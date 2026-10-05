@@ -23,6 +23,7 @@
  * did. Someone reads these at a petrol station at eleven at night.
  */
 import { SEAL_INFO_PREFIX } from "./seal.ts"
+import { MAX_MINOR_AMOUNT, NON_TWO_DIGIT_EXPONENTS } from "./currency.ts"
 
 /** Shared by every page. Hashed into the CSP, so it is a constant like the script. */
 export const STYLE = `*{box-sizing:border-box}
@@ -72,6 +73,7 @@ function luhn(n){if(n.length<13||n.length>19)return false;var sum=0,alt=false;
 for(var i=n.length-1;i>=0;i--){var d=n.charCodeAt(i)-48;
 if(alt){d*=2;if(d>9)d-=9}sum+=d;alt=!alt}return sum%10===0}
 function fail(m){err.textContent=m;return null}
+var EXP=${JSON.stringify(NON_TWO_DIGIT_EXPONENTS)};
 var ex=form.elements["f3"];if(ex)ex.addEventListener("input",function(){var d=digits(ex.value).slice(0,4);
 ex.value=d.length>2?d.slice(0,2)+"/"+d.slice(2):d});
 function payload(){
@@ -91,12 +93,13 @@ if(!name)return fail("Enter the name on the card.");
 var postal=field("f6").trim();
 if(!postal)return fail("Enter the billing postcode.");
 if(!checked("f8"))return fail("Only a virtual card with a spending limit can be added. Tick the box.");
-var lim=field("f9").trim();
-if(!/^[0-9]+(\\.[0-9]{1,2})?$/.test(lim))return fail("Enter the spending limit, like 200 or 200.00.");
-var minor=Math.round(parseFloat(lim)*100);
-if(!(minor>0))return fail("Enter the spending limit, like 200 or 200.00.");
 var cur=field("f10").trim().toUpperCase();
 if(!/^[A-Z]{3}$/.test(cur))return fail("Enter the limit currency as three letters, like USD.");
+var xp=Object.prototype.hasOwnProperty.call(EXP,cur)?EXP[cur]:2;
+var lim=field("f9").trim();var lm=/^([0-9]+)(?:\\.([0-9]+))?$/.exec(lim);
+if(!lm||(lm[2]||"").length>xp)return fail(xp===0?"Enter the spending limit as a whole number, like 200.":"Enter the spending limit, like 200 or 200."+"0000".slice(0,xp)+".");
+var minor=parseInt(lm[1]+((lm[2]||"")+"0000").slice(0,xp),10);
+if(!(minor>0)||minor>${MAX_MINOR_AMOUNT})return fail("Enter the spending limit, like 200.");
 return{kind:"card",name:name,pan:pan,exp:exp,cvv:code,virtual:true,limit_minor:minor,currency:cur,
 billing:{line1:field("f4").trim(),
 city:field("f5").trim(),postal:postal,country:field("f7").trim()}}}

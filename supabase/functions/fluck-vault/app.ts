@@ -51,6 +51,7 @@ import {
 import { SIGNATURE_HEADER, TIMESTAMP_HEADER, verifySigned } from "./signed.ts"
 import { looksSealed, sealPublicKey } from "./seal.ts"
 import { form, message } from "./page.ts"
+import { isKnownCurrency, MAX_MINOR_AMOUNT, minorUnitExponent } from "./currency.ts"
 
 /**
  * Where the function answers.
@@ -109,9 +110,44 @@ export interface Instance {
   userId: string
   linkPublicKey: string
   sealPublicKey: string
+  /**
+   * Whether an operator has approved this install to mint CVV and vault links. Registration
+   * alone never grants it: a signed-in account is not enough to put a page on this domain.
+   */
+  issuanceApproved: boolean
 }
 
-export type RegisterOutcome = "ok" | "conflict" | "revoked" | "limit" | "invalid" | "unavailable"
+/** A first registration, or a same-key re-registration. Never a key change. */
+export interface Registration {
+  instanceId: string
+  userId: string
+  linkPublicKey: string
+  sealPublicKey: string
+}
+
+/**
+ * `rotation_requires_proof`: the id exists with other keys, and a key change has to go through
+ * `rotateInstance` with a signature from the current key. `unauthorized` is only returned by
+ * the session-scoped SQL wrapper the plugin calls, never on this function's path.
+ */
+export type RegisterOutcome =
+  | "ok"
+  | "conflict"
+  | "revoked"
+  | "limit"
+  | "invalid"
+  | "rotation_requires_proof"
+  | "unauthorized"
+  | "unavailable"
+
+/** A key change, already proven with the current link key by the caller. */
+export interface Rotation extends Registration {
+  /** The link key the proof verified against. The write is refused if it is no longer current. */
+  expectedLinkPublicKey: string
+}
+
+/** `stale`: the keys changed between the proof check and the write. */
+export type RotateOutcome = "ok" | "conflict" | "revoked" | "stale" | "invalid" | "unavailable"
 
 /** What the DGX asks this function to write when it mints a link. Non secret facts only. */
 export interface CreateRequest {
@@ -163,8 +199,10 @@ export interface Dependencies {
   claimInbox(ws: string, instanceId: string | null): Promise<ClaimedItem[]>
   /** One live install, or null if it is unknown or revoked. */
   instance(instanceId: string): Promise<Instance | null>
-  /** Upsert one install's keys for its owner. */
-  registerInstance(instance: Instance): Promise<RegisterOutcome>
+  /** Register an install for its owner. Refuses to change an existing install's keys. */
+  registerInstance(registration: Registration): Promise<RegisterOutcome>
+  /** Change an install's keys, compare-and-swap on the current link key. */
+  rotateInstance(rotation: Rotation): Promise<RotateOutcome>
   /** The Supabase user id an access token belongs to, or null. */
   userFromToken(accessToken: string): Promise<string | null>
   /** Milliseconds. Injected so the tests can sit on either side of an expiry. */
@@ -186,16 +224,20 @@ const COPY = {
   cardSubmit: "Add card",
   cardNote:
     "The card and its security code are encrypted on this device, so only your Fluck can read them.",
-  cvvTitle: "Confirm payment",
+  // This page only seals the code and stages it for the install that minted the link. It does
+  // not charge anything, so nothing here may read as a payment.
+  cvvTitle: "Card security code",
   cvvIntro: "Enter the card security code.",
-  cvvSubmit: "Pay",
-  cvvNote: "Saved, encrypted, for next time. Only your Fluck can read it.",
+  cvvSubmit: "Send code",
+  cvvNote:
+    "This does not charge your card. Only continue if these details match a purchase you asked Fluck to make, and do not forward this link. The code is encrypted on this device and held for up to ten minutes until your Fluck collects it; Fluck keeps it, encrypted, for purchases you approve.",
   savedTitle: "Saved",
   saved: "Saved. You can go back to Messages.",
   cardSavedTitle: "Card added",
   cardSaved: "Card added. It is only used when you approve a purchase.",
-  cvvDoneTitle: "Sent",
-  cvvDone: "Sent. You can go back to Messages.",
+  cvvDoneTitle: "Code sent",
+  cvvDone:
+    "Code sent to your Fluck, encrypted. Your card has not been charged. You can go back to Messages.",
   badTitle: "Link problem",
   bad: "That link is not valid any more. Ask Fluck for a fresh one.",
   busyTitle: "Too many tries",
@@ -720,24 +762,24 @@ async function verified(
 }
 
 /**
- * A minor unit amount in the row's own currency: `₹290.69`, `$487.32`, `¥1,200`.
+ * A minor unit amount in the row's own currency: `₹290.69`, `$487.32`, `¥1,200`, `KWD 1.250`.
  *
- * The exponent comes from the currency, so a zero decimal currency is not divided by a hundred.
- * An unknown code falls back to `XYZ 290.69`; a missing one shows the bare number rather than a
- * guessed symbol.
+ * `minor` is in the currency's ISO 4217 minor unit (see currency.ts for the contract), so the
+ * divisor is `10 ** exponent` from that table and the number of decimals shown is the same
+ * exponent. A missing or unknown code renders nothing rather than a guessed amount: on a page
+ * that asks for a card's security code, no amount is better than a wrong one.
  */
 export function money(minor: number | null, currency: string | null): string | null {
-  if (minor === null || !Number.isFinite(minor)) return null
-  const code = currency?.toUpperCase() ?? null
-  if (code !== null) {
-    try {
-      const format = new Intl.NumberFormat("en", { style: "currency", currency: code })
-      const digits = format.resolvedOptions().maximumFractionDigits ?? 2
-      return format.format(minor / 10 ** digits)
-    } catch { /* an unknown code: fall through */ }
-  }
-  const amount = (minor / 100).toFixed(2)
-  return code === null ? amount : `${code} ${amount}`
+  if (minor === null || !Number.isSafeInteger(minor) || minor < 0) return null
+  const code = currency?.toUpperCase() ?? ""
+  const exponent = minorUnitExponent(code)
+  if (exponent === null) return null
+  return new Intl.NumberFormat("en", {
+    style: "currency",
+    currency: code,
+    minimumFractionDigits: exponent,
+    maximumFractionDigits: exponent,
+  }).format(minor / 10 ** exponent)
 }
 
 /**
@@ -1004,6 +1046,14 @@ async function signedRoute(
     return json(400, { error: "body" })
   }
 
+  // Minting is a privilege of the operator: the env key, or an install an operator approved.
+  // Without this any signed-in account could register a key and put its own merchant, card and
+  // amount on a first-party page that seals what is typed to that account.
+  if (path === "/requests" && instance && !instance.issuanceApproved) {
+    deps.log(`requests refused: issuance not approved [${instance.instanceId.slice(0, 8)}]`)
+    return json(403, { error: "issuance" })
+  }
+
   const id = instance?.instanceId ?? null
   return path === "/requests"
     ? await createRequestRoute(deps, parsed as Record<string, unknown>, nowSeconds, id)
@@ -1063,17 +1113,33 @@ async function createRequestRoute(
     if (value === undefined) return json(400, { error: "field" })
   }
   if (last4 !== null && !/^[0-9]{4}$/.test(last4 as string)) return json(400, { error: "last4" })
-  if (currency !== null && !/^[A-Z]{3}$/.test(currency as string)) {
+  if (currency !== null && !isKnownCurrency(currency as string)) {
     return json(400, { error: "currency" })
   }
   if (purpose === "cvv" && purchaseId === null) return json(400, { error: "purchase" })
   if (purpose === "vault" && purchaseId !== null) return json(400, { error: "purchase" })
 
-  const totalCents = body.totalCents
-  if (totalCents !== undefined && totalCents !== null) {
-    if (typeof totalCents !== "number" || !Number.isInteger(totalCents) || totalCents < 0) {
+  // ISO 4217 minor units of `currency` (currency.ts), bounded so the double is exact.
+  const totalCents = body.totalCents ?? null
+  if (
+    totalCents !== null &&
+    (typeof totalCents !== "number" || !Number.isSafeInteger(totalCents) || totalCents < 0 ||
+      totalCents > MAX_MINOR_AMOUNT)
+  ) {
+    return json(400, { error: "total" })
+  }
+  // A CVV page is the owner's only check of what is being bought, so it is never rendered
+  // without the merchant and the amount; a vault row is not a purchase and carries neither.
+  if (purpose === "cvv") {
+    if (merchant === null) return json(400, { error: "merchant" })
+    if (totalCents === null || totalCents === 0 || currency === null) {
       return json(400, { error: "total" })
     }
+  } else if (
+    merchant !== null || brand !== null || last4 !== null || totalCents !== null ||
+    currency !== null
+  ) {
+    return json(400, { error: "field" })
   }
 
   const created = await deps.createRequest({
@@ -1086,7 +1152,7 @@ async function createRequestRoute(
     merchant: merchant as string | null,
     brand: brand as string | null,
     last4: last4 as string | null,
-    totalCents: typeof totalCents === "number" ? totalCents : null,
+    totalCents: totalCents as number | null,
     currency: currency as string | null,
     expiresAt,
     instanceId,
@@ -1125,8 +1191,18 @@ function standardBase64(bytes: Uint8Array): string {
  * `POST /instances`: an install registers its public keys against the signed-in BOSS user.
  *
  * Authenticated by the user's Supabase access token. An id already owned by another user is
- * refused, so one user cannot take over, or re-key, another's install. Keys are validated and
- * stored normalised: Ed25519 as 32 raw bytes, P-256 as the 65 byte uncompressed point.
+ * refused, so one user cannot take over another's install. Keys are validated and stored
+ * normalised: Ed25519 as 32 raw bytes, P-256 as the 65 byte uncompressed point.
+ *
+ * ## Changing the keys of an install that already exists
+ *
+ * A session is not enough. A stolen session could otherwise swap in its own keys, and every
+ * unconsumed link of that install would then seal to them. A key change must also carry the
+ * usual signed-request headers (signed.ts) made with the install's CURRENT link key over this
+ * exact body, so it names the new keys and is at most two minutes old. The write is then a
+ * compare-and-swap on that current key, so a captured proof stops working the moment the keys
+ * it was made for are replaced, and replaying it before then only repeats the same change.
+ * A lost current key is not recoverable here: register a fresh instance id instead.
  */
 async function instancesRoute(request: Request, deps: Dependencies): Promise<Response> {
   const body = await request.text()
@@ -1163,14 +1239,61 @@ async function instancesRoute(request: Request, deps: Dependencies): Promise<Res
   } catch {
     return json(400, { error: "sealPublicKey" })
   }
-
-  const outcome = await deps.registerInstance({
+  const registration: Registration = {
     instanceId,
     userId,
     linkPublicKey,
     sealPublicKey: sealKey,
+  }
+  const who = `[${instanceId.slice(0, 8)}] [${userId.slice(0, 8)}]`
+
+  const outcome = await deps.registerInstance(registration)
+  if (outcome !== "rotation_requires_proof") {
+    deps.log(`instances ${outcome} ${who}`)
+    return registerResponse(outcome)
+  }
+
+  // A key change. Prove possession of the current link key before anything is written.
+  const current = await deps.instance(instanceId)
+  if (!current || current.userId !== userId) {
+    // Gone, revoked or owned by someone else since the register call: nothing to rotate.
+    deps.log(`instances refused: rotation target ${who}`)
+    return json(403, { error: "conflict" })
+  }
+  const proven = await verifySigned({
+    publicKey: current.linkPublicKey,
+    method: "POST",
+    path: "/instances",
+    body,
+    timestamp: request.headers.get(TIMESTAMP_HEADER),
+    signature: request.headers.get(SIGNATURE_HEADER),
+    nowSeconds: Math.floor(deps.now() / 1000),
   })
-  deps.log(`instances ${outcome} [${instanceId.slice(0, 8)}] [${userId.slice(0, 8)}]`)
+  if (!proven) {
+    deps.log(`instances refused: rotation without proof ${who}`)
+    return json(401, { error: "rotation_requires_proof" })
+  }
+  const rotated = await deps.rotateInstance({
+    ...registration,
+    expectedLinkPublicKey: current.linkPublicKey,
+  })
+  deps.log(`instances rotate ${rotated} ${who}`)
+  switch (rotated) {
+    case "ok":
+      return json(200, { ok: true, rotated: true })
+    case "conflict":
+    case "revoked":
+      return json(403, { error: rotated })
+    case "stale":
+      return json(409, { error: rotated })
+    case "invalid":
+      return json(400, { error: rotated })
+    default:
+      return json(503, { error: "unavailable" })
+  }
+}
+
+function registerResponse(outcome: RegisterOutcome): Response {
   switch (outcome) {
     case "ok":
       return json(200, { ok: true })

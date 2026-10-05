@@ -11,7 +11,9 @@ import {
   DEFAULT_PUBLIC_BASE_URL,
   type Dependencies,
   type Instance,
+  PAGES,
   resetRateLimits,
+  type Rotation,
   type RowInstance,
   shortId,
   type VaultRequestRow,
@@ -68,6 +70,7 @@ interface Harness {
   handler: (request: Request) => Promise<Response>
   instances: Map<string, Instance & { revoked?: boolean }>
   created: CreateRequest[]
+  rotated: Rotation[]
   claimed: [string, string | null][]
   logs: string[]
 }
@@ -76,6 +79,7 @@ function harness(options: { row?: VaultRequestRow | null; env?: boolean } = {}):
   resetRateLimits()
   const instances = new Map<string, Instance & { revoked?: boolean }>()
   const created: CreateRequest[] = []
+  const rotated: Rotation[] = []
   const claimed: [string, string | null][] = []
   const logs: string[] = []
   const tokens: Record<string, string> = { "alice-token": ALICE, "bob-token": BOB }
@@ -100,16 +104,35 @@ function harness(options: { row?: VaultRequestRow | null; env?: boolean } = {}):
       const found = instances.get(id)
       return Promise.resolve(found && !found.revoked ? found : null)
     },
-    registerInstance: (instance) => {
-      const existing = instances.get(instance.instanceId)
-      if (existing && existing.userId !== instance.userId) return Promise.resolve("conflict")
+    // Mirrors fluck_vault_register_instance: never a key change.
+    registerInstance: (registration) => {
+      const existing = instances.get(registration.instanceId)
+      if (existing && existing.userId !== registration.userId) return Promise.resolve("conflict")
       if (existing?.revoked) return Promise.resolve("revoked")
-      instances.set(instance.instanceId, instance)
+      if (existing) {
+        const same = existing.linkPublicKey === registration.linkPublicKey &&
+          existing.sealPublicKey === registration.sealPublicKey
+        return Promise.resolve(same ? "ok" : "rotation_requires_proof")
+      }
+      instances.set(registration.instanceId, { ...registration, issuanceApproved: false })
+      return Promise.resolve("ok")
+    },
+    // Mirrors fluck_vault_rotate_instance: compare-and-swap on the current link key.
+    rotateInstance: (rotation) => {
+      rotated.push(rotation)
+      const existing = instances.get(rotation.instanceId)
+      if (!existing || existing.userId !== rotation.userId) return Promise.resolve("conflict")
+      if (existing.revoked) return Promise.resolve("revoked")
+      if (existing.linkPublicKey !== rotation.expectedLinkPublicKey) {
+        return Promise.resolve("stale")
+      }
+      existing.linkPublicKey = rotation.linkPublicKey
+      existing.sealPublicKey = rotation.sealPublicKey
       return Promise.resolve("ok")
     },
     userFromToken: (token) => Promise.resolve(tokens[token] ?? null),
   }
-  return { handler: createHandler(deps), instances, created, claimed, logs }
+  return { handler: createHandler(deps), instances, created, rotated, claimed, logs }
 }
 
 function register(body: unknown, token: string | null = "alice-token"): Request {
@@ -123,8 +146,21 @@ function register(body: unknown, token: string | null = "alice-token"): Request 
   })
 }
 
-function seed(h: Harness, instanceId: string, userId: string, link: string, seal: string) {
-  h.instances.set(instanceId, { instanceId, userId, linkPublicKey: link, sealPublicKey: seal })
+function seed(
+  h: Harness,
+  instanceId: string,
+  userId: string,
+  link: string,
+  seal: string,
+  issuanceApproved = true,
+) {
+  h.instances.set(instanceId, {
+    instanceId,
+    userId,
+    linkPublicKey: link,
+    sealPublicKey: seal,
+    issuanceApproved,
+  })
 }
 
 async function signed(
@@ -132,9 +168,11 @@ async function signed(
   body: unknown,
   key: CryptoKey,
   instanceId: string | null,
+  extraHeaders: Record<string, string> = {},
+  timestamp = NOW,
 ): Promise<Request> {
   const raw = JSON.stringify(body)
-  const message = signingString("POST", path, NOW, await bodyDigest(raw))
+  const message = signingString("POST", path, timestamp, await bodyDigest(raw))
   const signature = await crypto.subtle.sign(
     { name: "Ed25519" },
     key,
@@ -145,9 +183,10 @@ async function signed(
     body: raw,
     headers: {
       "content-type": "application/json",
-      "x-fluck-timestamp": String(NOW),
+      "x-fluck-timestamp": String(timestamp),
       "x-fluck-signature": encodeBase64Url(new Uint8Array(signature)),
       ...(instanceId ? { "x-fluck-instance": instanceId } : {}),
+      ...extraHeaders,
     },
   })
 }
@@ -214,16 +253,129 @@ Deno.test("a signed-in user registers an install and its keys are stored normali
   assertEquals(stored.sealPublicKey, A_SEAL)
 })
 
-Deno.test("registering again for the same user is an idempotent re-key", async () => {
+Deno.test("registering the same keys again is idempotent", async () => {
   const h = harness()
   const first = { instanceId: INSTANCE_A, linkPublicKey: A.base64, sealPublicKey: A_SEAL }
   assertEquals((await h.handler(register(first))).status, 200)
   resetRateLimits()
   assertEquals((await h.handler(register(first))).status, 200)
+  assertEquals(h.rotated.length, 0)
+})
+
+// --------------------------------------------------------------------------------------------
+// Rotation: a session alone cannot change an install's keys
+// --------------------------------------------------------------------------------------------
+
+/** A key change request, signed (or not) the way the DGX signs any request. */
+async function rotation(
+  body: unknown,
+  key: CryptoKey | null,
+  token = "alice-token",
+  timestamp = NOW,
+): Promise<Request> {
+  if (key === null) return register(body, token)
+  return await signed(
+    "/instances",
+    body,
+    key,
+    null,
+    { authorization: `Bearer ${token}` },
+    timestamp,
+  )
+}
+
+const TO_B = { instanceId: INSTANCE_A, linkPublicKey: B.base64, sealPublicKey: B_SEAL }
+
+Deno.test("a stolen session cannot re-key an install, and its open links still seal to the owner", async () => {
+  const h = harness({ row: row(ROW_A) })
+  seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL)
+  // The attacker holds Alice's session and their own key pair B, but not Alice's key A. No
+  // proof, and a proof made with the attacker's own new key, are both refused.
+  for (const key of [null, B.pair.privateKey, LEGACY.pair.privateKey]) {
+    resetRateLimits()
+    const response = await h.handler(await rotation(TO_B, key))
+    assertEquals(response.status, 401, String(key))
+    assertEquals(await response.json(), { error: "rotation_requires_proof" })
+  }
+  assertEquals(h.rotated.length, 0)
+  assertEquals(h.instances.get(INSTANCE_A)!.linkPublicKey, A.base64)
+  assertEquals(h.instances.get(INSTANCE_A)!.sealPublicKey, A_SEAL)
+  // The unconsumed link Alice's Fluck already texted still seals to Alice's key.
   resetRateLimits()
-  const rekey = { instanceId: INSTANCE_A, linkPublicKey: B.base64, sealPublicKey: B_SEAL }
-  assertEquals((await h.handler(register(rekey))).status, 200)
+  const html = await (await h.handler(page(`/v/${shortId(JTI)}`))).text()
+  assertStringIncludes(html, `data-key="${A_SEAL}"`)
+  assert(!html.includes(B_SEAL))
+})
+
+Deno.test("a key change proven with the current key rotates, as a compare-and-swap", async () => {
+  const h = harness()
+  seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL)
+  const response = await h.handler(await rotation(TO_B, A.pair.privateKey))
+  assertEquals(response.status, 200)
+  assertEquals(await response.json(), { ok: true, rotated: true })
+  assertEquals(h.rotated[0].expectedLinkPublicKey, A.base64)
   assertEquals(h.instances.get(INSTANCE_A)!.linkPublicKey, B.base64)
+  assertEquals(h.instances.get(INSTANCE_A)!.sealPublicKey, B_SEAL)
+})
+
+Deno.test("a captured rotation proof is dead once the keys it was made for are gone", async () => {
+  const h = harness()
+  seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL)
+  const captured = await rotation(TO_B, A.pair.privateKey)
+  const replay = captured.clone()
+  assertEquals((await h.handler(captured)).status, 200)
+  // The owner rotates again, B to LEGACY's pair, proven with B.
+  resetRateLimits()
+  const onward = {
+    instanceId: INSTANCE_A,
+    linkPublicKey: LEGACY.base64,
+    sealPublicKey: LEGACY_SEAL,
+  }
+  assertEquals((await h.handler(await rotation(onward, B.pair.privateKey))).status, 200)
+  // Replaying the A-signed proof now verifies against the current key, which is not A.
+  resetRateLimits()
+  const response = await h.handler(replay)
+  assertEquals(response.status, 401)
+  assertEquals(h.instances.get(INSTANCE_A)!.linkPublicKey, LEGACY.base64)
+})
+
+Deno.test("a stale rotation proof is refused", async () => {
+  const h = harness()
+  seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL)
+  const response = await h.handler(
+    await rotation(TO_B, A.pair.privateKey, "alice-token", NOW - 600),
+  )
+  assertEquals(response.status, 401)
+  assertEquals(h.instances.get(INSTANCE_A)!.linkPublicKey, A.base64)
+})
+
+Deno.test("a valid proof under another user's session does not rotate", async () => {
+  const h = harness()
+  seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL)
+  const response = await h.handler(await rotation(TO_B, A.pair.privateKey, "bob-token"))
+  assertEquals(response.status, 403)
+  assertEquals(h.rotated.length, 0)
+  assertEquals(h.instances.get(INSTANCE_A)!.linkPublicKey, A.base64)
+})
+
+Deno.test("a rotation that loses a race to another rotation is refused, not applied", async () => {
+  const h = harness()
+  seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL)
+  const request = await rotation(TO_B, A.pair.privateKey)
+  // The keys move after the proof is checked but before the write. Lookups, in order: the
+  // register fake, the proof's key lookup, then the rotate fake's compare-and-swap.
+  const original = h.instances.get(INSTANCE_A)!
+  const lookup = h.instances.get.bind(h.instances)
+  let calls = 0
+  h.instances.get = (id: string) => {
+    const found = lookup(id)
+    if (found && ++calls === 3) found.linkPublicKey = LEGACY.base64
+    return found
+  }
+  const response = await h.handler(request)
+  assertEquals(response.status, 409)
+  assertEquals(await response.json(), { error: "stale" })
+  assertEquals(original.sealPublicKey, A_SEAL)
 })
 
 Deno.test("an install owned by another user is refused and keeps its keys", async () => {
@@ -397,4 +549,118 @@ Deno.test("an install's page renders with no env keys configured at all", async 
   // And a legacy row on the same deployment is still "not set up".
   const legacy = await harness({ row: row(null), env: false }).handler(page(`/v/${shortId(JTI)}`))
   assertEquals(legacy.status, 503)
+})
+
+// --------------------------------------------------------------------------------------------
+// Issuance: registering is not enough to mint a page on this domain
+// --------------------------------------------------------------------------------------------
+
+const CVV_MINT = {
+  jti: JTI,
+  ws: WS,
+  purpose: "cvv",
+  purchaseId: "purchase-1",
+  merchant: "shop.example",
+  brand: "Visa",
+  last4: "4242",
+  totalCents: 48_732,
+  currency: "USD",
+  expiresAt: NOW + 120,
+}
+
+Deno.test("an ordinary account that registers its own key cannot mint a payment page", async () => {
+  const h = harness()
+  // Bob signs in, registers a key he holds, and signs a CVV request with his own merchant,
+  // card and amount. Registration succeeds; minting is refused and nothing is written.
+  const registered = await h.handler(
+    register(
+      { instanceId: INSTANCE_B, linkPublicKey: B.base64, sealPublicKey: B_SEAL },
+      "bob-token",
+    ),
+  )
+  assertEquals(registered.status, 200)
+  assertEquals(h.instances.get(INSTANCE_B)!.issuanceApproved, false)
+  for (const body of [CVV_MINT, MINT]) {
+    resetRateLimits()
+    const response = await h.handler(await signed("/requests", body, B.pair.privateKey, INSTANCE_B))
+    assertEquals(response.status, 403)
+    assertEquals(await response.json(), { error: "issuance" })
+  }
+  assertEquals(h.created.length, 0)
+})
+
+Deno.test("an approved install mints, and the env key (the operator) still does", async () => {
+  const h = harness()
+  seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL, true)
+  assertEquals(
+    (await h.handler(await signed("/requests", CVV_MINT, A.pair.privateKey, INSTANCE_A))).status,
+    201,
+  )
+  resetRateLimits()
+  const legacy = { ...CVV_MINT, jti: "22222222-2222-3333-4444-555555555555" }
+  assertEquals(
+    (await h.handler(await signed("/requests", legacy, LEGACY.pair.privateKey, null))).status,
+    201,
+  )
+  assertEquals(h.created.map((c) => c.instanceId), [INSTANCE_A, null])
+})
+
+Deno.test("an unapproved install can still drain its own (empty) inbox", async () => {
+  const h = harness()
+  seed(h, INSTANCE_B, BOB, B.base64, B_SEAL, false)
+  const response = await h.handler(
+    await signed("/inbox/claim", { ws: WS }, B.pair.privateKey, INSTANCE_B),
+  )
+  assertEquals(response.status, 200)
+})
+
+Deno.test("a cvv request must name the merchant and a positive amount in a known currency", async () => {
+  const cases: [Record<string, unknown>, string][] = [
+    [{ ...CVV_MINT, merchant: null }, "merchant"],
+    [{ ...CVV_MINT, totalCents: null }, "total"],
+    [{ ...CVV_MINT, totalCents: 0 }, "total"],
+    [{ ...CVV_MINT, totalCents: -1 }, "total"],
+    [{ ...CVV_MINT, totalCents: 1.5 }, "total"],
+    [{ ...CVV_MINT, totalCents: 2 ** 53 }, "total"],
+    [{ ...CVV_MINT, totalCents: 1_000_000_000_001 }, "total"],
+    [{ ...CVV_MINT, currency: null }, "total"],
+    [{ ...CVV_MINT, currency: "XQZ" }, "currency"],
+    [{ ...CVV_MINT, currency: "usd" }, "currency"],
+    [{ ...CVV_MINT, last4: "42" }, "last4"],
+  ]
+  for (const [body, error] of cases) {
+    const h = harness()
+    seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL, true)
+    const response = await h.handler(await signed("/requests", body, A.pair.privateKey, INSTANCE_A))
+    assertEquals(response.status, 400, JSON.stringify(body))
+    assertEquals(await response.json(), { error })
+    assertEquals(h.created.length, 0)
+  }
+})
+
+Deno.test("a cvv request in a zero or three decimal currency is accepted as minor units", async () => {
+  for (const [currency, totalCents] of [["JPY", 1_200], ["KWD", 1_250], ["USD", 48_732]]) {
+    const h = harness()
+    seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL, true)
+    const body = { ...CVV_MINT, currency, totalCents }
+    const response = await h.handler(await signed("/requests", body, A.pair.privateKey, INSTANCE_A))
+    assertEquals(response.status, 201, String(currency))
+    assertEquals(h.created[0].totalCents, totalCents)
+    assertEquals(h.created[0].currency, currency)
+  }
+})
+
+Deno.test("a vault request carries no purchase details", async () => {
+  for (const extra of [{ merchant: "shop.example" }, { totalCents: 100 }, { currency: "USD" }]) {
+    const h = harness()
+    seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL, true)
+    const response = await h.handler(
+      await signed("/requests", { ...MINT, ...extra }, A.pair.privateKey, INSTANCE_A),
+    )
+    assertEquals(response.status, 400, JSON.stringify(extra))
+  }
+})
+
+Deno.test("the cvv copy is constant and never claims a charge", () => {
+  assertEquals(PAGES.cvvSubmit, "Send code")
 })

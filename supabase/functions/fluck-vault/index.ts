@@ -22,6 +22,9 @@ import {
   type CreateRequest,
   type Instance,
   type RegisterOutcome,
+  type Registration,
+  type RotateOutcome,
+  type Rotation,
   type StoreRequest,
   type StoreResult,
   type VaultRequestRow,
@@ -189,18 +192,35 @@ Deno.serve(createHandler({
       userId: String(row.user_id),
       linkPublicKey: row.link_public_key,
       sealPublicKey: row.seal_public_key,
+      // Fails closed: anything but an explicit true is not approved.
+      issuanceApproved: row.issuance_approved === true,
     }
   },
 
-  async registerInstance(instance: Instance): Promise<RegisterOutcome> {
+  async registerInstance(registration: Registration): Promise<RegisterOutcome> {
     const { data, error } = await client.rpc("fluck_vault_register_instance", {
-      p_instance_id: instance.instanceId,
-      p_user_id: instance.userId,
-      p_link_public_key: instance.linkPublicKey,
-      p_seal_public_key: instance.sealPublicKey,
+      p_instance_id: registration.instanceId,
+      p_user_id: registration.userId,
+      p_link_public_key: registration.linkPublicKey,
+      p_seal_public_key: registration.sealPublicKey,
     })
     if (error) return "unavailable"
     return data === "ok" || data === "conflict" || data === "revoked" || data === "limit" ||
+        data === "invalid" || data === "rotation_requires_proof"
+      ? data
+      : "unavailable"
+  },
+
+  async rotateInstance(rotation: Rotation): Promise<RotateOutcome> {
+    const { data, error } = await client.rpc("fluck_vault_rotate_instance", {
+      p_instance_id: rotation.instanceId,
+      p_user_id: rotation.userId,
+      p_expected_link_public_key: rotation.expectedLinkPublicKey,
+      p_link_public_key: rotation.linkPublicKey,
+      p_seal_public_key: rotation.sealPublicKey,
+    })
+    if (error) return "unavailable"
+    return data === "ok" || data === "conflict" || data === "revoked" || data === "stale" ||
         data === "invalid"
       ? data
       : "unavailable"

@@ -81,6 +81,7 @@ function harness(options: { create?: boolean; items?: ClaimedItem[] } = {}): Har
     },
     instance: () => Promise.resolve(null),
     registerInstance: () => Promise.resolve("unavailable"),
+    rotateInstance: () => Promise.resolve("unavailable"),
     userFromToken: () => Promise.resolve(null),
   }
   return { handler: createHandler(deps), created, claimed, logs }
@@ -320,6 +321,7 @@ Deno.test("the audience is not taken from the project-wide base url", async () =
     claimInbox: () => Promise.resolve([]),
     instance: () => Promise.resolve(null),
     registerInstance: () => Promise.resolve("unavailable"),
+    rotateInstance: () => Promise.resolve("unavailable"),
     userFromToken: () => Promise.resolve(null),
   }
   const response = await createHandler(deps)(

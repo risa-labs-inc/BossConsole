@@ -26,6 +26,7 @@ import {
 } from "../app.ts"
 import { SCRIPT, sha256Base64, STYLE } from "../page.ts"
 import { SEAL_VERSION } from "../seal.ts"
+import { minorUnitExponent } from "../currency.ts"
 import { type LinkClaims, mintLink } from "../token.ts"
 
 const AUD = new URL(DEFAULT_PUBLIC_BASE_URL).host
@@ -143,6 +144,7 @@ function harness(options: {
     claimInbox: () => Promise.resolve([]),
     instance: () => Promise.resolve(null),
     registerInstance: () => Promise.resolve("unavailable"),
+    rotateInstance: () => Promise.resolve("unavailable"),
     userFromToken: () => Promise.resolve(null),
   }
   return { handler: createHandler(deps), described, stored, logs }
@@ -262,11 +264,25 @@ Deno.test("the cvv page names the brand, the last four, the total and the mercha
   const { handler } = harness({ row: cvvRow() })
   const response = await handler(get("/cvv", await cvvToken()))
   const html = await response.text()
-  assertStringIncludes(html, "<h1>Confirm payment</h1>")
+  assertStringIncludes(html, "<h1>Card security code</h1>")
   assertStringIncludes(html, "<p>Visa ••4242 · $487.32 · Delta Air Lines</p>")
-  assertStringIncludes(html, ">Pay</button>")
+  assertStringIncludes(html, ">Send code</button>")
   assertStringIncludes(html, PAGES.cvvNote)
-  assertStringIncludes(html, "Saved, encrypted, for next time.")
+})
+
+Deno.test("the cvv page says what it does and does not do", async () => {
+  const { handler } = harness({ row: cvvRow() })
+  const html = await (await handler(get("/cvv", await cvvToken()))).text()
+  // No charge, check the details, do not forward, and the code is staged encrypted.
+  assertStringIncludes(html, "This does not charge your card.")
+  assertStringIncludes(html, "Only continue if these details match a purchase you asked Fluck")
+  assertStringIncludes(html, "do not forward this link")
+  assertStringIncludes(html, "held for up to ten minutes")
+  for (const claim of ["Confirm payment", ">Pay<", "Pay now", "never stored", "Payment sent"]) {
+    assert(!html.includes(claim), claim)
+  }
+  assertStringIncludes(PAGES.cvvDone, "Your card has not been charged.")
+  assert(!/\bpaid\b|payment (sent|complete)/i.test(PAGES.cvvDone + PAGES.cvvDoneTitle))
 })
 
 Deno.test("the cvv total is shown in the row's own currency", () => {
@@ -283,17 +299,33 @@ Deno.test("the cvv total is shown in the row's own currency", () => {
     ),
     "HSBC ••3585 · ₹290.69 · zomato.com",
   )
-  assertEquals(money(29_069, "INR"), "₹290.69")
-  assertEquals(money(48_732, "USD"), "$487.32")
   assertEquals(money(1_050, "GBP"), "£10.50")
   assertEquals(money(1_050, "EUR"), "€10.50")
-  // Zero decimal currencies are not divided by a hundred.
-  assertEquals(money(1_200, "JPY"), "¥1,200")
-  // An unassigned code is still formatted by Intl, a malformed one falls back to the code.
-  assertEquals(money(29_069, "XQZ"), "XQZ\u00a0290.69")
-  assertEquals(money(29_069, "1AB"), "1AB 290.69")
-  assertEquals(money(29_069, null), "290.69")
+  // An unknown, malformed or missing code shows no amount rather than a guessed one.
+  assertEquals(money(29_069, "XQZ"), null)
+  assertEquals(money(29_069, "1AB"), null)
+  assertEquals(money(29_069, null), null)
   assertEquals(money(null, "USD"), null)
+  assertEquals(money(1.5, "USD"), null)
+  assertEquals(money(-1, "USD"), null)
+})
+
+Deno.test("amounts are ISO 4217 minor units: the shared wire vectors (USD, JPY, KWD, ...)", async () => {
+  const fixture = JSON.parse(
+    await Deno.readTextFile(new URL("./fixtures/amount-vectors.json", import.meta.url)),
+  ) as {
+    vectors: { currency: string; exponent: number; major: string; minor: number; display: string }[]
+  }
+  const seen = new Set(fixture.vectors.map((v) => v.exponent))
+  for (const exponent of [0, 2, 3]) assert(seen.has(exponent), `no ${exponent}-decimal vector`)
+  for (const v of fixture.vectors) {
+    assertEquals(minorUnitExponent(v.currency), v.exponent, v.currency)
+    // major -> minor, the way a minter must do it: digits, not floating point.
+    const [whole, fraction = ""] = v.major.split(".")
+    assertEquals(fraction.length, v.exponent, v.currency)
+    assertEquals(Number(whole + fraction), v.minor, v.currency)
+    assertEquals(money(v.minor, v.currency)!.replace(/\u00a0/g, " "), v.display, v.currency)
+  }
 })
 
 Deno.test("the cvv line omits what the row does not have", () => {
