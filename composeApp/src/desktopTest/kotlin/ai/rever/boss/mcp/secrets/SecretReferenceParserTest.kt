@@ -46,6 +46,20 @@ class SecretReferenceParserTest {
     }
 
     @Test
+    fun `the secret marker prefix is case-insensitive`() {
+        val result = scan("{{SECRET:$id}}", "{{Secret:$id.username}}", "{{sEcReT:$id.notes}}")
+        assertIs<SecretReferenceScan.Found>(result)
+        assertEquals(
+            setOf(
+                SecretReference(id, SecretField.PASSWORD),
+                SecretReference(id, SecretField.USERNAME),
+                SecretReference(id, SecretField.NOTES),
+            ),
+            result.references,
+        )
+    }
+
+    @Test
     fun `adjacent references both parse`() {
         val other = "00000000-0000-4000-8000-000000000001"
         val result = scan("{{secret:$id}}{{secret:$other.username}}")
@@ -114,7 +128,9 @@ class SecretReferenceParserTest {
     @Test
     fun `the marker pre-check is a plain substring test`() {
         assertTrue(SecretReferenceParser.mayContain("x{{secret:y"))
+        assertTrue(SecretReferenceParser.mayContain("x{{SECRET:y"))
         assertTrue(!SecretReferenceParser.mayContain("{{ secret:y}}"))
+        assertTrue(!SecretReferenceParser.mayContain("secret:y"))
     }
 
     @Test

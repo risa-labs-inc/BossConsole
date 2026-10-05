@@ -227,18 +227,7 @@ class PluginStoreRealtimeService {
                     logger.info(LogCategory.NETWORK, "Subscribed to plugin_versions table changes")
 
                     // Listen for changes
-                    changeFlow.collect { action ->
-                        when (action) {
-                            is PostgresAction.Insert -> {
-                                val version = action.record["version"]?.toString()?.removeSurrounding("\"") ?: ""
-                                logger.debug(LogCategory.NETWORK, "Version published", mapOf("version" to version))
-                                _events.emit(PluginStoreEvent.VersionPublished("", version))
-                                triggerRefresh()
-                            }
-
-                            else -> {}
-                        }
-                    }
+                    changeFlow.collect { action -> onVersionAction(action) }
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -253,6 +242,41 @@ class PluginStoreRealtimeService {
                     backoffMs = (backoffMs * 2).coerceAtMost(maxBackoffMs)
                 }
             }
+        }
+    }
+
+    /**
+     * React to one plugin_versions change: emit the store event and request a refresh.
+     *
+     * Internal rather than private so desktopTest can drive it without a live websocket -
+     * the collect loop needs a real channel, this handler does not.
+     *
+     * The Update branch is the #1630 pairing on the client side. A version row is INSERTed
+     * with sha256='pending' and jar_size=0 and is made public by the finalize UPDATE on the
+     * same row. Once the "Published versions are viewable" policy gates on finalized rows,
+     * that pending INSERT never reaches a non-owner subscriber, so the UPDATE is the only
+     * realtime signal that a new version exists at all. Every UPDATE a subscriber CAN see is
+     * a change to a row they are allowed to read - finalization or a later metadata edit - so
+     * all of them refresh, not just pending-to-real transitions (the old row is not reliably
+     * present to compare against under RLS filtering).
+     */
+    internal suspend fun onVersionAction(action: PostgresAction) {
+        when (action) {
+            is PostgresAction.Insert -> {
+                val version = action.record["version"]?.toString()?.removeSurrounding("\"") ?: ""
+                logger.debug(LogCategory.NETWORK, "Version published", mapOf("version" to version))
+                _events.emit(PluginStoreEvent.VersionPublished("", version))
+                triggerRefresh()
+            }
+
+            is PostgresAction.Update -> {
+                val version = action.record["version"]?.toString()?.removeSurrounding("\"") ?: ""
+                logger.debug(LogCategory.NETWORK, "Version finalized", mapOf("version" to version))
+                _events.emit(PluginStoreEvent.VersionPublished("", version))
+                triggerRefresh()
+            }
+
+            else -> {}
         }
     }
 

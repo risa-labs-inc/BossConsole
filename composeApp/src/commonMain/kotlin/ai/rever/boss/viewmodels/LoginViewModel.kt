@@ -1,28 +1,30 @@
 package ai.rever.boss.viewmodels
 
-import ai.rever.boss.services.supabase.models.*
 import ai.rever.boss.viewmodels.auth.AuthOptions
 import ai.rever.boss.viewmodels.auth.AuthOptionsManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 
 /**
  * Facade pattern coordinating multiple authentication component ViewModels
  * Responsible for: orchestrating login flows, exposing unified state
  */
-class LoginViewModel(
-    // Default preserves production behavior; injectable so a test can assert the scope is cancelled.
-    private val viewModelScope: CoroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob()),
+class LoginViewModel internal constructor(
+    parentScope: CoroutineScope = CoroutineScope(Dispatchers.Main),
+    internal val coreLoginViewModel: CoreLoginViewModel = CoreLoginViewModel(parentScope),
+    val passkeyAuthViewModel: PasskeyAuthViewModel = PasskeyAuthViewModel(parentScope),
+    val authOptionsManager: AuthOptionsManager = AuthOptionsManager(parentScope),
 ) {
-    // Component ViewModels
-    private val coreLoginViewModel = CoreLoginViewModel()
-    val passkeyAuthViewModel = PasskeyAuthViewModel()
-    val authOptionsManager = AuthOptionsManager()
+    constructor() : this(CoroutineScope(Dispatchers.Main))
+
+    private val job = SupervisorJob(parentScope.coroutineContext[Job])
+    internal val viewModelScope = CoroutineScope(parentScope.coroutineContext + job)
 
     // Exposed state flows that delegate to appropriate component ViewModels
 
@@ -102,14 +104,15 @@ class LoginViewModel(
     }
 
     /**
-     * Release this view-model and its components. Cancels every child scope and this facade's own
-     * scope so no authentication work (and no onSuccess callback that navigates) can outlive the
+     * Release this view-model and its components. Cancels every child view-model and this facade's
+     * own job so no authentication work (and no onSuccess callback that navigates) can outlive the
      * auth screen. Call from the owning composable's onDispose.
+     * Cancelling our owned job does not cancel the caller's [parentScope].
      */
     fun dispose() {
         coreLoginViewModel.dispose()
         passkeyAuthViewModel.dispose()
         authOptionsManager.dispose()
-        viewModelScope.cancel()
+        job.cancel()
     }
 }

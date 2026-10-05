@@ -704,6 +704,7 @@ data class PluginDetailResponse(
             minBossVersion = versions.firstOrNull { it.version == latestVersion }?.minBossVersion ?: "",
             minApiVersion = versions.firstOrNull { it.version == latestVersion }?.minApiVersion ?: "",
             minIpcVersion = versions.firstOrNull { it.version == latestVersion }?.minIpcVersion ?: "1.0.0",
+            sha256 = versions.firstOrNull { it.version == latestVersion }?.sha256 ?: "",
             iconUrl = iconUrl,
             screenshots = screenshots.map { it.url },
             rating = avgRating,

@@ -3,7 +3,9 @@ package ai.rever.boss.plugin
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -84,6 +86,10 @@ object PluginPersistence {
                 config = InstalledPluginsConfig()
                 config!!
             }
+        } catch (e: SerializationException) {
+            logger.error(LogCategory.SYSTEM, "Failed to load installed plugins config", decodeFailure(e))
+            config = InstalledPluginsConfig()
+            config!!
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Failed to load installed plugins config", error = e)
             config = InstalledPluginsConfig()
@@ -467,6 +473,12 @@ object PluginPersistence {
         synchronized(configLock) {
             config = InstalledPluginsConfig()
             saveConfigInternal()
+        }
+    }
+
+    internal fun resetForTest() {
+        synchronized(configLock) {
+            config = null
         }
     }
 }

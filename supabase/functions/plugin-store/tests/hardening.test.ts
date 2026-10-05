@@ -133,12 +133,25 @@ function downloadStubClient(): SupabaseClient {
       getUser: () => Promise.resolve({ data: { user: null }, error: null }),
     },
     rpc: (fn: string) => {
-      if (fn === "get_plugin_with_stats") return Promise.resolve({ data: [PLUGIN_ROW], error: null })
       if (fn === "user_can_install_plugin") return Promise.resolve({ data: true, error: null })
       // record_plugin_download: tracking must not fail the request.
       return Promise.resolve({ data: "download-id", error: null })
     },
-    from: (_table: string) => ({ select: () => chain }),
+    // getPluginForDownload reads `plugins` directly (.select().eq().eq().maybeSingle());
+    // getLatestVersion reads `plugin_versions` through the chain above.
+    from: (table: string) =>
+      table === "plugins"
+        ? {
+          select: () => {
+            const pluginChain = {
+              eq: () => pluginChain,
+              maybeSingle: () =>
+                Promise.resolve({ data: { id: PLUGIN_ROW.id, required_permissions: [] }, error: null }),
+            }
+            return pluginChain
+          },
+        }
+        : { select: () => chain },
     storage: {
       from: (_bucket: string) => ({
         createSignedUrl: (_path: string, _expiresIn: number) =>

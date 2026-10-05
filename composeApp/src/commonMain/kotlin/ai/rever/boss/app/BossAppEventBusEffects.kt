@@ -66,13 +66,18 @@ import ai.rever.boss.terminal.TerminalLinkOpenMode
 import ai.rever.boss.terminal.TerminalLinkSettingsManager
 import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.awaitRegistryCondition
+import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import ai.rever.boss.window.WindowProjectState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filter
@@ -82,6 +87,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 
 /**
  * Pause before applying a tab selection received from another window. UX grace, not a
@@ -650,28 +656,15 @@ internal fun BossAppEventBusEffects(state: BossAppState) {
 
     // Listen for workspace load events from CLI
     // Issue #506: Filter by sourceWindowId for multi-window support
+    // Issue #1711: Redact decoder exceptions to prevent leaking Space layout data into logs
     LaunchedEffect(splitViewState, workspaceManager, windowId) {
-        WorkspaceEventBus.workspaceLoadEvents
-            .filter { event -> event.sourceWindowId == windowId }
-            .onEach { event ->
-                try {
-                    val file = java.io.File(event.workspacePath)
-                    if (file.exists() && file.canRead()) {
-                        val json = file.readText()
-                        val workspace = WorkspaceSerializer.deserialize(json)
-                        loadRequestedSpace(state, event, workspace)
-                    }
-                } catch (e: Exception) {
-                    logger.warn(
-                        LogCategory.WORKSPACE,
-                        "Workspace load from CLI failed",
-                        mapOf(
-                            "path" to event.workspacePath,
-                        ),
-                        error = e,
-                    )
-                }
-            }.launchIn(this)
+        subscribeWorkspaceLoadEvents(
+            windowId = windowId,
+            logger = logger,
+            onLoadSpace = { event, workspace ->
+                loadRequestedSpace(state, event, workspace)
+            },
+        )
     }
 
     // Listen for panel open events (e.g., from CLI folder command)
@@ -1330,3 +1323,49 @@ private suspend fun loadRequestedSpace(
         }
     }
 }
+
+/**
+ * Subscribes to [WorkspaceEventBus.workspaceLoadEvents] targeted at [windowId], deserializing
+ * valid Space files and forwarding them to [onLoadSpace].
+ *
+ * Issue #1711: If deserialization fails with [SerializationException], log structured diagnostics via
+ * [decodeFailure] without attaching the raw exception, because kotlinx includes the offending document
+ * (which may contain sensitive tab URLs, project paths, and terminal commands) in the exception message.
+ * Ordinary I/O exceptions retain their throwable for troubleshooting.
+ */
+internal fun CoroutineScope.subscribeWorkspaceLoadEvents(
+    windowId: String,
+    logger: ComponentLogger,
+    onLoadSpace: suspend (WorkspaceLoadEvent, LayoutWorkspace) -> Unit,
+): Job =
+    WorkspaceEventBus.workspaceLoadEvents
+        .filter { event -> event.sourceWindowId == windowId }
+        .onEach { event ->
+            try {
+                val file = java.io.File(event.workspacePath)
+                if (file.exists() && file.canRead()) {
+                    val json = file.readText()
+                    val workspace = WorkspaceSerializer.deserialize(json)
+                    onLoadSpace(event, workspace)
+                }
+            } catch (e: SerializationException) {
+                // A Space can contain tab URLs, project paths and terminal commands. Decoder
+                // messages quote the input document, so never attach one to a host log entry (#1711).
+                logger.warn(
+                    LogCategory.WORKSPACE,
+                    "Workspace load from CLI failed",
+                    mapOf("spacePath" to event.workspacePath) + decodeFailure(e),
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logger.warn(
+                    LogCategory.WORKSPACE,
+                    "Workspace load from CLI failed",
+                    mapOf(
+                        "spacePath" to event.workspacePath,
+                    ),
+                    error = e,
+                )
+            }
+        }.launchIn(this)

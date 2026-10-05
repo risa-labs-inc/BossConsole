@@ -4,11 +4,13 @@ import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -129,6 +131,10 @@ class PluginStateManager(
                     )
 
                     states.plugins
+                } catch (e: SerializationException) {
+                    logger.error(LogCategory.SYSTEM, "Failed to load plugin states", decodeFailure(e))
+                    cachedStates = PluginStatesFile()
+                    emptyMap()
                 } catch (e: Exception) {
                     logger.error(LogCategory.SYSTEM, "Failed to load plugin states", error = e)
                     cachedStates = PluginStatesFile()

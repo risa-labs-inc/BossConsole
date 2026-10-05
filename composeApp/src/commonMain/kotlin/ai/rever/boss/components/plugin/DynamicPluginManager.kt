@@ -2280,9 +2280,9 @@ class DynamicPluginManager(
     fun hasEntry(pluginId: String): Boolean = _pluginStates.value.containsKey(pluginId)
 
     /**
-     * Whether the loader still holds this plugin's classes, which is NOT what [isInstalled] asks.
+     * Whether the loader still holds this plugin's classes, which is NOT what [hasEntry] asks.
      *
-     * [isInstalled] reports whether a manager entry exists. This reports whether the id is resident
+     * [hasEntry] reports whether a manager entry exists. This reports whether the id is resident
      * in [pluginLoader], and the two diverge in the case that matters: `disablePlugin` unregisters
      * panels and flips the state to DISABLED but never unloads, so a user-disabled plugin keeps its
      * id in the loader. Any later `loadPlugin` for that id is refused with

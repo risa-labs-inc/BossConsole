@@ -75,12 +75,17 @@ sealed interface SecretReferenceScan {
     ) : SecretReferenceScan
 
     /**
-     * Something that looks like a reference does not parse. [literal] is the offending text and
-     * is safe to show: it cannot contain a value, only whatever the agent typed.
+     * Something that looks like a reference does not parse. [literal] is the offending text,
+     * which must be sanitized before presentation or logging as it may contain agent-authored
+     * plaintext credentials. [offset] and [length] identify where the candidate occurred in
+     * the scanned string so refusal messages can report shape and location without echoing
+     * raw candidate text.
      */
     data class Malformed(
         val literal: String,
         val reason: String,
+        val offset: Int = 0,
+        val length: Int = literal.length,
     ) : SecretReferenceScan
 }
 
@@ -102,14 +107,22 @@ object SecretReferenceParser {
 
     private val uuid = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
-    /** Every candidate, well-formed or not: anything between `{{secret:` and the next `}}`. */
-    private val candidate = Regex("\\{\\{secret:([^{}]*)\\}\\}")
+    /**
+     * Every candidate, well-formed or not: anything between `{{secret:` and the next `}}`.
+     * The `{{secret:` prefix is case-insensitive so an agent or operator typing `{{SECRET:...}}`
+     * is normalized rather than reaching the handler as literal placeholder text.
+     */
+    private val candidate = Regex("""(?i)\{\{secret:([^{}]*)\}\}""")
 
     /** Whether [text] contains anything worth parsing. */
-    fun mayContain(text: String): Boolean = text.contains(MARKER)
+    fun mayContain(text: String): Boolean = text.contains("{{") && text.contains(MARKER, ignoreCase = true)
 
     /**
      * Parse one candidate body (the text between `{{secret:` and `}}`).
+     *
+     * The `{{secret:` prefix is normalized case-insensitively, but field names remain strict
+     * lowercase wire names (`.password`, `.username`, `.notes`). A bad field fails closed with a
+     * malformed refusal without echoing agent-supplied text.
      *
      * Returns the reference, or null with the reason in [onMalformed].
      */
@@ -129,7 +142,7 @@ object SecretReferenceParser {
 
             field == null -> {
                 onMalformed(
-                    "unknown field '$fieldPart' (expected one of " +
+                    "unknown field (expected one of " +
                         SecretField.entries.joinToString { it.wireName } + ")",
                 )
                 null
@@ -164,17 +177,26 @@ object SecretReferenceParser {
                 var malformed: SecretReferenceScan.Malformed? = null
                 val ref =
                     parseBody(match.groupValues[1]) { reason ->
-                        malformed = SecretReferenceScan.Malformed(match.value, reason)
+                        malformed =
+                            SecretReferenceScan.Malformed(
+                                literal = match.value,
+                                reason = reason,
+                                offset = match.range.first,
+                                length = match.value.length,
+                            )
                     }
                 malformed?.let { return it }
                 if (ref != null) found.add(ref)
             }
             val unmatchedText = candidate.replace(text, "")
-            val unmatchedMarker = unmatchedText.indexOf(MARKER)
+            val unmatchedMarker = unmatchedText.indexOf(MARKER, ignoreCase = true)
             if (unmatchedMarker >= 0) {
+                val candidateLength = unmatchedText.length - unmatchedMarker
                 return SecretReferenceScan.Malformed(
-                    unmatchedText.substring(unmatchedMarker).take(120),
-                    "the reference is not terminated with }}",
+                    literal = unmatchedText.substring(unmatchedMarker).take(120),
+                    reason = "the reference is not terminated with }}",
+                    offset = unmatchedMarker,
+                    length = candidateLength,
                 )
             }
         }

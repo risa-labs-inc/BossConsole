@@ -2,17 +2,17 @@ package ai.rever.boss.viewmodels
 
 import ai.rever.boss.services.supabase.AuthService
 import ai.rever.boss.services.supabase.CrossDeviceAuthenticationRequired
-import ai.rever.boss.services.supabase.models.*
+import ai.rever.boss.services.supabase.models.AvailableWebAuthnCredential
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -26,13 +26,17 @@ import kotlinx.coroutines.launch
  * locally retires the QR URL, challenge and session id held by this view model; it does
  * not revoke the server-side challenge or close an external browser.
  */
-class PasskeyAuthViewModel(
-    // Default preserves production behavior; injectable so a test can assert the scope is cancelled.
-    private val viewModelScope: CoroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob()),
+class PasskeyAuthViewModel internal constructor(
+    parentScope: CoroutineScope = CoroutineScope(Dispatchers.Main),
     private val passkeyAuthentication: suspend (email: String, credentialId: String?) -> Result<Unit> =
         AuthService::authenticateWithPasskey,
 ) {
+    constructor() : this(CoroutineScope(Dispatchers.Main))
+
     private val logger = BossLogger.forComponent("PasskeyAuthViewModel")
+
+    private val job = SupervisorJob(parentScope.coroutineContext[Job])
+    internal val viewModelScope = CoroutineScope(parentScope.coroutineContext + job)
 
     // Handle of the single in-flight authentication attempt
     private var authJob: Job? = null
@@ -93,6 +97,10 @@ class PasskeyAuthViewModel(
      * Fetch user's registered passkeys for selection (used in settings/management screens)
      */
     suspend fun fetchUserPasskeys(email: String): Result<List<ai.rever.boss.services.passkey.PasskeyInfo>> {
+        if (!viewModelScope.isActive) {
+            logger.warn(LogCategory.PASSKEY, "Attempted to fetch user passkeys on disposed PasskeyAuthViewModel")
+            return Result.failure(IllegalStateException("PasskeyAuthViewModel has been disposed"))
+        }
         _fetchingPasskeys.value = true
         val result = AuthService.getUserPasskeys()
         _fetchingPasskeys.value = false
@@ -110,6 +118,10 @@ class PasskeyAuthViewModel(
      * state nor fire its onSuccess callback.
      */
     private fun launchAuthentication(block: suspend (isCurrent: () -> Boolean) -> Unit) {
+        if (!viewModelScope.isActive) {
+            logger.warn(LogCategory.PASSKEY, "Attempted to launch authentication on disposed PasskeyAuthViewModel")
+            return
+        }
         authJob?.cancel()
         val epoch = ++authAttemptEpoch
         authJob = viewModelScope.launch { block { epoch == authAttemptEpoch } }
@@ -286,10 +298,14 @@ class PasskeyAuthViewModel(
     }
 
     /**
-     * Cancel the view-model scope so any in-flight passkey/cross-device work cannot outlive the
-     * auth screen. Call from the owning composable's onDispose.
+     * Cancel ongoing authentication and this view-model's job so any in-flight passkey/cross-device
+     * work cannot outlive the auth screen. Call from the owning composable's onDispose.
+     * Cancelling our owned job does not cancel the caller's [parentScope].
      */
     fun dispose() {
-        viewModelScope.cancel()
+        cancelAuthentication()
+        job.cancel()
+        _isLoading.value = false
+        _fetchingPasskeys.value = false
     }
 }

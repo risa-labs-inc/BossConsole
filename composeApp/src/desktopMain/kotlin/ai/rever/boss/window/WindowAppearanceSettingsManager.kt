@@ -5,11 +5,13 @@ import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.awt.Toolkit
 import java.io.File
@@ -92,11 +94,19 @@ actual object WindowAppearanceSettingsManager {
                     logger.warn(LogCategory.SYSTEM, "Could not write default settings file", error = e)
                 }
             }
+        } catch (e: SerializationException) {
+            logger.warn(LogCategory.SYSTEM, "Failed to load settings", decodeFailure(e))
+            // An unreadable existing file is not a fresh install. Do not apply a screen profile.
+            _currentSettings.value = defaultWindowAppearanceSettings(isMacOs = SystemUtils.isMacOS)
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load settings", error = e)
             // An unreadable existing file is not a fresh install. Do not apply a screen profile.
             _currentSettings.value = defaultWindowAppearanceSettings(isMacOs = SystemUtils.isMacOS)
         }
+    }
+
+    internal fun reloadForTest() {
+        loadSettingsSync()
     }
 
     /**

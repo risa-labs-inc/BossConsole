@@ -1,6 +1,7 @@
 package ai.rever.boss.mcp.secrets
 
 import ai.rever.boss.mcp.McpApprovalDisposition
+import ai.rever.boss.mcp.McpArgumentSanitizer
 import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.mcp.McpPolicyEngine
 import ai.rever.boss.mcp.McpSecretPolicyAction
@@ -77,9 +78,11 @@ internal class McpSecretPrePass(
                 }
 
                 is SecretReferenceScan.Malformed -> {
+                    val sanitizedReason = McpArgumentSanitizer.sanitizeMessage(scan.reason)
+                    val descriptor = "{{secret:...}} (offset ${scan.offset}, length ${scan.length})"
                     return SecretPreparation.Refused(
                         McpApprovalDisposition.SECRET_UNRESOLVED,
-                        "Malformed secret reference ${scan.literal}: ${scan.reason}".take(240),
+                        "Malformed secret reference $descriptor: $sanitizedReason".take(240),
                     )
                 }
 

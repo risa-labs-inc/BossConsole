@@ -233,6 +233,8 @@ class WorkspaceReservedStoreNameTest {
         assertNull(reservedWorkspaceStoreFileName("workspace-1788000000001"))
         assertNull(reservedWorkspaceStoreFileName(""))
         assertNull(reservedWorkspaceStoreFileName(".json"))
+        assertNull(reservedWorkspaceStoreFileName("   "))
+        assertNull(reservedWorkspaceStoreFileName("   .json"))
     }
 
     private class StubTabComponent(

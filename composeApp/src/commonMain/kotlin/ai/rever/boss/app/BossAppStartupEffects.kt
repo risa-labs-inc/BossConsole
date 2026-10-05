@@ -840,7 +840,9 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                             now = Clock.System.now().toEpochMilliseconds(),
                         )
                     updateSessionSpace(write.current, splitViewState)
-                    saveSessionRecovery(windowId, write.record, splitViewState)
+                    // The in-memory copy tracks the live layout unconditionally; the FILES do
+                    // not follow it to empty, so the record can be null. See `layoutWatcherWrite`.
+                    write.record?.let { saveSessionRecovery(windowId, it, splitViewState) }
                 }
         }.launchIn(this)
 

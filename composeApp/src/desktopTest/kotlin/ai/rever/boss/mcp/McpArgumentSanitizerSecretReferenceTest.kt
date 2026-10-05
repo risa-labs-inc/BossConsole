@@ -1,5 +1,6 @@
 package ai.rever.boss.mcp
 
+import ai.rever.boss.mcp.secrets.SecretField
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -46,5 +47,88 @@ class McpArgumentSanitizerSecretReferenceTest {
         // Key-name redaction is unchanged: a key called "token" is redacted regardless of content.
         val out = McpArgumentSanitizer.sanitize(mapOf("token" to "{{secret:$id}}"))
         assertEquals("[REDACTED]", out["token"])
+    }
+
+    @Test
+    fun `a malformed reference with trailing characters is fully redacted`() {
+        val out = McpArgumentSanitizer.sanitizeMessage("note={{secret:plaincredential}}tail")
+        assertFalse(out.contains("plaincredential"), out)
+        assertTrue(out.contains("{{secret:[REDACTED]}}tail"), out)
+    }
+
+    @Test
+    fun `unterminated malformed references are redacted`() {
+        val unterminated =
+            listOf(
+                "{{secret:hunter2}",
+                "{{secret:hunter2}tail",
+                "{{secret:{hunter2}}}",
+                "pre{{secret:hunter2}post",
+            )
+        for (candidate in unterminated) {
+            val out = McpArgumentSanitizer.sanitizeMessage("arg=$candidate")
+            assertFalse(out.contains("hunter2"), "Failed for $candidate: $out")
+        }
+    }
+
+    @Test
+    fun `adjacent valid secret references remain legible`() {
+        val other = "00000000-0000-4000-8000-000000000001"
+        val third = "22222222-2222-4222-8222-222222222222"
+        val out =
+            McpArgumentSanitizer.sanitizeMessage(
+                "TOKEN={{secret:$id.password}}{{secret:$other.username}}{{secret:$third}}",
+            )
+        assertEquals("TOKEN={{secret:$id.password}}{{secret:$other.username}}{{secret:$third}}", out)
+
+        val uppercaseField = McpArgumentSanitizer.sanitizeMessage("TOKEN={{secret:$id.PASSWORD}}")
+        assertFalse(uppercaseField.contains("PASSWORD"), uppercaseField)
+    }
+
+    @Test
+    fun `sanitizer wireName alternations match SecretField entries exactly`() {
+        val expected =
+            SecretField.entries
+                .joinToString("|") { it.wireName }
+        assertEquals(expected, McpArgumentSanitizer.validSecretReferenceFields)
+    }
+
+    @Test
+    fun `malformed references with nested and brace-led bodies are redacted`() {
+        val candidates =
+            listOf(
+                "{{secret:{hunter2",
+                "{{secret:{{hunter2}}}}",
+                "{{SECRET:{{hunter2}}}}",
+                "{{secret:abc{def",
+            )
+        for (candidate in candidates) {
+            val out = McpArgumentSanitizer.sanitizeMessage("arg=$candidate")
+            assertFalse(out.contains("hunter2"), "Failed for $candidate: $out")
+            assertFalse(out.contains("def"), "Failed for $candidate: $out")
+            assertTrue(out.contains("{{secret:[REDACTED]}}"), "Expected redacted marker for $candidate: $out")
+        }
+    }
+
+    @Test
+    fun `valid reference following malformed reference remains legible`() {
+        val out = McpArgumentSanitizer.sanitizeMessage("{{secret:bad}}{{secret:$id}}")
+        assertEquals("{{secret:[REDACTED]}}{{secret:$id}}", out)
+    }
+
+    @Test
+    fun `a malformed reference with no keyword prefix is redacted`() {
+        val out = McpArgumentSanitizer.sanitizeMessage("note={{secret:hunter2}} and {{secret:hunter3}}")
+        assertFalse(out.contains("hunter2"), out)
+        assertFalse(out.contains("hunter3"), out)
+        assertTrue(out.contains("{{secret:[REDACTED]}}"), out)
+    }
+
+    @Test
+    fun `case-insensitive valid reference prefix is preserved while malformed is redacted`() {
+        val out = McpArgumentSanitizer.sanitizeMessage("note={{SECRET:$id}} and {{SECRET:hunter2}}")
+        assertTrue(out.contains("{{SECRET:$id}}"), out)
+        assertFalse(out.contains("hunter2"), out)
+        assertTrue(out.contains("{{secret:[REDACTED]}}"), out)
     }
 }

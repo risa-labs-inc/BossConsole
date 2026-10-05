@@ -6,6 +6,7 @@ import ai.rever.boss.services.supabase.SupabaseConfig
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.realtime.RealtimeChannel
@@ -24,6 +25,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -244,21 +246,6 @@ object SystemPluginManifestService {
         return merged.values.toList()
     }
 
-    /** The higher of two optional semver floors (unparseable/null = no floor). */
-    private fun highestVersion(
-        a: String?,
-        b: String?,
-    ): String? {
-        val va = a?.let { Version.parse(it) }
-        val vb = b?.let { Version.parse(it) }
-        return when {
-            va == null -> b ?: a
-            vb == null -> a
-            va >= vb -> a
-            else -> b
-        }
-    }
-
     /**
      * Start the startup catch-up fetch + Realtime subscription. Idempotent.
      * [onNewPluginsInstallable] runs after new rows were appended live.
@@ -416,6 +403,13 @@ object SystemPluginManifestService {
             } else {
                 FALLBACK
             }
+        } catch (e: SerializationException) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "System-plugins cache unreadable; using built-in fallback",
+                decodeFailure(e),
+            )
+            FALLBACK
         } catch (e: Exception) {
             logger.warn(
                 LogCategory.SYSTEM,
@@ -443,9 +437,28 @@ object SystemPluginManifestService {
             )
         }
     }
+
+    internal fun reloadForTest() {
+        entries.value = loadCacheOrFallback()
+    }
 }
 
 /** Suspend startup work until the client is ready, including an offline boot with late initialization. */
 internal suspend fun awaitSupabaseInitialized(initialized: StateFlow<Boolean> = SupabaseConfig.isInitialized) {
     initialized.first { it }
+}
+
+/** The higher of two optional semver floors (unparseable/null = no floor). */
+private fun highestVersion(
+    a: String?,
+    b: String?,
+): String? {
+    val va = a?.let { Version.parse(it) }
+    val vb = b?.let { Version.parse(it) }
+    return when {
+        va == null -> b ?: a
+        vb == null -> a
+        va >= vb -> a
+        else -> b
+    }
 }

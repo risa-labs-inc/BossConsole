@@ -6,6 +6,7 @@ import ai.rever.boss.plugin.run.MIN_RERUN_DELAY_MS
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -80,11 +82,16 @@ actual object RunnerSettingsManager {
                     }
                     logger.debug(LogCategory.SYSTEM, "Created default settings file")
                 }
+            } catch (e: SerializationException) {
+                logger.warn(LogCategory.SYSTEM, "Error loading settings", decodeFailure(e))
+                // Keep default settings on error
             } catch (e: Exception) {
                 logger.warn(LogCategory.SYSTEM, "Error loading settings", error = e)
                 // Keep default settings on error
             }
         }
+
+    internal suspend fun reloadForTest() = loadSettingsAsync()
 
     /**
      * Save current settings to persistent storage.

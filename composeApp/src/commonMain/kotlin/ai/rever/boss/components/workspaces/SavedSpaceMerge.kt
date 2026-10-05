@@ -66,6 +66,11 @@ internal fun savedSpaceNames(workspaces: List<LayoutWorkspace>): Set<String> =
  * delete dialog and refused by the manager - the shipped Codex answers to that name, and after the
  * merge stopped keying on names those are two different Spaces.
  *
+ * Case sensitivity is deliberate (#1646): [isUserOwnedSpace] tests exact membership
+ * (`!in PredefinedWorkspaces.allIds`) against canonical in-memory IDs. In contrast,
+ * [isSpaceSlot] folds case (`ignoreCase = true`) because slot IDs map directly to on-disk file
+ * names on case-insensitive filesystems (macOS/Windows) where case differences collide on disk.
+ *
  * The session record is "the user's" here, which is not obviously right and is unchanged
  * behaviour: it was never a predefined NAME either, so the dialog has always listed it.
  */

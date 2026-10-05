@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -16,6 +17,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.time.LocalDate
@@ -105,10 +107,24 @@ object DashboardStatsManager {
                     _stats.value = data
                     dashboardStatsLogger.debug(LogCategory.SYSTEM, "Loaded stats")
                 }
+            } catch (e: SerializationException) {
+                dashboardStatsLogger.warn(
+                    LogCategory.SYSTEM,
+                    "Failed to decode stats",
+                    decodeFailure(e),
+                )
             } catch (e: Exception) {
                 dashboardStatsLogger.warn(LogCategory.SYSTEM, "Error loading stats", error = e)
             }
         }
+
+    internal suspend fun reloadForTest() {
+        loadAsync()
+    }
+
+    internal fun resetForTest() {
+        _stats.value = DashboardStats()
+    }
 
     /**
      * Save stats to disk with debouncing.

@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -13,6 +14,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
 /**
@@ -106,6 +108,9 @@ internal object DefaultAppsSettingsManager {
                 "Loaded default-apps settings",
                 mapOf("promptShown" to _settings.value.promptShown),
             )
+        } catch (e: SerializationException) {
+            logger.warn(LogCategory.SYSTEM, "Could not read default-apps settings", decodeFailure(e))
+            _settings.value = DefaultAppsSettings()
         } catch (e: Exception) {
             // Defaults, which means the prompt may be offered again. Better than
             // the alternative failure direction: a corrupt file that silently

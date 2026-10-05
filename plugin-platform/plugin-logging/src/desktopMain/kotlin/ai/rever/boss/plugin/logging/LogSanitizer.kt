@@ -111,6 +111,13 @@ object LogSanitizer {
      * case-insensitively, so the passkey ceremony's `sessionId` and the `email`
      * beside it leave the log with the token names.
      *
+     * A credential carried in the authority is removed before the parameters are
+     * masked: `scheme://user:pass@host` becomes `scheme://[REDACTED]@host`, and the
+     * protocol-relative rule of [redactUserInfo] applies on this path too, so a
+     * scheme-less `//user:pass@host` is redacted wherever a reference can begin.
+     * Unlike [redactUrlUserInfo], whitespace does not end an authority here - the
+     * URI is already a single token.
+     *
      * Example:
      * "boss://auth?token=abc123&type=signup" -> "boss://auth?token=[REDACTED]&type=signup"
      */
@@ -183,7 +190,13 @@ object LogSanitizer {
      *   nested URL whose userinfo holds a literal `&` is not redacted;
      * - `\` does not end an authority. WHATWG parsing treats it as `/` in special schemes, so
      *   `https://evil.example\@good.example/x` loads `evil.example` but is logged as
-     *   `https://[REDACTED]@good.example/x`, hiding the host that was actually visited.
+     *   `https://[REDACTED]@good.example/x`, hiding the host that was actually visited;
+     * - a protocol-relative authority embedded in a path is not opened: in
+     *   `copied /srv//user:pass@10.0.0.5/x` the `//` does not sit where a reference can
+     *   begin, so in free text the line reaches [filePathPattern], which stops at the
+     *   userinfo colon and leaves the password (`copied [PATH]:pass@10.0.0.5[PATH]`).
+     *   Widening the openers to take a path's `/` was rejected - it would read every
+     *   genuine `//` inside a path (`/a//b@c`) as an authority (BossConsole#1665).
      */
     private fun redactUserInfo(
         text: String,

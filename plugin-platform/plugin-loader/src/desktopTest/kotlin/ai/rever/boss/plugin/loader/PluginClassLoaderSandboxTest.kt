@@ -85,6 +85,29 @@ class PluginClassLoaderSandboxTest {
     }
 
     @Test
+    fun `tab descriptors plugins open host tabs with resolve to the host's copy`() {
+        // deepseek-harness, docker, kubernetes, tool-creator and tool-evolver construct these to
+        // open a terminal tab; refusing them failed binary validation and disabled all five.
+        val names =
+            listOf(
+                ai.rever.boss.plugin.tab.terminal.TerminalTabInfo::class.java.name,
+                ai.rever.boss.plugin.tab.terminal.TerminalTabType::class.java.name,
+                ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo::class.java.name,
+            )
+        val loader =
+            PluginClassLoader(
+                pluginId = "com.example.tabs",
+                urls = arrayOf(emptyJar().toURI().toURL()),
+                parent = hostLoader,
+            )
+        try {
+            names.forEach { name -> assertSame(hostLoader.loadClass(name), loader.loadClass(name), name) }
+        } finally {
+            loader.close()
+        }
+    }
+
+    @Test
     fun `rendering classes use the host identity even when bundled by a plugin`() {
         val names = listOf("org.jetbrains.skia.Image", "org.jetbrains.skiko.SkiaLayer")
         val jar = emptyJar()

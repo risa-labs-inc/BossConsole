@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -11,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -54,10 +56,21 @@ actual object PerformanceSettingsManager {
             } else {
                 _currentSettings.value = PerformanceSettings()
             }
+        } catch (e: SerializationException) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Failed to load performance settings - using defaults",
+                decodeFailure(e),
+            )
+            _currentSettings.value = PerformanceSettings()
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load performance settings - using defaults", error = e)
             _currentSettings.value = PerformanceSettings()
         }
+    }
+
+    internal fun reloadForTest() {
+        loadSettingsSync()
     }
 
     actual suspend fun saveSettings() =

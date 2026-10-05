@@ -24,6 +24,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -438,22 +439,7 @@ class UserDataStorageMergeTest {
                 detectorFailures.isEmpty(),
                 "the torn-read detector itself failed; the race is inconclusive: $detectorFailures",
             )
-            if (IS_WINDOWS && decodedForms.size <= 1) {
-                // On Windows even the duty cycle cannot make the non-vacuity check
-                // conclusive: readText opens user_data.json without FILE_SHARE_DELETE, so
-                // while a reader holds the handle the writers' Files.move(REPLACE_EXISTING)
-                // is denied delete access to the destination and every racing write can
-                // no-op with no bug anywhere. A leg where no write landed is
-                // inconclusive there, not a failure - the torn-read contract above is
-                // what this test exists for, and the class header already scopes the
-                // scheduling-independence claim to tests 2 and 3.
-            } else {
-                assertTrue(
-                    decodedForms.size > 1,
-                    "the detector saw only the seed record: no racing write ever landed on disk, " +
-                        "so the race exercised nothing (e.g. every atomic move failed on this platform)",
-                )
-            }
+            assertNonVacuousRace(decodedForms.size)
             assertFalse(reader.isAlive, "the detector must stop when asked - a wedged detector is inconclusive")
             val stored = storedRecord()
             assertTrue(
@@ -525,6 +511,68 @@ class UserDataStorageMergeTest {
             )
             assertTrue(storedRecord().pluginWizardCompleted)
         }
+
+    internal fun assertNonVacuousRace(
+        decodedFormCount: Int,
+        isWindows: Boolean = IS_WINDOWS,
+        onInconclusive: (String) -> Unit = { println(it) },
+    ): Boolean {
+        if (!isWindows || decodedFormCount > 1) {
+            assertTrue(
+                decodedFormCount > 1,
+                "the detector saw only the seed record: no racing write ever landed on disk, " +
+                    "so the race exercised nothing (e.g. every atomic move failed on this platform)",
+            )
+            return true
+        }
+        // On Windows even the duty cycle cannot make the non-vacuity check
+        // conclusive: readText opens user_data.json without FILE_SHARE_DELETE, so
+        // while a reader holds the handle the writers' Files.move(REPLACE_EXISTING)
+        // is denied delete access to the destination and every racing write can
+        // no-op with no bug anywhere. A leg where no write landed is
+        // inconclusive there, not a failure - the torn-read contract above is
+        // what this test exists for, and the class header already scopes the
+        // scheduling-independence claim to tests 2 and 3.
+        onInconclusive(
+            "[UserDataStorageMergeTest] inconclusive on this leg: on Windows, racing read handle " +
+                "held user_data.json and blocked atomic moves (observed forms: $decodedFormCount)",
+        )
+        return false
+    }
+
+    @Test
+    fun `non-vacuity check fails on non-Windows when no racing write landed`() {
+        val error =
+            assertFailsWith<AssertionError> {
+                assertNonVacuousRace(decodedFormCount = 1, isWindows = false)
+            }
+        assertTrue(error.message?.contains("no racing write ever landed on disk") == true)
+    }
+
+    @Test
+    fun `non-vacuity check treats unlanded writes on Windows as inconclusive with logged notice`() {
+        var notice: String? = null
+        val conclusive =
+            assertNonVacuousRace(
+                decodedFormCount = 1,
+                isWindows = true,
+                onInconclusive = { notice = it },
+            )
+        assertFalse(conclusive, "a single observed form on Windows must be treated as inconclusive")
+        assertTrue(notice?.contains("inconclusive on this leg") == true, "must log inconclusive notice")
+    }
+
+    @Test
+    fun `non-vacuity check passes on any platform when racing writes landed`() {
+        assertTrue(
+            assertNonVacuousRace(decodedFormCount = 2, isWindows = true),
+            "Windows race must be conclusive when multiple forms were decoded",
+        )
+        assertTrue(
+            assertNonVacuousRace(decodedFormCount = 2, isWindows = false),
+            "Non-Windows race must be conclusive when multiple forms were decoded",
+        )
+    }
 
     private companion object {
         /** The CI matrix's Windows leg, where the non-vacuity check is inconclusive by design. */

@@ -29,15 +29,16 @@ import java.nio.file.Paths
  * install.
  *
  * On a platform with no UNC concept the provider rejects the authority outright,
- * and null is the honest answer: `\server\share` is not a path such a host can
- * address. Every caller already treats null as "could not determine the
- * executable" and falls back.
+ * and for a server other than `localhost`, null is the honest answer: `\server\share`
+ * is not a path such a host can address. Every caller already treats null as
+ * "could not determine the executable" and falls back.
  *
- * `localhost` is the exception, because it is not a server: `file://localhost/x`
- * is the local `/x`. The Unix provider rejects every authority, `localhost`
- * included, where `URI.path` used to answer correctly, so the redundant host is
- * dropped first - the same normalisation [OsOpenArguments] applies to file URLs
- * handed over by a file manager.
+ * `localhost` is handled carefully: on Windows, `file://localhost/share/...` can
+ * name a genuine UNC share (`\\localhost\share\...`), so `Paths.get(uri)` is
+ * attempted first. If the filesystem provider rejects the authority (on Unix
+ * platforms where any authority throws, or on Windows when given a path like
+ * `file://localhost/C:/...`), a `localhost` authority is stripped as naming
+ * this machine rather than a network server.
  */
 internal object CodeSourceLocation {
     private val logger = BossLogger.forComponent("CodeSourceLocation")
@@ -74,7 +75,8 @@ internal object CodeSourceLocation {
             }
 
             else -> {
-                runCatching { Paths.get(withoutLocalhost(uri)).toFile() }
+                runCatching { Paths.get(uri).toFile() }
+                    .recoverCatching { Paths.get(withoutLocalhost(uri)).toFile() }
                     .onFailure {
                         logger.debug(
                             LogCategory.SYSTEM,

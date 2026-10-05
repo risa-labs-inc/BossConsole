@@ -411,6 +411,9 @@ async function readBoundedArrayBuffer(resp: Response, label: string): Promise<Ar
   // boundary is identical on both the pre-download check and this buffer guard.
   const declared = Number(resp.headers.get("content-length") || "0")
   if (Number.isFinite(declared) && declared >= LARGE_JAR_THRESHOLD) {
+    // Cancel so the remainder of the body isn't transferred, matching the
+    // declare-then-refuse guards on the range paths.
+    try { await resp.body?.cancel() } catch { /* ignore */ }
     throw new Error(`${label} declares ${declared} bytes, at/over the ${LARGE_JAR_THRESHOLD}-byte cap`)
   }
   const buf = await resp.arrayBuffer()
@@ -465,9 +468,21 @@ async function downloadRange(
     throw new Error(`Range request failed: ${response.status}`)
   }
 
+  // Declare-then-refuse, same as readBoundedArrayBuffer: a server that
+  // ignores Range (200) or lies about the span usually still declares the
+  // real body size in Content-Length, so refuse before materializing it.
+  const declared = Number(response.headers.get("content-length") || "0")
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    // Cancel so the remainder of the body isn't transferred.
+    try { await response.body?.cancel() } catch { /* ignore */ }
+    throw new Error(`Range response declares ${declared} bytes, above the ${maxBytes}-byte cap`)
+  }
+
   const data = new Uint8Array(await response.arrayBuffer())
   // The server may ignore the Range header (200) or lie about honoring it:
-  // never buffer more than the caller's cap regardless of what arrived.
+  // never buffer more than the caller's cap regardless of what arrived. This
+  // post-read bound stays: a missing or lying Content-Length (or a
+  // content-encoded body) skips the declared check entirely.
   if (data.length > maxBytes) {
     throw new Error(`Range response returned ${data.length} bytes, above the ${maxBytes}-byte cap`)
   }
@@ -529,6 +544,18 @@ export async function extractManifestFromRemoteJar(
 
   if (tailResp.status !== 200 && tailResp.status !== 206) {
     throw new Error(`Range request for EOCD failed: ${tailResp.status}`)
+  }
+
+  // Declare-then-refuse: a server ignoring Range (200) answers with the whole
+  // file and says so in Content-Length, so refuse before buffering it. The
+  // post-read cap below stays for responses that declare nothing or lie.
+  const tailDeclared = Number(tailResp.headers.get("content-length") || "0")
+  if (Number.isFinite(tailDeclared) && tailDeclared > MAX_EOCD_PROBE_BYTES) {
+    // Cancel so the remainder of the body isn't transferred.
+    try { await tailResp.body?.cancel() } catch { /* ignore */ }
+    throw new Error(
+      `EOCD probe declares ${tailDeclared} bytes, above the ${MAX_EOCD_PROBE_BYTES}-byte cap`,
+    )
   }
 
   const tailData = new Uint8Array(await tailResp.arrayBuffer())
@@ -643,7 +670,7 @@ export async function extractManifestFromRemoteJar(
 
     const compressionMethod = cdView.getUint16(offset + 10, true)
     let compressedSize: number = cdView.getUint32(offset + 20, true)
-    let uncompressedSize: number = cdView.getUint32(offset + 24, true)
+    const uncompressedSize: number = cdView.getUint32(offset + 24, true)
     const fileNameLength = cdView.getUint16(offset + 28, true)
     const extraFieldLength = cdView.getUint16(offset + 30, true)
     const commentLength = cdView.getUint16(offset + 32, true)
@@ -673,6 +700,12 @@ export async function extractManifestFromRemoteJar(
           // Each field appears only if its corresponding main value was 0xFFFFFFFF.
           let q = p + 4
           const uncompressedMain = cdView.getUint32(offset + 24, true)
+          // uncompressedSize is deliberately read but NOT resolved: a
+          // 0xFFFFFFFF sentinel already exceeds MAX_ENTRY_BYTES_DECLARED, so
+          // the declared-size guard below refuses the entry before any
+          // inflate. Resolving the real u64 here would only ever widen what
+          // reaches the inflate loop — a "completeness" fix in the wrong
+          // direction.
           if (uncompressedMain === 0xffffffff) q += 8
           if (compressedSize === 0xffffffff) {
             const lo = cdView.getUint32(q, true)
@@ -900,8 +933,12 @@ async function extractFileFromZip(
       try {
         const ds = new DecompressionStream("deflate-raw")
         const writer = ds.writable.getWriter()
-        writer.write(fileData)
-        writer.close()
+        // Detach the writer promises like the remote-JAR reader does: a
+        // malformed deflate stream rejects the writable half, and an
+        // unhandled rejection escapes the try/catch as an isolate-level
+        // fault instead of the "Failed to decompress" error below.
+        writer.write(fileData).catch(() => {})
+        writer.close().catch(() => {})
 
         const reader = ds.readable.getReader()
         const chunks: Uint8Array[] = []
@@ -963,8 +1000,12 @@ async function extractFileFromZipLinear(
         try {
           const ds = new DecompressionStream("deflate-raw")
           const writer = ds.writable.getWriter()
-          writer.write(fileData)
-          writer.close()
+          // Detach the writer promises like the remote-JAR reader does: a
+          // malformed deflate stream rejects the writable half, and an
+          // unhandled rejection escapes the try/catch as an isolate-level
+          // fault instead of the "Failed to decompress" error below.
+          writer.write(fileData).catch(() => {})
+          writer.close().catch(() => {})
 
           const reader = ds.readable.getReader()
           const chunks: Uint8Array[] = []

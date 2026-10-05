@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -11,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import java.io.File
 
 /**
@@ -83,10 +85,25 @@ actual object FocusModeSettingsManager {
                     logger.warn(LogCategory.SYSTEM, "Could not write default settings file", error = e)
                 }
             }
+        } catch (e: SerializationException) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Failed to decode settings, falling back to defaults",
+                decodeFailure(e),
+            )
+            _currentSettings.value = platformDefaults
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load settings, falling back to defaults", error = e)
             _currentSettings.value = platformDefaults
         }
+    }
+
+    internal fun reloadForTest() {
+        loadSettingsSync()
+    }
+
+    internal fun resetForTest() {
+        _currentSettings.value = platformDefaults
     }
 
     /**
