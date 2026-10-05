@@ -706,7 +706,7 @@ internal fun BossAppStartupEffects(state: BossAppState) {
 
     // Give new/unassigned windows a real default Space without rebuilding their live tabs.
     LaunchedEffect(state.workspaceRestorationComplete, splitViewState.currentWorkspaceId) {
-        if (state.workspaceRestorationComplete && !state.sessionRestoreRefused &&
+        if (state.workspaceRestorationComplete &&
             (splitViewState.currentWorkspaceId == null ||
                 splitViewState.currentWorkspaceId?.startsWith("unsaved-window-") == true)
         ) {
