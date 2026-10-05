@@ -28,3 +28,9 @@ internal fun reusableSessionSpaceIdentity(
         .maxByOrNull { it.timestamp }
     return sessionSpaceIdentity(workspace, enabled) { recovery?.id ?: "space-recovered-session" }
 }
+
+/** Recognize recovery copies created by the old restore path, without hiding user namesakes. */
+internal fun isRecoverySnapshot(space: LayoutWorkspace): Boolean =
+    space.id == LAST_SESSION_ID || space.id == "space-recovered-session" ||
+        (space.description == "Automatically saved session" &&
+            Regex("""Recovered Space(?: \(\d+\))?""").matches(space.name))

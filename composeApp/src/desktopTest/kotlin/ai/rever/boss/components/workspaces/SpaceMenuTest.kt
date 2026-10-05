@@ -17,6 +17,15 @@ import kotlin.test.assertTrue
 
 class SpaceMenuTest {
     @Test
+    fun `recovery snapshots are excluded while user namesakes stay visible`() {
+        val recovery = DefaultSpace.planetBerul.copy(id = "old-recovery", name = "Recovered Space", description = "Automatically saved session")
+        val namesake = recovery.copy(id = "user-space", description = "My saved work")
+        val groups = spaceMenuGroups(listOf(DefaultSpace.planetBerul, recovery, namesake), listOf(recovery.id))
+        assertEquals(setOf(DefaultSpace.ID, namesake.id), groups.recent.map { it.id }.toSet())
+        assertEquals(emptyList(), groups.more)
+    }
+
+    @Test
     fun `legacy duplicate names remain selectable with distinct labels`() {
         val spaces = (1..3).map { index ->
             DefaultSpace.planetBerul.copy(id = "recovery-$index", name = "Recovered Space", timestamp = index.toLong())

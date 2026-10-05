@@ -19,7 +19,7 @@ internal data class SpaceMenuGroups(
 )
 
 internal fun spaceMenuGroups(spaces: List<LayoutWorkspace>, recentIds: List<String>): SpaceMenuGroups {
-    val actual = distinctSpaceMenuNames(spaces.filter { it.id !in PredefinedWorkspaces.allIds && it.id != LAST_SESSION_ID })
+    val actual = distinctSpaceMenuNames(spaces.filter { it.id !in PredefinedWorkspaces.allIds && !isRecoverySnapshot(it) })
     val ordered = actual.sortedWith(compareBy<LayoutWorkspace> {
         recentIds.indexOf(it.id).takeIf { index -> index >= 0 } ?: Int.MAX_VALUE
     }.thenByDescending { it.timestamp })

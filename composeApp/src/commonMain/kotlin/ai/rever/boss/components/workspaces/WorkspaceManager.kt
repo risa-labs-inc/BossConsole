@@ -147,7 +147,7 @@ class WorkspaceManager(
     val visibleWorkspaces: StateFlow<List<LayoutWorkspace>> =
         combine(workspaces, WorkspaceSettingsManager.currentSettings) { spaces, settings ->
             visibleSessionSpaces(spaces, settings.enableLastSessionSpace)
-                .filterNot { it.id in PredefinedWorkspaces.allIds }
+                .filterNot { it.id in PredefinedWorkspaces.allIds || isRecoverySnapshot(it) }
         }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     /**
@@ -390,7 +390,7 @@ class WorkspaceManager(
     fun loadWorkspace(workspace: LayoutWorkspace) {
         _currentWorkspace.value = workspace
         applySpaceTheme(workspace.id)
-        if (workspace.id !in PredefinedWorkspaces.allIds && workspace.id != LAST_SESSION_ID) {
+        if (workspace.id !in PredefinedWorkspaces.allIds && !isRecoverySnapshot(workspace)) {
             scope.launch {
                 val settings = WorkspaceSettingsManager.currentSettings.value
                 val recent = listOf(workspace.id) + settings.recentSpaceIds.filterNot { it == workspace.id }
