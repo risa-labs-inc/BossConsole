@@ -431,7 +431,6 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.pendingWorkspacePrompt = null
                 // New Space places the project only now, so dismissing the list opened nothing.
                 if (prompt.placeOnPick) placeProjectHere(state, windowProjectState, prompt.project)
-                if (prompt.showCodebase) state.draggablePanelComponent.setPanelVisible(left.top, true)
                 coroutineScope.launch {
                     // Preserve, apply, load: the same steps the top bar's workspace switch
                     // takes, in the order that leaves nothing destroyed when the apply is
@@ -1161,10 +1160,9 @@ internal fun BossAppDialogs(state: BossAppState) {
         rememberDirectoryPicker { path ->
             path?.let {
                 val projectName = it.extractFileName().ifEmpty { "Unknown" }
-                // Asked where it goes, like every other way of opening a project. The CodeBase
-                // panel this picker has always shown opens once the project lands HERE.
+                // Asked where it goes, like every other way of opening a project.
                 val picked = Project(name = projectName, path = it)
-                requestProjectOpen(state, windowProjectState, picked, showCodebase = true)
+                requestProjectOpen(state, windowProjectState, picked)
                 // Close the dialog after selection
                 state.showProjectDialog = false
             }
@@ -1224,25 +1222,20 @@ internal fun BossAppDialogs(state: BossAppState) {
             project = project,
             onDismiss = {
                 state.projectToOpen = null
-                state.projectToOpenShowsCodebase = false
                 state.focusRequester.requestFocus()
             },
             onOpenInThisSpace = { selectedProj ->
                 placeProjectHere(state, windowProjectState, selectedProj)
-                if (state.projectToOpenShowsCodebase) state.draggablePanelComponent.setPanelVisible(left.top, true)
                 state.projectToOpen = null
-                state.projectToOpenShowsCodebase = false
                 state.focusRequester.requestFocus()
             },
             onOpenInNewSpace = { selectedProj ->
                 state.pendingWorkspacePrompt =
-                    SpacePrompt(selectedProj, placeOnPick = true, showCodebase = state.projectToOpenShowsCodebase)
+                    SpacePrompt(selectedProj, placeOnPick = true)
                 state.projectToOpen = null
-                state.projectToOpenShowsCodebase = false
                 state.focusRequester.requestFocus()
             },
             onOpenInNewWindow = { selectedProj ->
-                state.projectToOpenShowsCodebase = false
                 // Create new window with the project - each window has independent project state
                 WindowOperations.createNewWindowWithProject(selectedProj)
                 state.projectToOpen = null
@@ -1437,14 +1430,11 @@ internal fun requestProjectOpen(
     state: BossAppState,
     windowProjectState: WindowProjectState,
     project: Project,
-    showCodebase: Boolean = false,
 ) {
     if (WorkspaceSettingsManager.currentSettings.value.resolveOnProjectSelection() is ProjectSelectionWorkspace.Ask) {
         state.projectToOpen = project
-        state.projectToOpenShowsCodebase = showCodebase
     } else {
         selectProjectInWindow(windowProjectState, project)
-        if (showCodebase) state.draggablePanelComponent.setPanelVisible(left.top, true)
     }
 }
 

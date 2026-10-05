@@ -119,12 +119,6 @@ internal class BossAppState(
     var showCloneProjectDialog by mutableStateOf(false)
     var projectToOpen by mutableStateOf<Project?>(null)
 
-    /**
-     * Whether answering [projectToOpen] should also show the CodeBase panel: File > Open Project's
-     * folder picker always has. Held until the project lands in THIS window, so choosing New
-     * Window or dismissing leaves no panel open for a project this window never got.
-     */
-    var projectToOpenShowsCodebase by mutableStateOf(false)
     var showShortcutHelpDialog by mutableStateOf(false)
 
     /**
