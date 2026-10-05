@@ -16,6 +16,16 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SpaceMenuTest {
+    @Test
+    fun `legacy duplicate names remain selectable with distinct labels`() {
+        val spaces = (1..3).map { index ->
+            DefaultSpace.planetBerul.copy(id = "recovery-$index", name = "Recovered Space", timestamp = index.toLong())
+        }
+        val rows = spaceMenuGroups(spaces, listOf("recovery-3")).recent
+        assertEquals(listOf("Recovered Space", "Recovered Space (2)", "Recovered Space (3)"), rows.map { it.name })
+        assertEquals(spaces.map { it.id }.toSet(), rows.map { it.id }.toSet())
+    }
+
     private fun space(index: Int) = DefaultSpace.planetBerul.copy(id = "space-$index", name = "Space $index", timestamp = index.toLong())
 
     @Test

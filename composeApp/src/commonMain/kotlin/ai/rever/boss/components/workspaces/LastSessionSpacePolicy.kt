@@ -17,3 +17,14 @@ internal fun sessionSpaceIdentity(
     } else {
         workspace
     }
+
+/** Repeated legacy restores update one recovery Space instead of minting another. */
+internal fun reusableSessionSpaceIdentity(
+    workspace: LayoutWorkspace,
+    enabled: Boolean,
+    known: List<LayoutWorkspace>,
+): LayoutWorkspace {
+    val recovery = known.filter { it.name == "Recovered Space" && it.id != LAST_SESSION_ID }
+        .maxByOrNull { it.timestamp }
+    return sessionSpaceIdentity(workspace, enabled) { recovery?.id ?: "space-recovered-session" }
+}

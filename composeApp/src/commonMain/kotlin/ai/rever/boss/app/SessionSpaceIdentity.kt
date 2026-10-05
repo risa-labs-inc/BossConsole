@@ -7,13 +7,13 @@ import ai.rever.boss.components.workspaces.WorkspaceSerializer
 import ai.rever.boss.components.workspaces.WorkspaceSettingsManager
 import ai.rever.boss.components.workspaces.extractRunningWorkspaces
 import ai.rever.boss.components.workspaces.sessionSetOf
-import ai.rever.boss.components.workspaces.sessionSpaceIdentity
+import ai.rever.boss.components.workspaces.reusableSessionSpaceIdentity
 import ai.rever.boss.components.workspaces.workspaceManager
 
 /** Preserve legacy recovery data as an ordinary Space when the optional slot is disabled. */
 internal fun prepareSessionSpace(workspace: LayoutWorkspace): LayoutWorkspace {
     val enabled = WorkspaceSettingsManager.currentSettings.value.enableLastSessionSpace
-    val restored = sessionSpaceIdentity(workspace, enabled)
+    val restored = reusableSessionSpaceIdentity(workspace, enabled, workspaceManager.workspaces.value)
     if (restored.id == workspace.id) return restored
     return checkNotNull(workspaceManager.importWorkspace(WorkspaceSerializer.serialize(restored)))
 }
@@ -23,7 +23,14 @@ internal fun updateSessionSpace(
     current: LayoutWorkspace,
     splitViewState: SplitViewState,
 ) {
-    val space = prepareSessionSpace(current)
+    val bound = splitViewState.currentWorkspaceId
+        ?.takeIf { it != LAST_SESSION_ID }
+        ?.let(workspaceManager::savedCopyOf)
+    val space = if (bound != null && current.id == LAST_SESSION_ID) {
+        current.copy(id = bound.id, name = bound.name)
+    } else {
+        prepareSessionSpace(current)
+    }
     if (splitViewState.currentWorkspaceId == null || splitViewState.currentWorkspaceId == LAST_SESSION_ID) {
         splitViewState.rebindCurrentWorkspace(space.id)
     }
