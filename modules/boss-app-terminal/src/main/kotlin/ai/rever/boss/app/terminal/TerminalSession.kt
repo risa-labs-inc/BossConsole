@@ -10,6 +10,7 @@ import com.google.rpc.RetryInfo
 import io.grpc.Status
 import io.grpc.StatusRuntimeException
 import io.grpc.protobuf.StatusProto
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
@@ -129,10 +130,21 @@ internal class TerminalSession(
 
     private suspend fun acquireInputLock(ticket: Any): Boolean {
         val acquired =
-            withTimeoutOrNull(inputQueueTimeoutMillis) {
-                inputMutex.lock(ticket)
-                true
-            } == true
+            try {
+                withTimeoutOrNull(inputQueueTimeoutMillis) {
+                    inputMutex.lock(ticket)
+                    true
+                } == true
+            } catch (cancellation: CancellationException) {
+                // Mutex.lock fast-path does not check cancellation; withTimeoutOrNull prompt
+                // cancellation can throw CancellationException after the lock was taken,
+                // bypassing the post-timeout check and caller's try/finally. Hand the ticket
+                // back so the session's input mutex is not permanently leaked (#1778).
+                if (inputMutex.holdsLock(ticket)) {
+                    inputMutex.unlock(ticket)
+                }
+                throw cancellation
+            }
         if (!acquired && inputMutex.holdsLock(ticket)) {
             // The grant can still land on a waiter the timeout already shed; hand
             // it back instead of leaving the queue locked behind a dead caller.
@@ -218,6 +230,8 @@ internal class TerminalSession(
      * Takes the same input mutex as [send], so a close never races a write on the same fd, and
      * waits for it on the same bounded queue: a caller behind a stalled writer is answered
      * RESOURCE_EXHAUSTED "Terminal input is busy" with a retry-after, exactly as a queued send is.
+     * Re-checks [ensureActive] after lock acquisition so a cancelled caller does not proceed to deliver EOF
+     * if cancellation landed in the post-admission window before any state change or stream close.
      *
      * Idempotent and safe after exit: a second call, or one after the process has died or a
      * failed write already closed the pipe, finds nothing left to close rather than throwing.
@@ -228,6 +242,7 @@ internal class TerminalSession(
             throw inputBusy(inputQueueTimeoutMillis)
         }
         try {
+            currentCoroutineContext().ensureActive()
             if (inputClosed) return
             inputClosedByCaller = true
             inputClosed = true

@@ -115,8 +115,11 @@ object McpArgumentSanitizer {
      */
     private const val KEY_CLOSE = """(?:\\?["'])?"""
 
-    /** A value: quoted whole, or up to the next delimiter. The closing quote of a JSON value rides along. */
-    private const val VALUE = """(?:"[^"]*"|'[^']*'|[^\s&,;}]+)"""
+    /**
+     * A value: quoted whole, a double-braced template, or up to the next delimiter.
+     * The closing quote of a JSON value rides along.
+     */
+    private const val VALUE = """(?:"[^"]*"|'[^']*'|(?:\{\{[^{}]*+\}\}|[^\s&,;}])++)"""
 
     /** Authorization is special: consume generic scheme words before the credential value. */
     private val authorizationHeader =
@@ -143,9 +146,31 @@ object McpArgumentSanitizer {
      *   reference; the value is kept. Nothing real starts with `{{secret:`.
      * See `ai.rever.boss.mcp.secrets`.
      */
+    internal const val validSecretReferenceFields = "password|username|notes"
+    internal const val validSecretReferenceTail = """(?:\.(?-i:$validSecretReferenceFields))?"""
+    private const val validSecretReferenceId =
+        """[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"""
     private const val validSecretReference =
-        """\{\{secret:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}""" +
-            """(?:\.(?:password|username|notes))?\}\}"""
+        """\{\{secret:$validSecretReferenceId$validSecretReferenceTail\}\}"""
+
+    /**
+     * A candidate `{{secret:...}}` that is not a valid secret reference. A valid reference
+     * (`{{secret:<uuid>}}`) is preserved in cleartext so operators and audits can see which secret
+     * was authorized; any invalid candidate (e.g. `{{secret:hunter2}}` or an unterminated
+     * `{{secret:hunter2}`) may be an agent-authored plaintext credential with no keyword prefix,
+     * so it undergoes best-effort redaction bounded at the first closing brace before reaching
+     * refusal messages, dialogs, or disk.
+     *
+     * Note: The pattern consumes to the next closing brace or end-of-string so an unmatched
+     * candidate is redacted up to the first closing brace. If a malformed reference is missing its
+     * closing braces mid-command (e.g. `curl -X POST {{secret:abc https://api/x`), this consumes up
+     * to the next brace or end of string, trading operator readability of subsequent arguments for
+     * best-effort redaction of plaintext credentials.
+     */
+    private val malformedSecretReference =
+        Regex(
+            """(?i)\{\{secret:(?!$validSecretReferenceId$validSecretReferenceTail\}\})[^}]*+\}{0,2}""",
+        )
 
     // `*+`, not `*`: see STACK SAFETY on [sanitizeMessage]. Nothing that may follow the name
     // (a quote, a backslash, whitespace, `:` or `=`) can be a character the group consumed, so
@@ -153,7 +178,7 @@ object McpArgumentSanitizer {
     private val sensitiveAssignment =
         Regex(
             """(?i)(?:(?:password|passwd|token|api[_-]?key|credential|cookie)|(?<!\{\{)secret)""" +
-                """(?:[_-][A-Za-z0-9]+)*+$KEY_CLOSE\s*[:=]\s*(?!$validSecretReference(?:[\s&,;}]|$))$VALUE""",
+                """(?:[_-][A-Za-z0-9]+)*+$KEY_CLOSE\s*[:=]\s*(?!(?:$validSecretReference)++(?:[\s&,;}]|$))$VALUE""",
         )
     private val bearer = Regex("""(?i)Bearer\s+[^\s"',;}]+""")
 
@@ -292,4 +317,5 @@ object McpArgumentSanitizer {
             .replace(redisAuthFlag, "$1 [REDACTED]")
             .replace(npmAuthToken, "$1 [REDACTED]")
             .replace(bearer, "Bearer [REDACTED]")
+            .replace(malformedSecretReference, "{{secret:[REDACTED]}}")
 }

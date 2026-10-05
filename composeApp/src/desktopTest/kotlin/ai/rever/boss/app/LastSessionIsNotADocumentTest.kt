@@ -26,6 +26,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -123,7 +124,7 @@ class LastSessionIsNotADocumentTest {
 
         // Now the watcher settles and rewrites the record, which is what used to clear the mark.
         val write = layoutWatcherWrite(current = record, live = live, now = 2_000)
-        disk[write.record.id] = write.record
+        assertNotNull(write.record).let { disk[it.id] = it }
         assertFalse(
             isUnsaved(live, disk[record.id]),
             "the record now matches the screen again - the manager is right about the file",
@@ -251,7 +252,7 @@ class LastSessionIsNotADocumentTest {
         state.getPanel("main")!!.tabsComponent.addTab(editor("later"))
         val afterwards = extractCurrentWorkspace(state, projectPath = PROJECT)
         val write = layoutWatcherWrite(current = saved, live = afterwards, now = 3_000)
-        disk[write.record.id] = write.record
+        assertNotNull(write.record).let { disk[it.id] = it }
 
         assertEquals(
             afterwards.layout,

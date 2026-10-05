@@ -61,6 +61,35 @@ class McpArgumentSanitizerStackSafetyTest {
     }
 
     @Test
+    fun `pathological nested template fixtures assert actual redaction rather than only no exception`() {
+        onSmallStack {
+            for (prefix in listOf("{{secret:", "{{SECRET:")) {
+                for (size in SIZES) {
+                    val input = prefix + "{{a}}".repeat(size / 5)
+                    val out = McpArgumentSanitizer.sanitizeMessage(input)
+                    assertNotEquals(McpArgumentSanitizer.SANITIZE_FAILED, out)
+                    assertFalse(out.contains("{{secret:{{a}}"), out)
+                    assertFalse(out.contains("{{SECRET:{{a}}"), out)
+                    assertTrue(out.startsWith("{{secret:[REDACTED]}}"), out)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `repeated adjacent valid secret references remain legible on a small stack`() {
+        val ref = "{{secret:6f1d2c3e-4b5a-4c6d-8e7f-90a1b2c3d4e5}}"
+        onSmallStack {
+            for (size in SIZES) {
+                val count = size / ref.length
+                val input = "TOKEN=" + ref.repeat(count)
+                val out = McpArgumentSanitizer.sanitizeMessage(input)
+                assertEquals(input, out)
+            }
+        }
+    }
+
+    @Test
     fun `a call that already ran under ALLOW keeps its ledger row whatever its arguments carry`() =
         runBlocking<Unit> {
             val f = Fixture()
@@ -186,6 +215,9 @@ class McpArgumentSanitizerStackSafetyTest {
                 "postgres://admin:",
                 "https://",
                 "TOKEN={{secret:",
+                "TOKEN={{secret:6f1d2c3e-4b5a-4c6d-8e7f-90a1b2c3d4e5}}",
+                "{{secret:",
+                "{{SECRET:",
             )
 
         /** Repeated after a trigger until the input reaches its size. */
@@ -209,6 +241,8 @@ class McpArgumentSanitizerStackSafetyTest {
                 "A:\\n",
                 "\u00e9",
                 "{{",
+                "{{a}}",
+                "{{secret:6f1d2c3e-4b5a-4c6d-8e7f-90a1b2c3d4e5}}",
             )
 
         /**

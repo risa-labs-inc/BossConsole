@@ -1,5 +1,7 @@
 package ai.rever.boss.plugin.packs
 
+import ai.rever.boss.mcp.ApprovedArtifact
+import ai.rever.boss.mcp.PreparedPackDisplayModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -65,12 +67,14 @@ interface PluginPackEffects {
         version: String,
         latest: Boolean,
         approvedOrder: List<String>,
+        approvedArtifacts: List<ApprovedArtifact> = emptyList(),
     ): Result<Unit>
 
     /** Replace the installed build of [pluginId] with the store's [version]. */
     suspend fun changeVersion(
         pluginId: String,
         version: String,
+        approvedArtifacts: List<ApprovedArtifact> = emptyList(),
     ): Result<Unit>
 
     suspend fun enable(pluginId: String): Result<Unit>
@@ -130,6 +134,9 @@ enum class PackApplyStatus {
 
     /** A required plugin or a rule did not land, and nothing changed. */
     FAILED,
+
+    /** The plan changed between approval and job start; apply again for a new preview. */
+    PLAN_CHANGED,
 }
 
 data class PackApplyResult(
@@ -137,6 +144,18 @@ data class PackApplyResult(
     val status: PackApplyStatus,
     val plugins: List<PluginResult>,
     val rules: List<RuleResult>,
+)
+
+/**
+ * An immutable, fully resolved pack application prepared and approved before job start.
+ */
+data class PreparedPackApply(
+    val pack: PluginPack,
+    val plan: PackPlan,
+    val snapshot: PackSnapshot,
+    val stamps: Map<String, RuleStamp>,
+    val artifacts: List<ApprovedArtifact>,
+    val displayModel: PreparedPackDisplayModel,
 )
 
 /**
@@ -150,9 +169,86 @@ data class PackApplyResult(
  *
  * An optional plugin that cannot be satisfied is reported but does not make the pack partial.
  */
+@Suppress("TooManyFunctions")
 class PluginPackApplier(
     private val effects: PluginPackEffects,
 ) {
+    suspend fun apply(
+        prepared: PreparedPackApply,
+        onProgress: (done: Int, total: Int, current: String) -> Unit = { _, _, _ -> },
+    ): PackApplyResult {
+        val freshSnapshot = effects.snapshot(prepared.pack)
+        val freshPlan = PluginPackPlanner.plan(prepared.pack, freshSnapshot)
+        if (isPlanChanged(prepared, freshSnapshot, freshPlan)) {
+            return PackApplyResult(
+                packId = prepared.pack.id,
+                status = PackApplyStatus.PLAN_CHANGED,
+                plugins = emptyList(),
+                rules = emptyList(),
+            )
+        }
+        val plan = prepared.plan
+        val total = plan.plugins.size + plan.rules.size
+        var done = 0
+
+        val pluginResults =
+            plan.plugins.map { step ->
+                currentCoroutineContext().ensureActive()
+                onProgress(done, total, step.plugin.pluginId)
+                applyPlugin(step, prepared.artifacts).also { done++ }
+            }
+        val ruleResults =
+            plan.rules.map { step ->
+                currentCoroutineContext().ensureActive()
+                onProgress(done, total, step.rule.subject)
+                applyRule(step, prepared.snapshot).also { done++ }
+            }
+        onProgress(done, total, "")
+        return PackApplyResult(prepared.pack.id, statusOf(plan, pluginResults, ruleResults), pluginResults, ruleResults)
+    }
+
+    @Suppress("ReturnCount", "CyclomaticComplexMethod")
+    fun isPlanChanged(
+        prepared: PreparedPackApply,
+        freshSnapshot: PackSnapshot,
+        freshPlan: PackPlan,
+    ): Boolean {
+        if (prepared.plan.plugins.size != freshPlan.plugins.size) return true
+        for (i in prepared.plan.plugins.indices) {
+            val p = prepared.plan.plugins[i]
+            val f = freshPlan.plugins[i]
+            if (p.plugin.pluginId != f.plugin.pluginId) return true
+            if (p.kind != f.kind) return true
+            if (p.targetVersion != f.targetVersion) return true
+            if (p.installedVersion != f.installedVersion) return true
+            if (p.targetSha256 != f.targetSha256) return true
+            val pClosure = p.closure
+            val fClosure = f.closure
+            if ((pClosure == null) != (fClosure == null)) return true
+            if (pClosure != null && fClosure != null) {
+                if (pClosure.order != fClosure.order) return true
+                if (pClosure.alsoInstalls != fClosure.alsoInstalls) return true
+                if (pClosure.artifacts != fClosure.artifacts) return true
+            }
+        }
+
+        if (prepared.plan.rules.size != freshPlan.rules.size) return true
+        for (i in prepared.plan.rules.indices) {
+            val pr = prepared.plan.rules[i]
+            val fr = freshPlan.rules[i]
+            if (pr.rule.scope != fr.rule.scope) return true
+            if (pr.rule.subject != fr.rule.subject) return true
+            if (pr.rule.action != fr.rule.action) return true
+            if (pr.kind != fr.kind) return true
+            if (pr.existing != fr.existing) return true
+            val pStamp = prepared.stamps[pr.rule.subject]
+            val fStamp = freshSnapshot.stamps[pr.rule.subject]
+            if (pStamp != fStamp) return true
+        }
+
+        return false
+    }
+
     suspend fun apply(
         pack: PluginPack,
         onProgress: (done: Int, total: Int, current: String) -> Unit = { _, _, _ -> },
@@ -178,8 +274,14 @@ class PluginPackApplier(
         return PackApplyResult(pack.id, statusOf(plan, pluginResults, ruleResults), pluginResults, ruleResults)
     }
 
-    private suspend fun applyPlugin(step: PluginStep): PluginResult {
+    private suspend fun applyPlugin(
+        step: PluginStep,
+        preparedArtifacts: List<ApprovedArtifact> = emptyList(),
+    ): PluginResult {
         val pluginId = step.plugin.pluginId
+        val approvedArtifacts =
+            step.closure?.artifacts?.takeIf { it.isNotEmpty() }
+                ?: preparedArtifacts.filter { it.pluginId == pluginId }
         val attempt: Result<Unit>? =
             when (step.kind) {
                 PluginStepKind.SATISFIED, PluginStepKind.UNAVAILABLE, PluginStepKind.STORE_UNREACHABLE -> {
@@ -197,12 +299,19 @@ class PluginPackApplier(
                             checkNotNull(step.targetVersion),
                             step.targetIsLatest,
                             step.closure?.order.orEmpty(),
+                            approvedArtifacts,
                         )
                     }
                 }
 
                 PluginStepKind.CHANGE_VERSION -> {
-                    guarded { effects.changeVersion(pluginId, checkNotNull(step.targetVersion)) }
+                    guarded {
+                        effects.changeVersion(
+                            pluginId,
+                            checkNotNull(step.targetVersion),
+                            approvedArtifacts,
+                        )
+                    }
                 }
             }
         val failure = attempt?.exceptionOrNull()

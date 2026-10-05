@@ -131,6 +131,23 @@ class FreeTextUserInfoTest {
     }
 
     /**
+     * BossConsole#1665 - an accepted residual leak, pinned so the cost is visible. The `//` of
+     * `/srv//user:CANARY0018@10.0.0.5/x` sits inside a path, so [LogSanitizer.redactUrlUserInfo]
+     * leaves the line alone; `filePathPattern` then consumes `/srv//user`, stops at the userinfo
+     * colon, and leaves the password in the line. Treating a path's `/` as a reference start was
+     * rejected - it would redact every genuine `//` inside a path.
+     */
+    @Test
+    fun `a protocol-relative credential inside a path still leaks through filePathPattern`() {
+        val line = "copied /srv//user:CANARY0018@10.0.0.5/x"
+        assertEquals(line, LogSanitizer.redactUrlUserInfo(line))
+        assertEquals(
+            "copied [PATH]:CANARY0018@10.0.0.5[PATH]",
+            LogSanitizer.sanitizeExceptionMessage(line),
+        )
+    }
+
+    /**
      * The query-parameter pass has to keep running first: its whole job is removing a colon before
      * `filePathPattern` trips on it, so anything inserted ahead of it would be too late.
      */

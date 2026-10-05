@@ -192,7 +192,6 @@
     <ID>CyclomaticComplexMethod:UpdateUI.kt$private fun formatTime(instant: kotlin.time.Instant): String</ID>
     <ID>CyclomaticComplexMethod:UserExistenceService.kt$UserExistenceService$suspend fun checkUserExists(email: String): Result&lt;UserExistence&gt;</ID>
     <ID>CyclomaticComplexMethod:WorkspaceApplier.kt$private fun createTabFromWorkspaceConfig( tabConfig: TabConfig, projectPath: String, splitViewState: SplitViewState, ): TabInfo?</ID>
-    <ID>CyclomaticComplexMethod:WorkspaceApplier.kt$private suspend fun applyWorkspaceNode( node: SplitConfig, splitViewState: SplitViewState, currentPanelId: String, projectPath: String, )</ID>
     <ID>CyclomaticComplexMethod:WorkspaceSelectionDialog.kt$@Composable private fun WorkspaceSelectionItem( workspace: ai.rever.boss.components.workspaces.LayoutWorkspace, isSelected: Boolean, selectedPanelId: String?, onToggle: () -&gt; Unit, onPanelSelected: (String?) -&gt; Unit, )</ID>
     <ID>CyclomaticComplexMethod:main.kt$fun main(args: Array&lt;String&gt;)</ID>
     <ID>CyclomaticComplexMethod:main.kt$private fun extractPty4jNatives(targetDir: File)</ID>
@@ -443,7 +442,6 @@
     <ID>LongMethod:WindowsDefaultBrowserHandler.kt$WindowsDefaultBrowserHandler$internal fun registerAsBrowserCandidate(): Boolean</ID>
     <ID>LongMethod:WizardComponents.kt$@Composable fun SelectionCard( title: String, description: String, icon: ImageVector? = null, isSelected: Boolean, onClick: () -&gt; Unit, modifier: Modifier = Modifier, )</ID>
     <ID>LongMethod:WizardComponents.kt$@Composable fun WizardStepIndicator( currentStep: Int, totalSteps: Int, modifier: Modifier = Modifier, )</ID>
-    <ID>LongMethod:WorkspaceApplier.kt$private suspend fun applyWorkspaceNode( node: SplitConfig, splitViewState: SplitViewState, currentPanelId: String, projectPath: String, )</ID>
     <ID>LongMethod:WorkspaceExtractor.kt$private fun extractSplitConfig(node: SplitNode): SplitConfig</ID>
     <ID>LongMethod:WorkspaceSelectionDialog.kt$@Composable fun WorkspaceSelectionDialog( title: String, workspaces: List&lt;ai.rever.boss.components.workspaces.LayoutWorkspace&gt;, preselectedWorkspaces: Map&lt;String, String?&gt; = emptyMap(), onDismiss: () -&gt; Unit, onConfirm: (workspacePanelMap: Map&lt;String, String?&gt;) -&gt; Unit, )</ID>
     <ID>LongMethod:WorkspaceSelectionDialog.kt$@Composable private fun WorkspaceSelectionItem( workspace: ai.rever.boss.components.workspaces.LayoutWorkspace, isSelected: Boolean, selectedPanelId: String?, onToggle: () -&gt; Unit, onPanelSelected: (String?) -&gt; Unit, )</ID>
@@ -981,7 +979,6 @@
     <ID>NestedBlockDepth:SplitView.kt$SplitViewState$fun collectAllActiveTabs( workspaceManager: ai.rever.boss.components.workspaces.WorkspaceManager? = null, windowId: String = "unknown", ): List&lt;ActiveTab&gt;</ID>
     <ID>NestedBlockDepth:UrlHistoryManager.kt$UrlHistoryManager$private fun loadHistory()</ID>
     <ID>NestedBlockDepth:UserExistenceService.kt$UserExistenceService$suspend fun checkUserExists(email: String): Result&lt;UserExistence&gt;</ID>
-    <ID>NestedBlockDepth:WorkspaceApplier.kt$private suspend fun applyWorkspaceNode( node: SplitConfig, splitViewState: SplitViewState, currentPanelId: String, projectPath: String, )</ID>
     <ID>NestedBlockDepth:main.kt$fun main(args: Array&lt;String&gt;)</ID>
     <ID>NestedBlockDepth:main.kt$private fun extractPty4jNatives(targetDir: File)</ID>
     <ID>PackageNaming:BarMenuItemsTest.kt$package ai.rever.boss.components.window_panel</ID>

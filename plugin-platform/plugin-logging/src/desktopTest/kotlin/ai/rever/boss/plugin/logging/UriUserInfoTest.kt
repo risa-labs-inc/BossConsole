@@ -152,4 +152,23 @@ class UriUserInfoTest {
             LogSanitizer.maskUriParams("https://sso.example/login?next=https://internal.example&contact=a@b.com"),
         )
     }
+
+    /**
+     * BossConsole#1665: the protocol-relative rule applies on this path too - a scheme-less `//`
+     * opens an authority wherever a reference can begin, here at the start of the URI. Whitespace
+     * does not end an authority on this path (`freeText = false`); `/`, `?` and `#` still do.
+     */
+    @Test
+    fun `a protocol-relative authority is redacted`() {
+        assertEquals(
+            "//[REDACTED]@10.0.0.5/x?token=[REDACTED]",
+            LogSanitizer.maskUriParams("//u:p@10.0.0.5/x?token=t"),
+        )
+    }
+
+    /** `file:///` has an empty authority, so the `@` sits in the path and is left alone. */
+    @Test
+    fun `an empty file authority leaves an at sign in the path alone`() {
+        assertEquals("file:///home/u@x", LogSanitizer.maskUriParams("file:///home/u@x"))
+    }
 }

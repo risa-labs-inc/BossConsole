@@ -6,6 +6,7 @@ import ai.rever.boss.components.plugin.PluginDependencyResolution
 import ai.rever.boss.components.plugin.PluginStoreVersionBridge
 import ai.rever.boss.components.plugin.StoreVersionInstaller
 import ai.rever.boss.components.plugin.StoreVersionRequest
+import ai.rever.boss.mcp.ApprovedArtifact
 import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.mcp.McpPolicyEngine
 import ai.rever.boss.mcp.McpPolicyFault
@@ -102,9 +103,10 @@ class DesktopPluginPackEffects(
     ): Map<String, InstallClosure> {
         val window = manager() ?: return emptyMap()
         val installer = MissingDependencyReporter.installerFor(window)
+        val repository = store()
         return pack.plugins
             .filter { it.pluginId !in installed && it.version == null }
-            .associate { plugin -> plugin.pluginId to closureFor(installer, plugin.pluginId) }
+            .associate { plugin -> plugin.pluginId to closureFor(installer, plugin.pluginId, repository) }
     }
 
     /**
@@ -135,21 +137,20 @@ class DesktopPluginPackEffects(
         version: String,
         latest: Boolean,
         approvedOrder: List<String>,
+        approvedArtifacts: List<ApprovedArtifact>,
     ): Result<Unit> {
         val window = manager() ?: return noWindow()
         if (latest) {
             val installer = MissingDependencyReporter.installerFor(window)
-            // The order resolved when the plan was computed, never a fresh walk: re-resolving here
-            // would install whatever the store's dependency rows say at this instant, which is not
-            // what the operator approved. An empty order means the closure was never resolved (no
-            // window at snapshot time), so fall back to the one plugin named rather than to a walk.
-            return installer.installAll(approvedOrder.ifEmpty { listOf(pluginId) })
+            return if (approvedArtifacts.isNotEmpty()) {
+                installer.installAllArtifacts(approvedArtifacts)
+            } else {
+                installer.installAll(approvedOrder.ifEmpty { listOf(pluginId) })
+            }
         }
-        // A pinned older release of a plugin that is not installed. The version bridge cannot take
-        // this: it always unloads the running build first, and unloading a plugin that was never
-        // loaded fails with "Plugin not found". Nothing is running, so the unload is a no-op here,
-        // and the download, vetting, promotion and record are still the store-version installer's.
         val repository = store() ?: return Result.failure(IllegalStateException(STORE_UNAVAILABLE))
+        val hashError = verifyApprovedArtifactHash(repository, pluginId, version, approvedArtifacts)
+        if (hashError != null) return hashError
         return StoreVersionInstaller(pluginDir = { PluginStoreSetup.getPluginDir() })
             .install(
                 store = repository,
@@ -167,11 +168,16 @@ class DesktopPluginPackEffects(
             ).map { }
     }
 
+    @Suppress("ReturnCount")
     override suspend fun changeVersion(
         pluginId: String,
         version: String,
+        approvedArtifacts: List<ApprovedArtifact>,
     ): Result<Unit> {
         val window = manager() ?: return noWindow()
+        val repository = store() ?: return Result.failure(IllegalStateException(STORE_UNAVAILABLE))
+        val hashError = verifyApprovedArtifactHash(repository, pluginId, version, approvedArtifacts)
+        if (hashError != null) return hashError
         return PluginStoreVersionBridge
             .installStoreVersion(pluginId, version, sourceUrl = null, manager = window)
             .map { }
@@ -221,7 +227,9 @@ class DesktopPluginPackEffects(
     ): StoreListing {
         val lookup = flatten { repository.getPlugin(pluginId) }
         val failure = lookup.exceptionOrNull()
-        val latest = lookup.getOrNull()?.version?.takeIf { it.isNotBlank() }
+        val pluginInfo = lookup.getOrNull()
+        val latest = pluginInfo?.version?.takeIf { it.isNotBlank() }
+        val latestSha256 = pluginInfo?.sha256.orEmpty()
         return when {
             failure != null -> {
                 StoreListing.Unreachable("Could not reach the plugin store: ${shortFailureReason(failure)}")
@@ -235,7 +243,21 @@ class DesktopPluginPackEffects(
                 // The version list is a second call that can fail on its own. The latest release is
                 // still known then, so a pack asking for it is not blocked by the list being unreadable.
                 val versions = flatten { repository.getPluginVersions(pluginId) }.getOrNull().orEmpty()
-                StoreListing.Published(latest, (versions.map { it.version } + latest).toSet())
+                val versionArtifacts = mutableMapOf<String, ApprovedArtifact>()
+                for (v in versions) {
+                    if (v.version.isNotBlank()) {
+                        versionArtifacts[v.version] = ApprovedArtifact(pluginId, v.version, v.sha256)
+                    }
+                }
+                val resolvedLatestSha256 =
+                    versionArtifacts[latest]?.sha256?.takeIf { it.isNotBlank() } ?: latestSha256
+                versionArtifacts[latest] = ApprovedArtifact(pluginId, latest, resolvedLatestSha256)
+                StoreListing.Published(
+                    latest = latest,
+                    versions = (versions.map { it.version } + latest).toSet(),
+                    latestSha256 = resolvedLatestSha256,
+                    versionArtifacts = versionArtifacts,
+                )
             }
         }
     }
@@ -347,9 +369,10 @@ private fun McpPolicyEngine.deniedCause(providerId: String?): RuleWrite =
  * File level for the same reason as [providerFor]: it needs only its two arguments.
  */
 @Suppress("TooGenericExceptionCaught") // A store walk fails in both shapes; neither may abort the plan.
-private suspend fun closureFor(
+internal suspend fun closureFor(
     installer: MissingDependencyInstaller,
     pluginId: String,
+    repository: PluginRepository?,
 ): InstallClosure {
     val plan =
         try {
@@ -365,11 +388,72 @@ private suspend fun closureFor(
                 truncated = false,
             )
         }
+    val unresolved = plan.unresolved.toMutableSet()
+    val artifacts = mutableListOf<ApprovedArtifact>()
+    for (id in plan.order) {
+        val artifact = resolveArtifactForId(repository, id)
+        if (artifact == null) {
+            unresolved.add(id)
+        } else {
+            artifacts.add(artifact)
+        }
+    }
     return InstallClosure(
         order = plan.order,
         alsoInstalls = plan.order.filterNot { it == pluginId },
-        unresolved = plan.unresolved,
+        unresolved = unresolved,
         cyclic = plan.cyclic,
         truncated = plan.truncated,
+        artifacts = artifacts,
     )
+}
+
+private suspend fun resolveArtifactForId(
+    repository: PluginRepository?,
+    id: String,
+): ApprovedArtifact? {
+    val info = runCatching { repository?.getPlugin(id)?.getOrNull() }.getOrNull()
+    var version = info?.version?.takeIf { it.isNotBlank() }
+    var sha256 = info?.sha256.orEmpty()
+    if (sha256.isBlank()) {
+        val versions = runCatching { repository?.getPluginVersions(id)?.getOrNull() }.getOrNull().orEmpty()
+        val match = if (version != null) versions.firstOrNull { it.version == version } else versions.firstOrNull()
+        if (match != null) {
+            if (version == null && match.version.isNotBlank()) version = match.version
+            if (match.sha256.isNotBlank()) sha256 = match.sha256
+        }
+    }
+    return if (info != null && version != null && sha256.isNotBlank()) {
+        ApprovedArtifact(id, version, sha256)
+    } else {
+        null
+    }
+}
+
+@Suppress("ReturnCount")
+private suspend fun verifyApprovedArtifactHash(
+    repository: PluginRepository,
+    pluginId: String,
+    version: String,
+    approvedArtifacts: List<ApprovedArtifact>,
+): Result<Unit>? {
+    val targetArtifact = approvedArtifacts.firstOrNull { it.pluginId == pluginId }
+    val expectedSha = targetArtifact?.sha256?.takeIf { it.isNotBlank() } ?: return null
+    val versions = runCatching { repository.getPluginVersions(pluginId).getOrNull() }.getOrNull().orEmpty()
+    val versionInfo = versions.firstOrNull { it.version == version }
+    val fallbackInfo = runCatching { repository.getPlugin(pluginId).getOrNull() }.getOrNull()
+    val storeSha = versionInfo?.sha256?.takeIf { it.isNotBlank() } ?: fallbackInfo?.sha256.orEmpty()
+    if (storeSha.isBlank()) {
+        return Result.failure(
+            IllegalStateException("Store provides no SHA-256 hash for $pluginId; expected $expectedSha."),
+        )
+    }
+    if (!storeSha.equals(expectedSha, ignoreCase = true)) {
+        return Result.failure(
+            IllegalStateException(
+                "Store SHA-256 for $pluginId ($storeSha) does not match approved hash $expectedSha.",
+            ),
+        )
+    }
+    return null
 }

@@ -3,6 +3,7 @@ package ai.rever.boss.components.wizard.plugin
 import ai.rever.boss.components.plugin.DynamicPluginInfo
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -436,6 +437,76 @@ class WizardStagedInstallTest {
             assertFalse(loaderReached, "nothing is loaded over a resident plugin")
             assertTrue(installed.exists(), "the refusal protects this file; it must not delete it")
             assertEquals("the running plugin's bytes", installed.readText())
+        }
+    }
+
+    @Test
+    fun `a failed in-place install leaves the installed jar alone`() {
+        runBlocking {
+            val installed = file("demo-1.0.0.jar", "the running plugin's bytes")
+            var loaderReached = false
+
+            val result =
+                stageAndInstall(
+                    downloadedFile = installed,
+                    finalFile = installed,
+                    pluginId = "demo",
+                    isResident = { false },
+                ) {
+                    loaderReached = true
+                    refused("demo")
+                }
+
+            assertTrue(result.isFailure, "loader failure must be returned")
+            assertTrue(loaderReached, "loader is reached when not resident")
+            assertTrue(installed.exists(), "an in-place install must not delete the existing jar on failure")
+            assertEquals("the running plugin's bytes", installed.readText())
+        }
+    }
+
+    @Test
+    fun `a cancelled in-place install leaves the installed jar alone`() {
+        runBlocking {
+            val installed = file("demo-1.0.0.jar", "the running plugin's bytes")
+            var loaderReached = false
+
+            assertFailsWith<CancellationException> {
+                stageAndInstall(
+                    downloadedFile = installed,
+                    finalFile = installed,
+                    pluginId = "demo",
+                    isResident = { false },
+                ) {
+                    loaderReached = true
+                    throw CancellationException("user cancelled install")
+                }
+            }
+
+            assertTrue(loaderReached, "loader is reached when not resident")
+            assertTrue(installed.exists(), "an in-place install must not delete the existing jar on cancellation")
+            assertEquals("the running plugin's bytes", installed.readText())
+        }
+    }
+
+    @Test
+    fun `a cancelled staged install cleans up the promoted destination`() {
+        runBlocking {
+            val staged = file("demo-1.0.0.jar.downloading.1", "the new bytes")
+            val finalFile = File(dir, "demo-1.0.0.jar")
+
+            assertFailsWith<CancellationException> {
+                stageAndInstall(
+                    downloadedFile = staged,
+                    finalFile = finalFile,
+                    pluginId = "demo",
+                    isResident = { false },
+                ) {
+                    throw CancellationException("cancelled during install")
+                }
+            }
+
+            assertFalse(finalFile.exists(), "cancellation must clean up the promoted destination")
+            assertFalse(staged.exists(), "the staging file was moved to destination and cleared")
         }
     }
 

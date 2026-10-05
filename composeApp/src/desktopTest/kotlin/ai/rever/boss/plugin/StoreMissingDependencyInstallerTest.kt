@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin
 
+import ai.rever.boss.mcp.ApprovedArtifact
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
@@ -557,6 +558,44 @@ class StoreMissingDependencyInstallerTest {
             val message = result.exceptionOrNull()?.message.orEmpty()
             assertTrue(message.contains("did not start"), "misleading message: $message")
             assertFalse(jar().exists())
+        }
+
+    @Test
+    fun `installArtifact refuses approved artifact with blank SHA-256`() =
+        runTest {
+            val installer = installer(store = FakeStore(info()))
+            val result = installer.installArtifact(ApprovedArtifact(PLUGIN_ID, "1.2.3", ""))
+            assertTrue(result.isFailure)
+            assertTrue(
+                result.exceptionOrNull()?.message?.contains("blank SHA-256 hash") == true,
+                result.exceptionOrNull()?.message,
+            )
+        }
+
+    @Test
+    fun `installArtifact refuses when store provides no SHA-256 and expected SHA-256 is present`() =
+        runTest {
+            val storeInfo = info().copy(sha256 = "")
+            val installer = installer(store = FakeStore(storeInfo))
+            val result = installer.installArtifact(ApprovedArtifact(PLUGIN_ID, "1.2.3", "expected-sha"))
+            assertTrue(result.isFailure)
+            assertTrue(
+                result.exceptionOrNull()?.message?.contains("Store provides no SHA-256 hash") == true,
+                result.exceptionOrNull()?.message,
+            )
+        }
+
+    @Test
+    fun `installArtifact refuses when store SHA-256 does not match expected SHA-256`() =
+        runTest {
+            val storeInfo = info().copy(sha256 = "actual-store-sha")
+            val installer = installer(store = FakeStore(storeInfo))
+            val result = installer.installArtifact(ApprovedArtifact(PLUGIN_ID, "1.2.3", "expected-sha"))
+            assertTrue(result.isFailure)
+            assertTrue(
+                result.exceptionOrNull()?.message?.contains("does not match approved hash") == true,
+                result.exceptionOrNull()?.message,
+            )
         }
 
     /** Counts downloads, to prove two concurrent installs collapse into one. */

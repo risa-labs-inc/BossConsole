@@ -76,7 +76,7 @@ internal const val LEGACY_LAST_SESSION_FILE = "Last_Session.json"
  */
 internal fun reservedWorkspaceStoreFileName(id: String): String? {
     val stem = id.removeSuffix(".json")
-    if (stem.isEmpty()) return null
+    if (stem.isBlank()) return null
     val fileName = WorkspaceFileManagerCommon.fileNameForId(stem)
     return WorkspaceFileManagerCommon.reservedRecordFileNames.firstOrNull { it.equals(fileName, ignoreCase = true) }
 }

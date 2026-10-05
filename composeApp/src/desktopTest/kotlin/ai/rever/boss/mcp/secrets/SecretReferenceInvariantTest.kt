@@ -314,12 +314,46 @@ class SecretReferenceInvariantTest {
             val result = h.core.invoke("write", """{"a":"{{secret:$id.totp}}"}""")
             assertTrue(result.isError)
             assertTrue(result.text.contains("unknown field"), result.text)
+            assertFalse(result.text.contains("totp"), "Raw candidate text must not be in refusal: ${result.text}")
+            assertFalse(result.text.contains(id), "Raw candidate id must not be in refusal: ${result.text}")
+            assertTrue(result.text.contains("{{secret:...}}"), "Shape descriptor must be in refusal: ${result.text}")
             assertFalse(called)
             assertEquals(
                 McpApprovalDisposition.SECRET_UNRESOLVED,
                 h.ledger.recentOperations.value
                     .single()
                     .approvalDisposition,
+            )
+        }
+
+    @Test
+    fun `INV2 - malformed candidate credentials are never echoed in refusal messages or ledger`() =
+        runBlocking {
+            val h = Harness(CountingVault(listOf(record)))
+            h.register(
+                tool("write") {
+                    McpToolResult("ran")
+                },
+            )
+            val secretCandidate = "hunter2}secret_token"
+            val result = h.core.invoke("write", """{"a":"{{secret:$secretCandidate"}""")
+            assertTrue(result.isError)
+            assertFalse(
+                result.text.contains("hunter2"),
+                "Credential must not be reflected in refusal: ${result.text}",
+            )
+            assertFalse(
+                result.text.contains("secret_token"),
+                "Credential must not be reflected in refusal: ${result.text}",
+            )
+            assertTrue(result.text.contains("{{secret:...}}"), "Shape descriptor must be present: ${result.text}")
+            val op =
+                h.ledger.recentOperations.value
+                    .single()
+            assertEquals(McpApprovalDisposition.SECRET_UNRESOLVED, op.approvalDisposition)
+            assertFalse(
+                op.errorSnippet?.contains("hunter2") == true,
+                "Credential must not be in ledger errorSnippet",
             )
         }
 

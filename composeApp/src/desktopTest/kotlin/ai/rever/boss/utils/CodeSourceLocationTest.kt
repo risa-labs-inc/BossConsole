@@ -71,6 +71,32 @@ class CodeSourceLocationTest {
     }
 
     @Test
+    fun `a localhost network-share URL preserves its authority on Windows`() {
+        val url = URL("file://localhost/share/BOSS/app/BOSS.jar")
+        val resolved = CodeSourceLocation.fileOf(url)
+
+        // On Windows (or any host addressing UNC paths), \\localhost\share\... is a
+        // genuine network share and must keep its server rather than silently
+        // rebasing to \share\... on the current drive. On hosts with no UNC concept,
+        // the provider rejects the authority and falls back to the stripped local path.
+        val isWindows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+        if (isWindows) {
+            assertNotNull(resolved)
+            assertTrue(
+                resolved.path.startsWith("""\\localhost\share"""),
+                "resolved to ${resolved.path}, which must remain a UNC path",
+            )
+        } else {
+            assertNotNull(resolved)
+            assertEquals(
+                "/share/BOSS/app/BOSS.jar",
+                resolved.path.replace('\\', '/'),
+                "resolved to ${resolved.path}, which should be the local path",
+            )
+        }
+    }
+
+    @Test
     fun `the dropped-authority path is not what we resolve to`() {
         val url = URL("file://nas01/software/BOSS/app/BOSS.jar")
         val droppedAuthority = File(url.toURI().path)

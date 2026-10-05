@@ -97,6 +97,7 @@ class TerminalCloseInputTest {
                 val id = start()
                 val request = CloseInputRequest.newBuilder().setSessionId(id).build()
 
+                // Pins the RPC-level idempotence contract: repeated calls succeed without error.
                 stub.closeInput(request)
                 stub.closeInput(request)
 
@@ -185,7 +186,9 @@ class TerminalCloseInputTest {
                 assertTrue(waitedMs >= QUEUE_TIMEOUT_MILLIS - 50, "gave up after only ${waitedMs}ms")
             } finally {
                 session.terminate()
-                writer.join()
+                withTimeoutOrNull(5_000) {
+                    writer.join()
+                }
             }
         }
 

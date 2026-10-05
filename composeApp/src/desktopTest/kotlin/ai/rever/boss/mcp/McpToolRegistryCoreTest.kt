@@ -11,6 +11,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -1036,4 +1037,144 @@ class McpToolRegistryCoreTest {
             assertEquals(out, roundTripped, "cap=$cap does not survive a UTF-8 round trip")
         }
     }
+
+    @Test
+    fun `IdentityHashMap execution objects prevents collision between identical argument instances`() {
+        val args1 = McpToolArgs(mapOf("x" to 1), """{"x":1}""")
+        val args2 = McpToolArgs(mapOf("x" to 1), """{"x":1}""")
+
+        assertEquals(args1.raw, args2.raw)
+        assertEquals(args1.int("x"), args2.int("x"))
+        assertTrue(args1 !== args2)
+
+        args1.withExecutionObject("payload-1")
+        assertNull(args2.executionObject<String>())
+        assertEquals("payload-1", args1.executionObject<String>())
+        assertNull(args1.executionObject<String>())
+    }
+
+    @Test
+    fun `executionObject reified type check returns null on type mismatch`() {
+        val args = McpToolArgs(emptyMap(), "{}")
+        args.withExecutionObject(42)
+
+        assertNull(args.executionObject<String>())
+        assertNull(consumeExecutionObject(args))
+
+        args.withExecutionObject(42)
+        assertEquals(42, args.executionObject<Int>())
+        assertNull(args.executionObject<Int>())
+    }
+
+    @Test
+    fun `invalidArguments is checked before effectivePolicy DENY`() =
+        runBlocking<Unit> {
+            val file = tempPolicyFile()
+            file.writeText("""{"tools":{"test_tool":"DENY"}}""")
+            val policy = McpPolicyEngine(policyFile = file)
+            val core =
+                McpToolRegistryCore(
+                    disabledFile = null,
+                    policyEngine = policy,
+                    approvalBus = McpApprovalBus(),
+                    ledger = McpOperationLedger(ledgerFile = null),
+                )
+            val toolDef =
+                McpToolDefinition(
+                    name = "test_tool",
+                    description = "Tool with required args",
+                    handler = McpToolHandler { McpToolResult("ok") },
+                    inputSchema = """{"type":"object","required":["req"],"properties":{"req":{"type":"string"}}}""",
+                )
+            core.registerProvider(provider("p1", toolDef))
+
+            // Invoke with invalid arguments (missing required "req")
+            val result = core.invoke("test_tool", "{}")
+            assertTrue(result.isError)
+            // Must fail on argument validation, NOT on "MCP tool rejected by policy (DENY)"
+            assertTrue(
+                result.text.contains("inputSchema validation") || result.text.contains("missing required argument"),
+                result.text,
+            )
+            assertFalse(result.text.contains("MCP tool rejected by policy (DENY)"), result.text)
+        }
+
+    @Test
+    fun `executionObject is preserved across secret argument substitution and cleaned up after invocation`() =
+        runBlocking<Unit> {
+            val secretId = "00000000-0000-0000-0000-000000000001"
+            val vault =
+                object : ai.rever.boss.mcp.secrets.SecretLookup {
+                    override suspend fun page(
+                        limit: Int,
+                        offset: Int,
+                    ): Result<List<ai.rever.boss.mcp.secrets.SecretRecord>> =
+                        Result.success(
+                            listOf(
+                                ai.rever.boss.mcp.secrets.SecretRecord(
+                                    id = secretId,
+                                    website = "example.com",
+                                    username = "user",
+                                    password = "secret_password",
+                                    notes = null,
+                                ),
+                            ),
+                        )
+                }
+
+            var executionObjectInHandler: String? = null
+            val toolDef =
+                McpToolDefinition(
+                    name = "secret_prep_tool",
+                    description = "Tool testing secret substitution with prep",
+                    handler =
+                        McpToolHandler { args ->
+                            executionObjectInHandler = args.executionObject<String>()
+                            McpToolResult("ok: ${args.raw}")
+                        },
+                )
+
+            val preparingProvider =
+                object : McpToolProvider, McpToolPreparer {
+                    override val providerId = "prep_provider"
+
+                    override fun tools() = listOf(toolDef)
+
+                    override suspend fun prepareInvocation(
+                        toolName: String,
+                        args: McpToolArgs,
+                    ): McpPreparationResult =
+                        McpPreparationResult.Prepared(
+                            displayModel = null,
+                            executionObject = "MY_SPECIAL_PLAN",
+                            requiresFreshApproval = false,
+                        )
+                }
+
+            val bus = McpApprovalBus()
+            val core =
+                McpToolRegistryCore(
+                    disabledFile = null,
+                    policyEngine = McpPolicyEngine(policyFile = null),
+                    approvalBus = bus,
+                    ledger = McpOperationLedger(ledgerFile = null),
+                    secretLookup = vault,
+                )
+            core.updateAccess(isAdmin = true, permissions = emptySet())
+            core.registerProvider(preparingProvider)
+
+            val call =
+                async {
+                    core.invoke("secret_prep_tool", """{"p":"{{secret:$secretId.password}}"}""")
+                }
+            val request =
+                withTimeout(5_000) {
+                    bus.pendingList.first { it.isNotEmpty() }.first()
+                }
+            bus.approve(request.id, trustForSession = false)
+            val result = call.await()
+
+            assertFalse(result.isError)
+            assertEquals("MY_SPECIAL_PLAN", executionObjectInHandler)
+        }
 }

@@ -13,6 +13,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -86,7 +87,7 @@ actual object RunConfigurationManager {
      */
     internal fun loadSettingsSync() {
         try {
-            if (settingsFile.exists()) {
+            if (settingsFile.isFile) {
                 val cleanedSettings = loadSettingsFromFile(settingsFile)
                 _currentSettings.value = cleanedSettings
 
@@ -117,20 +118,23 @@ actual object RunConfigurationManager {
 
     /**
      * Reset manager state and optionally redirect [settingsFile] to [testFile]; with no
-     * argument, restore [defaultSettingsFile]. Call only when no mutation is in flight - the
-     * load re-reads [settingsFile] without [settingsMutex] (see [loadSettingsFromFile]) - and
-     * always call with no argument before finishing, so the singleton is left where the app
-     * and other tests expect it.
+     * argument, restore [defaultSettingsFile]. Serialized under [settingsMutex] so in-flight
+     * mutations cannot race or clobber the reset (#1792). Always call with no argument before
+     * finishing, so the singleton is left where the app and other tests expect it.
      */
     internal fun resetForTesting(testFile: File? = null) {
-        settingsFile = testFile ?: defaultSettingsFile
-        synchronized(scanLock) {
-            scanOwner = null
-            _detectedConfigurations.value = emptyList()
-            _isScanning.value = false
-            _lastError.value = null
+        runBlocking {
+            settingsMutex.withLock {
+                settingsFile = testFile ?: defaultSettingsFile
+                synchronized(scanLock) {
+                    scanOwner = null
+                    _detectedConfigurations.value = emptyList()
+                    _isScanning.value = false
+                    _lastError.value = null
+                }
+                loadSettingsSync()
+            }
         }
-        loadSettingsSync()
     }
 
     /**

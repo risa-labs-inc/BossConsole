@@ -52,6 +52,8 @@ class SecretReferenceFuzzTest {
             "{{",
             "}}",
             "{{secret:",
+            "{{SECRET:",
+            "{{Secret:",
             "/",
             "&",
             "=",
@@ -71,7 +73,7 @@ class SecretReferenceFuzzTest {
      * planted text is then never a candidate of its own, so the generator knows exactly what it
      * planted. Braces still appear in VALUES (see [value]), where they are data, not grammar.
      */
-    private val noiseAlphabet = alphabet - setOf("}", "}}", "{{secret:")
+    private val noiseAlphabet = alphabet - setOf("}", "}}", "{{secret:", "{{SECRET:", "{{Secret:")
 
     private fun Random.value(maxLen: Int = 24): String {
         val length = nextInt(0, maxLen)
@@ -89,11 +91,17 @@ class SecretReferenceFuzzTest {
     private fun Random.refLiteral(): String {
         val id = ids.random(this)
         val spelled = if (nextBoolean()) id else id.uppercase()
+        val prefix =
+            when (nextInt(3)) {
+                0 -> "{{secret:"
+                1 -> "{{SECRET:"
+                else -> "{{Secret:"
+            }
         return when (nextInt(4)) {
-            0 -> "{{secret:$spelled}}"
-            1 -> "{{secret:$spelled.password}}"
-            2 -> "{{secret:$spelled.username}}"
-            else -> "{{secret:$spelled.notes}}"
+            0 -> "$prefix$spelled}}"
+            1 -> "$prefix$spelled.password}}"
+            2 -> "$prefix$spelled.username}}"
+            else -> "$prefix$spelled.notes}}"
         }
     }
 
@@ -105,7 +113,7 @@ class SecretReferenceFuzzTest {
                 if (nextBoolean()) {
                     val literal = refLiteral()
                     append(literal)
-                    val body = literal.removePrefix("{{secret:").removeSuffix("}}")
+                    val body = literal.substringAfter(':').removeSuffix("}}")
                     val id = body.substringBefore('.').lowercase()
                     val field =
                         if ('.' in body) SecretField.fromWireName(body.substringAfter('.'))!! else SecretField.PASSWORD

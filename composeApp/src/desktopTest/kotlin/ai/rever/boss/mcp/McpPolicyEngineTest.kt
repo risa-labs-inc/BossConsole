@@ -41,6 +41,14 @@ class McpPolicyEngineTest {
     }
 
     @Test
+    fun `sensitive read tools for workspace context resolve to ASK even when declared readOnly`() {
+        val engine = McpPolicyEngine(policyFile = null)
+
+        assertEquals(McpPolicyAction.ASK, engine.policyFor("get_workspace_context", declaredReadOnly = true))
+        assertEquals(McpPolicyAction.ASK, engine.policyFor("get_active_editor_file", declaredReadOnly = true))
+    }
+
+    @Test
     fun `explicit tool rule overrides default action`() {
         val file = createTempPolicyFile()
         val engine = McpPolicyEngine(policyFile = file)

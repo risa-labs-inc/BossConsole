@@ -625,28 +625,53 @@ class WorkspaceManager(
             // as the literal file ".json", which every id-less import then shared - the second
             // destroyed the first. The minted id is written back with the Space below, so it
             // stays stable across launches instead of being re-minted on every load.
-            // withImportableId, not withStableId: the id is also re-minted when it is a slot or
-            // would save over a reserved record - see withImportableId for what that destroyed.
-            val workspace = WorkspaceSerializer.deserialize(jsonString).withImportableId()
-
-            // Save the imported workspace to disk
-            scope.launch {
-                val fileName = fileNameFor(workspace)
-                withContext(Dispatchers.IO) {
-                    fileManager.saveWorkspace(workspace, fileName)
-                }
-                loadedFileNames[workspace.id] = fileName
-
-                // Update workspaces list (on Main thread), by ID. By NAME an import whose name
-                // matched anything already listed wrote the file and then declined to add the row,
-                // so the user pressed Open from File and saw nothing happen at all.
-                val workspaces = _workspaces.value.toMutableList()
-                val existingIndex = workspaces.indexOfFirst { it.id == workspace.id }
-                if (existingIndex >= 0) workspaces[existingIndex] = workspace else workspaces.add(workspace)
-                _workspaces.value = workspaces
+            val raw = WorkspaceSerializer.deserialize(jsonString)
+            val withSafeId = raw.withImportableId()
+            if (raw.id != withSafeId.id) {
+                logger.info(
+                    LogCategory.WORKSPACE,
+                    "Re-minted imported workspace id to avoid collisions or reserved record overwrite",
+                    mapOf("previousId" to raw.id, "newId" to withSafeId.id),
+                )
             }
+            val uniqueName = uniqueWorkspaceName(withSafeId.name, savedSpaceNames(_workspaces.value))
+            val workspace = if (uniqueName != withSafeId.name) withSafeId.copy(name = uniqueName) else withSafeId
 
-            workspace
+            // The reserved-store gate the MCP create path applies to a caller-chosen id (#926,
+            // #964), evaluated on the name the save will write (#1627). withImportableId re-mints
+            // an id whose own fileNameForId lands on a reserved record, but fileNameFor can
+            // instead answer a name the load scan recorded into loadedFileNames - a name the
+            // identity rule never consulted - so the check runs on the actual write target.
+            // Refusal mirrors the MCP answer: before anything is created or applied, so the
+            // import reports failure whole rather than registering a Space that never persisted.
+            val fileName = fileNameFor(workspace)
+            val reserved = reservedWorkspaceStoreFileName(fileName)
+            if (reserved != null) {
+                logger.warn(
+                    LogCategory.WORKSPACE,
+                    "Refusing to import a workspace onto the reserved store file '$reserved'",
+                    mapOf("workspaceId" to workspace.id, "fileName" to fileName),
+                )
+                null
+            } else {
+                // Save the imported workspace to disk
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        fileManager.saveWorkspace(workspace, fileName)
+                    }
+                    loadedFileNames[workspace.id] = fileName
+
+                    // Update workspaces list (on Main thread), by ID. By NAME an import whose name
+                    // matched anything already listed wrote the file and then declined to add the row,
+                    // so the user pressed Open from File and saw nothing happen at all.
+                    val workspaces = _workspaces.value.toMutableList()
+                    val existingIndex = workspaces.indexOfFirst { it.id == workspace.id }
+                    if (existingIndex >= 0) workspaces[existingIndex] = workspace else workspaces.add(workspace)
+                    _workspaces.value = workspaces
+                }
+
+                workspace
+            }
         } catch (e: SerializationException) {
             // Import JSON has the same private layout data as an on-disk Space. Do not route the
             // caller-provided document back into logs through the decoder exception.

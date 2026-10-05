@@ -2448,7 +2448,12 @@ class SplitViewState(
 
             val panels = getAllPanels()
             val splitPositions = splitPositionsFor(panels)
+            val currentActivePanelId = _activePanelId.value
             panels.forEach { panel ->
+                val isPanelActive = panel.id == currentActivePanelId
+                val selectedTabId =
+                    panel.tabsComponent.tabsState.value.activeTab
+                        ?.id
                 panel.tabsComponent.tabsState.value.tabs.forEach { tab ->
                     if (!seenTabIds.contains(tab.id)) {
                         currentTabs.add(
@@ -2459,6 +2464,8 @@ class SplitViewState(
                                 panelId = panel.id,
                                 windowId = windowId,
                                 splitPosition = splitPositions[panel.id],
+                                isSelected = tab.id == selectedTabId,
+                                isPanelActive = isPanelActive,
                             ),
                         )
                         seenTabIds.add(tab.id)
@@ -2504,6 +2511,9 @@ class SplitViewState(
     ) {
         when (node) {
             is SplitNode.Panel -> {
+                val selectedTabId =
+                    node.tabsComponent.tabsState.value.activeTab
+                        ?.id
                 node.tabsComponent.tabsState.value.tabs.forEach { tab ->
                     if (!seenTabIds.contains(tab.id) && (tab is FluckTabInfo || tab.typeId.typeId == "fluck")) {
                         result.add(
@@ -2514,6 +2524,8 @@ class SplitViewState(
                                 panelId = node.id,
                                 windowId = context.windowId,
                                 splitPosition = context.splitPositions[node.id],
+                                isSelected = tab.id == selectedTabId,
+                                isPanelActive = false,
                             ),
                         )
                         seenTabIds.add(tab.id)
@@ -2541,6 +2553,9 @@ class SplitViewState(
     ) {
         when (node) {
             is SplitNode.Panel -> {
+                val selectedTabId =
+                    node.tabsComponent.tabsState.value.activeTab
+                        ?.id
                 node.tabsComponent.tabsState.value.tabs.forEach { tab ->
                     if (!seenTabIds.contains(tab.id)) {
                         result.add(
@@ -2551,6 +2566,8 @@ class SplitViewState(
                                 panelId = node.id,
                                 windowId = context.windowId,
                                 splitPosition = context.splitPositions[node.id],
+                                isSelected = tab.id == selectedTabId,
+                                isPanelActive = false,
                             ),
                         )
                         seenTabIds.add(tab.id)

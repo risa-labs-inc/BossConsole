@@ -74,6 +74,11 @@ class LastSessionCoordinator internal constructor(
     // the middle of the other's pair. See [writeInSession].
     private val writeLock = Any()
 
+    // True while in-session recovery writes keep failing. The layout watcher retries on every
+    // settle, so a fault that persists is logged at warn once, then at debug, until a whole write
+    // goes through (see [endInSessionFailureRun]).
+    private val inSessionFailing = AtomicBoolean(false)
+
     /** Number of windows currently registered. */
     val liveWindowCount: Int
         get() = liveWindows.size
@@ -97,8 +102,10 @@ class LastSessionCoordinator internal constructor(
         extractLayout: () -> LayoutWorkspace,
     ) {
         liveWindows[windowId] = LiveWindow(isFirstWindow, extractLayout, extractSet, canSave)
-        // A new window means a new session to persist later.
+        // A new window means a new session to persist later, and a fresh run of in-session
+        // failures: a run left open by a window that has since closed must not mute its first.
         writtenThisSession.set(false)
+        inSessionFailing.set(false)
     }
 
     /**
@@ -184,9 +191,12 @@ class LastSessionCoordinator internal constructor(
      * after the shutdown write adds nothing, and one that arrives first finishes before the hook
      * writes over it.
      *
-     * Never throws, like [claimAndWrite]: a failure is logged and answered false. The caller is a
-     * window's layout watcher, and an exception escaping into it would end the watcher for the rest
-     * of that window's life - no unsaved marks, no recovery files - with nothing in the log.
+     * Never throws an [Exception], like [claimAndWrite]: a failure, a throw or a writer answering
+     * false, is logged through [reportInSessionFailure] and answered false. The caller is a
+     * window's layout watcher, and an exception escaping into it would end the watcher for the
+     * rest of that window's life - no unsaved marks, no recovery files - with nothing in the log.
+     * The ownership check is inside the catch too: it runs every live window's `canSave`, which
+     * reads that window's state.
      */
     // Any failure, the set's serialization included, must be logged rather than end the watcher.
     @Suppress("TooGenericExceptionCaught")
@@ -196,25 +206,52 @@ class LastSessionCoordinator internal constructor(
         set: LastSessionSet?,
     ): Boolean =
         synchronized(writeLock) {
-            if (writtenThisSession.get() || !ownsSessionRecord(windowId)) {
-                false
-            } else {
-                try {
+            try {
+                if (writtenThisSession.get() || !ownsSessionRecord(windowId)) {
+                    false
+                } else {
                     // Restore prefers the set. If it could not be replaced (or removed),
                     // preserve the previous record too rather than report a fresh recovery
                     // beside a stale set. A later watcher write can retry the whole pair.
-                    saveSet(set) && saveRecord(record)
-                } catch (e: Exception) {
-                    logger.warn(
-                        LogCategory.WORKSPACE,
-                        "In-session recovery write failed",
-                        mapOf("windowId" to windowId),
-                        error = e,
-                    )
-                    false
+                    (saveSet(set) && saveRecord(record)).also { landed ->
+                        // The writers catch their own I/O failure (a full or read-only disk), log
+                        // its cause and answer false: the fault that persists is this one, so it
+                        // belongs to the run as much as a throw does.
+                        if (!landed) reportInSessionFailure(windowId, "In-session recovery write did not land")
+                    }
                 }
+            } catch (e: Exception) {
+                reportInSessionFailure(windowId, "In-session recovery write failed", e)
+                false
             }
         }
+
+    /**
+     * Log an in-session recovery failure: at warn for the first of a run, at debug for the rest,
+     * so a fault that persists does not warn on every settle. [error] is null for a write that
+     * answered false: its writer has already logged the cause.
+     *
+     * Only [endInSessionFailureRun] ends the run, so a write that lands but whose bookkeeping then
+     * throws stays inside it rather than warning again on every settle.
+     */
+    internal fun reportInSessionFailure(
+        windowId: String,
+        what: String,
+        error: Exception? = null,
+    ) {
+        if (inSessionFailing.compareAndSet(false, true)) {
+            logger.warn(LogCategory.WORKSPACE, what, mapOf("windowId" to windowId), error = error)
+        } else {
+            logger.debug(
+                LogCategory.WORKSPACE,
+                "$what (still failing)",
+                mapOf("windowId" to windowId, "error" to (error?.let { it::class.simpleName } ?: "answered false")),
+            )
+        }
+    }
+
+    /** A whole in-session write went through, bookkeeping included: the next failure warns again. */
+    internal fun endInSessionFailureRun() = inSessionFailing.set(false)
 
     /** The primary window if it is still open, else any live window - the one a shutdown writes for. */
     private fun recordOwner(): Map.Entry<String, LiveWindow>? =
