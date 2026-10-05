@@ -224,7 +224,7 @@ internal class MacSidebarToolbar(
         item: Pointer,
         action: NativeTitleBarAction,
     ): Boolean {
-        if (action.menu == null) return false
+        if (action.menu == null && action.id != "space") return false
         val textMenu = action.symbol == null && action.icon == null
         if (textMenu) {
             MacToolbarMenu.update(item, action, delegate)
