@@ -256,6 +256,41 @@ Deno.test("a card with no virtual-card attestation and no limit is refused in th
   assertStringIncludes(badCurrency.error(), "three letters")
 })
 
+Deno.test("the card limit is sealed in the currency's ISO 4217 minor unit", async () => {
+  const { base64, privateKey } = await recipient()
+  const card = {
+    f1: "A Person",
+    f2: "4111 1111 1111 1111",
+    f3: "04/29",
+    f11: "123",
+    f6: "12345",
+    f8: true,
+  }
+  const cases: [string, string, number][] = [
+    ["200", "USD", 20_000],
+    ["200.5", "USD", 20_050],
+    ["0.10", "USD", 10],
+    ["20000", "JPY", 20_000],
+    ["1.25", "KWD", 1_250],
+    ["12.005", "BHD", 12_005],
+  ]
+  for (const [limit, currency, minor] of cases) {
+    const harness = page("card", base64)
+    await harness.submit({ ...card, f9: limit, f10: currency })
+    assertEquals(harness.submitted(), 1, `${limit} ${currency}`)
+    const sealed = JSON.parse(await open(privateKey, JTI, harness.ciphertext()))
+    assertEquals(sealed.limit_minor, minor, `${limit} ${currency}`)
+    assertEquals(sealed.currency, currency)
+  }
+  // More decimals than the currency has is refused rather than rounded.
+  for (const [limit, currency] of [["200.5", "JPY"], ["1.2345", "KWD"], ["1.001", "USD"]]) {
+    const harness = page("card", base64)
+    await harness.submit({ ...card, f9: limit, f10: currency })
+    assertEquals(harness.submitted(), 0, `${limit} ${currency}`)
+    assertStringIncludes(harness.error(), "spending limit")
+  }
+})
+
 Deno.test("the page seals a password and a cvv", async () => {
   const { base64, privateKey } = await recipient()
 
