@@ -2701,3 +2701,10 @@ Native NSWindow background stays clear in glass mode, including fullscreen. The 
 after it shows the focused terminal tab's live title and disappears on other tabs.
 GlassSurfaceRenderingTest renders the actual integrated sidebar and verifies that both surfaces
 continue through their headers without tint overlap, in both palettes.
+
+## Tab inventory before a Space is assigned
+
+The current split tree may contain live tabs while `currentWorkspaceId` is null. Both tab
+inventories must include that tree using a window-local `unsaved-window-<windowId>` identity,
+without assigning or persisting a workspace. Browser lookup matches the shared `TabInfo.id`;
+dynamic browser tabs are not instances of the host's built-in `FluckTabInfo`.
