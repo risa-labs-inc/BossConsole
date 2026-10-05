@@ -170,6 +170,42 @@ Deno.test("health is 503 when the client secret is missing", async () => {
   assertEquals(response.status, 503)
 })
 
+Deno.test("client returns the configured client id, uncached", async () => {
+  const h = harness()
+  const response = await h.handler(
+    new Request("https://example.test/functions/v1/fluck-oauth/client"),
+  )
+  assertEquals(response.status, 200)
+  assertEquals(response.headers.get("Content-Type"), "application/json")
+  assertEquals(response.headers.get("Cache-Control"), "no-store")
+  assertEquals(await response.json(), {
+    client_id: "294223497390-test.apps.googleusercontent.com",
+  })
+  assertEquals(routePath("/fluck-oauth/client/"), "/client")
+})
+
+Deno.test("client is 503 when the client id is missing or blank", async () => {
+  for (const value of ["", "  "]) {
+    const h = harness({ env: { GOOGLE_WEB_CLIENT_ID: value } })
+    const response = await h.handler(new Request("https://example.test/fluck-oauth/client"))
+    assertEquals(response.status, 503)
+    assertEquals(await response.json(), { error: "unconfigured" })
+    assertEquals(h.logs, ["client unconfigured"])
+  }
+})
+
+Deno.test("a POST to client is refused and its body drained", async () => {
+  const h = harness()
+  const request = new Request("https://example.test/fluck-oauth/client", {
+    method: "POST",
+    body: "x",
+  })
+  const response = await h.handler(request)
+  assertEquals(response.status, 405)
+  assertEquals(await response.json(), { error: "method" })
+  assertEquals(request.bodyUsed, true)
+})
+
 Deno.test("an unknown route is a 404 page", async () => {
   const h = harness()
   const response = await h.handler(new Request("https://example.test/fluck-oauth/start"))

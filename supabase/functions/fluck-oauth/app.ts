@@ -155,6 +155,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
   return async (request: Request) => {
     const path = routePath(new URL(request.url).pathname)
     if (path === "/health") return health(deps)
+    if (path === "/client") return await client(request, deps)
     if (path === "/callback") return await callback(request, deps)
     if (path === "/refresh") return await refresh(request, deps)
     return page(404, "Not found", PAGE_NOT_FOUND)
@@ -188,6 +189,21 @@ function health(deps: Dependencies): Response {
     status: ok ? 200 : 503,
     headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
   })
+}
+
+// The plugin builds the authorization URL with this id, so it must match the exchange's client.
+async function client(request: Request, deps: Dependencies): Promise<Response> {
+  if (request.method !== "GET") {
+    await request.body?.cancel().catch(() => {})
+    return json(405, { error: "method" })
+  }
+  // Untrimmed: the exchange sends the env value as is, and the two must be the same string.
+  const clientId = deps.env("GOOGLE_WEB_CLIENT_ID")
+  if (!clientId?.trim()) {
+    deps.log("client unconfigured")
+    return json(503, { error: "unconfigured" })
+  }
+  return json(200, { client_id: clientId })
 }
 
 async function callback(request: Request, deps: Dependencies): Promise<Response> {

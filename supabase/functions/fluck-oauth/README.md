@@ -35,6 +35,7 @@ that crosses between them is the secret, through the Secret Manager.
 | `GET /callback` | the signed `state`  | Verifies, exchanges, stores, renders one sentence               |
 | `POST /refresh` | signed install call | Refresh token in, access token out; nothing stored or logged    |
 | `GET /health`   | none                | `{ ok, configured: { clientId, clientSecret } }`, booleans only |
+| `GET /client`   | none                | `{ client_id }`, the public id the authorization URL must use   |
 
 `verify_jwt = false` in `supabase/config.toml`, and it must be: the callback caller is a browser
 following a redirect Google issued and carries no header we chose, and `/refresh` callers hold no
