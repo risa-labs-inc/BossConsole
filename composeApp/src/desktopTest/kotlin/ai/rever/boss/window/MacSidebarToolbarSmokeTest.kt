@@ -23,6 +23,7 @@ class MacSidebarToolbarSmokeTest {
     fun `windows keep independent toolbar items through updates and close`() {
         val windows = mutableListOf<ComposeWindow>()
         val controllers = mutableListOf<MacSidebarToolbar>()
+        val clicked = CompletableFuture<String>()
         try {
             SwingUtilities.invokeAndWait {
                 repeat(2) { index ->
@@ -35,7 +36,7 @@ class MacSidebarToolbarSmokeTest {
                             isVisible = true
                         }
                     windows.add(window)
-                    controllers.add(MacSidebarToolbar(window.windowHandle, {}, {}))
+                    controllers.add(MacSidebarToolbar(window.windowHandle, {}, { clicked.complete(it) }))
                 }
             }
             val first = controllers[0]
@@ -62,6 +63,7 @@ class MacSidebarToolbarSmokeTest {
             listOf(false, true, false).forEach { opensPlugin ->
                 val action = NativeTitleBarAction(
                     "space", "Planet Berul",
+                    contextMenu = listOf(NativeTitleBarAction("create-space", "Create New Space") {}),
                     menu = if (opensPlugin) null else listOf(NativeTitleBarAction("new-space", "Create New Space") {}),
                     onClick = {},
                 )
@@ -79,8 +81,10 @@ class MacSidebarToolbarSmokeTest {
                         assertEquals(number(item, "tag"), number(view, "tag"))
                         kotlin.test.assertNotNull(pointer(view, "target"))
                         kotlin.test.assertNotNull(pointer(view, "action"))
+                        MacToolbarRuntime.send(view, "performClick:", null)
                     }
                 }
+                if (opensPlugin) assertEquals("space", clicked.get(5, TimeUnit.SECONDS))
             }
 
             first.close()
