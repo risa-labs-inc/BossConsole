@@ -94,12 +94,16 @@ internal object AutomaticPluginUpdater {
             if (applyPendingUpdate(update, managers)) remaining.add(update)
         }
         pending = remaining
-        if (remaining.isNotEmpty() &&
-            remaining.none {
-                !retries.canAttempt(it.pluginId, it.newVersion, System.currentTimeMillis())
-            }
-        ) {
-            _status.value = "Waiting for views to close for ${remaining.size} plugin update(s)"
+        if (remaining.isNotEmpty()) {
+            val now = System.currentTimeMillis()
+            val paused = remaining.count { retries.isPaused(it.pluginId, it.newVersion) }
+            val retrying =
+                remaining.count {
+                    !retries.isPaused(it.pluginId, it.newVersion) &&
+                        !retries.canAttempt(it.pluginId, it.newVersion, now)
+                }
+            val waiting = remaining.size - paused - retrying
+            _status.value = automaticPluginPendingStatus(waiting, retrying, paused)
         }
     }
 

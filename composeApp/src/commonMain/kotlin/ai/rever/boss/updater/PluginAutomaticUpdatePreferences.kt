@@ -15,19 +15,16 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
 
 @Composable
 internal fun PluginAutomaticUpdatePreferences() {
     val manager = DynamicPluginManager.anyActiveManager() ?: return
     val plugins by manager.pluginStates.collectAsState()
     val optOuts by UpdateSettings.pluginAutoUpdateOptOuts.collectAsState()
-    val scope = rememberCoroutineScope()
     var expanded by remember { mutableStateOf(false) }
     TextButton(onClick = { expanded = !expanded }) {
         Text(if (expanded) "Hide per-plugin preferences" else "Manage per-plugin automatic updates")
@@ -50,7 +47,7 @@ internal fun PluginAutomaticUpdatePreferences() {
                             checked = plugin.manifest.pluginId !in optOuts,
                             onCheckedChange = { enabled ->
                                 UpdateSettings.setPluginAutomaticUpdates(plugin.manifest.pluginId, enabled)
-                                scope.launch { UpdateSettingsManager.saveSettings() }
+                                UpdatePreferenceWriter.instance.requestSave()
                             },
                         )
                     }

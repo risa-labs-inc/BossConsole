@@ -614,7 +614,12 @@ class PluginUpdateManager(
 
         // Success
         _state.value = UpdateState.Completed(pluginId, update.newVersion)
-        listeners.forEach { it.onUpdateCompleted(pluginId, update.newVersion) }
+        listeners.forEach { listener ->
+            runCatching { listener.onUpdateCompleted(pluginId, update.newVersion) }
+                .onFailure { error ->
+                    logger.warn(LogCategory.SYSTEM, "Plugin update completion listener failed", error = error)
+                }
+        }
 
         // Remove from available updates
         _availableUpdates.value =

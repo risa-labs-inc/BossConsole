@@ -54,6 +54,7 @@ internal class PluginUpdateArtifact(
             Files.move(file.toPath(), quarantine.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
             quarantine.delete()
         }
+        Files.deleteIfExists(File("${file.absolutePath}.rejected-update").toPath())
         PluginSignatureSidecar.delete(file.absolutePath)
     }
 }

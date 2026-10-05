@@ -11,6 +11,42 @@ import kotlin.test.assertTrue
 
 class AutomaticPluginPreferencesTest {
     @Test
+    fun `closing settings does not cancel an accepted opt out save`(): Unit =
+        runBlocking {
+            UpdateSettingsManager.ensureLoaded()
+            val directory = Files.createTempDirectory("closing-plugin-settings").toFile()
+            val originalFile = UpdateSettingsFiles.settingsFileOverride
+            val originalOptOuts = UpdateSettings.pluginAutoUpdateOptOuts.value
+            val caller = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Job())
+            val writerScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob())
+            val started = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val proceed = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val writer =
+                UpdatePreferenceWriter(writerScope) {
+                    started.complete(Unit)
+                    proceed.await()
+                    UpdateSettingsManager.saveSettings()
+                }
+            try {
+                UpdateSettingsFiles.settingsFileOverride = File(directory, "settings.json")
+                UpdateSettings.setPluginAutomaticUpdates("test.pinned", false)
+                val save = kotlinx.coroutines.withContext(caller.coroutineContext) { writer.requestSave() }
+                started.await()
+                caller.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
+                proceed.complete(Unit)
+                save.join()
+                val persisted = Json.decodeFromString<UpdateSettingsData>(UpdateSettingsFiles.settingsFile.readText())
+                assertTrue("test.pinned" in persisted.pluginAutoUpdateOptOuts)
+            } finally {
+                caller.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
+                writerScope.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
+                UpdateSettings.restorePluginOptOuts(originalOptOuts)
+                UpdateSettingsFiles.settingsFileOverride = originalFile
+                directory.deleteRecursively()
+            }
+        }
+
+    @Test
     fun `legacy update preferences inherit the build default for plugin updates`() {
         val settings = Json.decodeFromString<UpdateSettingsData>("{\"autoCheckEnabled\":false}")
         assertEquals(defaultAutoUpdateEnabled(), settings.autoPluginUpdatesEnabled)

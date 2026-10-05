@@ -9,6 +9,44 @@ import kotlin.test.assertTrue
 
 class AutomaticPluginInstallRegressionTest {
     @Test
+    fun `live rejected artifact retains its fence until its loader closes`() {
+        val directory = Files.createTempDirectory("plugin-update-live").toFile()
+        try {
+            val artifact = PluginUpdateArtifact(java.io.File(directory, "plugin-2.jar"))
+            artifact.download.writeText("rejected bytes")
+            artifact.promote().getOrThrow()
+            ai.rever.boss.plugin.loader
+                .PluginClassLoader(
+                    "test.rejected",
+                    arrayOf(artifact.target.toURI().toURL()),
+                    javaClass.classLoader,
+                ).use {
+                    artifact.discardRejected().getOrThrow()
+                    assertTrue(artifact.target.exists())
+                    assertTrue(java.io.File("${artifact.target.absolutePath}.rejected-update").exists())
+                }
+            artifact.discardRejected().getOrThrow()
+            assertFalse(artifact.target.exists())
+            assertFalse(java.io.File("${artifact.target.absolutePath}.rejected-update").exists())
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `paused and retrying plugins do not hide updates waiting on views`() {
+        val status = automaticPluginPendingStatus(waiting = 1, retrying = 1, paused = 1)
+        assertTrue(status.contains("1 plugin update(s) waiting for views"))
+        assertTrue(status.contains("1 plugin update(s) waiting to retry"))
+        assertTrue(status.contains("1 plugin update(s) paused after three failures"))
+        assertFalse(automaticPluginPendingStatus(0, 1, 1).contains("waiting for views"))
+        val retries = AutomaticPluginRetryPolicy()
+        repeat(3) { retries.failed("plugin", "2", 0) }
+        assertTrue(retries.isPaused("plugin", "2"))
+        assertFalse(retries.isPaused("plugin", "3"))
+    }
+
+    @Test
     fun `cleanup after successful activation preserves the committed artifact`() {
         val directory = Files.createTempDirectory("plugin-update-committed").toFile()
         try {
@@ -38,6 +76,10 @@ class AutomaticPluginInstallRegressionTest {
             artifact.discardRejected().getOrThrow()
             assertTrue(directory.listFiles()!!.none { it.extension == "jar" })
             assertFalse(java.io.File(PluginSignatureSidecar.pathFor(artifact.target.absolutePath)).exists())
+            assertFalse(java.io.File("${artifact.target.absolutePath}.rejected-update").exists())
+            // Manual replacement at the same path must not inherit a stale startup fence.
+            artifact.target.writeText("repaired bytes")
+            assertFalse(java.io.File("${artifact.target.absolutePath}.rejected-update").exists())
         } finally {
             directory.deleteRecursively()
         }

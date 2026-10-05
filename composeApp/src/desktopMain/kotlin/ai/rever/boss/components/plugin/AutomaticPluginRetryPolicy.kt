@@ -29,6 +29,11 @@ internal class AutomaticPluginRetryPolicy {
         return attempts < 3
     }
 
+    fun isPaused(
+        id: String,
+        version: String,
+    ): Boolean = failures[id]?.let { it.version == version && it.attempts >= 3 } == true
+
     fun clear(id: String) {
         failures.remove(id)
     }

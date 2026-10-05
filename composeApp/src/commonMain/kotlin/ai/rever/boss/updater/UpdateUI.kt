@@ -535,7 +535,7 @@ fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinat
                         checked = automaticPluginUpdates,
                         onCheckedChange = { enabled ->
                             UpdateSettings.autoPluginUpdatesEnabled = enabled
-                            coroutineScope.launch { UpdateSettingsManager.saveSettings() }
+                            UpdatePreferenceWriter.instance.requestSave()
                         },
                         colors =
                             SwitchDefaults.colors(

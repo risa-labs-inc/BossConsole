@@ -35,6 +35,45 @@ class PluginUpdateManagerIdentityVetTest {
     }
 
     @Test
+    fun `throwing completion listener cannot fail activation or prevent offer cleanup`() =
+        runTest {
+            val mgr = manager(vet = { _, _ -> Result.success(Unit) })
+            val pending = mgr.checkForUpdates(mapOf(pluginId to "1.0.0")).availableUpdates.single()
+            mgr.addListener(
+                object : UpdateListener {
+                    override fun onUpdateCompleted(
+                        pluginId: String,
+                        newVersion: String,
+                    ) {
+                        error("Listener failed after installation")
+                    }
+                },
+            )
+            var notified = false
+            mgr.addListener(
+                object : UpdateListener {
+                    override fun onUpdateCompleted(
+                        pluginId: String,
+                        newVersion: String,
+                    ) {
+                        notified = true
+                    }
+                },
+            )
+            val result =
+                mgr.updatePluginSnapshot(
+                    pending,
+                    "/tmp/does-not-matter.jar",
+                    unloadPlugin = { Result.success(Unit) },
+                    loadPlugin = { Result.success(Unit) },
+                )
+            assertTrue(result.isSuccess)
+            assertTrue(notified)
+            assertEquals(UpdateState.Completed(pluginId, "2.0.0"), mgr.state.value)
+            assertTrue(mgr.availableUpdates.value.isEmpty())
+        }
+
+    @Test
     fun `snapshot activation removes older offers from the shared list`() =
         runTest {
             val mgr = manager(vet = { _, _ -> Result.success(Unit) })
