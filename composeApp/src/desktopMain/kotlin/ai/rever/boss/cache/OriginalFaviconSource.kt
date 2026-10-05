@@ -7,8 +7,6 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.graphics.toComposeImageBitmap
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
@@ -39,13 +37,6 @@ internal object OriginalFaviconSource {
     private const val MAX_DIMENSION = 1024
     private val attempts = OriginalFaviconAttempts()
     private val semaphore = Semaphore(3)
-    private val clientLazy =
-        lazy {
-            HttpClient(CIO) {
-                configureOriginalFaviconClient()
-            }
-        }
-    private val client by clientLazy
 
     suspend fun sharperIcon(
         url: String?,
@@ -76,7 +67,7 @@ internal object OriginalFaviconSource {
             val matching = result?.takeIf { page == null || sharperMatchingFavicon(page, it.icon) === it.icon }
             if (matching != null && owner) {
                 val host = FaviconHost.of(url) ?: return@withContext matching.icon
-                HqFaviconDiskCache.save(HqFaviconDiskCache.keyFor(host), matching.bitmap.toAwtImage())
+                HqFaviconDiskCache.save(HqFaviconDiskCache.originalKeyFor(host), matching.bitmap.toAwtImage())
             }
             matching?.icon
         }
@@ -211,7 +202,7 @@ internal object OriginalFaviconSource {
 
     private suspend fun fetch(url: String): ByteArray? {
         val uri = URI(url)
-        return fetchOriginalFavicon(client, url, htmlPrefix = uri.rawPath == "/" && uri.rawQuery == null)
+        return fetchOriginalFavicon(null, url, htmlPrefix = uri.rawPath == "/" && uri.rawQuery == null)
     }
 
     fun clearAttempts() {
@@ -219,7 +210,7 @@ internal object OriginalFaviconSource {
     }
 
     fun close() {
-        if (clientLazy.isInitialized()) client.close()
+        closeOriginalFaviconDns()
     }
 }
 

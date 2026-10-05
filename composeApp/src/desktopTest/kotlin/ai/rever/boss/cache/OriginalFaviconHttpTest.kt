@@ -1,6 +1,7 @@
 package ai.rever.boss.cache
 
 import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIOEngineConfig
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpHeaders
@@ -24,7 +25,7 @@ class OriginalFaviconHttpTest {
             HttpClient(
                 MockEngine {
                     requests++
-                    respond("", HttpStatusCode.Found, headersOf(HttpHeaders.Location, "http://127.0.0.1/private"))
+                    respond("", HttpStatusCode.Found, headersOf(HttpHeaders.Location, "https://127.0.0.1/private"))
                 },
             ) { configureOriginalFaviconClient() }.use { client ->
                 assertNull(fetch(client, "https://example.com/favicon.ico", false))
@@ -93,6 +94,15 @@ class OriginalFaviconHttpTest {
             "::1",
             "fd00::1",
             "fe80::1",
+            "::ffff:127.0.0.1",
+            "64:ff9b::a00:1",
+            "2002:7f00:1::",
+            "2001::1",
+            "2001:db8::1",
+            "192.0.0.1",
+            "192.0.2.1",
+            "198.51.100.1",
+            "203.0.113.1",
         )) {
             assertFalse(isPublicFaviconAddress(InetAddress.getByName(ip)), ip)
         }
@@ -107,8 +117,8 @@ class OriginalFaviconHttpTest {
             val checkedHosts = mutableListOf<String>()
             HttpClient(
                 MockEngine { request ->
-                    requests.add(request.url.host)
-                    if (request.url.host == "example.com") {
+                    requests.add(assertNotNull(request.headers[HttpHeaders.Host]))
+                    if (request.headers[HttpHeaders.Host] == "example.com") {
                         respond(
                             "",
                             HttpStatusCode.Found,
@@ -122,7 +132,7 @@ class OriginalFaviconHttpTest {
                 val result =
                     fetchOriginalFavicon(client, "https://example.com/favicon.ico", false) { host ->
                         checkedHosts.add(host)
-                        true
+                        listOf(publicAddress)
                     }
                 assertEquals("image", assertNotNull(result).toString(Charsets.UTF_8))
                 assertEquals(listOf("example.com", "cdn.example.com"), requests)
@@ -146,7 +156,7 @@ class OriginalFaviconHttpTest {
             ) { configureOriginalFaviconClient() }.use { client ->
                 assertNull(
                     fetchOriginalFavicon(client, "https://example.com/favicon.ico", false) {
-                        it == "example.com"
+                        listOf(if (it == "example.com") publicAddress else InetAddress.getByName("127.0.0.1"))
                     },
                 )
                 assertEquals(1, requests)
@@ -173,5 +183,39 @@ class OriginalFaviconHttpTest {
         client: HttpClient,
         url: String,
         htmlPrefix: Boolean,
-    ): ByteArray? = fetchOriginalFavicon(client, url, htmlPrefix, addressAllowed = { true })
+    ): ByteArray? = fetchOriginalFavicon(client, url, htmlPrefix, resolveAddresses = { listOf(publicAddress) })
+
+    @Test
+    fun `connection uses the vetted IP without resolving the original host again`(): Unit =
+        runTest {
+            var lookups = 0
+            HttpClient(
+                MockEngine { request ->
+                    assertEquals("8.8.8.8", request.url.host)
+                    assertEquals("example.com:8443", request.headers[HttpHeaders.Host])
+                    assertEquals("/icon.ico?size=128", request.url.encodedPath + "?" + request.url.encodedQuery)
+                    respond("image")
+                },
+            ) { configureOriginalFaviconClient() }.use { client ->
+                val result =
+                    fetchOriginalFavicon(client, "https://example.com:8443/icon.ico?size=128", false) {
+                        lookups++
+                        // A second DNS answer would be unsafe. The transport must use the first result.
+                        listOf(if (lookups == 1) publicAddress else InetAddress.getByName("127.0.0.1"))
+                    }
+                assertEquals("image", assertNotNull(result).toString(Charsets.UTF_8))
+                assertEquals(1, lookups)
+            }
+        }
+
+    @Test
+    fun `pinned HTTPS preserves the original certificate name and default trust`() {
+        pinnedOriginalFaviconClient("example.com").use { client ->
+            val config = client.engine.config as CIOEngineConfig
+            assertEquals("example.com", config.https.serverName)
+            assertNull(config.https.trustManager)
+        }
+    }
+
+    private val publicAddress = InetAddress.getByName("8.8.8.8")
 }

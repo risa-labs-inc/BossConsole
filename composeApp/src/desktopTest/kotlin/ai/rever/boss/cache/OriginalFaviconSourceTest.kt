@@ -26,7 +26,7 @@ class OriginalFaviconSourceTest {
     fun cleanUp(): Unit =
         runTest {
             OriginalFaviconSource.clearAttempts()
-            HqFaviconDiskCache.delete(HqFaviconDiskCache.keyFor("home-lookup.example.com"))
+            HqFaviconDiskCache.delete(HqFaviconDiskCache.originalKeyFor("home-lookup.example.com"))
         }
 
     @Test

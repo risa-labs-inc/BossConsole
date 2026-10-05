@@ -135,7 +135,9 @@ object HighQualityFaviconService {
             // The two slots cannot be swapped by accident: `pageIcon` is not `suspend` and
             // `hostGuess` is, so the compiler rejects the reversal a test would otherwise pin.
             pageIcon = ::loadStandardFavicon,
-            hostGuess = { hostIcon(it) },
+            hostGuess = { url ->
+                FaviconHost.of(url)?.let { HqFaviconDiskCache.loadOriginal(it)?.icon } ?: hostIcon(url)
+            },
             qualityUpgrade = { pageUrl, icon -> upgradeCachedFavicon(pageUrl, icon) },
         )
 

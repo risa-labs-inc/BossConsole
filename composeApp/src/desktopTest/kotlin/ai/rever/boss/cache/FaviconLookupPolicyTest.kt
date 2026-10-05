@@ -94,7 +94,9 @@ class FaviconLookupPolicyTest {
                     small,
                     NOW,
                     loadCandidate = { HqFaviconDiskCache.load(HqFaviconDiskCache.keyFor(it), dir) },
-                    refresh = { HighQualityFaviconService.hostIcon(it, NOW, dir) { _, _ -> FaviconFetch.NoAnswer } },
+                    refresh = { url, _ ->
+                        HighQualityFaviconService.hostIcon(url, NOW, dir) { _, _ -> FaviconFetch.NoAnswer }
+                    },
                 )
             assertEquals(128f, upgraded.painter.intrinsicSize.width)
         }

@@ -24,18 +24,22 @@ internal suspend fun upgradeCachedFavicon(
     url: String?,
     page: TabIcon.Image,
     nowMs: Long = System.currentTimeMillis(),
-    loadCandidate: (String) -> CachedFavicon? = { host -> HqFaviconDiskCache.load(HqFaviconDiskCache.keyFor(host)) },
-    refresh: suspend (String) -> TabIcon.Image? = {
-        HighQualityFaviconService.hostIcon(it, nowMs = nowMs, refreshSmallIcon = true)
+    loadCandidate: (String) -> CachedFavicon? = { host -> loadFaviconArtwork(host) },
+    refresh: suspend (String, CachedFavicon) -> TabIcon.Image? = { pageUrl, cached ->
+        refreshFaviconArtwork(pageUrl, page, cached, nowMs)
     },
 ): TabIcon.Image {
     val host = FaviconHost.of(url)
     val cached = host?.let(loadCandidate) ?: return page
-    val candidate = if (qualityRefreshDue(cached, nowMs)) refresh("https://$host") else cached.icon
+    val candidate = if (qualityRefreshDue(cached, nowMs)) refresh("https://$host", cached) else cached.icon
     val upgraded = sharperMatchingFavicon(page, candidate)
     // NoIcon returns null after intentionally deleting the cache. An unrelated non-null refresh
     // may belong to another page on the same host; keep the old verified artwork for this page.
-    return if (candidate != null && upgraded === page) sharperMatchingFavicon(page, cached.icon) else upgraded
+    return if (candidate != null && candidate !== cached.icon && upgraded === page) {
+        sharperMatchingFavicon(page, cached.icon)
+    } else {
+        upgraded
+    }
 }
 
 internal fun qualityRefreshDue(

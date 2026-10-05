@@ -113,7 +113,7 @@ class FaviconQualityUpgradeTest {
                     "https://private.test",
                     page,
                     loadCandidate = { null },
-                    refresh = { error("lookup started") },
+                    refresh = { _, _ -> error("lookup started") },
                 ),
             )
         }
@@ -131,7 +131,7 @@ class FaviconQualityUpgradeTest {
                     page,
                     now,
                     loadCandidate = { CachedFavicon(cached, now) },
-                    refresh = { error("fresh entry was fetched again") },
+                    refresh = { _, _ -> error("fresh entry was fetched again") },
                 ),
             )
             var refreshed = false
@@ -143,7 +143,7 @@ class FaviconQualityUpgradeTest {
                     page,
                     now,
                     loadCandidate = { CachedFavicon(cached, now - FaviconFreshness.MAX_CACHE_AGE_MS - 1) },
-                    refresh = {
+                    refresh = { _, _ ->
                         refreshed = true
                         large
                     },
@@ -167,10 +167,10 @@ class FaviconQualityUpgradeTest {
             val page = icon(16, Color.BLUE)
             val now = 2_000_000_000_000L
             val old = CachedFavicon(icon(32, Color.BLUE), now - FaviconFreshness.MAX_CACHE_AGE_MS - 1)
-            assertSame(page, upgradeCachedFavicon("https://example.test", page, now, { old }, { null }))
+            assertSame(page, upgradeCachedFavicon("https://example.test", page, now, { old }, { _, _ -> null }))
             assertSame(
                 old.icon,
-                upgradeCachedFavicon("https://example.test", page, now, { old }, { icon(128, Color.RED) }),
+                upgradeCachedFavicon("https://example.test", page, now, { old }, { _, _ -> icon(128, Color.RED) }),
             )
         }
 
@@ -184,8 +184,8 @@ class FaviconQualityUpgradeTest {
                 page,
                 1_000,
                 loadCandidate = { CachedFavicon(icon(128, Color.BLUE), 1_001) },
-                refresh = {
-                    requested = it
+                refresh = { url, _ ->
+                    requested = url
                     null
                 },
             )
