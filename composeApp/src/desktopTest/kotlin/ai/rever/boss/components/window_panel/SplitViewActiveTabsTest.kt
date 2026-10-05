@@ -64,11 +64,12 @@ class SplitViewActiveTabsTest {
         val left = state.getPanel(state.activePanelId)!!
         left.tabsComponent.addTab(createTab("terminal"))
         val rightId = state.splitPanel(left.id, SplitOrientation.VERTICAL)
-        val browserType = object : TabTypeInfo {
-            override val typeId = TabTypeId("fluck", "dynamic.browser")
-            override val displayName = "Dynamic Browser"
-            override val icon = Icons.Outlined.Language
-        }
+        val browserType =
+            object : TabTypeInfo {
+                override val typeId = TabTypeId("fluck", "dynamic.browser")
+                override val displayName = "Dynamic Browser"
+                override val icon = Icons.Outlined.Language
+            }
         tabRegistry.registerTabType(browserType) { config, ctx -> TestTabComponent(ctx, config) }
         val browser = TestTabInfo("browser", browserType.typeId)
         state.getPanel(rightId)!!.tabsComponent.addTab(browser)

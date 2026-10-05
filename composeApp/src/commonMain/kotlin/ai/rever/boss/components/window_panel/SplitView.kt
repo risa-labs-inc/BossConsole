@@ -2333,6 +2333,18 @@ class SplitViewState(
         }
     }
 
+    private fun inventoryWorkspaceId(windowId: String) = _currentWorkspaceId ?: "unsaved-window-$windowId"
+
+    private fun defaultInventoryWorkspaceName(
+        workspaceId: String,
+        windowId: String,
+    ): String =
+        when (workspaceId) {
+            "last-session" -> "Last Session"
+            "unsaved-window-$windowId" -> "Current Window"
+            else -> "Space $workspaceId"
+        }
+
     fun collectAllActiveFluckTabs(windowId: String = "unknown"): List<ActiveTab> {
         val result = mutableListOf<ActiveTab>()
         val seenTabIds = mutableSetOf<String>()
@@ -2340,7 +2352,7 @@ class SplitViewState(
         // The visible tree exists even before a Space has been assigned.
         // Use a window-local inventory identity without creating a saved workspace.
         run {
-            val workspaceId = _currentWorkspaceId ?: "unsaved-window-$windowId"
+            val workspaceId = inventoryWorkspaceId(windowId)
             // Get the actual workspace name from preserved states or use a default
             val workspaceName =
                 preservedWorkspaceStates[workspaceId]?.workspaceName
@@ -2439,15 +2451,11 @@ class SplitViewState(
                 ?.find { it.id == workspaceId }
                 ?.name
                 ?: preservedWorkspaceStates[workspaceId]?.workspaceName
-                ?: when (workspaceId) {
-                    "last-session" -> "Last Session"
-                    "unsaved-window-$windowId" -> "Current Window"
-                    else -> "Space $workspaceId"
-                }
+                ?: defaultInventoryWorkspaceName(workspaceId, windowId)
 
         // Include visible tabs in a window that has not yet been assigned a Space.
         run {
-            val workspaceId = _currentWorkspaceId ?: "unsaved-window-$windowId"
+            val workspaceId = inventoryWorkspaceId(windowId)
             val currentTabs = mutableListOf<ActiveTab>()
 
             val panels = getAllPanels()
