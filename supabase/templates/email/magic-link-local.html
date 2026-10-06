@@ -9,8 +9,12 @@
   Third brand (web): the live-sessions edge function requests OTPs with
   redirect_to=<functions>/live-sessions/auth; that email opens the browser page, not an app.
   Exact match (Go text/template has no hasPrefix); lockstep with redirect/app.ts and config.toml.
-  Fourth brand ($fluck): the fluck-web function (fluck.risaboss.com), same web shape, own name.
+  Fourth brand (optimist): Optimist chat (risa-labs-inc/optimist-chat) opens its own web callback;
+  lockstep with redirect/app.ts OPTIMIST_REDIRECTS (prod URLs: no local-function equivalent).
+  Fifth brand ($fluck): the fluck-web function (fluck.risaboss.com), same web shape, own name.
+  Exact-match URLs only, disjoint from optimist/web, so fluck never matches those.
 */}}{{ $bossterm := eq .RedirectTo "bossterm://auth/verify" -}}
+{{ $optimist := or (eq .RedirectTo "https://optimist.risalabs.ai/auth/callback") (eq .RedirectTo "https://spark-7226.basa-tone.ts.net/auth/callback") -}}
 {{ $fluck := eq .RedirectTo "http://127.0.0.1:54321/functions/v1/fluck-web/auth" -}}
 {{ $web := eq .RedirectTo "http://127.0.0.1:54321/functions/v1/live-sessions/auth" -}}
 <!DOCTYPE html>
@@ -18,7 +22,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sign in to {{ if $fluck }}Fluck{{ else if $web }}BossTerm Live Sessions{{ else if $bossterm }}BossTerm{{ else }}BOSS{{ end }}</title>
+    <title>Sign in to {{ if $optimist }}Optimist{{ else if $fluck }}Fluck{{ else if $web }}BossTerm Live Sessions{{ else if $bossterm }}BossTerm{{ else }}BOSS{{ end }}</title>
 </head>
 <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #1a1a1a;">
     <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #1a1a1a;">
@@ -29,10 +33,10 @@
                     <tr>
                         <td style="padding: 40px 40px 30px; text-align: center; border-bottom: 1px solid #4D4D4D;">
                             <h1 style="margin: 0; color: #F2F2F2; font-size: 28px; font-weight: 600; letter-spacing: -0.5px;">
-                                {{ if $fluck }}Fluck{{ else if $web }}BossTerm Live Sessions{{ else if $bossterm }}BossTerm{{ else }}BOSS Console{{ end }} [LOCAL]
+                                {{ if $optimist }}Optimist{{ else if $fluck }}Fluck{{ else if $web }}BossTerm Live Sessions{{ else if $bossterm }}BossTerm{{ else }}BOSS Console{{ end }} [LOCAL]
                             </h1>
                             <p style="margin: 8px 0 0; color: #AAAAAA; font-size: 14px; letter-spacing: 0.5px;">
-                                {{ if $fluck }}Your Fluck, from any browser{{ else if $web }}Your shared terminals, in the browser{{ else if $bossterm }}Modern Terminal Emulator{{ else }}Business Operating System as Service{{ end }} - Local Development
+                                {{ if $optimist }}Secure chat by Risa Labs{{ else if $fluck }}Your Fluck, from any browser{{ else if $web }}Your shared terminals, in the browser{{ else if $bossterm }}Modern Terminal Emulator{{ else }}Business Operating System as Service{{ end }} - Local Development
                             </p>
                         </td>
                     </tr>
@@ -44,7 +48,7 @@
                                 Sign in to your account
                             </h2>
                             <p style="margin: 0 0 24px; color: #AAAAAA; font-size: 16px; line-height: 1.5;">
-                                {{ if $fluck }}Click the button below to open your Fluck in this browser.{{ else if $web }}Click the button below to open your live BossTerm sessions in this browser.{{ else }}Click the button below to securely sign in to your {{ if $bossterm }}BossTerm{{ else }}BOSS{{ end }} account.{{ end }} This link will expire in 15 minutes.
+                                {{ if $optimist }}Click the button below to sign in to Optimist in this browser.{{ else if $fluck }}Click the button below to open your Fluck in this browser.{{ else if $web }}Click the button below to open your live BossTerm sessions in this browser.{{ else }}Click the button below to securely sign in to your {{ if $bossterm }}BossTerm{{ else }}BOSS{{ end }} account.{{ end }} This link will expire in 15 minutes.
                             </p>
 
                             <!-- Button -->
@@ -53,7 +57,7 @@
                                     <td align="center" style="padding: 16px 0;">
                                         <a href="http://127.0.0.1:54321/functions/v1/redirect?url={{ .ConfirmationURL }}"
                                            style="display: inline-block; padding: 16px 48px; background-color: #3592C4; color: #FFFFFF; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 600; letter-spacing: 0.3px; box-shadow: 0 2px 8px rgba(53, 146, 196, 0.3);">
-                                            {{ if $fluck }}Open Fluck{{ else if $web }}Open Live Sessions{{ else }}Sign In to {{ if $bossterm }}BossTerm{{ else }}BOSS{{ end }}{{ end }} [LOCAL]
+                                            {{ if $optimist }}Sign In to Optimist{{ else if $fluck }}Open Fluck{{ else if $web }}Open Live Sessions{{ else }}Sign In to {{ if $bossterm }}BossTerm{{ else }}BOSS{{ end }}{{ end }} [LOCAL]
                                         </a>
                                     </td>
                                 </tr>
@@ -94,10 +98,10 @@
                     <tr>
                         <td style="padding: 30px 40px; text-align: center; border-top: 1px solid #4D4D4D;">
                             <p style="margin: 0; color: #AAAAAA; font-size: 13px; line-height: 1.5;">
-                                This email was sent by {{ if $fluck }}Fluck{{ else if $web }}BossTerm Live Sessions{{ else if $bossterm }}BossTerm{{ else }}BOSS Console{{ end }} - Local Development Environment
+                                This email was sent by {{ if $optimist }}Optimist{{ else if $fluck }}Fluck{{ else if $web }}BossTerm Live Sessions{{ else if $bossterm }}BossTerm{{ else }}BOSS Console{{ end }} - Local Development Environment
                             </p>
                             <p style="margin: 12px 0 0; color: #666666; font-size: 12px;">
-                                {{ if or $fluck $web $bossterm }}© 2025 Risa Labs. All rights reserved.{{ else }}© 2025 BOSS. All rights reserved.{{ end }}
+                                {{ if or $optimist $fluck $web $bossterm }}© 2025 Risa Labs. All rights reserved.{{ else }}© 2025 BOSS. All rights reserved.{{ end }}
                             </p>
                         </td>
                     </tr>
