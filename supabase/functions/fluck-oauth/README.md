@@ -1,9 +1,10 @@
-# Fluck Google OAuth callback
+# Fluck OAuth callback
 
-The OAuth redirect target for Fluck's Google connector. It verifies a `state` signed by a Fluck
-install's registered Ed25519 key, exchanges the authorization code with Google, and writes the
+The OAuth redirect target for Fluck's Google and Slack connectors. It verifies a `state` signed by a
+Fluck install's registered Ed25519 key, exchanges the authorization code with Google, and writes the
 resulting refresh token into BOSS Secret Manager as the BOSS user who owns that install. It is also
-where installs refresh access tokens, since the Google web client secret lives only here.
+where installs refresh access tokens, since the Google web client secret lives only here. Slack uses
+the same state and nonce checks at `GET /slack/callback` (see [Slack](#slack)).
 
 It replaces a callback Fluck used to serve from the machine it runs on, behind a Tailscale Funnel
 hostname. A redirect URI registered with Google has to keep resolving forever; a tailnet hostname
@@ -30,12 +31,15 @@ that crosses between them is the secret, through the Secret Manager.
 
 ## Routes
 
-| Route           | Auth                | What it does                                                                    |
-| --------------- | ------------------- | ------------------------------------------------------------------------------- |
-| `GET /callback` | the signed `state`  | Verifies, exchanges, stores, renders one sentence                               |
-| `POST /refresh` | signed install call | Refresh token in, access token out; nothing stored or logged                    |
-| `GET /health`   | none                | `{ ok, configured: { clientId, clientSecret, githubClientId } }`, booleans only |
-| `GET /client`   | none                | `{ client_id, github_client_id? }`, the public ids the plugin needs             |
+| Route                 | Auth                | What it does                                                                                                      |
+| --------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `GET /callback`       | the signed `state`  | Google: verifies, exchanges, binds, stores, renders one sentence                                                  |
+| `GET /slack/callback` | the signed `state`  | Slack: verifies, exchanges, stores the `xoxp-` user token, renders one sentence                                   |
+| `POST /refresh`       | signed install call | Google refresh token in, access token out; nothing stored or logged                                               |
+| `GET /health`         | none                | `{ ok, configured: { clientId, clientSecret, githubClientId, slackClientId, slackClientSecret } }`, booleans only |
+| `GET /client`         | none                | `{ client_id, github_client_id?, slack_client_id? }`, the public ids the plugin needs                             |
+
+`ok` is the Google pair only; GitHub and Slack are optional and never make `/health` a 503.
 
 `verify_jwt = false` in `supabase/config.toml`, and it must be: the callback caller is a browser
 following a redirect Google issued and carries no header we chose, and `/refresh` callers hold no
@@ -87,6 +91,8 @@ Set with `supabase secrets set --project-ref pcnwqamqdnsadranufjv …`. `SUPABAS
 | `GOOGLE_WEB_CLIENT_ID`     | yes      | The Google OAuth client of type **Web application**                                                                        |
 | `GOOGLE_WEB_CLIENT_SECRET` | yes      | Its client secret. This function is the only holder; the plugin never sees it                                              |
 | `GITHUB_OAUTH_CLIENT_ID`   | no       | Public client id of the risa-labs-inc GitHub OAuth App with Device Flow enabled; served at `/client` as `github_client_id` |
+| `SLACK_CLIENT_ID`          | no       | Public client id of the Fluck Slack app; served at `/client` as `slack_client_id`                                          |
+| `SLACK_CLIENT_SECRET`      | no       | Its client secret. Without both Slack variables `/slack/callback` renders the unconfigured page                            |
 | `PUBLIC_BASE_URL`          | no       | Defaults to `https://pcnwqamqdnsadranufjv.functions.supabase.co/fluck-oauth`. Set it when the custom domain lands          |
 
 There is no state key. Each install signs with the Ed25519 key it registered through fluck-vault's
@@ -95,10 +101,10 @@ There is no state key. Each install signs with the Ed25519 key it registered thr
 
 ### `PUBLIC_BASE_URL`
 
-The redirect URI is this value plus `/callback`, and Google compares it byte for byte with the one
-in the authorization request. It is therefore a configuration value at BOTH ends: change it here and
-in the plugin's `FLUCK_OAUTH_PUBLIC_BASE_URL`, add the new URI to the Google client, and only then
-remove the old one.
+The redirect URI is this value plus `/callback` (Slack: plus `/slack/callback`), and Google compares
+it byte for byte with the one in the authorization request. It is therefore a configuration value at
+BOTH ends: change it here and in the plugin's `FLUCK_OAUTH_PUBLIC_BASE_URL`, add the new URI to the
+Google client, and only then remove the old one.
 
 ## Google console
 
@@ -113,6 +119,53 @@ same project. The scopes the plugin requests are `gmail.modify`, `calendar`, `dr
 `documents`, `spreadsheets`, `openid` and `userinfo.email`, with `access_type=offline` and
 `prompt=consent`, which together are what make Google return a refresh token every time rather than
 only on the first consent an account ever gives.
+
+## Slack
+
+`GET /slack/callback` runs the exact checks `/callback` does (method, `error` param, configuration,
+install-signed state owned by its `uid`, single use nonce claimed before the exchange) through the
+same helper in `app.ts`, then POSTs `client_id`, `client_secret`, `code` and `redirect_uri`
+(form-encoded) to `https://slack.com/api/oauth.v2.access`.
+
+- Slack answers HTTP 200 with `{"ok":false,"error":"…"}` on a refusal. Any refusal is the bad link
+  page, except `ratelimited`, `request_timeout`, `service_unavailable`, `internal_error` and
+  `fatal_error`, which, like a network failure, HTTP 429 or a 5xx, are the "could not be reached"
+  page.
+- On success it reads `authed_user.access_token`, which must start with `xoxp-`. Anything else (no
+  user token, a bot token only, or a rotating `xoxe.xoxp-` token) is the "no lasting access" page.
+- The token is stored at `fluck/<workspaceId>/slack/SLACK_MCP_XOXP_TOKEN` with username
+  `<team name> (<authed user id>)`. The plugin polls for that key.
+- No grant is bound and there is no Slack `/refresh`: with token rotation off the user token does
+  not expire.
+
+The plugin builds the authorization URL as:
+
+```
+https://slack.com/oauth/v2/authorize?client_id=<slack_client_id from /client>
+  &user_scope=<scopes below, comma separated>
+  &redirect_uri=<PUBLIC_BASE_URL>/slack/callback
+  &state=<signed state>
+```
+
+`user_scope`, not `scope`: the latter asks for a bot token, which this function ignores.
+
+### Slack app setup
+
+At api.slack.com/apps, on the Fluck app:
+
+1. **OAuth & Permissions → Redirect URLs**: add both, byte for byte, no trailing slash:
+
+   ```
+   https://pcnwqamqdnsadranufjv.functions.supabase.co/fluck-oauth/slack/callback
+   https://api.risaboss.com/fluck-oauth/slack/callback
+   ```
+
+2. **User Token Scopes**:
+   `channels:history channels:read groups:history groups:read im:history
+   im:read mpim:history mpim:read users:read users:read.email search:read chat:write`.
+3. **Token Rotation**: OFF. With rotation on Slack issues expiring `xoxe.xoxp-` tokens, which this
+   function refuses because nothing here refreshes them.
+4. Copy the Client ID and Client Secret into `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`.
 
 ## No PKCE
 
@@ -163,7 +216,8 @@ use and short lived.
 
    ```sh
    curl -s https://pcnwqamqdnsadranufjv.functions.supabase.co/fluck-oauth/health
-   # {"ok":true,"configured":{"clientId":true,"clientSecret":true}}
+   # {"ok":true,"configured":{"clientId":true,"clientSecret":true,"githubClientId":true,
+   #  "slackClientId":true,"slackClientSecret":true}}
    ```
 
 ## The state format is a shared contract
@@ -183,9 +237,9 @@ deno task check   # deno fmt --check && deno check index.ts tests/*.test.ts
 ```
 
 The tests drive `createHandler` from `app.ts`, never `index.ts`, so nothing binds a port and no
-Supabase client is constructed. Google's token endpoint is a fake `fetch` that records what was
-sent, so the redirect URI and the absence of a `code_verifier` are asserted as facts about the
-request rather than as a reading of the source.
+Supabase client is constructed. Google's and Slack's token endpoints are a fake `fetch` that records
+what was sent, so the redirect URI and the absence of a `code_verifier` are asserted as facts about
+the request rather than as a reading of the source.
 
 ## What is never written down
 

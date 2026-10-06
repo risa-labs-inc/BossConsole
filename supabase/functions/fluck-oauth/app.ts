@@ -1,5 +1,5 @@
 /**
- * `fluck-oauth` - the OAuth redirect target for Fluck's Google connector.
+ * `fluck-oauth` - the OAuth redirect target for Fluck's Google and Slack connectors.
  *
  * ## What this replaces
  *
@@ -38,6 +38,10 @@
  * Nothing about the destination of the write is read off the request. `user_id` and the secret
  * key both come from inside the signed token.
  *
+ * `GET /slack/callback` is the same flow for Slack: the same state and nonce checks, then
+ * Slack's `oauth.v2.access` for a non expiring `xoxp-` user token, stored under the `slack`
+ * connector. It has no grant binding and no refresh, because the token does not expire.
+ *
  * `POST /refresh` is the other route: an install trades its refresh token for an access token
  * through this function, because the web client secret lives only here. It is authenticated by
  * a signed request (see `signed.ts`), never by the state, and it only redeems a token the
@@ -50,8 +54,9 @@
  * the route, the outcome, and the first eight characters of the workspace id, which is enough
  * to line two attempts up against each other and nothing else.
  */
-import { INSTANCE_ID_PATTERN, parseState, verifyState } from "./state.ts"
+import { INSTANCE_ID_PATTERN, parseState, type StateClaims, verifyState } from "./state.ts"
 import { exchangeCode, type ExchangeFailure, refreshAccessToken } from "./google.ts"
+import { exchangeSlackCode } from "./slack.ts"
 import {
   bodyDigest,
   INSTANCE_HEADER,
@@ -65,8 +70,9 @@ import {
 export const DEFAULT_PUBLIC_BASE_URL =
   "https://pcnwqamqdnsadranufjv.functions.supabase.co/fluck-oauth"
 
-/** The one connector this function serves; part of the secret's key. */
+/** The connector ids this function writes for; part of the secret's key. */
 const GOOGLE_CONNECTOR_ID = "google"
+const SLACK_CONNECTOR_ID = "slack"
 
 /** A refresh request is one small JSON object; anything bigger is not one. */
 const MAX_REFRESH_BODY_BYTES = 4096
@@ -74,11 +80,17 @@ const MAX_REFRESH_BODY_BYTES = 4096
 /** The env var a secret is keyed under, inside the Fluck key scheme. */
 const REFRESH_ENV_VAR = "GOOGLE_REFRESH_TOKEN"
 
+/** The env var the plugin's Slack MCP reads the user token from. */
+const SLACK_TOKEN_ENV_VAR = "SLACK_MCP_XOXP_TOKEN"
+
 /** Matches `HostSecretVault`'s own note, so a Fluck secret reads the same wherever it was made. */
 const SECRET_NOTE = "Created by Fluck when a service was connected. Do not edit by hand."
 
 /** Shown as the secret's username when the id_token carried no email. */
 const UNKNOWN_ACCOUNT = "google account"
+
+/** Shown as the secret's username when Slack named neither the workspace nor the member. */
+const UNKNOWN_SLACK_ACCOUNT = "slack account"
 
 export type NonceClaim = "claimed" | "replay" | "invalid" | "unavailable"
 
@@ -138,6 +150,10 @@ const PAGE_NO_REFRESH =
   "Google did not hand over lasting access. Ask Fluck for a fresh link and approve everything it asks for."
 const PAGE_UNREACHABLE =
   "Google could not be reached to finish the sign in. Worth trying again in a minute."
+const PAGE_SLACK_NO_TOKEN =
+  "Slack did not hand over lasting access. Ask Fluck for a fresh link and approve everything it asks for."
+const PAGE_SLACK_UNREACHABLE =
+  "Slack could not be reached to finish the sign in. Worth trying again in a minute."
 const PAGE_STORE_FAILED =
   "The sign in worked, but the credential could not be saved. Ask Fluck to try again."
 const PAGE_UNCONFIGURED =
@@ -151,12 +167,19 @@ const FAILURE_PAGES: Record<ExchangeFailure, string> = {
   unreachable: PAGE_UNREACHABLE,
 }
 
+const SLACK_FAILURE_PAGES: Record<ExchangeFailure, string> = {
+  bad_code: PAGE_BAD_CODE,
+  no_refresh_token: PAGE_SLACK_NO_TOKEN,
+  unreachable: PAGE_SLACK_UNREACHABLE,
+}
+
 export function createHandler(deps: Dependencies): (request: Request) => Promise<Response> {
   return async (request: Request) => {
     const path = routePath(new URL(request.url).pathname)
     if (path === "/health") return health(deps)
     if (path === "/client") return await client(request, deps)
     if (path === "/callback") return await callback(request, deps)
+    if (path === "/slack/callback") return await slackCallback(request, deps)
     if (path === "/refresh") return await refresh(request, deps)
     return page(404, "Not found", PAGE_NOT_FOUND)
   }
@@ -184,8 +207,10 @@ function health(deps: Dependencies): Response {
     clientId: Boolean(deps.env("GOOGLE_WEB_CLIENT_ID")),
     clientSecret: Boolean(deps.env("GOOGLE_WEB_CLIENT_SECRET")),
     githubClientId: Boolean(deps.env("GITHUB_OAUTH_CLIENT_ID")),
+    slackClientId: Boolean(deps.env("SLACK_CLIENT_ID")),
+    slackClientSecret: Boolean(deps.env("SLACK_CLIENT_SECRET")),
   }
-  // GitHub is optional, so only the Google pair gates readiness.
+  // GitHub and Slack are optional, so only the Google pair gates readiness.
   const ok = configured.clientId && configured.clientSecret
   return new Response(JSON.stringify({ ok, configured }), {
     status: ok ? 200 : 503,
@@ -205,17 +230,34 @@ async function client(request: Request, deps: Dependencies): Promise<Response> {
     deps.log("client unconfigured")
     return json(503, { error: "unconfigured" })
   }
-  // The GitHub device flow id is public too and optional: omitted, not null, when unset.
+  // The GitHub device flow and Slack ids are public too and optional: omitted, not null, when
+  // unset. Slack's is untrimmed for the same reason as Google's.
+  const body: Record<string, string> = { client_id: clientId }
   const githubClientId = deps.env("GITHUB_OAUTH_CLIENT_ID")?.trim()
-  return json(
-    200,
-    githubClientId
-      ? { client_id: clientId, github_client_id: githubClientId }
-      : { client_id: clientId },
-  )
+  if (githubClientId) body.github_client_id = githubClientId
+  const slackClientId = deps.env("SLACK_CLIENT_ID")
+  if (slackClientId?.trim()) body.slack_client_id = slackClientId
+  return json(200, body)
 }
 
-async function callback(request: Request, deps: Dependencies): Promise<Response> {
+/** A callback whose state verified and whose nonce this request now owns. */
+interface AcceptedCallback {
+  claims: StateClaims
+  code: string
+  workspace: string
+}
+
+/**
+ * Everything a provider callback does before it talks to the provider, shared so every
+ * provider gets the same method, decline, configuration, state, ownership and nonce checks in
+ * the same order. A Response means the request was refused and that is the page to show.
+ */
+async function acceptCallback(
+  request: Request,
+  deps: Dependencies,
+  route: string,
+  configured: boolean,
+): Promise<AcceptedCallback | Response> {
   if (request.method !== "GET") {
     // Drained first: an unread body on a keep alive connection desyncs the next request on it.
     await request.body?.cancel().catch(() => {})
@@ -226,17 +268,15 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
   const code = query.get("code")
   const state = query.get("state")
 
-  // Google's own word for it is not shown. `access_denied` is not information on a phone, and
-  // the remedy is the same for every value it takes.
+  // The provider's own word for it is not shown. `access_denied` is not information on a phone,
+  // and the remedy is the same for every value it takes.
   if (error) {
-    deps.log("callback declined")
+    deps.log(`${route} declined`)
     return page(400, "Sign in problem", PAGE_DECLINED)
   }
 
-  const clientId = deps.env("GOOGLE_WEB_CLIENT_ID")
-  const clientSecret = deps.env("GOOGLE_WEB_CLIENT_SECRET")
-  if (!clientId || !clientSecret) {
-    deps.log("callback unconfigured: client")
+  if (!configured) {
+    deps.log(`${route} unconfigured: client`)
     return page(503, "Sign in problem", PAGE_UNCONFIGURED)
   }
 
@@ -249,34 +289,56 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
   const verified = parsed && instance && publicKey && instance.userId === parsed.claims.uid &&
     await verifyState(publicKey, parsed, nowSeconds)
   if (!parsed || !verified || !code) {
-    deps.log("callback refused: state")
+    deps.log(`${route} refused: state`)
     return page(400, "Sign in problem", PAGE_STALE)
   }
   const claims = parsed.claims
   const workspace = workspacePrefix(claims.ws)
 
-  // Claimed BEFORE the exchange, not after. A code is single use at Google anyway, but the
-  // nonce is what makes a REPLAYED link dead even when the first attempt failed, and claiming
-  // it only on success would leave a link that can be retried until one attempt lands.
+  // Claimed BEFORE the exchange, not after. A code is single use at the provider anyway, but
+  // the nonce is what makes a REPLAYED link dead even when the first attempt failed, and
+  // claiming it only on success would leave a link that can be retried until one attempt lands.
   // Scoped by install so one install's nonces can never collide with another's.
   const claim = await deps.claimNonce(`${claims.iid}.${claims.nonce}`, claims.exp)
   if (claim === "invalid") {
-    deps.log(`callback refused: nonce validity [${workspace}]`)
+    deps.log(`${route} refused: nonce validity [${workspace}]`)
     return page(400, "Sign in problem", PAGE_STALE)
   }
   if (claim === "replay") {
-    deps.log(`callback refused: replay [${workspace}]`)
+    deps.log(`${route} refused: replay [${workspace}]`)
     return page(400, "Sign in problem", PAGE_REPLAY)
   }
   if (claim === "unavailable") {
-    deps.log(`callback failed: nonce store [${workspace}]`)
+    deps.log(`${route} failed: nonce store [${workspace}]`)
     return page(503, "Sign in problem", PAGE_STORE_FAILED)
   }
+  return { claims, code, workspace }
+}
 
-  const redirectUri = (deps.env("PUBLIC_BASE_URL") || DEFAULT_PUBLIC_BASE_URL).replace(/\/+$/, "") +
-    "/callback"
+/** `<PUBLIC_BASE_URL>/<path>`; the provider compares it byte for byte with the authorize URL's. */
+function redirectUri(deps: Dependencies, path: string): string {
+  return (deps.env("PUBLIC_BASE_URL") || DEFAULT_PUBLIC_BASE_URL).replace(/\/+$/, "") + path
+}
+
+async function callback(request: Request, deps: Dependencies): Promise<Response> {
+  const clientId = deps.env("GOOGLE_WEB_CLIENT_ID")
+  const clientSecret = deps.env("GOOGLE_WEB_CLIENT_SECRET")
+  const accepted = await acceptCallback(
+    request,
+    deps,
+    "callback",
+    Boolean(clientId && clientSecret),
+  )
+  if (accepted instanceof Response) return accepted
+  const { claims, code, workspace } = accepted
+
   const exchanged = await exchangeCode(
-    { clientId, clientSecret, code, redirectUri },
+    {
+      clientId: clientId!,
+      clientSecret: clientSecret!,
+      code,
+      redirectUri: redirectUri(deps, "/callback"),
+    },
     deps.fetch,
   )
   if (!exchanged.ok) {
@@ -305,6 +367,61 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
   }
   deps.log(`callback connected [${workspace}]`)
   return page(200, "Connected", PAGE_CONNECTED)
+}
+
+/**
+ * `GET /slack/callback`: the same state and nonce checks as `/callback`, then Slack's
+ * `oauth.v2.access` for the authorizing user's `xoxp-` token, stored under the bare `slack`
+ * connector for the plugin to find.
+ *
+ * No grant is bound: there is no `/refresh` for Slack. Token rotation is off on the app, so the
+ * user token does not expire and the plugin uses the stored value directly.
+ */
+async function slackCallback(request: Request, deps: Dependencies): Promise<Response> {
+  const clientId = deps.env("SLACK_CLIENT_ID")
+  const clientSecret = deps.env("SLACK_CLIENT_SECRET")
+  const accepted = await acceptCallback(
+    request,
+    deps,
+    "slack callback",
+    Boolean(clientId && clientSecret),
+  )
+  if (accepted instanceof Response) return accepted
+  const { claims, code, workspace } = accepted
+
+  const exchanged = await exchangeSlackCode(
+    {
+      clientId: clientId!,
+      clientSecret: clientSecret!,
+      code,
+      redirectUri: redirectUri(deps, "/slack/callback"),
+    },
+    deps.fetch,
+  )
+  if (!exchanged.ok) {
+    deps.log(`slack callback failed: ${exchanged.reason} [${workspace}]`)
+    return page(400, "Sign in problem", SLACK_FAILURE_PAGES[exchanged.reason])
+  }
+
+  const stored = await deps.storeRefreshToken({
+    userId: claims.uid,
+    website: `fluck/${claims.ws}/${SLACK_CONNECTOR_ID}/${SLACK_TOKEN_ENV_VAR}`,
+    username: slackAccountLabel(exchanged.teamName || exchanged.teamId, exchanged.userId),
+    refreshToken: exchanged.userToken,
+    notes: SECRET_NOTE,
+  })
+  if (!stored) {
+    deps.log(`slack callback failed: store [${workspace}]`)
+    return page(503, "Sign in problem", PAGE_STORE_FAILED)
+  }
+  deps.log(`slack callback connected [${workspace}]`)
+  return page(200, "Connected", PAGE_CONNECTED)
+}
+
+/** `<team> (<user id>)`: the Slack workspace name and an opaque member id, never a name. */
+function slackAccountLabel(team: string, userId: string): string {
+  if (team && userId) return `${team} (${userId})`
+  return team || userId || UNKNOWN_SLACK_ACCOUNT
 }
 
 /**
@@ -446,6 +563,8 @@ export const PAGES = {
   badCode: PAGE_BAD_CODE,
   noRefresh: PAGE_NO_REFRESH,
   unreachable: PAGE_UNREACHABLE,
+  slackNoToken: PAGE_SLACK_NO_TOKEN,
+  slackUnreachable: PAGE_SLACK_UNREACHABLE,
   storeFailed: PAGE_STORE_FAILED,
   unconfigured: PAGE_UNCONFIGURED,
   notFound: PAGE_NOT_FOUND,
