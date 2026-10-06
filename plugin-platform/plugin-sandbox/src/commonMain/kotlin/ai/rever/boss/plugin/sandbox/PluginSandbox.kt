@@ -44,6 +44,12 @@ interface PluginSandbox : PluginSandboxRef {
 
     /**
      * Stop the sandbox and clean up resources.
+     *
+     * Sandbox-owned coroutines are cancelled and given a bounded opportunity to
+     * finish before returning to a caller that may close their classloader.
+     * Log expiry rather than waiting indefinitely. This does not cover scopes
+     * independently created by plugins or guarantee completion after timeout.
+     *
      * @return Result indicating success or failure
      */
     suspend fun stop(): Result<Unit>
