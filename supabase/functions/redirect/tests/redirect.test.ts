@@ -152,3 +152,28 @@ Deno.test("live-sessions arm accepts the vanity-host landing", async () => {
   assertStringIncludes(html, "redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
   assertStringIncludes(html, "<h1>BossTerm Live Sessions</h1>")
 })
+
+// (f) Web arm, Fluck brand: fluck-web's redirect_to bounces to GoTrue's verify like live-sessions.
+
+Deno.test("fluck-web redirect_to bounces to the GoTrue verify URL under the Fluck brand", async () => {
+  const rt = "https://fluck.risaboss.com/auth"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent("https://api.risaboss.com/auth/v1/verify?token=t1")}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
+  assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=t1&amp;type=magiclink&amp;redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
+  assertStringIncludes(html, "<h1>Fluck</h1>")
+  assert(!html.includes("boss://auth/verify"), "must not deep-link the web flow into the desktop app")
+})
+
+Deno.test("fluck-web arm accepts the direct function landing and refuses a non-first-party host", async () => {
+  const rt = "https://api.risaboss.com/functions/v1/fluck-web/auth"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent("https://api.risaboss.com/auth/v1/verify?token=t1")}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
+  assertStringIncludes(html, "<h1>Fluck</h1>")
+  const res = await app.request(`/redirect?url=${encodeURIComponent("https://evil.example/auth/v1/verify?token=t")}&redirect_to=${encodeURIComponent(rt)}`)
+  assertEquals(res.status, 400)
+})
+
+Deno.test("fluck-web arm is an exact match: a sub-path or look-alike host is NOT the web arm", async () => {
+  for (const rt of ["https://fluck.risaboss.com/auth/x", "https://fluck.risaboss.com.evil.example/auth"]) {
+    const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent(rt))
+    assertStringIncludes(html, "boss://auth/verify?token=abc")
+  }
+})
