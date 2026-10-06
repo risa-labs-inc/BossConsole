@@ -453,6 +453,7 @@ fun NewTabDialog(
                 }
             },
             fileExtensions = emptyList(), // Allow all files
+            readContent = false, // Opening a file needs its path, including large binary files.
         )
 
     // Update suggestions when URL text changes

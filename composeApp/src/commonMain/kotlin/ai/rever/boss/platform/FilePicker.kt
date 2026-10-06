@@ -16,12 +16,14 @@ interface DirectoryPicker {
  * @param onFileSelected receives the chosen path and its content, or nulls when
  *   the user cancelled. [tooLarge] distinguishes "refused to read it" from
  *   "cancelled", which would otherwise look identical to the caller.
+ * @param readContent false selects only a path, without decoding or size-limiting the file.
  */
 @Composable
 expect fun rememberFilePicker(
     onFileSelected: (path: String?, content: String?, tooLarge: Boolean) -> Unit,
     fileExtensions: List<String> = listOf("json"),
     title: String = "Select File",
+    readContent: Boolean = true,
 ): FilePicker
 
 interface FilePicker {
