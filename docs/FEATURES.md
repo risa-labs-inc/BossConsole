@@ -21,6 +21,11 @@ Real-time system metrics monitoring with configurable thresholds and visualizati
 - Performance indicator in status bar
 - Exportable metrics history
 
+This subsystem measures **the BOSS process itself** for the operator. For measuring **other**
+processes on an agent's request, see the `telemetry_*` MCP tools in
+[docs/TELEMETRY.md](TELEMETRY.md). The two share a subject and nothing else: different audience,
+different surface, different trigger.
+
 ## Dashboard System
 
 Start screen with cards for quick access to recent items and actions.
