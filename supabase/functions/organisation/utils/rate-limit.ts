@@ -87,17 +87,28 @@ export function resetRateLimits(): void {
 /**
  * Best-effort client identity for rate-limit keys.
  *
- * Prefer connecting headers supplied by the gateway over a caller-supplied
- * X-Forwarded-For prefix. All forwarded headers require a trusted ingress;
+ * Header trust order matches the crash-report function's documented-correct
+ * derivation (app.ts clientIp): cf-connecting-ip first (Cloudflare-set on the
+ * api.risaboss.com route), else the RIGHTMOST X-Forwarded-For entry - trusted
+ * proxies append on the right, so the leftmost entry is whatever the caller
+ * typed and rotating it would fully evade the limiter (and spray unique keys
+ * to bloat the bucket map). All forwarded headers require a trusted ingress;
  * this identity is a best-effort brake, not an authentication control.
  */
 export function clientKey(headers: Headers): string {
-  // Prefer gateway-provided identity to an XFF chain's potentially caller-supplied prefix.
+  // Prefer gateway-provided identity over any XFF chain parsing.
   // This remains a best-effort bucket key, not an authentication boundary.
   for (const name of ["cf-connecting-ip", "x-real-ip"]) {
     const value = headers.get(name)?.trim()
     if (value) return value
   }
-  const first = headers.get("x-forwarded-for")?.split(",")[0].trim()
-  return first || "unknown"
+  const xff = headers.get("x-forwarded-for")
+  if (xff) {
+    // RIGHTMOST entry: the one a trusted proxy appended for this hop. The
+    // leftmost is caller-controlled ("client, proxy1, ..." is built by
+    // appending, so the client's forgery always sits at the front).
+    const rightmost = xff.split(",").map((e) => e.trim()).filter(Boolean).pop()
+    if (rightmost) return rightmost
+  }
+  return "unknown"
 }
