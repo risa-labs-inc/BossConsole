@@ -183,7 +183,9 @@ function health(deps: Dependencies): Response {
   const configured = {
     clientId: Boolean(deps.env("GOOGLE_WEB_CLIENT_ID")),
     clientSecret: Boolean(deps.env("GOOGLE_WEB_CLIENT_SECRET")),
+    githubClientId: Boolean(deps.env("GITHUB_OAUTH_CLIENT_ID")),
   }
+  // GitHub is optional, so only the Google pair gates readiness.
   const ok = configured.clientId && configured.clientSecret
   return new Response(JSON.stringify({ ok, configured }), {
     status: ok ? 200 : 503,
@@ -203,7 +205,14 @@ async function client(request: Request, deps: Dependencies): Promise<Response> {
     deps.log("client unconfigured")
     return json(503, { error: "unconfigured" })
   }
-  return json(200, { client_id: clientId })
+  // The GitHub device flow id is public too and optional: omitted, not null, when unset.
+  const githubClientId = deps.env("GITHUB_OAUTH_CLIENT_ID")?.trim()
+  return json(
+    200,
+    githubClientId
+      ? { client_id: clientId, github_client_id: githubClientId }
+      : { client_id: clientId },
+  )
 }
 
 async function callback(request: Request, deps: Dependencies): Promise<Response> {

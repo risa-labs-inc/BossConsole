@@ -30,12 +30,12 @@ that crosses between them is the secret, through the Secret Manager.
 
 ## Routes
 
-| Route           | Auth                | What it does                                                    |
-| --------------- | ------------------- | --------------------------------------------------------------- |
-| `GET /callback` | the signed `state`  | Verifies, exchanges, stores, renders one sentence               |
-| `POST /refresh` | signed install call | Refresh token in, access token out; nothing stored or logged    |
-| `GET /health`   | none                | `{ ok, configured: { clientId, clientSecret } }`, booleans only |
-| `GET /client`   | none                | `{ client_id }`, the public id the authorization URL must use   |
+| Route           | Auth                | What it does                                                                    |
+| --------------- | ------------------- | ------------------------------------------------------------------------------- |
+| `GET /callback` | the signed `state`  | Verifies, exchanges, stores, renders one sentence                               |
+| `POST /refresh` | signed install call | Refresh token in, access token out; nothing stored or logged                    |
+| `GET /health`   | none                | `{ ok, configured: { clientId, clientSecret, githubClientId } }`, booleans only |
+| `GET /client`   | none                | `{ client_id, github_client_id? }`, the public ids the plugin needs             |
 
 `verify_jwt = false` in `supabase/config.toml`, and it must be: the callback caller is a browser
 following a redirect Google issued and carries no header we chose, and `/refresh` callers hold no
@@ -82,11 +82,12 @@ them.
 Set with `supabase secrets set --project-ref pcnwqamqdnsadranufjv …`. `SUPABASE_URL` and
 `SUPABASE_SERVICE_ROLE_KEY` are injected by the platform and are not set by hand.
 
-| Variable                   | Required | What it is                                                                                                        |
-| -------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
-| `GOOGLE_WEB_CLIENT_ID`     | yes      | The Google OAuth client of type **Web application**                                                               |
-| `GOOGLE_WEB_CLIENT_SECRET` | yes      | Its client secret. This function is the only holder; the plugin never sees it                                     |
-| `PUBLIC_BASE_URL`          | no       | Defaults to `https://pcnwqamqdnsadranufjv.functions.supabase.co/fluck-oauth`. Set it when the custom domain lands |
+| Variable                   | Required | What it is                                                                                                                 |
+| -------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `GOOGLE_WEB_CLIENT_ID`     | yes      | The Google OAuth client of type **Web application**                                                                        |
+| `GOOGLE_WEB_CLIENT_SECRET` | yes      | Its client secret. This function is the only holder; the plugin never sees it                                              |
+| `GITHUB_OAUTH_CLIENT_ID`   | no       | Public client id of the risa-labs-inc GitHub OAuth App with Device Flow enabled; served at `/client` as `github_client_id` |
+| `PUBLIC_BASE_URL`          | no       | Defaults to `https://pcnwqamqdnsadranufjv.functions.supabase.co/fluck-oauth`. Set it when the custom domain lands          |
 
 There is no state key. Each install signs with the Ed25519 key it registered through fluck-vault's
 `POST /instances`, and the install row (not the token) decides whose secrets it may write.
