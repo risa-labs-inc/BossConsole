@@ -2243,6 +2243,13 @@ entry points are the MCP tools in `profile/BossProfileMcpToolProvider.kt`: `prof
 only reads, and `profile_create` and `profile_open`, which are approval-gated. `open_workspace` separately gained `newWindow`, which
 opens a Space in a new window of the same profile with nothing else changed.
 
+**It is off by default.** `BossDirectories.profilesEnabled` is false unless the process opts in
+(`BOSS_PROFILES_ENABLED=1` or `-Dboss.profiles.enabled=true`) or runs as a profile. While it is
+off, the profile tools are not registered, no sign-in marker is written, and
+`AuthService.verifyEmail` takes the pre-profiles `verifyEmailOtp` path unchanged. `BOSS_PROFILE`
+names only a profile `profile_create` registered (its `profile.json`); any other id is ignored
+with a warning and the process runs as the main profile.
+
 There are two kinds, and they run in different places:
 
 | | `SHARED` (main account) | `SEPARATE` (own sign-in) |
@@ -2300,7 +2307,9 @@ What a separate-account profile does not share, and why:
     (`AuthFlowMarker.claim`, a rename, so exactly one process acts on a link); unclaimed, it is
     not spent in the main process either. A dead profile's flow still counts here while the main
     process waits for nothing, and is ignored while it waits for a link of its own;
-  - a Google / Apple callback (`boss://auth/callback`, PKCE-bound) goes to the newest flow first.
+  - a Google / Apple callback (`boss://auth/callback`) is not routed: no process records an OAuth
+    flow yet, so it always stays in the main process, and a separate-account profile signs in by
+    magic link only.
 
   The exchange itself is **quarantined** (`MagicLinkExchange`): whenever this process asked for a
   link, `AuthService.verifyEmail` calls GoTrue's `/verify` directly instead of
@@ -2308,7 +2317,12 @@ What a separate-account profile does not share, and why:
   persistence, no `sessionStatus` publication - until its account matches the flow's. A session
   for any other account, or one whose account cannot be read, is revoked and dropped. A claim is
   bound to the exact token it was offered for, consumed once, and checked for expiry at exchange;
-  a flow put back after a failed exchange never replaces a newer generation. An `AUTH_CLAIM`
+  a later `mark` leaves it bound, so an old link can never consume a newer flow. Generations are
+  guarded by the newest flow this process issued: only that flow is ever put back after a failed
+  exchange, and a flow superseded by a newer one (or expired) is not exchanged, checked both
+  before `/verify` and again before the import. While this process's own link may still arrive,
+  a link with no flow to spend (a second delivery, or a concurrent caller that took it first) is
+  refused rather than given the legacy exchange, so the quarantine holds for the process. An `AUTH_CLAIM`
   answer of anything but `DECLINED` stops the offer (a lost reply may mean it was taken), so a
   link is never offered twice. A separate-account profile that asked for nothing refuses a link
   without spending it; only the main process asking for nothing keeps the old path. Passkey,
@@ -2322,7 +2336,7 @@ secret-manager's `EnvResolver`), so their settings are shared with separate-acco
 each resolves its root through the host. MCP clients that scan ports 7677-7686 instead of reading
 `BOSS_MCP_PORT` may attach to another process's server. A shared-account profile opens only from a
 main BOSS process. Shared-account windows are not restored after a restart. There is no profile
-deletion tool yet.
+deletion tool yet. A separate-account profile cannot sign in with Google or Apple (see above).
 
 ## The product word is "Space", the code word is `workspace`
 

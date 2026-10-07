@@ -25,17 +25,10 @@ class ProfileAuthRelayTest {
         email: String?,
     ) = Flow(Kind.MAGIC_LINK, at, email)
 
-    private fun oauth(at: Long) = Flow(Kind.OAUTH, at)
-
     private fun magicRoute(
         own: Flow?,
         vararg waiting: Pair<String, Flow>,
     ) = ProfileAuthRelay.route(Kind.MAGIC_LINK, own, waiting.toList(), running = waiting.map { it.first }.toSet())
-
-    private fun oauthRoute(
-        own: Flow?,
-        vararg waiting: Pair<String, Flow>,
-    ) = ProfileAuthRelay.route(Kind.OAUTH, own, waiting.toList(), running = waiting.map { it.first }.toSet())
 
     private fun writeFlow(
         root: File,
@@ -54,15 +47,17 @@ class ProfileAuthRelayTest {
     fun cleanUp() {
         BossDirectories.profilesDir().deleteRecursively()
         AuthFlowMarker.fileFor(BossDirectories.rootDir).delete()
+        AuthFlowMarker.resetForTest()
         ProfileAuthRelay.claimer = savedClaimer
     }
 
     @Test
-    fun `only the two sign-in callbacks are ever routed`() {
+    fun `only magic links are ever routed`() {
         assertEquals(Kind.MAGIC_LINK, ProfileAuthRelay.kindOf("boss://auth/verify?token=x"))
         assertEquals(Kind.MAGIC_LINK, ProfileAuthRelay.kindOf("boss://auth/verify/?token=x"))
-        assertEquals(Kind.OAUTH, ProfileAuthRelay.kindOf("boss://auth/callback?code=x"))
         listOf(
+            // No process records an OAuth flow yet, so its callback always stays in the main process.
+            "boss://auth/callback?code=x",
             "boss://passkey/authenticated?session=x",
             "boss://auth/recovery?token=x",
             "boss://auth",
@@ -114,15 +109,6 @@ class ProfileAuthRelayTest {
     }
 
     @Test
-    fun `an oauth callback goes to the newest flow first and falls back here`() {
-        assertEquals(
-            Route.Offer(listOf("newer"), fallback = Outcome.KEEP),
-            oauthRoute(oauth(2), "older" to oauth(1), "newer" to oauth(3)),
-        )
-        assertEquals(Route.KeepHere, oauthRoute(oauth(5), "p" to oauth(1)))
-    }
-
-    @Test
     fun `a dead profile's flow keeps the link from being spent here when this process asked for none`() {
         val dead = listOf("dead" to magic(1, b))
         val route = ProfileAuthRelay.route(Kind.MAGIC_LINK, own = null, allWaiting = dead, running = emptySet())
@@ -146,7 +132,7 @@ class ProfileAuthRelayTest {
         val now = System.currentTimeMillis()
         writeFlow(BossDirectories.profileRoot("live"), Kind.MAGIC_LINK, now - 1_000, a)
         writeFlow(BossDirectories.profileRoot("stale"), Kind.MAGIC_LINK, now - Kind.MAGIC_LINK.maxAgeMs - 1)
-        writeFlow(BossDirectories.profileRoot("oauth"), Kind.OAUTH, now - 1_000)
+        write(BossDirectories.profileRoot("oauth"), """{"kind":"OAUTH","startedAtMs":${now - 1_000}}""")
         writeFlow(File(BossDirectories.profilesDir(), "Not Valid"), Kind.MAGIC_LINK, now - 1_000)
         assertEquals(listOf("live"), ProfileAuthRelay.waitingFlows(Kind.MAGIC_LINK, now).map { it.first })
     }

@@ -41,8 +41,18 @@ object AuthService {
         val sent = EmailAuthService.sendMagicLink(email)
         // A magic link completes through boss://auth/verify; record that this process waits for
         // it, and for which account, so the link is routed to and accepted by this process only.
-        sent.onSuccess { AuthFlowMarker.mark(AuthFlowMarker.Kind.MAGIC_LINK, email) }
+        if (profilesEnabled()) sent.onSuccess { AuthFlowMarker.mark(AuthFlowMarker.Kind.MAGIC_LINK, email) }
         return sent
+    }
+
+    private const val STALE_LINK = "This sign-in link was already used or is not the newest one. Request a new link."
+
+    /** The hidden profiles feature; while off, magic links take the pre-profiles path unchanged. */
+    internal var profilesEnabled: () -> Boolean = { BossDirectories.profilesEnabled }
+
+    /** The pre-profiles exchange: spends the link and imports the session with no account check. */
+    internal var legacyVerify: suspend (token: String, type: String) -> Result<Unit> = { token, type ->
+        EmailAuthService.verifyEmail(token, type)
     }
 
     /** Where a Google or Apple sign-in stands. */
@@ -82,12 +92,16 @@ object AuthService {
      * for exactly this token or its own pending one, and consumes it), the link is spent through
      * [MagicLinkExchange]: the minted session reaches the live client only if it is for the account
      * the link was sent to. A separate-account profile that asked for no link refuses it without
-     * spending it. Only the main profile, asking for nothing, keeps the old path, unchanged.
+     * spending it, and so does a process whose own link may still be live but finds no flow for this
+     * one (a second delivery, or a concurrent caller that already took it): the quarantine holds for
+     * the process, not for one caller. Only a main profile asking for nothing - and every process
+     * while profiles are off - keeps the old path, unchanged.
      */
     suspend fun verifyEmail(
         token: String,
         type: String = "magiclink",
     ): Result<Unit> {
+        if (!profilesEnabled()) return legacyVerify(token, type)
         val flow = AuthFlowMarker.takeForExchange(token)
         return when {
             flow != null -> {
@@ -102,8 +116,12 @@ object AuthService {
                 Result.failure(Exception("This sign-in link was not requested in this BOSS window."))
             }
 
+            AuthFlowMarker.hasIssuedLive() -> {
+                Result.failure(Exception(STALE_LINK))
+            }
+
             else -> {
-                EmailAuthService.verifyEmail(token, type)
+                legacyVerify(token, type)
             }
         }
     }

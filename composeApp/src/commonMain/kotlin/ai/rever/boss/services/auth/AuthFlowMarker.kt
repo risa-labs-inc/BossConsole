@@ -23,8 +23,9 @@ import java.util.concurrent.atomic.AtomicReference
  * the minted session against before anything is imported.
  *
  * Every flow has an [Flow.id], its generation. A flow is consumed at most once - [claim] and
- * [takeForExchange] rename the marker away atomically - and a flow put back after a failed exchange
- * ([restore]) never replaces a newer one.
+ * [takeForExchange] rename the marker away atomically - and only the newest generation this process
+ * issued is ever put back ([restore]) or exchanged ([isCurrent]), so an old link or an old completion
+ * can never displace or spend a newer flow.
  */
 @Suppress("TooManyFunctions") // one small record and the questions asked of it
 object AuthFlowMarker {
@@ -38,16 +39,13 @@ object AuthFlowMarker {
     ) {
         /** A magic link (`boss://auth/verify`). Valid as long as the link: `otp_expiry` is an hour. */
         MAGIC_LINK(60 * 60 * 1000L),
-
-        /** A Google / Apple sign-in (`boss://auth/callback`), whose own time limit is 15 minutes. */
-        OAUTH(15 * 60 * 1000L),
     }
 
     @Serializable
     data class Flow(
         val kind: Kind,
         val startedAtMs: Long,
-        /** SHA-256 of the normalised email the link was sent to; null for OAuth. */
+        /** SHA-256 of the normalised email the link was sent to. */
         val emailHash: String? = null,
         /** This flow's generation: a new one per [mark], never reused. */
         val id: String = "",
@@ -66,6 +64,12 @@ object AuthFlowMarker {
 
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** Guards [newestIssued] and every write or take of this process's marker. */
+    private val lock = Any()
+
+    /** The last flow this process started, kept after it is consumed: the generation boundary. */
+    private var newestIssued: Flow? = null
+
     private val claimed = AtomicReference<Claim?>(null)
 
     fun fileFor(root: File): File = File(File(root, "run"), FILE_NAME)
@@ -83,12 +87,30 @@ object AuthFlowMarker {
         kind: Kind,
         email: String? = null,
         now: Long = System.currentTimeMillis(),
-    ): Flow {
-        val flow = Flow(kind, now, email?.let(::hashEmail), UUID.randomUUID().toString())
-        write(flow)
-        claimed.set(null)
-        return flow
-    }
+    ): Flow =
+        synchronized(lock) {
+            // An accepted claim is left alone: it stays bound to its own token and generation, so
+            // its link can never consume this new flow ([isCurrent] decides whether it may sign in).
+            Flow(kind, now, email?.let(::hashEmail), UUID.randomUUID().toString()).also {
+                newestIssued = it
+                write(it)
+            }
+        }
+
+    /**
+     * Whether [flow] is still the newest sign-in this process asked for. A flow superseded by a
+     * later [mark] is never exchanged, so an old link cannot sign in an account the user moved on
+     * from. True when this process has issued none (a marker left by an earlier run).
+     */
+    fun isCurrent(flow: Flow): Boolean = synchronized(lock) { newestIssued.let { it == null || it.id == flow.id } }
+
+    /**
+     * Whether this process asked for a magic link that may still arrive. While it has, a link with
+     * no flow to spend (a duplicate delivery, or one already taken by another caller) is refused
+     * rather than given the unchecked legacy exchange.
+     */
+    fun hasIssuedLive(now: Long = System.currentTimeMillis()): Boolean =
+        synchronized(lock) { newestIssued?.let { now - it.startedAtMs in 0..it.kind.maxAgeMs } ?: false }
 
     /** [root]'s pending flow of [kind], or null when it is not waiting for one (or it expired). */
     fun pending(
@@ -107,6 +129,11 @@ object AuthFlowMarker {
         token: String,
         now: Long = System.currentTimeMillis(),
     ): Flow? = takeLive(kind, now)?.also { claimed.set(Claim(it, sha256(token))) }
+
+    internal fun resetForTest() {
+        synchronized(lock) { newestIssued = null }
+        claimed.set(null)
+    }
 
     /**
      * The flow an exchange of [token] may spend, consumed so it can be spent once: the flow claimed
@@ -127,13 +154,18 @@ object AuthFlowMarker {
 
     /**
      * Puts [flow] back after an exchange that did not sign it in, so the link that does belong to
-     * it can still arrive. Generation-safe: does nothing once a newer flow has been started.
+     * it can still arrive. Generation-safe: only the newest flow this process issued goes back, even
+     * when that newer flow has itself been consumed, and the check and the write hold one lock.
      */
     fun restore(
         flow: Flow,
         now: Long = System.currentTimeMillis(),
     ) {
-        if (!fileFor(BossDirectories.rootDir).exists() && flow.isLive(flow.kind, now)) write(flow)
+        synchronized(lock) {
+            val newest = newestIssued
+            val superseded = newest != null && newest.id != flow.id
+            if (!superseded && !fileFor(BossDirectories.rootDir).exists() && flow.isLive(flow.kind, now)) write(flow)
+        }
     }
 
     /**
@@ -144,13 +176,14 @@ object AuthFlowMarker {
     private fun takeLive(
         kind: Kind,
         now: Long,
-    ): Flow? {
-        val expected = pending(BossDirectories.rootDir, kind, now) ?: return null
-        val taken = takeMarker() ?: return null
-        if (taken.id == expected.id && taken.isLive(kind, now)) return taken
-        restore(taken, now)
-        return null
-    }
+    ): Flow? =
+        synchronized(lock) {
+            val expected = pending(BossDirectories.rootDir, kind, now) ?: return null
+            val taken = takeMarker() ?: return null
+            if (taken.id == expected.id && taken.isLive(kind, now)) return taken
+            restore(taken, now)
+            null
+        }
 
     /** Renames the marker away (atomic: exactly one taker) and returns what it held. */
     private fun takeMarker(): Flow? {

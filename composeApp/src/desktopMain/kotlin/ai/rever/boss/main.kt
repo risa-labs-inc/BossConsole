@@ -384,9 +384,12 @@ fun main(args: Array<String>) {
     PluginStoreSetup.initialize()
     ai.rever.boss.plugin.packs.PluginPacks
         .registerMcpTools()
-    // Hidden BOSS profile surface: reachable only through these (approval-gated) tools.
-    ai.rever.boss.profile.BossProfileMcpToolProvider
-        .register()
+    // Hidden BOSS profile surface, off unless opted in (BOSS_PROFILES_ENABLED): reachable only
+    // through these approval-gated tools.
+    if (ai.rever.boss.plugin.pathutils.BossDirectories.profilesEnabled) {
+        ai.rever.boss.profile.BossProfileMcpToolProvider
+            .register()
+    }
     // A sign-in callback the main process offers this profile is taken only for a flow of its own.
     SingleInstanceManager.authClaimHandler = ai.rever.boss.profile.ProfileAuthRelay::claimHere
 

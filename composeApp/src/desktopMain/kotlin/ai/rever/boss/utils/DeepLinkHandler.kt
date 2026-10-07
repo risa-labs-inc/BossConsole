@@ -304,28 +304,6 @@ actual object DeepLinkHandler {
     }
 
     /**
-     * Processes links and file paths the OS asked BOSS to open through `argv`.
-     *
-     * **No longer Windows-only, and that gate was a real gap.** It ran under
-     * `if (isWindows)` because Windows delivers a protocol URL in `argv`. So does
-     * Linux: the generated `boss.desktop` uses `Exec=<app> %u`, and the JDK's X11
-     * Desktop peer supports no `APP_OPEN_URI` action, so `setOpenURIHandler` is
-     * never called there. Between the two, a Linux user who set BOSS as their
-     * default browser had every cold-start link silently dropped - argv held it,
-     * nothing read argv, and the URI handler that would have read it does not
-     * exist on that platform.
-     *
-     * macOS is unaffected either way: it delivers URLs and files as AppleEvents,
-     * so in practice these args hold neither, and running this costs one scan of
-     * an argv with nothing in it to find.
-     *
-     * Subsumes `WindowsProtocolHandler.extractDeepLinkFromArgs`, which was
-     * `args.firstOrNull { it.startsWith("boss://") }` - the same answer
-     * [OsOpenArguments] gives for that case, plus http/https and file paths, and
-     * all of them rather than the first.
-     */
-
-    /**
      * Hands a link no route claims - in practice a sign-in callback - to the auth/other flow.
      *
      * Unless a BOSS profile is waiting for a sign-in too: the OS delivers every `boss://` link to
@@ -359,7 +337,7 @@ actual object DeepLinkHandler {
 
                 ProfileAuthRelay.Outcome.REFUSED -> {
                     StatusMessageManager.showMessage(
-                        "More than one BOSS window is waiting for a sign-in link. " +
+                        "Another BOSS window was waiting for a sign-in link, so this one was not used. " +
                             "Request a new link from the window that should sign in.",
                         durationMs = REFUSAL_MESSAGE_MS,
                     )
@@ -368,6 +346,27 @@ actual object DeepLinkHandler {
         }
     }
 
+    /**
+     * Processes links and file paths the OS asked BOSS to open through `argv`.
+     *
+     * **No longer Windows-only, and that gate was a real gap.** It ran under
+     * `if (isWindows)` because Windows delivers a protocol URL in `argv`. So does
+     * Linux: the generated `boss.desktop` uses `Exec=<app> %u`, and the JDK's X11
+     * Desktop peer supports no `APP_OPEN_URI` action, so `setOpenURIHandler` is
+     * never called there. Between the two, a Linux user who set BOSS as their
+     * default browser had every cold-start link silently dropped - argv held it,
+     * nothing read argv, and the URI handler that would have read it does not
+     * exist on that platform.
+     *
+     * macOS is unaffected either way: it delivers URLs and files as AppleEvents,
+     * so in practice these args hold neither, and running this costs one scan of
+     * an argv with nothing in it to find.
+     *
+     * Subsumes `WindowsProtocolHandler.extractDeepLinkFromArgs`, which was
+     * `args.firstOrNull { it.startsWith("boss://") }` - the same answer
+     * [OsOpenArguments] gives for that case, plus http/https and file paths, and
+     * all of them rather than the first.
+     */
     fun processCommandLineArgs(args: Array<String>) {
         OsOpenArguments.requestsFrom(args).forEach { (link, origin) ->
             logger.info(

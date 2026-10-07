@@ -64,4 +64,22 @@ class BossDirectoriesProfileTest {
             assertTrue(BossDirectories.rootDir.startsWith(BossDirectories.profilesDir()))
         }
     }
+
+    @Test
+    fun `an id no profile was created for is ignored, never materialised`() {
+        assertNull(BossDirectories.registeredProfileId("worrk") { false })
+        assertEquals("work", BossDirectories.registeredProfileId("work") { it == "work" })
+        assertNull(BossDirectories.registeredProfileId(null) { true })
+    }
+
+    @Test
+    fun `the profiles feature is off by default`() {
+        // The test JVM opts in to nothing and runs as no profile.
+        val optedIn =
+            System.getenv(BossDirectories.PROFILES_ENABLED_ENV) != null ||
+                System.getProperty(BossDirectories.PROFILES_ENABLED_PROPERTY) != null
+        if (BossDirectories.profileId == null && !optedIn) {
+            assertFalse(BossDirectories.profilesEnabled)
+        }
+    }
 }

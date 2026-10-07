@@ -24,15 +24,16 @@ import java.net.URI
  *   rests on the account each flow was sent to. Flows for different accounts waiting at once make
  *   the link ambiguous and it is used nowhere; the user requests a new one from the right window.
  *   One account waiting in profiles only: the profiles are offered it, newest first.
- * - **A Google / Apple callback** (`boss://auth/callback`) is bound to its starting process by
- *   PKCE, so the newest flow is offered it first.
+ * - **A Google / Apple callback** (`boss://auth/callback`) is not routed yet: no process records an
+ *   OAuth flow, so it always stays in the main process, and a separate-account profile signs in by
+ *   magic link only.
  *
  * An offer is [SingleInstanceManager.claimAuthAt]: the profile takes the link only after it has
  * atomically claimed a pending flow of its own, so a link is acted on by one process at most. A
  * magic link that no waiting profile claims is not handed back to the main process to spend either -
  * one was waiting, so the link was most likely theirs.
  *
- * Only these two callbacks are ever routed. Passkey links and every other `boss://auth` link -
+ * Only magic links are ever routed. Passkey links and every other `boss://auth` link -
  * email confirmation, invites, recovery - stay in the main process whatever markers exist.
  */
 object ProfileAuthRelay {
@@ -168,27 +169,17 @@ object ProfileAuthRelay {
         val waiting = if (own != null) allWaiting.filter { it.first in running } else allWaiting
         if (waiting.isEmpty()) return Route.KeepHere
         val newestFirst = waiting.sortedByDescending { (_, flow) -> flow.startedAtMs }.filter { it.first in running }
-        return when (kind) {
-            AuthFlowMarker.Kind.MAGIC_LINK -> {
-                val accounts = (listOfNotNull(own) + waiting.map { it.second }).map { it.emailHash }.toSet()
-                when {
-                    // Different accounts (or an account that cannot be told) are waiting: the link
-                    // could sign any of them in, so it signs in none.
-                    accounts.size != 1 || accounts.single() == null -> Route.Refuse
+        check(kind == AuthFlowMarker.Kind.MAGIC_LINK)
+        val accounts = (listOfNotNull(own) + waiting.map { it.second }).map { it.emailHash }.toSet()
+        return when {
+            // Different accounts (or an account that cannot be told) are waiting: the link
+            // could sign any of them in, so it signs in none.
+            accounts.size != 1 || accounts.single() == null -> Route.Refuse
 
-                    // One account, and this process asked for it too: same account, no hand-off.
-                    own != null -> Route.KeepHere
+            // One account, and this process asked for it too: same account, no hand-off.
+            own != null -> Route.KeepHere
 
-                    else -> Route.Offer(newestFirst.map { it.first }, fallback = Outcome.REFUSED)
-                }
-            }
-
-            AuthFlowMarker.Kind.OAUTH -> {
-                // PKCE binds the callback to whoever holds the verifier, so a wrong guess fails
-                // its exchange; the newest flow is the likeliest owner.
-                val newer = newestFirst.filter { (_, flow) -> own == null || flow.startedAtMs > own.startedAtMs }
-                if (newer.isEmpty()) Route.KeepHere else Route.Offer(newer.map { it.first }, fallback = Outcome.KEEP)
-            }
+            else -> Route.Offer(newestFirst.map { it.first }, fallback = Outcome.REFUSED)
         }
     }
 
@@ -226,7 +217,6 @@ object ProfileAuthRelay {
                 ?.takeIf { it.scheme.equals("boss", ignoreCase = true) && it.host.equals(AUTH_HOST, ignoreCase = true) }
         return when (parsed?.path?.lowercase()?.trimEnd('/')) {
             "/verify" -> AuthFlowMarker.Kind.MAGIC_LINK
-            "/callback" -> AuthFlowMarker.Kind.OAUTH
             else -> null
         }
     }

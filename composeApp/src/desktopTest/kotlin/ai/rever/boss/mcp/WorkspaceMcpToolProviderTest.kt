@@ -1642,4 +1642,14 @@ class WorkspaceMcpToolProviderTest {
             assertTrue(result.isError)
             assertTrue(result.text.contains("No window creator"), result.text)
         }
+
+    @Test
+    fun `a newWindow open refused for its Space leaves no window behind`(): Unit =
+        runBlocking {
+            val result =
+                createTestCore().invoke("open_workspace", """{"workspaceId":"no-such-space","newWindow":true}""")
+            assertTrue(result.isError)
+            assertTrue(result.text.contains("not found"), result.text)
+            assertEquals(0, windowCreatorCalls, "the window is made only after the Space passes its checks")
+        }
 }

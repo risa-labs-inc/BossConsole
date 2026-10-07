@@ -186,4 +186,13 @@ class BossProfileStoreTest {
             .jsonArray
             .map { it.jsonObject }
             .associateBy { it["pluginId"]!!.jsonPrimitive.content }
+
+    @Test
+    fun `an explicit id naming a stray directory is refused, never adopted`() {
+        val stray = BossDirectories.profileRoot("stray").apply { mkdirs() }
+        File(stray, "leftover").writeText("someone's data")
+        assertTrue(create("Stray", id = "stray").isFailure)
+        assertTrue(File(stray, "leftover").isFile)
+        assertNull(BossProfileStore.get("stray"))
+    }
 }

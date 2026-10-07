@@ -525,17 +525,18 @@ object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
             return openWorkspaceByPath(path, requestedWindowId)
         }
 
-        val (targetWindowId, targetIsColdStart) =
-            when (
-                val resolution =
-                    if (newWindow) createTargetWindow(newWindowCreator) else resolveTargetWindow(requestedWindowId)
-            ) {
-                is TargetWindowResolution.Success -> {
-                    resolution.windowId to resolution.isColdStart
-                }
-
-                is TargetWindowResolution.Failure -> {
-                    return McpToolResult(resolution.errorMessage, isError = true)
+        if (newWindow && newWindowCreator == null && windowCreator == null) {
+            return McpToolResult("No window creator is configured", isError = true)
+        }
+        // A new window is made only once the Space has passed every check below, so a refused
+        // request never leaves an empty window behind.
+        val existingTarget: Pair<String, Boolean>? =
+            if (newWindow) {
+                null
+            } else {
+                when (val resolution = resolveTargetWindow(requestedWindowId)) {
+                    is TargetWindowResolution.Success -> resolution.windowId to resolution.isColdStart
+                    is TargetWindowResolution.Failure -> return McpToolResult(resolution.errorMessage, isError = true)
                 }
             }
 
@@ -612,6 +613,13 @@ object WorkspaceMcpToolProvider : McpToolProvider, McpToolAliasProvider {
         // Persisted commands were not visible in this MCP invocation's approval arguments.
         // Require a separate open_terminal call so its command receives normal risk review.
         initialCommandsRefusal(workspace, isShippedTemplate)?.let { return it }
+
+        val (targetWindowId, targetIsColdStart) =
+            existingTarget
+                ?: when (val resolution = createTargetWindow(newWindowCreator)) {
+                    is TargetWindowResolution.Success -> resolution.windowId to resolution.isColdStart
+                    is TargetWindowResolution.Failure -> return McpToolResult(resolution.errorMessage, isError = true)
+                }
 
         // Awaited only once there is a workspace to open, so a wrong id is reported at once rather
         // than after the UI-state wait. A window that never registers is an error, as it is in

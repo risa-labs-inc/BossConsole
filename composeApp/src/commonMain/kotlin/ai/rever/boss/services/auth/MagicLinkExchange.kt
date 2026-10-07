@@ -5,7 +5,9 @@ import ai.rever.boss.services.supabase.getSupabaseUrl
 import ai.rever.boss.services.supabase.models.UserInfo
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import io.ktor.client.HttpClient
+import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.header
@@ -18,6 +20,7 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -39,6 +42,7 @@ internal object MagicLinkExchange {
 
     private const val WRONG_ACCOUNT = "This sign-in link is for a different account than this BOSS window asked for."
     private const val NO_ACCOUNT = "This sign-in has no account to check the link against."
+    private const val SUPERSEDED = "A newer sign-in link was requested. Use the newest link."
 
     /** A session GoTrue minted for a link, held outside the client until it is accepted. */
     data class Minted(
@@ -63,7 +67,17 @@ internal object MagicLinkExchange {
 
     class WrongAccountException : Exception(WRONG_ACCOUNT)
 
-    internal var transport: Transport = HttpTransport
+    class SupersededException : Exception(SUPERSEDED)
+
+    internal var transport: Transport = HttpTransport()
+
+    /**
+     * Whether [flow] may still sign in: unexpired, and not superseded by a newer sign-in this
+     * process started. Asked before the link is spent and again after the suspended `/verify`.
+     */
+    internal var stillWanted: (AuthFlowMarker.Flow) -> Boolean = { flow ->
+        AuthFlowMarker.isCurrent(flow) && flow.isLive(flow.kind, System.currentTimeMillis())
+    }
 
     /** The one step that touches the live client; runs only for an accepted session. */
     internal var importer: suspend (Minted) -> Result<Unit> = ::importIntoClient
@@ -81,6 +95,7 @@ internal object MagicLinkExchange {
         val expected =
             flow.emailHash
                 ?: return Result.failure(IllegalStateException(NO_ACCOUNT))
+        if (!stillWanted(flow)) return Result.failure(SupersededException())
         val minted =
             runCatching { transport.verify(tokenHash, type) }
                 .getOrElse { return Result.failure(it) }
@@ -92,6 +107,15 @@ internal object MagicLinkExchange {
                 mapOf("revoked" to revoked),
             )
             return Result.failure(WrongAccountException())
+        }
+        if (!stillWanted(flow)) {
+            val revoked = runCatching { transport.revoke(minted.accessToken) }.getOrDefault(false)
+            logger.warn(
+                LogCategory.AUTH,
+                "Refused a sign-in link whose flow expired or was superseded during the exchange",
+                mapOf("revoked" to revoked),
+            )
+            return Result.failure(SupersededException())
         }
         return importer(minted)
     }
@@ -107,12 +131,19 @@ internal object MagicLinkExchange {
             )
 
     /** GoTrue over HTTP: `POST /auth/v1/verify` and `POST /auth/v1/logout?scope=local`. */
-    private object HttpTransport : Transport {
-        private const val TIMEOUT_MS = 20_000L
-
+    internal class HttpTransport(
+        private val engine: HttpClientEngine? = null,
+        private val supabaseUrl: () -> String = ::getSupabaseUrl,
+        private val anonKey: () -> String = ::getSupabaseAnonKey,
+    ) : Transport {
         private val json = Json { ignoreUnknownKeys = true }
 
-        private val client by lazy { HttpClient(CIO) { install(HttpTimeout) { requestTimeoutMillis = TIMEOUT_MS } } }
+        private val client by lazy {
+            val config: io.ktor.client.HttpClientConfig<*>.() -> Unit = {
+                install(HttpTimeout) { requestTimeoutMillis = TIMEOUT_MS }
+            }
+            if (engine != null) HttpClient(engine, config) else HttpClient(CIO, config)
+        }
 
         @Serializable
         private data class VerifyResponse(
@@ -134,9 +165,9 @@ internal object MagicLinkExchange {
             type: String,
         ): Minted {
             val response =
-                client.post("${getSupabaseUrl().trimEnd('/')}/auth/v1/verify") {
-                    header("apikey", getSupabaseAnonKey())
-                    header(HttpHeaders.Authorization, "Bearer ${getSupabaseAnonKey()}")
+                client.post("${supabaseUrl().trimEnd('/')}/auth/v1/verify") {
+                    header("apikey", anonKey())
+                    header(HttpHeaders.Authorization, "Bearer ${anonKey()}")
                     contentType(ContentType.Application.Json)
                     setBody(
                         buildJsonObject {
@@ -145,10 +176,16 @@ internal object MagicLinkExchange {
                         }.toString(),
                     )
                 }
-            // The body is GoTrue's own error text on failure; on success it holds tokens, so it is
-            // never logged.
+            // The body is GoTrue's own error text on failure; on success it holds tokens. Neither is
+            // ever logged or put in an exception: kotlinx quotes the input in its decode errors.
             check(response.status.isSuccess()) { "The sign-in link was not accepted (${response.status.value})" }
-            val body = json.decodeFromString(VerifyResponse.serializer(), response.bodyAsText())
+            val body =
+                try {
+                    json.decodeFromString(VerifyResponse.serializer(), response.bodyAsText())
+                } catch (e: SerializationException) {
+                    logger.warn(LogCategory.AUTH, "The sign-in response could not be read", decodeFailure(e))
+                    error("The sign-in response could not be read (${response.status.value})")
+                }
             return Minted(
                 accessToken = body.accessToken,
                 refreshToken = body.refreshToken,
@@ -161,10 +198,14 @@ internal object MagicLinkExchange {
 
         override suspend fun revoke(accessToken: String): Boolean =
             client
-                .post("${getSupabaseUrl().trimEnd('/')}/auth/v1/logout?scope=local") {
-                    header("apikey", getSupabaseAnonKey())
+                .post("${supabaseUrl().trimEnd('/')}/auth/v1/logout?scope=local") {
+                    header("apikey", anonKey())
                     header(HttpHeaders.Authorization, "Bearer $accessToken")
                 }.status
                 .isSuccess()
+
+        private companion object {
+            const val TIMEOUT_MS = 20_000L
+        }
     }
 }

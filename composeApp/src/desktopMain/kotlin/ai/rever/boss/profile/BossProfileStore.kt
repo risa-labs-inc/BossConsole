@@ -79,7 +79,7 @@ data class BossProfile(
 object BossProfileStore {
     private val logger = BossLogger.forComponent("BossProfileStore")
 
-    private const val PROFILE_FILE = "profile.json"
+    private const val PROFILE_FILE = BossDirectories.PROFILE_FILE_NAME
     private const val STORE_LOCK_FILE = ".store.lock"
     private const val MAX_NAME_LENGTH = 64
 
@@ -130,34 +130,42 @@ object BossProfileStore {
             require(displayName.isNotEmpty()) { "A profile needs a name" }
             val explicitId = id?.let(::normalizeId)
             if (explicitId != null) require(BossDirectories.isValidProfileId(explicitId)) { "Invalid profile id '$id'" }
-            withStoreLock {
-                val profileId = explicitId ?: uniqueIdFor(displayName)
-                val root = BossDirectories.profileRoot(profileId)
-                if (File(root, PROFILE_FILE).exists()) {
-                    throw FileAlreadyExistsException("Profile '$profileId' already exists")
+            // The id is reserved under the lock by creating its root; the seeding (a large tree
+            // walk) runs outside it, and profile.json - what makes the root a profile - is
+            // written last, so no other process sees a half-seeded profile.
+            val (profileId, root) =
+                withStoreLock {
+                    val profileId = explicitId ?: uniqueIdFor(displayName)
+                    val root = BossDirectories.profileRoot(profileId)
+                    // An existing root, registered or stray, is someone's data: never adopted.
+                    if (root.exists() || !root.mkdirs()) {
+                        throw FileAlreadyExistsException("Profile '$profileId' already exists")
+                    }
+                    profileId to root
                 }
-                root.mkdirs()
-                val profile =
-                    BossProfile(
-                        id = profileId,
-                        name = displayName,
-                        auth = auth,
-                        createdAt = System.currentTimeMillis(),
-                    )
-                write(profile)
+            val profile =
+                BossProfile(
+                    id = profileId,
+                    name = displayName,
+                    auth = auth,
+                    createdAt = System.currentTimeMillis(),
+                )
+            runCatching {
                 // A same-account profile runs inside the main process: it has no plugins or engine
                 // of its own to seed, only Space bindings and a browser profile in the main engine.
                 if (auth == ProfileAuthMode.SEPARATE) {
                     seedChromium(root)
                     if (plugins == ProfilePluginSeed.COPY_MAIN) seedPlugins(root)
                 }
-                logger.info(
-                    LogCategory.SYSTEM,
-                    "Created BOSS profile",
-                    mapOf("profileId" to profileId, "auth" to auth.name, "plugins" to plugins.name),
-                )
-                profile
-            }
+                withStoreLock { write(profile) }
+            }.onFailure { root.deleteRecursively() }
+                .getOrThrow()
+            logger.info(
+                LogCategory.SYSTEM,
+                "Created BOSS profile",
+                mapOf("profileId" to profileId, "auth" to auth.name, "plugins" to plugins.name),
+            )
+            profile
         }
 
     /** Records that [workspaceId] belongs to [profileId]. Idempotent. */
