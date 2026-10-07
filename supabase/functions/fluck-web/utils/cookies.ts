@@ -9,7 +9,9 @@
  *     lasts REFRESH_MAX_AGE_SECONDS; the server rotates the access token when it expires);
  *   - no script can read them - not this page's, and not a sibling function's on the shared
  *     api.risaboss.com origin, which was the weakness of the sessionStorage design;
- *   - `Path` keeps them off every other function on the origin.
+ *   - served at /functions/v1/fluck-web, `Path` keeps them off every other function on the
+ *     origin; behind the alias the host is ours alone and the path is `/`. The page is never
+ *     served on api.risaboss.com in alias mode (aliasRedirect), so no browser sets them there.
  *
  * `__Secure-` rather than `__Host-`: the latter mandates `Path=/`. The cost is that `__Secure-`
  * does not pin the host, so any HTTPS host under the parent domain can set one of these names

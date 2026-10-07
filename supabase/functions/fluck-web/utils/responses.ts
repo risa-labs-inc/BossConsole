@@ -94,7 +94,6 @@ export function redirectResponse(
   return new Response(null, { status: options.status ?? 303, headers })
 }
 
-/** JSON, for /health only. Pages are always HTML. */
 /**
  * JSON for the page's same-origin API. `setCookies` are appended one header each: a single
  * `Set-Cookie` string joined with commas is NOT how multiple cookies are sent.

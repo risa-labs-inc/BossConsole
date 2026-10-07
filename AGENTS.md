@@ -735,13 +735,20 @@ Deploy is manual. Nothing below runs in CI:
 ```bash
 supabase link --project-ref pcnwqamqdnsadranufjv           # once
 supabase db push                                           # 20261006120000_fluck_web_instances.sql
+ALIAS_SECRET=$(openssl rand -hex 32)                        # shared by the function and the Worker
 supabase secrets set --project-ref pcnwqamqdnsadranufjv \
   FLUCK_WEB_PUBLIC_BASE_URL=https://fluck.risaboss.com FLUCK_WEB_PUBLIC_BASE_PATH=/ \
-  FLUCK_WEB_AUTH_PUBLIC_URL=https://api.risaboss.com
+  FLUCK_WEB_AUTH_PUBLIC_URL=https://api.risaboss.com FLUCK_WEB_ALIAS_SECRET=$ALIAS_SECRET
 supabase functions deploy fluck-web --project-ref pcnwqamqdnsadranufjv --no-verify-jwt
 supabase functions deploy redirect --project-ref pcnwqamqdnsadranufjv --no-verify-jwt   # Fluck web arm
-cd infra/cloudflare/fluck-web-alias && npx wrangler login && npx wrangler deploy
+cd infra/cloudflare/fluck-web-alias && npx wrangler login
+echo "$ALIAS_SECRET" | npx wrangler secret put FLUCK_WEB_ALIAS_SECRET && npx wrangler deploy
+curl -sf https://fluck.risaboss.com/ -o /dev/null -w '%{http_code}\n'   # 200; 503 alias_unverified = secrets differ
 ```
+
+The function trusts the Worker (serves the page, keys rate limits on the visitor's IP) only when
+`X-Fluck-Web-Alias-Secret` matches `FLUCK_WEB_ALIAS_SECRET` (32+ chars). Direct hits on
+`api.risaboss.com/functions/v1/fluck-web/` are always redirected to the vanity host.
 
 Dashboard, by hand: Auth -> URL Configuration -> Redirect URLs, add `https://fluck.risaboss.com/auth`;
 Auth -> Email Templates -> Magic Link, paste `supabase/templates/email/magic-link.html` (it gained a

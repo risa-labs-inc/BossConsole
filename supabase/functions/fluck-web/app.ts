@@ -24,7 +24,7 @@
  */
 
 import { OpenAPIHono } from "@hono/zod-openapi"
-import { authPublicUrl, LIVE_WINDOW_SECONDS, publicBasePath, publicBaseUrl, publicOrigin, readConfig } from "./utils/config.ts"
+import { authPublicUrl, LIVE_WINDOW_SECONDS, publicBasePath, publicBaseUrl, publicOrigin, readConfig, viaAlias } from "./utils/config.ts"
 import { htmlResponse, jsonResponse, redirectResponse } from "./utils/responses.ts"
 import { clientKey, rateLimit } from "./utils/rate-limit.ts"
 import {
@@ -72,6 +72,8 @@ export const INSTANCE_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
 /** fluck_web_mint_ticket returns 32 bytes in unpadded base64url. */
 const TICKET_RE = /^[A-Za-z0-9_-]{43}$/
 const UPSTREAM_TIMEOUT_MS = 5000
+/** fluck_web_mint_ticket lifetime: pending tickets (the too_many_tickets cap) drain within it. */
+const TICKET_TTL_SECONDS = 60
 
 type Cfg = { supabaseUrl: string; anonKey: string }
 
@@ -81,27 +83,34 @@ function page(): Response {
 
 /**
  * Page loads that did not come through the alias Worker go to the vanity host, so cookies, links
- * and the address bar agree on one host (copied from live-sessions). The marker header is
- * client-settable; forging it only skips this convenience redirect.
+ * and the address bar agree on one host (copied from live-sessions). The page is built for the
+ * configured base path, so serving it on any other host would leave every API call 404ing and
+ * /api/open failing the Origin check. There is no opt-out: a request either proves it came via the
+ * Worker (viaAlias), is already on the base host, or is redirected. One that claims the alias but
+ * cannot prove it is refused rather than redirected, which would loop through the Worker.
  */
-function aliasRedirect(ctx: { req: { url: string; header: (n: string) => string | undefined } }, route: string): Response | null {
+function aliasRedirect(ctx: { req: { url: string; raw: Request; header: (n: string) => string | undefined } }, route: string): Response | null {
+  if (viaAlias(ctx.req.raw.headers)) return null
+  if (ctx.req.header("x-fluck-web-alias") !== undefined) {
+    console.error("alias request without a valid FLUCK_WEB_ALIAS_SECRET; check the Worker and function secrets")
+    return jsonResponse({ error: "alias_unverified" }, 503)
+  }
   const base = publicBaseUrl()
   if (!base) return null
   let baseHost = ""
   try {
     baseHost = new URL(base).host
   } catch { /* unparseable base: no redirect */ }
-  if (!baseHost || ctx.req.header("x-fluck-web-alias") === baseHost) return null
+  if (!baseHost) return null
   const reqHost = (ctx.req.header("host") ?? "").split(",")[0].trim()
   if (!reqHost || reqHost === baseHost) return null
-  let url: URL | null = null
+  let search = ""
   try {
-    url = new URL(ctx.req.url)
-  } catch { /* keep null */ }
-  if (url?.searchParams.get("_alias") === "1") return null
-  const params = new URLSearchParams(url?.search ?? "")
-  params.set("_alias", "1")
-  return redirectResponse(`${base}${route}?${params.toString()}`, { status: 302 })
+    const params = new URL(ctx.req.url).searchParams
+    params.delete("_alias")
+    search = params.size > 0 ? `?${params.toString()}` : ""
+  } catch { /* drop the query */ }
+  return redirectResponse(`${base}${route || "/"}${search}`, { status: 302 })
 }
 
 app.get("/", (ctx) => aliasRedirect(ctx, "") ?? page())
@@ -138,9 +147,7 @@ app.get("/health", () => jsonResponse({ status: "healthy" }))
 app.post("/api/otp", async (ctx) => {
   if (ctx.req.header("sec-fetch-site") === "cross-site") return jsonResponse({ error: "forbidden" }, 403)
   const limit = rateLimit(`otp:${clientKey(ctx.req.raw.headers)}`, OTP_LIMIT, OTP_WINDOW_SECONDS)
-  if (!limit.allowed) {
-    return jsonResponse({ error: "rate_limited", retryAfterSeconds: limit.retryAfterSeconds }, 429, [], { "Retry-After": String(limit.retryAfterSeconds) })
-  }
+  if (!limit.allowed) return tooMany(limit.retryAfterSeconds)
   const body = await readJson(ctx.req.raw)
   const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : ""
   if (!EMAIL_RE.test(email) || email.length > 254) return jsonResponse({ error: "invalid_email" }, 400)
@@ -160,7 +167,7 @@ app.post("/api/otp", async (ctx) => {
       body: JSON.stringify({ email, create_user: false }),
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     })
-    if (resp.status === 429) return jsonResponse({ error: "rate_limited", retryAfterSeconds: 60 }, 429)
+    if (resp.status === 429) return tooMany(60)
     if (resp.status >= 500) {
       console.error("otp upstream", resp.status)
       return jsonResponse({ error: "upstream" }, 502)
@@ -176,7 +183,7 @@ app.post("/api/otp", async (ctx) => {
 app.post("/api/session", async (ctx) => {
   if (ctx.req.header("sec-fetch-site") === "cross-site") return jsonResponse({ error: "forbidden" }, 403)
   const limit = rateLimit(`session:${clientKey(ctx.req.raw.headers)}`, SESSION_LIMIT, SESSION_WINDOW_SECONDS)
-  if (!limit.allowed) return jsonResponse({ error: "rate_limited", retryAfterSeconds: limit.retryAfterSeconds }, 429)
+  if (!limit.allowed) return tooMany(limit.retryAfterSeconds)
   const body = await readJson(ctx.req.raw)
   const accessToken = typeof body?.access_token === "string" ? body.access_token.trim() : ""
   const refreshToken = typeof body?.refresh_token === "string" ? body.refresh_token.trim() : ""
@@ -206,7 +213,7 @@ app.post("/api/logout", (ctx) => {
 app.get("/api/instances", async (ctx) => {
   if (ctx.req.header("sec-fetch-site") === "cross-site") return jsonResponse({ error: "forbidden" }, 403)
   const limit = rateLimit(`instances:${clientKey(ctx.req.raw.headers)}`, LIST_LIMIT, LIST_WINDOW_SECONDS)
-  if (!limit.allowed) return jsonResponse({ error: "rate_limited", retryAfterSeconds: limit.retryAfterSeconds }, 429)
+  if (!limit.allowed) return tooMany(limit.retryAfterSeconds)
   const cfg = readConfig()
   if (!cfg.supabaseUrl || !cfg.anonKey) return jsonResponse({ error: "not_configured" }, 503)
 
@@ -233,7 +240,8 @@ app.get("/api/instances", async (ctx) => {
 /**
  * Mint a ticket for one of the caller's online instances and hand back the URL the page
  * navigates to. The endpoint comes from the caller's own row (read with their JWT, so RLS), and
- * is re-validated as a bare https origin here: the row's CHECK is the first guard, this the second.
+ * is re-validated as a bare https origin by isInstanceRow: the row's CHECK is the first guard,
+ * that shape guard the second.
  */
 app.post("/api/open", async (ctx) => {
   if (ctx.req.header("sec-fetch-site") === "cross-site") return jsonResponse({ error: "forbidden" }, 403)
@@ -247,7 +255,7 @@ app.post("/api/open", async (ctx) => {
   }
   if (!ctx.req.header("content-type")?.startsWith("application/json")) return jsonResponse({ error: "invalid_request" }, 415)
   const limit = rateLimit(`open:${clientKey(ctx.req.raw.headers)}`, OPEN_LIMIT, OPEN_WINDOW_SECONDS)
-  if (!limit.allowed) return jsonResponse({ error: "rate_limited", retryAfterSeconds: limit.retryAfterSeconds }, 429)
+  if (!limit.allowed) return tooMany(limit.retryAfterSeconds)
 
   const body = await readJson(ctx.req.raw)
   const instanceId = typeof body?.instance_id === "string" ? body.instance_id : ""
@@ -261,8 +269,7 @@ app.post("/api/open", async (ctx) => {
     const rows = await list.json().catch(() => null)
     const row = Array.isArray(rows) ? rows.find((r) => isInstanceRow(r) && r.instance_id === instanceId) : null
     if (!row || !row.online) return { status: 200, body: { error: "instance_unavailable" } as OpenOutcome }
-    const endpoint = httpsOrigin(row.endpoint_url)
-    if (!endpoint) return { status: 200, body: { error: "invalid_endpoint" } as OpenOutcome }
+    const endpoint = httpsOrigin(row.endpoint_url) as string // non-null: isInstanceRow checked it
     const minted = await rpc(cfg, token, "fluck_web_mint_ticket", { p_instance_id: instanceId })
     if (!minted.ok) {
       const err = await minted.json().catch(() => null) as Record<string, unknown> | null
@@ -283,8 +290,8 @@ app.post("/api/open", async (ctx) => {
     return jsonResponse({ error: "upstream" }, 502, result.setCookies)
   }
   if ("url" in out.body) return jsonResponse(out.body, 200, result.setCookies)
-  const status = out.body.error === "instance_unavailable" ? 409 : out.body.error === "rate_limited" ? 429 : 502
-  return jsonResponse(out.body, status, result.setCookies)
+  if (out.body.error === "rate_limited") return tooMany(TICKET_TTL_SECONDS, result.setCookies)
+  return jsonResponse(out.body, 409, result.setCookies)
 })
 
 app.notFound(() => jsonResponse({ error: "not_found" }, 404))
@@ -296,7 +303,12 @@ app.onError((err, _ctx) => {
 
 // ---- helpers ----
 
-type OpenOutcome = { url: string } | { error: "instance_unavailable" | "invalid_endpoint" | "rate_limited" }
+type OpenOutcome = { url: string } | { error: "instance_unavailable" | "rate_limited" }
+
+/** Every 429 carries Retry-After as well as the body field. */
+function tooMany(retryAfterSeconds: number, setCookies: string[] = []): Response {
+  return jsonResponse({ error: "rate_limited", retryAfterSeconds }, 429, setCookies, { "Retry-After": String(retryAfterSeconds) })
+}
 
 type RouteReq = {
   url: string
@@ -390,22 +402,23 @@ function publicInstance(r: InstanceRow) {
   }
 }
 
+/** The fluck_web_instances.endpoint_url CHECK, so every row the table accepts is openable. */
+const ENDPOINT_RE = /^https:\/\/[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$/
+
 /**
- * `value` as a bare https origin (no userinfo, path, query or fragment), or null. A single
- * trailing slash is tolerated, matching fluck_web_upsert_instance.
+ * `value` as a normalised bare https origin (host lowercased, default :443 dropped), or null.
+ * Same shape as the table CHECK; a single trailing slash is tolerated.
  */
 export function httpsOrigin(value: unknown): string | null {
   if (typeof value !== "string" || value.length > 512) return null
-  let u: URL
+  const bare = value.endsWith("/") ? value.slice(0, -1) : value
+  if (!ENDPOINT_RE.test(bare)) return null
   try {
-    u = new URL(value)
+    const u = new URL(bare)
+    return u.protocol === "https:" ? u.origin : null
   } catch {
     return null
   }
-  if (u.protocol !== "https:" || u.username || u.password || u.search || u.hash) return null
-  if (u.pathname !== "/" && u.pathname !== "") return null
-  if (value.replace(/\/$/, "") !== u.origin) return null
-  return u.origin
 }
 
 /** The provider's return to /auth, or null for an ordinary page load (see live-sessions). */
@@ -501,7 +514,9 @@ async function gotrueRefresh(cfg: Cfg, refreshToken: string): Promise<{ accessTo
     if (!resp.ok) return null
     const json = await resp.json() as Record<string, unknown>
     if (typeof json.access_token !== "string" || !ACCESS_TOKEN_RE.test(json.access_token)) return null
-    return { accessToken: json.access_token, refreshToken: typeof json.refresh_token === "string" ? json.refresh_token : refreshToken }
+    if (json.refresh_token === undefined) return { accessToken: json.access_token, refreshToken }
+    if (typeof json.refresh_token !== "string" || !REFRESH_TOKEN_RE.test(json.refresh_token)) return null
+    return { accessToken: json.access_token, refreshToken: json.refresh_token }
   } catch (err) {
     console.error("refresh failed", err)
     return null

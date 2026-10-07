@@ -9,7 +9,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert"
 // Import the app module (not index.ts, which calls Deno.serve) so no listener starts under test.
-import { app, htmlAttr, jsStringLiteral, OPTIMIST_REDIRECTS } from "../app.ts"
+import { app, FLUCK_WEB_REDIRECTS, htmlAttr, jsStringLiteral, OPTIMIST_REDIRECTS } from "../app.ts"
 
 async function pageFor(path: string): Promise<string> {
   return await (await app.request(path)).text()
@@ -220,4 +220,14 @@ Deno.test("fluck-web arm is an exact match: a sub-path or look-alike host is NOT
     const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent(rt))
     assertStringIncludes(html, "boss://auth/verify?token=abc")
   }
+})
+
+Deno.test("fluck-web redirect allow-list is in lockstep with config.toml and both email templates", async () => {
+  const fluckPredicateUrls = (tpl: string) =>
+    [...(tpl.match(/\{\{ \$fluck := [^\n]*/)?.[0] ?? "").matchAll(/eq \.RedirectTo "([^"]+)"/g)].map((m) => m[1]).sort()
+  const config = await read("config.toml")
+  for (const u of FLUCK_WEB_REDIRECTS) assertStringIncludes(config, `"${u}"`)
+  const all = [...FLUCK_WEB_REDIRECTS].sort()
+  assertEquals(fluckPredicateUrls(await read("templates/email/magic-link.html")), all.filter((u) => !isLoopback(u)))
+  assertEquals(fluckPredicateUrls(await read("templates/email/magic-link-local.html")), all.filter(isLoopback))
 })

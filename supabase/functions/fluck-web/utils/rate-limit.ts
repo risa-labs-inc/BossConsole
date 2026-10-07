@@ -8,6 +8,8 @@
  * data routes it is that every call is authenticated by the caller's own JWT and RLS.
  */
 
+import { viaAlias } from "./config.ts"
+
 interface Window {
   count: number
   resetAt: number
@@ -78,20 +80,25 @@ export function resetRateLimits(): void {
   buckets.clear()
 }
 
+/** Bounds the Map key a header value can produce. */
+const MAX_KEY_LENGTH = 64
+
 /**
  * Best-effort client identity for rate-limit keys.
  *
- * Proxies APPEND the address they observed to X-Forwarded-For, so the RIGHTMOST entry is the
- * one our gateway saw and the leftmost is whatever the client chose to send. Cloudflare's
- * cf-connecting-ip is the single observed address and is preferred when present. Still a
- * brake and not a control: anyone reaching the origin directly can set either header.
+ * Through the fluck.risaboss.com Worker every request reaches us from Cloudflare's egress, so the
+ * visitor's address travels in X-Fluck-Web-Client-Ip. That header is honoured ONLY when the Worker
+ * proved itself with the alias secret (viaAlias); otherwise a direct caller could pick a fresh
+ * bucket per request. Without that proof the platform's own observation is used: Cloudflare's
+ * cf-connecting-ip, else the RIGHTMOST X-Forwarded-For entry (proxies append what they saw; the
+ * leftmost is whatever the client sent). Still a brake, not a control.
  */
 export function clientKey(headers: Headers): string {
-  // Through the fluck.risaboss.com Worker the visitor's address arrives in this header (the Worker
-  // reads CF-Connecting-IP on its own inbound request). Spoofable on a direct hit, which only lets
-  // a caller pick their own bucket - the same power X-Forwarded-For already gives them.
-  const viaAlias = headers.get("x-fluck-web-client-ip")?.trim()
-  if (viaAlias) return viaAlias
+  const proxied = viaAlias(headers) ? headers.get("x-fluck-web-client-ip")?.trim() : ""
+  return (proxied || platformClientIp(headers)).slice(0, MAX_KEY_LENGTH)
+}
+
+function platformClientIp(headers: Headers): string {
   const cf = headers.get("cf-connecting-ip")?.trim()
   if (cf) return cf
   const forwarded = headers.get("x-forwarded-for")

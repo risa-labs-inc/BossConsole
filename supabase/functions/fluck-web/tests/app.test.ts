@@ -7,7 +7,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert"
 import { app, codeChallenge, deps, emailFromJwt, httpsOrigin, isInstanceRow } from "../app.ts"
-import { resetRateLimits } from "../utils/rate-limit.ts"
+import { clientKey, resetRateLimits } from "../utils/rate-limit.ts"
 import { FLUCK_MARK } from "../views/page.ts"
 
 const BASE = "/fluck-web"
@@ -15,6 +15,8 @@ const ORIGIN = "https://fluck.risaboss.com"
 const SECURE = { "x-forwarded-proto": "https" }
 const CSRF = "a".repeat(64)
 const TICKET = "A".repeat(40) + "b-_"
+const ALIAS_SECRET = "s".repeat(64)
+const ENV_VARS = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "FLUCK_WEB_PUBLIC_BASE_URL", "FLUCK_WEB_PUBLIC_BASE_PATH", "FLUCK_WEB_ALIAS_SECRET"]
 
 type Call = { url: string; init?: RequestInit }
 
@@ -24,12 +26,12 @@ function withEnv(fn: () => Promise<void>): () => Promise<void> {
     Deno.env.set("SUPABASE_ANON_KEY", "anon-key")
     Deno.env.set("FLUCK_WEB_PUBLIC_BASE_URL", ORIGIN)
     Deno.env.set("FLUCK_WEB_PUBLIC_BASE_PATH", "/")
+    Deno.env.set("FLUCK_WEB_ALIAS_SECRET", ALIAS_SECRET)
     resetRateLimits()
     try {
       await fn()
     } finally {
-      Deno.env.delete("FLUCK_WEB_PUBLIC_BASE_URL")
-      Deno.env.delete("FLUCK_WEB_PUBLIC_BASE_PATH")
+      for (const name of ENV_VARS) Deno.env.delete(name)
     }
   }
 }
@@ -146,11 +148,54 @@ Deno.test("GET /auth and the bare base path serve the same page", withEnv(async 
 Deno.test("page loads that did not come through the alias go to fluck.risaboss.com; alias requests are served", withEnv(async () => {
   const direct = await app.request(`${BASE}/?instance=inst-a`, { headers: { host: "api.risaboss.com" } })
   assertEquals(direct.status, 302)
-  assertEquals(direct.headers.get("location"), "https://fluck.risaboss.com?instance=inst-a&_alias=1")
-  const viaAlias = await app.request(`${BASE}/auth`, { headers: { host: "api.risaboss.com", "x-fluck-web-alias": "fluck.risaboss.com" } })
+  assertEquals(direct.headers.get("location"), "https://fluck.risaboss.com/?instance=inst-a")
+  const viaAlias = await app.request(`${BASE}/auth`, {
+    headers: { host: "api.risaboss.com", "x-fluck-web-alias": "fluck.risaboss.com", "x-fluck-web-alias-secret": ALIAS_SECRET },
+  })
   assertEquals(viaAlias.status, 200)
   const api = await app.request(`${BASE}/api/instances`, { headers: { host: "api.risaboss.com" } })
   assertEquals(api.status, 401, "API routes are never redirected")
+}))
+
+Deno.test("?_alias=1 no longer serves the page off the base host (its API calls would all 404)", withEnv(async () => {
+  for (const path of [`${BASE}/?_alias=1`, `${BASE}/auth?_alias=1&instance=inst-a`]) {
+    const res = await app.request(path, { headers: { host: "api.risaboss.com" } })
+    assertEquals(res.status, 302, path)
+    assert(!res.headers.get("location")!.includes("_alias"), path)
+  }
+}))
+
+Deno.test("a forged or unverifiable alias marker is refused, not served and not redirected", withEnv(async () => {
+  const cases: Record<string, string>[] = [
+    { "x-fluck-web-alias": "fluck.risaboss.com" },
+    { "x-fluck-web-alias": "fluck.risaboss.com", "x-fluck-web-alias-secret": "wrong" },
+    { "x-fluck-web-alias": "fluck.risaboss.com", "x-fluck-web-alias-secret": ALIAS_SECRET + "x" },
+  ]
+  for (const headers of cases) {
+    const res = await app.request(`${BASE}/`, { headers: { host: "api.risaboss.com", ...headers } })
+    assertEquals(res.status, 503, JSON.stringify(headers))
+    assertEquals((await res.json()).error, "alias_unverified")
+  }
+  Deno.env.set("FLUCK_WEB_ALIAS_SECRET", "short")
+  const weak = await app.request(`${BASE}/`, { headers: { host: "api.risaboss.com", "x-fluck-web-alias": "fluck.risaboss.com", "x-fluck-web-alias-secret": "short" } })
+  assertEquals(weak.status, 503, "a secret under 32 chars is treated as unset")
+}))
+
+Deno.test("GET /api/oauth/:provider off the base host goes to the vanity host first", withEnv(async () => {
+  const direct = await app.request(`${BASE}/api/oauth/google`, { headers: { ...SECURE, host: "api.risaboss.com" } })
+  assertEquals(direct.status, 302)
+  assertEquals(direct.headers.get("location"), "https://fluck.risaboss.com/api/oauth/google")
+  assertEquals(direct.headers.getSetCookie().length, 0)
+  const viaAlias = await app.request(`${BASE}/api/oauth/google`, {
+    headers: { ...SECURE, host: "api.risaboss.com", "x-fluck-web-alias": "fluck.risaboss.com", "x-fluck-web-alias-secret": ALIAS_SECRET },
+  })
+  assertStringIncludes(viaAlias.headers.get("location")!, "/auth/v1/authorize?provider=google")
+}))
+
+Deno.test("GET /health", withEnv(async () => {
+  const res = await app.request(`${BASE}/health`)
+  assertEquals(res.status, 200)
+  assertEquals(await res.json(), { status: "healthy" })
 }))
 
 // ---- sign-in ----
@@ -204,6 +249,71 @@ Deno.test("POST /api/otp rejects malformed email, cross-site callers, and rate-l
     assertEquals(blocked.status, 429)
     assert(Number(blocked.headers.get("retry-after")) > 0)
     assertEquals(stub.calls.length, 5)
+  } finally {
+    stub.restore()
+  }
+}))
+
+Deno.test("the OTP brake ignores a client-supplied X-Fluck-Web-Client-Ip unless the Worker proved itself", withEnv(async () => {
+  const stub = stubFetch(() => json({}))
+  try {
+    const send = (headers: Record<string, string>) =>
+      app.request(`${BASE}/api/otp`, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ email: "a@b.co" }) })
+    // Direct caller rotating the header: one bucket (the platform's address), so the 6th is refused.
+    for (let i = 0; i < 5; i++) assertEquals((await send({ "x-forwarded-for": "203.0.113.9", "x-fluck-web-client-ip": `10.0.0.${i}` })).status, 200)
+    assertEquals((await send({ "x-forwarded-for": "203.0.113.9", "x-fluck-web-client-ip": "10.0.0.99" })).status, 429)
+    // Forged marker plus header without the secret: still the platform's bucket.
+    assertEquals((await send({ "x-forwarded-for": "203.0.113.9", "x-fluck-web-client-ip": "10.0.1.1", "x-fluck-web-alias-secret": "nope" })).status, 429)
+    // Through the Worker (secret present) each visitor gets their own bucket, even though all
+    // arrive from the same Cloudflare egress.
+    const alias = { "x-forwarded-for": "203.0.113.9", "x-fluck-web-alias-secret": ALIAS_SECRET }
+    assertEquals((await send({ ...alias, "x-fluck-web-client-ip": "198.51.100.1" })).status, 200)
+    assertEquals((await send({ ...alias, "x-fluck-web-client-ip": "198.51.100.2" })).status, 200)
+  } finally {
+    stub.restore()
+  }
+}))
+
+Deno.test("clientKey trusts the Worker header only with the secret, and bounds the key", withEnv(() => {
+  const h = (o: Record<string, string>) => new Headers(o)
+  assertEquals(clientKey(h({ "x-fluck-web-client-ip": "1.1.1.1", "x-forwarded-for": "9.9.9.9, 8.8.8.8" })), "8.8.8.8")
+  assertEquals(clientKey(h({ "x-fluck-web-client-ip": "1.1.1.1", "cf-connecting-ip": "7.7.7.7" })), "7.7.7.7")
+  assertEquals(clientKey(h({ "x-fluck-web-client-ip": "1.1.1.1", "x-fluck-web-alias-secret": ALIAS_SECRET, "cf-connecting-ip": "7.7.7.7" })), "1.1.1.1")
+  assertEquals(clientKey(h({ "x-fluck-web-client-ip": "x".repeat(500), "x-fluck-web-alias-secret": ALIAS_SECRET })).length, 64)
+  Deno.env.delete("FLUCK_WEB_ALIAS_SECRET")
+  assertEquals(clientKey(h({ "x-fluck-web-client-ip": "1.1.1.1", "x-fluck-web-alias-secret": "", "x-real-ip": "6.6.6.6" })), "6.6.6.6")
+  return Promise.resolve()
+}))
+
+Deno.test("POST /api/otp maps GoTrue's own 429 to 429 with Retry-After", withEnv(async () => {
+  const stub = stubFetch(() => json({ msg: "email rate limit exceeded" }, 429))
+  try {
+    const res = await app.request(`${BASE}/api/otp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: "a@b.co" }) })
+    assertEquals(res.status, 429)
+    assertEquals(res.headers.get("retry-after"), "60")
+  } finally {
+    stub.restore()
+  }
+}))
+
+Deno.test("every local 429 carries Retry-After: /api/session, /api/instances, /api/open", withEnv(async () => {
+  const stub = stubFetch(() => json({}, 401))
+  try {
+    const ip = { "x-forwarded-for": "203.0.113.50" }
+    const session = () => app.request(`${BASE}/api/session`, { method: "POST", headers: { "Content-Type": "application/json", ...ip }, body: "{}" })
+    for (let i = 0; i < 30; i++) await session()
+    const s = await session()
+    assertEquals(s.status, 429)
+    assert(Number(s.headers.get("retry-after")) > 0)
+    const list = () => app.request(`${BASE}/api/instances`, { headers: ip })
+    for (let i = 0; i < 120; i++) await list()
+    const l = await list()
+    assertEquals(l.status, 429)
+    assert(Number(l.headers.get("retry-after")) > 0)
+    for (let i = 0; i < 30; i++) await openRequest({ instance_id: "inst-a" }, ip)
+    const o = await openRequest({ instance_id: "inst-a" }, ip)
+    assertEquals(o.status, 429)
+    assert(Number(o.headers.get("retry-after")) > 0)
   } finally {
     stub.restore()
   }
@@ -383,6 +493,23 @@ Deno.test("GET /api/instances with a dead refresh cookie is 401 and clears both 
   }
 }))
 
+Deno.test("a rotated refresh token of the wrong shape never reaches a cookie", withEnv(async () => {
+  const fresh = fakeJwt("me@risalabs.ai") + "n"
+  for (const refresh_token of ["bad token\r\nSet-Cookie: x=y", "short", 42]) {
+    const stub = stubFetch((call) => {
+      if (call.url.includes("grant_type=refresh_token")) return json({ access_token: fresh, refresh_token })
+      return auth(call) === `Bearer ${fresh}` ? json([ROW]) : json({ message: "JWT expired" }, 401)
+    })
+    try {
+      const res = await app.request(`${BASE}/api/instances`, { headers: { ...SECURE, cookie: "__Secure-boss_fluck_rt=refresh-token-value-old" } })
+      assertEquals(res.status, 401, String(refresh_token))
+      assert(!res.headers.getSetCookie().some((c) => c.includes(fresh)), String(refresh_token))
+    } finally {
+      stub.restore()
+    }
+  }
+}))
+
 Deno.test("GET /api/instances refuses cross-site callers", withEnv(async () => {
   const stub = backend()
   try {
@@ -468,6 +595,32 @@ Deno.test("POST /api/open maps the RPC's instance_unavailable (went offline betw
   }
 }))
 
+Deno.test("POST /api/open maps the RPC's too_many_tickets cap to 429 with Retry-After", withEnv(async () => {
+  const stub = backend({ mint: () => json({ code: "54000", message: "too_many_tickets" }, 500) })
+  try {
+    const res = await openRequest({ instance_id: "inst-a" })
+    assertEquals(res.status, 429)
+    assertEquals((await res.json()).error, "rate_limited")
+    assertEquals(res.headers.get("retry-after"), "60")
+  } finally {
+    stub.restore()
+  }
+}))
+
+Deno.test("POST /api/open opens a row the table CHECK accepts with an uppercase host or :443, normalised", withEnv(async () => {
+  for (const endpoint of ["https://Mac.Tail1234.ts.net", "https://a.trycloudflare.com:443", "https://A.trycloudflare.com/"]) {
+    const stub = backend({ list: () => json([{ ...ROW, endpoint_url: endpoint }]) })
+    try {
+      const res = await openRequest({ instance_id: "inst-a" })
+      assertEquals(res.status, 200, endpoint)
+      const url = new URL((await res.json()).url)
+      assertEquals(url.origin, new URL(endpoint).origin, endpoint)
+    } finally {
+      stub.restore()
+    }
+  }
+}))
+
 Deno.test("POST /api/open never navigates to a non-https or non-origin endpoint", withEnv(async () => {
   for (const endpoint of ["http://a.example", "javascript:alert(1)", "https://a.example/path", "https://u:p@a.example", "https://a.example?x=1"]) {
     const stub = backend({ list: () => json([{ ...ROW, endpoint_url: endpoint }]) })
@@ -526,7 +679,9 @@ Deno.test("POST /api/open without a session is 401", withEnv(async () => {
 Deno.test("httpsOrigin accepts only bare https origins", () => {
   assertEquals(httpsOrigin("https://a.trycloudflare.com"), "https://a.trycloudflare.com")
   assertEquals(httpsOrigin("https://mac.tail.ts.net:8443/"), "https://mac.tail.ts.net:8443")
-  for (const bad of ["http://a.example", "https://a.example/x", "https://a.example/#x", "https://a.example?y", "https://u@a.example", "ftp://a", "", 42, null]) {
+  assertEquals(httpsOrigin("https://Mac.Tail.ts.net"), "https://mac.tail.ts.net")
+  assertEquals(httpsOrigin("https://a.example:443"), "https://a.example")
+  for (const bad of ["http://a.example", "https://a.example/x", "https://a.example/#x", "https://a.example?y", "https://u@a.example", "ftp://a", "https://a.example//", "https://a.example:99999", "https://%61.example", "", 42, null]) {
     assertEquals(httpsOrigin(bad), null, String(bad))
   }
 })

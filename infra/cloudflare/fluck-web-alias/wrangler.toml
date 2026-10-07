@@ -11,3 +11,5 @@ account_id = "804b4814a4615997b78ab1d30d12ff77"
 main = "worker.js"
 compatibility_date = "2026-09-01"
 routes = [{ pattern = "fluck.risaboss.com", custom_domain = true }]
+# Secret, set once (same value as the function's FLUCK_WEB_ALIAS_SECRET, e.g. `openssl rand -hex 32`):
+#   npx wrangler secret put FLUCK_WEB_ALIAS_SECRET

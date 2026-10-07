@@ -49,6 +49,28 @@ export function authPublicUrl(): string {
   return raw.replace(/\/+$/, "")
 }
 
+/** Shortest FLUCK_WEB_ALIAS_SECRET honoured; a shorter one is treated as unset. */
+const MIN_ALIAS_SECRET_LENGTH = 32
+
+/**
+ * True only when the alias Worker vouched for this request by sending FLUCK_WEB_ALIAS_SECRET,
+ * which it holds as a Worker secret and strips from every inbound request. The plain
+ * X-Fluck-Web-Alias marker is client-settable and proves nothing on its own.
+ */
+export function viaAlias(headers: Headers): boolean {
+  const secret = Deno.env.get("FLUCK_WEB_ALIAS_SECRET") ?? ""
+  if (secret.length < MIN_ALIAS_SECRET_LENGTH) return false
+  return timingSafeEqual(secret, headers.get("x-fluck-web-alias-secret") ?? "")
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  const x = new TextEncoder().encode(a)
+  const y = new TextEncoder().encode(b)
+  let diff = x.length ^ y.length
+  for (let i = 0; i < x.length; i++) diff |= x[i] ^ (y[i] ?? 0)
+  return diff === 0
+}
+
 export interface FluckWebConfig {
   supabaseUrl: string
   anonKey: string
