@@ -9,7 +9,8 @@ import java.nio.channels.FileLock
 import java.nio.channels.OverlappingFileLockException
 import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
-import java.util.concurrent.ConcurrentHashMap
+import java.util.Properties
+import java.util.UUID
 
 internal class PluginUpdateLeaseBusyException(
     pluginId: String,
@@ -19,14 +20,14 @@ internal class PluginUpdateLeaseBusyException(
 internal class PluginUpdateLease private constructor(
     private val channelClose: PluginUpdateLeaseChannelClose,
     private val lock: FileLock,
-    private val owners: ConcurrentHashMap<String, Any>,
-    private val path: String,
-    private val token: Any,
+    private val owners: Properties,
+    private val ownerKey: String,
+    private val token: String,
     private val reportFailure: (String, String) -> Unit,
 ) : Closeable {
     @Synchronized
     override fun close() {
-        reportFailure.cleanup(channelClose, lock, owners, path, token)
+        reportFailure.cleanup(channelClose, lock, owners, ownerKey, token)
     }
 
     companion object {
@@ -43,9 +44,9 @@ internal class PluginUpdateLease private constructor(
         ): Result<PluginUpdateLease> {
             val channelClose = PluginUpdateLeaseChannelClose()
             var lock: FileLock? = null
-            var owners: ConcurrentHashMap<String, Any>? = null
-            var path: String? = null
-            val token = Any()
+            var owners: Properties? = null
+            var ownerKey: String? = null
+            val token = UUID.randomUUID().toString()
             return try {
                 val directory = File(pluginDir, ".plugin-update-locks")
                 check(directory.mkdirs() || directory.isDirectory) { "Cannot create plugin update lock directory" }
@@ -55,11 +56,11 @@ internal class PluginUpdateLease private constructor(
                         .digest(pluginId.toByteArray(Charsets.UTF_8))
                         .joinToString("") { "%02x".format(it) }
                 val file = File(directory, "$name.lock").canonicalFile
-                path = file.path
+                ownerKey = PluginUpdateProcessRegistry.ownerKey(file.path)
                 owners = PluginUpdateProcessRegistry.owners()
                 // On POSIX, closing ANY descriptor for this inode can release the process's
                 // existing lock. Reject same-JVM contenders before opening another channel.
-                claimProcessOwner(owners, path, token, pluginId)
+                claimProcessOwner(owners, ownerKey, token, pluginId)
                 val channel = openChannel(file)
                 channelClose.attach(channel)
                 lock =
@@ -69,12 +70,12 @@ internal class PluginUpdateLease private constructor(
                         null
                     }
                 if (lock == null) throw PluginUpdateLeaseBusyException(pluginId)
-                Result.success(PluginUpdateLease(channelClose, lock, owners, path, token, reportFailure))
+                Result.success(PluginUpdateLease(channelClose, lock, owners, ownerKey, token, reportFailure))
             } catch (failure: Exception) {
-                cleanupFailedAcquisition(failure) { reportFailure.cleanup(channelClose, lock, owners, path, token) }
+                cleanupFailedAcquisition(failure) { reportFailure.cleanup(channelClose, lock, owners, ownerKey, token) }
                 Result.failure(failure)
             } catch (failure: Throwable) {
-                cleanupFailedAcquisition(failure) { reportFailure.cleanup(channelClose, lock, owners, path, token) }
+                cleanupFailedAcquisition(failure) { reportFailure.cleanup(channelClose, lock, owners, ownerKey, token) }
                 throw failure
             }
         }
@@ -95,12 +96,12 @@ internal class PluginUpdateLease private constructor(
         }
 
         private fun claimProcessOwner(
-            owners: ConcurrentHashMap<String, Any>,
-            path: String,
-            token: Any,
+            owners: Properties,
+            ownerKey: String,
+            token: String,
             pluginId: String,
         ) {
-            if (owners.putIfAbsent(path, token) != null) throw PluginUpdateLeaseBusyException(pluginId)
+            if (owners.putIfAbsent(ownerKey, token) != null) throw PluginUpdateLeaseBusyException(pluginId)
         }
 
         private fun reportCleanupFailure(
@@ -117,16 +118,16 @@ internal class PluginUpdateLease private constructor(
         private fun ((String, String) -> Unit).cleanup(
             channelClose: PluginUpdateLeaseChannelClose,
             lock: FileLock?,
-            owners: ConcurrentHashMap<String, Any>?,
-            path: String?,
-            token: Any,
+            owners: Properties?,
+            ownerKey: String?,
+            token: String,
         ) {
             cleanupPluginUpdateLease(
                 release = { if (lock?.isValid == true) lock.release() },
                 close = channelClose::close,
                 afterClose = {
                     // isOpen becomes false before native close; only a successful close confirms teardown.
-                    if (channelClose.confirmed && path != null) owners?.remove(path, token)
+                    if (channelClose.confirmed && ownerKey != null) owners?.remove(ownerKey, token)
                 },
                 reportFailure = this,
             )

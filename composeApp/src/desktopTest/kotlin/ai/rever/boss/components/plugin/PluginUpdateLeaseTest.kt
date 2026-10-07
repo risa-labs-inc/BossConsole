@@ -11,6 +11,8 @@ import java.nio.channels.FileLock
 import java.nio.channels.ReadableByteChannel
 import java.nio.channels.WritableByteChannel
 import java.nio.file.Files
+import java.util.Properties
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
@@ -57,8 +59,8 @@ class PluginUpdateLeaseTest {
             val locks = File(directory, ".plugin-update-locks").listFiles()!!.toList()
             assertEquals(8, locks.size)
             assertEquals(8, locks.map { it.name }.toSet().size)
-            val prefix = File(directory, ".plugin-update-locks").canonicalPath + File.separator
-            assertTrue(PluginUpdateProcessRegistry.owners().keys.none { it.startsWith(prefix) })
+            val owners = PluginUpdateProcessRegistry.owners()
+            assertTrue(locks.none { owners.containsKey(PluginUpdateProcessRegistry.ownerKey(it.canonicalPath)) })
         } finally {
             start.countDown()
             workers.forEach { it.join(TimeUnit.SECONDS.toMillis(10)) }
@@ -110,26 +112,28 @@ class PluginUpdateLeaseTest {
     }
 
     @Test
-    fun `process ownership uses bootstrap JDK values and releases only its own token`() {
+    fun `process ownership uses string properties and releases only its own token`() {
         val directory = Files.createTempDirectory("plugin-update-jdk-gate").toFile()
         try {
             val held = PluginUpdateLease.acquire(directory, "plugin").getOrThrow()
             val registry = PluginUpdateProcessRegistry.owners()
-            assertIs<ConcurrentHashMap<*, *>>(registry)
+            assertIs<Properties>(registry)
             val path = File(directory, ".plugin-update-locks").listFiles()!!.single().canonicalPath
-            val token = assertNotNull(registry[path])
-            assertEquals(Any::class.java, token.javaClass, "Gate value must not pin a plugin classloader")
+            val key = PluginUpdateProcessRegistry.ownerKey(path)
+            val token = assertNotNull(registry[key])
+            assertIs<String>(token)
+            assertEquals(token, UUID.fromString(token).toString())
             assertEquals(null, token.javaClass.classLoader)
             assertEquals(null, registry.javaClass.classLoader)
             assertTrue(PluginUpdateLease.acquire(directory.canonicalFile, "plugin").isFailure)
-            assertTrue(registry[path] === token, "Busy acquisition removed the current owner's token")
+            assertTrue(registry[key] === token, "Busy acquisition removed the current owner's token")
             held.close()
             held.close()
-            assertEquals(null, registry[path])
+            assertEquals(null, registry[key])
             PluginUpdateLease.acquire(directory, "plugin").getOrThrow().use {
-                val replacement = assertNotNull(registry[path])
+                val replacement = assertNotNull(registry[key])
                 held.close()
-                assertTrue(registry[path] === replacement, "Previous owner released the replacement's process gate")
+                assertTrue(registry[key] === replacement, "Previous owner released the replacement's process gate")
                 assertTrue(PluginUpdateLease.acquire(directory, "plugin").isFailure)
             }
         } finally {
@@ -240,8 +244,7 @@ class PluginUpdateLeaseTest {
                             reportFailure = { phase, _ -> reports += phase },
                         ).getOrThrow()
                 val owners = PluginUpdateProcessRegistry.owners()
-                val prefix = File(directory, ".plugin-update-locks").canonicalPath + File.separator
-                val path = owners.keys.single { it.startsWith(prefix) }
+                val path = syntheticOwnerKey(directory)
                 val token = assertNotNull(owners[path])
                 if (failure is Exception) {
                     assertEquals("committed", lease.use { "committed" })
@@ -328,10 +331,20 @@ class PluginUpdateLeaseTest {
         }
     }
 
+    private fun syntheticOwnerKey(directory: File): String {
+        val hash =
+            java.security.MessageDigest
+                .getInstance("SHA-256")
+                .digest("plugin".toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+        return PluginUpdateProcessRegistry.ownerKey(File(directory, ".plugin-update-locks/$hash.lock").canonicalPath)
+    }
+
     private fun removeSyntheticFence(directory: File) {
-        val prefix = File(directory, ".plugin-update-locks").canonicalPath + File.separator
         val owners = PluginUpdateProcessRegistry.owners()
-        owners.entries.filter { it.key.startsWith(prefix) }.forEach { owners.remove(it.key, it.value) }
+        val key = syntheticOwnerKey(directory)
+        val token = owners[key] ?: return
+        owners.remove(key, token)
     }
 
     private fun externalProbe(

@@ -1,29 +1,26 @@
 package ai.rever.boss.components.plugin
 
-import java.io.ByteArrayOutputStream
-import java.io.ObjectOutputStream
+import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
-import java.lang.management.ManagementFactory
+import java.nio.file.Files
+import java.security.MessageDigest
+import java.util.Properties
 import java.util.UUID
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicReference
-import javax.management.ObjectName
-import javax.management.modelmbean.RequiredModelMBean
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class PluginUpdateProcessRegistryTest {
     @Test
-    fun `concurrent bootstrap callers share one registry and one owner claim`() {
-        val name = ObjectName("boss.plugins.test:type=UpdateLeaseRegistry,fixture=${UUID.randomUUID()}")
-        val server = ManagementFactory.getPlatformMBeanServer()
+    fun `concurrent callers share properties and only one string owner claim`() {
+        val key = PluginUpdateProcessRegistry.ownerKey("fixture-${UUID.randomUUID()}")
         val workers = 8
         val ready = CountDownLatch(workers)
         val start = CountDownLatch(1)
@@ -35,9 +32,9 @@ class PluginUpdateProcessRegistryTest {
                         Callable {
                             ready.countDown()
                             check(start.await(10, TimeUnit.SECONDS)) { "Bootstrap start timed out" }
-                            val owners = PluginUpdateProcessRegistry.owners(name)
-                            val token = Any()
-                            Triple(owners, token, owners.putIfAbsent("fixture-owner", token) == null)
+                            val owners = PluginUpdateProcessRegistry.owners()
+                            val token = UUID.randomUUID().toString()
+                            Triple(owners, token, owners.putIfAbsent(key, token) == null)
                         },
                     )
                 }
@@ -49,19 +46,21 @@ class PluginUpdateProcessRegistryTest {
             val winners = results.filter { it.third }
             assertEquals(1, winners.size, "Only one concurrent caller may claim the owner")
             val winner = winners.single()
-            assertSame(winner.second, owners["fixture-owner"])
-            assertTrue(owners.remove("fixture-owner", winner.second))
+            assertSame(winner.second, owners[key])
+            assertTrue(owners.remove(key, winner.second))
         } finally {
             start.countDown()
             pool.shutdownNow()
-            // Never remove a registry while a fixture worker could still be using it.
+            // Remove only this fixture key after all callers stop using it.
             assertTrue(pool.awaitTermination(10, TimeUnit.SECONDS), "Bootstrap workers did not finish")
-            if (server.isRegistered(name)) server.unregisterMBean(name)
+            val owners = PluginUpdateProcessRegistry.owners()
+            val token = owners[key]
+            if (token != null) owners.remove(key, token)
         }
     }
 
     @Test
-    fun `independent classloader copies share bootstrap registry without property pollution`() {
+    fun `independent classloader copies share string properties without retaining plugin state`() {
         val owners = PluginUpdateProcessRegistry.owners()
         val type = PluginUpdateProcessRegistry::class.java
         val bytes = type.getResourceAsStream("/${type.name.replace('.', '/')}.class")!!.use { it.readBytes() }
@@ -85,45 +84,57 @@ class PluginUpdateProcessRegistryTest {
         assertTrue(copy !== type)
         val instance = copy.getField("INSTANCE").get(null)
         assertSame(owners, copy.getMethod("owners").invoke(instance))
-        System.getProperties().store(StringWriter(), "test")
-        System.getProperties().list(PrintWriter(StringWriter()))
-        val info = ManagementFactory.getPlatformMBeanServer().getMBeanInfo(registryName)
-        ObjectOutputStream(ByteArrayOutputStream()).use { it.writeObject(info) }
-        assertTrue(info.attributes.isEmpty())
-        assertTrue(
-            info.operations
-                .single()
-                .signature
-                .isEmpty(),
-        )
+        val path = "fixture-${UUID.randomUUID()}"
+        val key = PluginUpdateProcessRegistry.ownerKey(path)
+        assertEquals(key, copy.getMethod("ownerKey", String::class.java).invoke(instance, path))
+        val token = UUID.randomUUID().toString()
+        assertEquals(null, owners.putIfAbsent(key, token))
+        try {
+            assertIs<String>(owners[key])
+            assertEquals(null, owners[key]!!.javaClass.classLoader)
+            owners.store(StringWriter(), "test")
+            owners.list(PrintWriter(StringWriter()))
+        } finally {
+            owners.remove(key, token)
+        }
     }
 
     @Test
-    fun `foreign registry metadata and resource fail closed without replacing production bean`() {
+    fun `foreign owner remains busy and malformed isolated properties fail closed`() {
         val owners = PluginUpdateProcessRegistry.owners()
-        val server = ManagementFactory.getPlatformMBeanServer()
-        val info = server.getMBeanInfo(registryName)
-        for (wrongMetadata in listOf(true, false)) {
-            val name = ObjectName("boss.plugins.test:type=UpdateLeaseRegistry,id=${UUID.randomUUID()}")
-            val bean =
-                if (wrongMetadata) {
-                    RequiredModelMBean()
-                } else {
-                    RequiredModelMBean(info as javax.management.modelmbean.ModelMBeanInfo).also {
-                        it.setManagedResource(AtomicReference("wrong resource"), "ObjectReference")
-                    }
-                }
-            server.registerMBean(bean, name)
-            try {
-                assertFailsWith<IllegalStateException> { PluginUpdateProcessRegistry.owners(name) }
-            } finally {
-                server.unregisterMBean(name)
-            }
+        val foreign = "foreign owner"
+        val directory = Files.createTempDirectory("plugin-update-foreign-owner").toFile()
+        val hash =
+            MessageDigest
+                .getInstance("SHA-256")
+                .digest("plugin".toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+        val path = File(directory, ".plugin-update-locks/$hash.lock").canonicalPath
+        val key = PluginUpdateProcessRegistry.ownerKey(path)
+        assertEquals(null, owners.putIfAbsent(key, foreign))
+        try {
+            val result =
+                PluginUpdateLease.acquire(
+                    directory,
+                    "plugin",
+                    openChannel = { error("Busy property must reject before opening a channel") },
+                )
+            assertIs<PluginUpdateLeaseBusyException>(result.exceptionOrNull())
+            assertSame(foreign, owners[key])
+        } finally {
+            owners.remove(key, foreign)
+            directory.deleteRecursively()
         }
-        assertSame(owners, PluginUpdateProcessRegistry.owners())
-    }
 
-    companion object {
-        private val registryName = ObjectName("boss.plugins:type=UpdateLeaseRegistry,protocol=2")
+        // Malformed entries stay local so parallel system-property consumers remain safe.
+        val isolated = Properties()
+        val malformed = Any()
+        val candidate = UUID.randomUUID().toString()
+        isolated[key] = malformed
+        assertSame(malformed, isolated.putIfAbsent(key, candidate))
+        assertSame(malformed, isolated[key])
+        assertTrue(!isolated.remove(key, candidate))
+        assertSame(malformed, isolated[key])
+        assertTrue(isolated.remove(key, malformed))
     }
 }
