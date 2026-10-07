@@ -6,11 +6,14 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert"
 import {
   type ClaimedItem,
+  CONNECTOR_LABELS,
   cookieName,
   createHandler,
+  type CreateOutcome,
   type CreateRequest,
   DEFAULT_PUBLIC_BASE_URL,
   type Dependencies,
+  ENV_PATTERN,
   PAGES,
   resetRateLimits,
   shortId,
@@ -76,7 +79,9 @@ interface Harness {
   logs: string[]
 }
 
-function harness(options: { row?: VaultRequestRow; items?: ClaimedItem[] } = {}): Harness {
+function harness(
+  options: { row?: VaultRequestRow; items?: ClaimedItem[]; create?: CreateOutcome } = {},
+): Harness {
   resetRateLimits()
   const created: CreateRequest[] = []
   const stored: StoreRequest[] = []
@@ -96,7 +101,7 @@ function harness(options: { row?: VaultRequestRow; items?: ClaimedItem[] } = {})
     },
     createRequest: (request) => {
       created.push(request)
-      return Promise.resolve(true)
+      return Promise.resolve(options.create ?? "created")
     },
     claimInbox: () => Promise.resolve(options.items ?? []),
     instance: () => Promise.resolve(null),
@@ -197,6 +202,41 @@ Deno.test("metadata on the other kinds is ignored exactly as before", async () =
   assertEquals(h.created[0].env, null)
 })
 
+Deno.test("a database behind the function is a schema error, not a taken id", async () => {
+  const cases: [CreateOutcome, number, string][] = [
+    ["schema", 503, "schema"],
+    ["unavailable", 503, "unavailable"],
+    ["taken", 409, "taken"],
+  ]
+  for (const [outcome, status, error] of cases) {
+    const h = harness({ create: outcome })
+    const response = await h.handler(
+      await signed("/requests", { ...MINT, connector: "notion", env: "NOTION_TOKEN" }),
+    )
+    assertEquals(response.status, status, outcome)
+    assertEquals(await response.json(), { error })
+    if (outcome === "schema") assert(h.logs.some((l) => l.includes("schema")), outcome)
+  }
+})
+
+Deno.test("the connector vocabulary and env rule match the migration's check", async () => {
+  const migrations = new URL("../../../migrations/", import.meta.url)
+  let sql = ""
+  for await (const entry of Deno.readDir(migrations)) {
+    if (entry.name.endsWith("_fluck_vault_secret_kind.sql")) {
+      sql = await Deno.readTextFile(new URL(entry.name, migrations))
+    }
+  }
+  const check = /ADD CONSTRAINT "fluck_vault_requests_secret_meta_check"[\s\S]*?;/.exec(sql)?.[0] ??
+    ""
+  const listed = /"connector" IN \(([^)]*)\)/.exec(check)?.[1] ?? ""
+  assertEquals(
+    listed.split(",").map((v) => v.trim().replace(/^'|'$/g, "")).sort(),
+    Object.keys(CONNECTOR_LABELS).sort(),
+  )
+  assertStringIncludes(check, `"env" ~ '${ENV_PATTERN.source}'`)
+})
+
 // --------------------------------------------------------------------------------------------
 // The page
 // --------------------------------------------------------------------------------------------
@@ -231,7 +271,7 @@ Deno.test("a connector's page prefills its label read only", async () => {
   assert(!input(html, "f2")!.includes("value="))
 })
 
-Deno.test("a replace page is always empty", async () => {
+Deno.test("a replace page never prefills the alias or the key, only a connector's label", async () => {
   for (const connector of [null, "github" as const]) {
     const h = harness({ row: secretRow({ alias: "notion-work", connector }) })
     const html = await (await h.handler(

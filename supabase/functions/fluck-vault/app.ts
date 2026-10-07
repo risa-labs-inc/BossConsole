@@ -98,8 +98,18 @@ export function isConnector(value: unknown): value is Connector {
   return typeof value === "string" && Object.hasOwn(CONNECTOR_LABELS, value)
 }
 
-/** The variable name an install exposes a secret as. Same rule as the database check. */
+/**
+ * The variable name an install exposes a secret as. Same rule as the database check, pinned by
+ * a test. `$` without the m flag anchors at the end in both engines, so no newline gets through.
+ */
 export const ENV_PATTERN = /^[A-Z][A-Z0-9_]{1,63}$/
+
+/**
+ * `taken`: the database refused the row (the id is used, or the install went away).
+ * `schema`: the database does not have the columns or signature this function sends, i.e. the
+ * function was deployed ahead of its migration. `unavailable`: any other error.
+ */
+export type CreateOutcome = "created" | "taken" | "schema" | "unavailable"
 
 export interface StoreResult {
   outcome: StoreOutcome
@@ -244,8 +254,8 @@ export interface Dependencies {
   describeRequest(jti: string): Promise<VaultRequestRow | null>
   /** Consume the request and stage the blob, in one statement. */
   store(request: StoreRequest): Promise<StoreResult>
-  /** Write the row for a link the DGX is about to sign. False if the id is already taken. */
-  createRequest(request: CreateRequest): Promise<boolean>
+  /** Write the row for a link the DGX is about to sign. */
+  createRequest(request: CreateRequest): Promise<CreateOutcome>
   /** Return and delete every unclaimed row for one workspace and install (null: legacy rows). */
   claimInbox(ws: string, instanceId: string | null): Promise<ClaimedItem[]>
   /** One live install, or null if it is unknown or revoked. */
@@ -907,8 +917,9 @@ async function get(
       kind: "secret" as const,
       submit: COPY.secretSubmit,
       note: COPY.secretNote,
-      // A connector's label is a constant of ours. Nothing about the stored item, and never
-      // its value, is put on the page: a replace starts from an empty form.
+      // A connector's label is a constant of ours, also on a replace. Nothing about the stored
+      // item, and never its value, is put on the page. `readonly` is cosmetic: the sealed label
+      // is whatever the browser sent, so the install treats it as untrusted text.
       label: row.connector ? CONNECTOR_LABELS[row.connector] : undefined,
     }
     : {
@@ -1265,7 +1276,15 @@ async function createRequestRoute(
     expiresAt,
     instanceId,
   })
-  if (!created) {
+  if (created === "schema") {
+    deps.log(`requests refused: database schema is behind this function`)
+    return json(503, { error: "schema" })
+  }
+  if (created === "unavailable") {
+    deps.log(`requests failed: database error [${workspacePrefix(ws)}] [${tag(jti)}]`)
+    return json(503, { error: "unavailable" })
+  }
+  if (created !== "created") {
     deps.log(`requests refused: taken [${workspacePrefix(ws)}] [${tag(jti)}]`)
     return json(409, { error: "taken" })
   }

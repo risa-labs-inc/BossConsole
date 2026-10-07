@@ -7,10 +7,16 @@
 --   `connector`  which connector the value is for, so the page can label the field itself
 --   `env`        the environment variable name the install will expose the value as
 --
--- Additive only. Both columns are nullable and NULL on every existing row; the kind check is
--- widened, never narrowed. Every function keeps its old call shape (new parameters default to
+-- Additive. Both columns are nullable and NULL on every existing row; the kind check admits
+-- `secret` and no longer admits a vault row with a NULL kind. Every function keeps its old call shape (new parameters default to
 -- NULL) and old callers ignore the added result columns, so the edge function deployed before
 -- this migration keeps working after it.
+--
+-- Runs after 20261007100000 (rotation and issuance) and redefines none of its functions. The
+-- issuance trigger, rotation expiry and revocation act on every request row, `secret` included.
+--
+-- Deploy order: this migration, then `fluck-vault`. A function deployed first answers every
+-- secret mint with 503 'schema' rather than a misleading 409 'taken'.
 
 -- ---------------------------------------------------------------------------------------------
 -- The columns
@@ -27,26 +33,40 @@ ALTER TABLE "public"."fluck_vault_inbox"
 ALTER TABLE "public"."fluck_vault_requests"
     DROP CONSTRAINT IF EXISTS "fluck_vault_requests_kind_check";
 
+-- Every branch is TRUE or FALSE, never NULL: a CHECK passes on NULL, so `"kind" IN (...)` on a
+-- NULL kind would admit a vault row without one. NOT VALID: existing rows are short-lived.
 ALTER TABLE "public"."fluck_vault_requests"
     ADD CONSTRAINT "fluck_vault_requests_kind_check"
         CHECK (
-            ("purpose" = 'vault' AND "kind" IN ('password', 'card', 'secret') AND "purchase_id" IS NULL)
+            ("purpose" = 'vault' AND "kind" IS NOT NULL
+                AND "kind" IN ('password', 'card', 'secret') AND "purchase_id" IS NULL)
             OR ("purpose" = 'cvv' AND "kind" IS NULL AND "purchase_id" IS NOT NULL)
-        );
+        ) NOT VALID;
 
 -- Only a secret carries metadata, and only from a fixed vocabulary: `connector` is rendered
--- into the page and `env` becomes a variable name on the install.
+-- into the page and `env` becomes a variable name on the install. Per kind, so a cvv row (kind
+-- NULL) is held to "no metadata" too. The vocabulary is pinned to app.ts by a test.
 ALTER TABLE "public"."fluck_vault_requests"
     DROP CONSTRAINT IF EXISTS "fluck_vault_requests_secret_meta_check";
 
 ALTER TABLE "public"."fluck_vault_requests"
     ADD CONSTRAINT "fluck_vault_requests_secret_meta_check"
         CHECK (
-            ("kind" = 'secret' OR ("connector" IS NULL AND "env" IS NULL))
-            AND ("connector" IS NULL
-                 OR "connector" IN ('notion', 'github', 'google', 'gmail', 'calendar', 'workspace'))
-            AND ("env" IS NULL OR "env" ~ '^[A-Z][A-Z0-9_]{1,63}$')
+            CASE WHEN "kind" IS NOT DISTINCT FROM 'secret'
+                THEN ("connector" IS NULL
+                      OR "connector" IN ('notion', 'github', 'google', 'gmail', 'calendar', 'workspace'))
+                     AND ("env" IS NULL OR "env" ~ '^[A-Z][A-Z0-9_]{1,63}$')
+                ELSE "connector" IS NULL AND "env" IS NULL
+            END
         );
+
+-- The inbox is written only by fluck_vault_store from a checked request row; this holds it there.
+ALTER TABLE "public"."fluck_vault_inbox"
+    DROP CONSTRAINT IF EXISTS "fluck_vault_inbox_secret_meta_check";
+
+ALTER TABLE "public"."fluck_vault_inbox"
+    ADD CONSTRAINT "fluck_vault_inbox_secret_meta_check"
+        CHECK ("kind" IS NOT DISTINCT FROM 'secret' OR ("connector" IS NULL AND "env" IS NULL));
 
 -- ---------------------------------------------------------------------------------------------
 -- Describe: the connector, so the page can label the field. `env` is not needed to render.
@@ -99,6 +119,9 @@ REVOKE ALL ON FUNCTION "public"."fluck_vault_describe"("p_jti" "uuid") FROM "ano
 REVOKE ALL ON FUNCTION "public"."fluck_vault_describe"("p_jti" "uuid") FROM "authenticated";
 GRANT EXECUTE ON FUNCTION "public"."fluck_vault_describe"("p_jti" "uuid") TO "service_role";
 
+COMMENT ON FUNCTION "public"."fluck_vault_describe"("p_jti" "uuid") IS
+    'The non secret half of a live, unspent, unexpired Fluck vault request, for rendering its page. No row for a revoked install. service_role only.';
+
 -- ---------------------------------------------------------------------------------------------
 -- Store: same signature; now carries the metadata onto the staged blob.
 -- ---------------------------------------------------------------------------------------------
@@ -149,6 +172,9 @@ BEGIN
 END;
 $$;
 
+COMMENT ON FUNCTION "public"."fluck_vault_store"("p_jti" "uuid", "p_ciphertext" "bytea", "p_cookie_hash" "text") IS
+    'Consume a Fluck vault request and stage its sealed blob with the request''s metadata. Returns the kind stored, or NULL if the request is gone. service_role only.';
+
 -- ---------------------------------------------------------------------------------------------
 -- Claim: two more result columns. A changed return type needs a drop.
 -- ---------------------------------------------------------------------------------------------
@@ -196,6 +222,9 @@ REVOKE ALL ON FUNCTION "public"."fluck_vault_claim"("p_ws" "text", "p_instance_i
 REVOKE ALL ON FUNCTION "public"."fluck_vault_claim"("p_ws" "text", "p_instance_id" "text") FROM "anon";
 REVOKE ALL ON FUNCTION "public"."fluck_vault_claim"("p_ws" "text", "p_instance_id" "text") FROM "authenticated";
 GRANT EXECUTE ON FUNCTION "public"."fluck_vault_claim"("p_ws" "text", "p_instance_id" "text") TO "service_role";
+
+COMMENT ON FUNCTION "public"."fluck_vault_claim"("p_ws" "text", "p_instance_id" "text") IS
+    'Return and delete the unclaimed staged blobs of one workspace and install (NULL: legacy rows). service_role only.';
 
 -- ---------------------------------------------------------------------------------------------
 -- Create: two more parameters, defaulted, so the thirteen-argument call still resolves. The old
@@ -268,3 +297,6 @@ REVOKE ALL ON FUNCTION "public"."fluck_vault_create"("p_jti" "uuid", "p_ws" "tex
 REVOKE ALL ON FUNCTION "public"."fluck_vault_create"("p_jti" "uuid", "p_ws" "text", "p_purpose" "text", "p_kind" "text", "p_alias" "text", "p_purchase_id" "text", "p_merchant" "text", "p_brand" "text", "p_last4" "text", "p_total_cents" bigint, "p_currency" "text", "p_expires_at" timestamp with time zone, "p_instance_id" "text", "p_connector" "text", "p_env" "text") FROM "anon";
 REVOKE ALL ON FUNCTION "public"."fluck_vault_create"("p_jti" "uuid", "p_ws" "text", "p_purpose" "text", "p_kind" "text", "p_alias" "text", "p_purchase_id" "text", "p_merchant" "text", "p_brand" "text", "p_last4" "text", "p_total_cents" bigint, "p_currency" "text", "p_expires_at" timestamp with time zone, "p_instance_id" "text", "p_connector" "text", "p_env" "text") FROM "authenticated";
 GRANT EXECUTE ON FUNCTION "public"."fluck_vault_create"("p_jti" "uuid", "p_ws" "text", "p_purpose" "text", "p_kind" "text", "p_alias" "text", "p_purchase_id" "text", "p_merchant" "text", "p_brand" "text", "p_last4" "text", "p_total_cents" bigint, "p_currency" "text", "p_expires_at" timestamp with time zone, "p_instance_id" "text", "p_connector" "text", "p_env" "text") TO "service_role";
+
+COMMENT ON FUNCTION "public"."fluck_vault_create"("p_jti" "uuid", "p_ws" "text", "p_purpose" "text", "p_kind" "text", "p_alias" "text", "p_purchase_id" "text", "p_merchant" "text", "p_brand" "text", "p_last4" "text", "p_total_cents" bigint, "p_currency" "text", "p_expires_at" timestamp with time zone, "p_instance_id" "text", "p_connector" "text", "p_env" "text") IS
+    'Write the request row for a Fluck vault link about to be signed. False if the id is taken or the request is out of policy. service_role only.';
