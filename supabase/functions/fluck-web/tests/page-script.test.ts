@@ -135,7 +135,6 @@ Deno.test("?instance= opens the Fluck in the frame, pushes a ticket-free history
   assertEquals(h.pushed, [{ view: "fluck" }])
   assertEquals(h.location.search, "", "?instance leaves the address bar")
   assert(!h.location.hash.includes("/t/"), "the ticket never enters the address bar")
-  assertEquals(h.get("viewer-name").textContent, "Fluck on Mac")
 })
 
 Deno.test("fluck-title sets a capped, single-line document title; only from the frame", async () => {
@@ -238,10 +237,9 @@ Deno.test("no fluck-hello in time: close the frame, replace the entry with ?list
 })
 
 Deno.test("closing the frame or Back before the hello timeout cancels the fallback", async () => {
-  for (const close of ["switch", "signed-out", "back", "popstate"]) {
+  for (const close of ["switch", "signed-out", "popstate"]) {
     const h = await opened()
-    if (close === "back") for (const fn of h.get("viewer-back").listeners.click) fn({})
-    else if (close === "popstate") h.popstate()
+    if (close === "popstate") h.popstate()
     else h.message({ type: "fluck-" + close })
     assertEquals(h.pending(HELLO_MS), 0, close)
     await h.settle()

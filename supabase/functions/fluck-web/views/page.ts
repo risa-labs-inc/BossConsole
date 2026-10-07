@@ -86,15 +86,12 @@ const STYLES = `
   .dot.on { background-color: var(--ok); }
   footer { margin-top: 28px; color: var(--text-2); font-size: 12px; text-align: center; }
   a { color: var(--signal-text); }
-  /* Embedded Fluck: the page becomes a thin bar over a full-height frame (as live-sessions). */
+  /* Embedded Fluck: the frame fills the page; the Fluck's own "Switch BOSS" and Back return to the list. */
   body.viewing { overflow: hidden; }
   body.viewing main { max-width: none; padding: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
   body.viewing header, body.viewing #notice, body.viewing .card, body.viewing footer { display: none; }
   #viewer { display: none; flex: 1; flex-direction: column; min-height: 0; }
   body.viewing #viewer { display: flex; }
-  #viewerbar { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background-color: var(--raised); border-bottom: 1px solid var(--line); font-size: 13px; }
-  #viewerbar .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #viewerbar button { padding: 5px 10px; font-size: 12px; }
   #fluckframe { flex: 1; width: 100%; border: 0; background-color: var(--ink); }
   .providers { display: grid; gap: 10px; }
   a.btn.provider { display: flex; align-items: center; justify-content: center; gap: 10px;
@@ -329,7 +326,6 @@ const SCRIPT = `
     viewing = { url: url, label: label };
     stopPolling(); cancelOpenTimer();
     notice("");
-    $("viewer-name").textContent = label;
     $("fluckframe").setAttribute("src", url);
     document.body.classList.add("viewing");
     fitViewport();
@@ -406,7 +402,6 @@ const SCRIPT = `
     cancelOpenTimer();
     loadInstances(false).catch(function () {});
   });
-  $("viewer-back").addEventListener("click", function () { closeFrame(true); });
   // Restored from bfcache with no Fluck framed: refresh the list, do not reopen.
   window.addEventListener("pageshow", function (ev) {
     if (ev.persisted && !viewing) { opening = false; autoOpenDone = true; loadInstances(false).catch(function () {}); }
@@ -504,10 +499,6 @@ export function fluckPage(model: PageModel, nonce: string): string {
   </section>
 
   <div id="viewer">
-    <div id="viewerbar">
-      <button id="viewer-back" class="secondary" type="button">&#8592; Flucks</button>
-      <span class="name" id="viewer-name"></span>
-    </div>
     <iframe id="fluckframe" title="Fluck" allow="clipboard-read; clipboard-write; fullscreen" allowfullscreen src="about:blank"></iframe>
   </div>
 
