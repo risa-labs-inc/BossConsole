@@ -31,7 +31,7 @@ internal fun hasLiveSession(
 
 internal actual fun startSessionFileImport(scope: CoroutineScope) {
     val path = SessionFileImporter.pathFromEnvironment() ?: return
-    // The client is resolved per call rather than captured, so the importer never holds a stale one.
+    // isSignedIn and adopt resolve the client per call; the status flow is read once when the job starts.
     val importer =
         SessionFileImporter(
             path = path,

@@ -729,7 +729,9 @@ file; BOSS adopts it as its own session (`refreshSession` then `importSession`).
   slows the poll like an absent file.
 - **Session recovery**: `CoreAuthService` does not clear a session that replaced the one it was
   recovering (`SessionRecoveryPolicy.replacedSince`), so a handoff that lands while recovery's
-  refresh of the old token is in flight survives that refresh's rejection.
+  refresh of the old token is in flight survives that refresh's rejection. The guard is one-directional:
+  a rejection that lands before the handoff's `importSession` still clears the old session, and
+  the import then lands on top of it.
 
 **Writer contract.** Create the file owner-only and rename it into place, in the same directory:
 

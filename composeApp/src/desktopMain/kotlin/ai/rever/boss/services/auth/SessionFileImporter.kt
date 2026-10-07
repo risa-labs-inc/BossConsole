@@ -5,6 +5,7 @@ import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
@@ -92,9 +93,10 @@ internal class SessionFileImporter(
         signedOut.distinctUntilChanged().collectLatest { out ->
             var quiet = 0
             while (out) {
+                // No return on IMPORTED: the status flip ends this loop, and if it never comes the
+                // next poll sees the session and idles.
                 when (pollOnce()) {
-                    Outcome.IMPORTED -> return@collectLatest
-                    Outcome.ABSENT, null -> quiet++
+                    Outcome.ABSENT, Outcome.SIGNED_IN, null -> quiet++
                     Outcome.REJECTED -> if (rejectionRepeated) quiet++ else quiet = 0
                     else -> quiet = 0
                 }
@@ -121,9 +123,15 @@ internal class SessionFileImporter(
         }
 
     /** One check of [path]. */
-    @Suppress("ReturnCount")
     suspend fun importOnce(): Outcome {
         if (isSignedIn()) return Outcome.SIGNED_IN
+        // Once the file is deleted the token is spent, and adopt's own success flips the session
+        // status that cancels this poll, so consuming and adopting must run to completion.
+        return withContext(NonCancellable) { consumeAndAdopt() }
+    }
+
+    @Suppress("ReturnCount")
+    private suspend fun consumeAndAdopt(): Outcome {
         val bytes =
             when (val read = withContext(Dispatchers.IO) { readAndConsume() }) {
                 is Read.Absent -> return Outcome.ABSENT

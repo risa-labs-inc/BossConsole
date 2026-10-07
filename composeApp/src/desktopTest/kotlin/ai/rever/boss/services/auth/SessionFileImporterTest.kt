@@ -350,8 +350,36 @@ class SessionFileImporterTest {
             val job = launch { imp.run(MutableStateFlow(true)) }
             delay(300)
             job.cancel()
-            assertTrue(polls <= 6, "polled $polls times")
+            assertTrue(polls in 3..6, "polled $polls times")
             assertTrue(file.exists())
+        }
+
+    @Test
+    fun `an adoption that flips the session status runs to completion`(): Unit =
+        runBlocking {
+            assumePosix()
+            write()
+            val signedOut = MutableStateFlow(true)
+            val done = CompletableDeferred<Unit>()
+            val imp =
+                SessionFileImporter(
+                    path = file,
+                    isSignedIn = { !signedOut.value },
+                    adopt = { token ->
+                        // importSession publishes Authenticated, then keeps going (persisting).
+                        signedOut.value = false
+                        delay(50)
+                        adopted += token
+                        done.complete(Unit)
+                    },
+                    currentUid = uid,
+                    pollInterval = 10.milliseconds,
+                )
+            val job = launch { imp.run(signedOut) }
+            withTimeout(5_000) { done.await() }
+            job.cancel()
+            assertEquals(listOf("rt-123"), adopted)
+            assertFalse(file.exists())
         }
 
     @Test
