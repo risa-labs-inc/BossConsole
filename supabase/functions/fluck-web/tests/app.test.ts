@@ -357,8 +357,31 @@ Deno.test("POST /api/session refuses an unknown token; session and logout refuse
   }
 }))
 
+Deno.test("otp, session and logout refuse a non-JSON body (a cross-origin form is text/plain)", withEnv(async () => {
+  const stub = stubFetch(() => json({ email: "me@risalabs.ai" }))
+  try {
+    for (const [path, body] of [["/api/otp", '{"email":"a@b.co"}'], ["/api/session", JSON.stringify({ access_token: JWT })], ["/api/logout", "{}"]]) {
+      for (const type of ["text/plain", ""]) {
+        const headers: Record<string, string> = type ? { "Content-Type": type } : {}
+        const res = await app.request(`${BASE}${path}`, { method: "POST", headers, body })
+        assertEquals(res.status, 415, `${path} ${type}`)
+        assertEquals(res.headers.getSetCookie().length, 0)
+      }
+    }
+    assertEquals(stub.calls.length, 0)
+  } finally {
+    stub.restore()
+  }
+}))
+
+Deno.test("GET /auth?error= with no verifier (a spent magic link) lands on a visible oauth_error", withEnv(async () => {
+  const res = await app.request(`${BASE}/auth?error=access_denied&error_code=otp_expired`, { headers: SECURE })
+  assertEquals(res.status, 302)
+  assertEquals(res.headers.get("location"), "/auth?oauth_error=expired")
+}))
+
 Deno.test("POST /api/logout clears both cookies", withEnv(async () => {
-  const res = await app.request(`${BASE}/api/logout`, { method: "POST", headers: SECURE })
+  const res = await app.request(`${BASE}/api/logout`, { method: "POST", headers: { ...SECURE, "Content-Type": "application/json" }, body: "{}" })
   assertEquals(res.status, 200)
   const cookies = res.headers.getSetCookie()
   assertEquals(cookies.length, 2)

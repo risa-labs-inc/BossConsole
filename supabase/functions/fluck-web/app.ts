@@ -146,6 +146,7 @@ app.get("/health", () => jsonResponse({ status: "healthy" }))
 /** Magic link. Always 200 {sent:true} on a well-formed email so accounts are not enumerable. */
 app.post("/api/otp", async (ctx) => {
   if (ctx.req.header("sec-fetch-site") === "cross-site") return jsonResponse({ error: "forbidden" }, 403)
+  if (!isJson(ctx.req)) return jsonResponse({ error: "invalid_request" }, 415)
   const limit = rateLimit(`otp:${clientKey(ctx.req.raw.headers)}`, OTP_LIMIT, OTP_WINDOW_SECONDS)
   if (!limit.allowed) return tooMany(limit.retryAfterSeconds)
   const body = await readJson(ctx.req.raw)
@@ -183,6 +184,7 @@ app.post("/api/otp", async (ctx) => {
 /** Turn the magic link's fragment tokens into cookies, after GoTrue vouches for the access token. */
 app.post("/api/session", async (ctx) => {
   if (ctx.req.header("sec-fetch-site") === "cross-site") return jsonResponse({ error: "forbidden" }, 403)
+  if (!isJson(ctx.req)) return jsonResponse({ error: "invalid_request" }, 415)
   const limit = rateLimit(`session:${clientKey(ctx.req.raw.headers)}`, SESSION_LIMIT, SESSION_WINDOW_SECONDS)
   if (!limit.allowed) return tooMany(limit.retryAfterSeconds)
   const body = await readJson(ctx.req.raw)
@@ -204,6 +206,7 @@ app.post("/api/session", async (ctx) => {
 
 app.post("/api/logout", (ctx) => {
   if (ctx.req.header("sec-fetch-site") === "cross-site") return jsonResponse({ error: "forbidden" }, 403)
+  if (!isJson(ctx.req)) return jsonResponse({ error: "invalid_request" }, 415)
   return jsonResponse({ ok: true }, 200, clearCookieHeaders(isSecure(ctx.req), publicBasePath()))
 })
 
@@ -255,7 +258,7 @@ app.post("/api/open", async (ctx) => {
   if (ctx.req.header("origin") !== origin || !expected || !CSRF_RE.test(expected) || expected !== supplied) {
     return jsonResponse({ error: "forbidden" }, 403)
   }
-  if (!ctx.req.header("content-type")?.startsWith("application/json")) return jsonResponse({ error: "invalid_request" }, 415)
+  if (!isJson(ctx.req)) return jsonResponse({ error: "invalid_request" }, 415)
   const limit = rateLimit(`open:${clientKey(ctx.req.raw.headers)}`, OPEN_LIMIT, OPEN_WINDOW_SECONDS)
   if (!limit.allowed) return tooMany(limit.retryAfterSeconds)
 
@@ -320,6 +323,11 @@ type RouteReq = {
   header: (n: string) => string | undefined
   query: (n: string) => string | undefined
   raw: Request
+}
+
+/** A JSON body forces a CORS preflight, so a cross-origin form (text/plain) can never reach a POST route. */
+function isJson(req: { header: (n: string) => string | undefined }): boolean {
+  return req.header("content-type")?.toLowerCase().startsWith("application/json") ?? false
 }
 
 function isSecure(req: { url: string; header: (n: string) => string | undefined }): boolean {
@@ -440,8 +448,8 @@ async function oauthReturn(ctx: { req: RouteReq }): Promise<Response | null> {
   if (code && providerError) return oauthErrorRedirect("failed", [clearVerifier])
   const verifier = cookieToken(ctx.req.header("cookie") ?? null, pkceCookieName(secure))
   if (providerError) {
-    // Without a verifier this is GoTrue reporting a spent magic link; the page shows it.
-    if (!verifier) return null
+    // Without a verifier this is GoTrue reporting a spent magic link (normally in the fragment).
+    if (!verifier) return oauthErrorRedirect(oauthErrorReason(providerError, ctx.req.query("error_code")))
     console.warn("oauth provider error", OAUTH_ERROR_RE.test(providerError) ? providerError : "<malformed>")
     return oauthErrorRedirect(oauthErrorReason(providerError, ctx.req.query("error_code")), [clearVerifier])
   }

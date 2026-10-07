@@ -188,7 +188,7 @@ const SCRIPT = `
 
   async function signOut() {
     stopPolling(); cancelOpenTimer(); requestGeneration++;
-    try { await api("/api/logout", { method: "POST" }); } catch (_) {}
+    try { await api("/api/logout", { method: "POST", body: {} }); } catch (_) {}
     notice(""); show("signin");
   }
 
