@@ -26,8 +26,13 @@ internal fun engineDownloadStatus(
     engineLabel: String,
     isExtracting: Boolean,
     totalBytes: Long,
+    isRestarting: Boolean = false,
 ): String =
     when {
+        // The download is done and BOSS is about to quit and reopen (macOS); without this the
+        // window falls back to the "Connecting" line below, at 0%, for its last seconds on screen.
+        isRestarting -> "Restarting BOSS to finish setting up $engineLabel\u2026"
+
         // isExtracting arrives with totalBytes still set from the download, so this
         // branch has to come first or the dialog claims it is still downloading
         // while it unpacks.

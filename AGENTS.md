@@ -951,7 +951,10 @@ Rules for anyone touching it:
 - **JxBrowser must stay in the host class loader.** A plugin that bundled JxBrowser would get
   `already loaded in another classloader` for a library the host preloaded.
 - **Known gaps:** the first launch after an install, engine change or app update has no valid
-  manifest and keeps only the in-JVM preload; a first-run download-then-boot gets no preload; a
+  manifest and keeps only the in-JVM preload; a first-run download-then-boot gets no preload, so
+  packaged macOS relaunches after the download (`ChromiumBootstrap.onEngineDownloadComplete`)
+  instead of booting with AppKit running (9.5.39 crashed there on a fresh install), carrying
+  queued `boss://` links and files across in `RelaunchHandoff` (replayed as `EXTERNAL`); a
   native allocation failure is still a `brk #0` (only moving JxBrowser out of process fixes that).
   Off switch for both layers: `BOSS_TOOLKIT_PRELOAD=false`.
 - **Re-measure after a JxBrowser bump.** Check the zone swap still sits in a static initializer and
@@ -2326,6 +2329,8 @@ agents" (`AuthBrandArt.kt` and `auth-brand/index.html`) and the Toolbox wizard's
 workspace by selecting the tools you need." Tools install app-wide, not into a Space.
 
 ## Documentation
+
+- [Create and publish plugins](https://github.com/risa-labs-inc/BossConsole/wiki/Create-and-Publish-a-Plugin) - Toolbox/Tool Creator, coding agents, GitHub repositories and publish keys. Hosted BOSS grants `plugins.create` + `api_key.create` to `user`; refresh the session after a grant.
 
 - [Authenticated IPC rollout](docs/authenticated-ipc-rollout.md): paired runtime release, ownership, and credential lifetime.
 

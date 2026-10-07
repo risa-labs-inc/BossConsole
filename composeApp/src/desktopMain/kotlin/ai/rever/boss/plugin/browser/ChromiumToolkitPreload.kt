@@ -64,7 +64,8 @@ import java.nio.file.Path
  *
  * **What it does not.** The first launch after an install, an engine change or an app update has no
  * valid manifest, so that one launch keeps the in-JVM preload and its narrower window. A first-run
- * download-then-boot gets no preload at all (see the call site). Nothing here touches the other
+ * download-then-boot gets no preload at all, so packaged macOS relaunches once the download lands
+ * (`ChromiumBootstrap.onEngineDownloadComplete`); Gradle runs still boot in process. Nothing here touches the other
  * PartitionAlloc failure mode, a native allocation failure, which is also `brk #0`; only moving
  * JxBrowser out of the host process removes that. The offsets above are for this JxBrowser build:
  * re-measure after a bump before relying on them.

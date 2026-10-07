@@ -116,15 +116,11 @@ internal class BossAppState(
      */
     var pendingWorkspaceSwitch by mutableStateOf<LayoutWorkspace?>(null)
     var showNewProjectDialog by mutableStateOf(false)
+    var pendingSpaceToOpen by mutableStateOf<ai.rever.boss.components.workspaces.LayoutWorkspace?>(null)
+    var showCreateSpaceDialog by mutableStateOf(false)
     var showCloneProjectDialog by mutableStateOf(false)
     var projectToOpen by mutableStateOf<Project?>(null)
 
-    /**
-     * Whether answering [projectToOpen] should also show the CodeBase panel: File > Open Project's
-     * folder picker always has. Held until the project lands in THIS window, so choosing New
-     * Window or dismissing leaves no panel open for a project this window never got.
-     */
-    var projectToOpenShowsCodebase by mutableStateOf(false)
     var showShortcutHelpDialog by mutableStateOf(false)
 
     /**

@@ -182,6 +182,8 @@ intellij-platform = "243.21565.199"
 # moves this and the topofmind pin again.
 # 1.0.94 adds the shared BrowserTitleBarBridge. Release the API before merging this pin.
 # 1.0.97 restores terminal-link destination requests. Release the API before merging this pin.
+# Organisation-secret access envelopes were published in 1.0.91; the host transports
+# their server management decisions and attribution through in-process and KERNEL paths.
 boss-plugin-api = "1.0.97"
 
 [libraries]

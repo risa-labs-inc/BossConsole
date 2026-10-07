@@ -18,12 +18,14 @@ import kotlin.test.assertTrue
  */
 class BarContextMenuMappingTest {
     @Test
-    fun `all optional bars start hidden`() {
-        // These defaults apply on every desktop platform. The View menu can restore each bar.
+    fun `only the bottom status bar starts visible`() {
+        // These defaults apply on every desktop platform. The View menu can change each bar.
+        // The status bar is on by default since #1828; the top bar and icon strips stay off.
         val defaults = WindowAppearanceSettings()
 
         ChromeBar.entries.forEach { bar ->
-            assertFalse(defaults.isBarVisible(bar), "${bar.name} should default to hidden")
+            val expected = bar == ChromeBar.BOTTOM
+            assertEquals(expected, defaults.isBarVisible(bar), "${bar.name} default visibility")
         }
     }
 

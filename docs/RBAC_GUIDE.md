@@ -31,7 +31,11 @@ requires `role.assign` first, which this role does not have. See migration
 else, and still holds no `secret.share.role`.)
 
 **The `user` baseline** carries `user.read/write/update/delete`,
-`organisation.create`, `organisation.read` and `secret.read`. Each of those is a
+`organisation.create`, `organisation.read` and `secret.read`. Hosted BOSS also grants
+`plugins.create` and `api_key.create` to `user`, covering existing users and future
+signups without assigning an admin role. These are production role grants; other
+deployments must configure the equivalent. See the [creation and publishing guide](https://github.com/risa-labs-inc/BossConsole/wiki/Create-and-Publish-a-Plugin).
+Each baseline permission is a
 deliberate kill switch: revoking one from `user` disables that capability
 deployment-wide without touching any other role. `secret.read` is what makes the
 Secret Manager panel - and with it the AI section that plugin owns -

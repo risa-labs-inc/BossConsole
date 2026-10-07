@@ -43,7 +43,16 @@ internal object MacToolbarActionMenu {
     ): Pointer {
         val menu = pointer(pointer(clazz("NSMenu"), "alloc"), "initWithTitle:", string(action.label))
         send(menu, "setAutoenablesItems:", 0.toByte())
-        action.menu.orEmpty().forEach { entry ->
+        appendEntries(checkNotNull(menu), action.menu.orEmpty(), target)
+        return menu
+    }
+
+    fun appendEntries(
+        menu: Pointer,
+        entries: List<NativeTitleBarAction>,
+        target: Pointer?,
+    ) {
+        entries.forEach { entry ->
             val row =
                 pointer(
                     pointer(clazz("NSMenuItem"), "alloc"),
@@ -56,9 +65,13 @@ internal object MacToolbarActionMenu {
             send(row, "setRepresentedObject:", string(entry.id))
             send(row, "setEnabled:", if (entry.enabled) 1.toByte() else 0.toByte())
             send(row, "setState:", if (entry.active) 1L else 0L)
+            if (entry.menu != null) {
+                val submenu = create(entry, target)
+                send(row, "setSubmenu:", submenu)
+                send(submenu, "release")
+            }
             send(menu, "addItem:", row)
             send(row, "release")
         }
-        return checkNotNull(menu)
     }
 }

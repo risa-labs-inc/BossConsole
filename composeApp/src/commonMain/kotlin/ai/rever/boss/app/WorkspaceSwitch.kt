@@ -11,6 +11,7 @@ import ai.rever.boss.components.workspaces.resolveOnWorkspaceSwitch
 import ai.rever.boss.components.workspaces.spaceToOpen
 import ai.rever.boss.components.workspaces.workspaceManager
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -169,4 +170,17 @@ internal fun WorkspaceSwitchPrompt(
         // somebody pressed Escape on.
         onDismiss = { state.pendingWorkspaceSwitch = null },
     )
+}
+
+@Composable
+internal fun HandleMenuSpaceSwitch(
+    state: BossAppState,
+    workspaceSwitch: WorkspaceSwitch,
+) {
+    LaunchedEffect(state.pendingSpaceToOpen) {
+        state.pendingSpaceToOpen?.let { space ->
+            state.pendingSpaceToOpen = null
+            workspaceSwitch.request(space)
+        }
+    }
 }

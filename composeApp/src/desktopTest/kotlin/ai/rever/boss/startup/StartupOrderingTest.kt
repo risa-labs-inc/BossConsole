@@ -74,6 +74,28 @@ class StartupOrderingTest {
 
     @Test
     fun `pre-warm is handed the preflight`() {
-        assertTrue(preflight < at("ChromiumBootstrap.prepare(chromiumPreflight)"))
+        assertTrue(preflight < at("ChromiumBootstrap.prepare(chromiumPreflight,"))
+    }
+
+    @Test
+    fun `the relaunch handoff is consumed under the lock and replayed after the post-lock CLI`() {
+        val consume = at("RelaunchHandoff.consume()")
+        assertTrue(at("SingleInstanceManager.acquireLock()") < consume)
+        assertTrue(consume < at("ChromiumBootstrap.prepare(chromiumPreflight,"))
+        assertTrue(at("CliBootstrap.dispatchPostLock(args)") < at("RelaunchHandoff::toCommand"))
+    }
+
+    @Test
+    fun `every engine download completion goes through onEngineDownloadComplete`() {
+        // A download path that booted the engine itself would bring back the 9.5.39 fresh-install crash.
+        at("ChromiumBootstrap.onEngineDownloadComplete(")
+        val completions = Regex("""progress\s*\.\s*isComplete""").findAll(main).count()
+        val routed =
+            Regex("""if\s*\(\s*progress\s*\.\s*isComplete\s*\)\s*onEngineDownloaded\(\)""")
+                .findAll(main)
+                .count()
+        assertTrue(completions > 0 && completions == routed, "a download completion bypasses onEngineDownloaded")
+        val bootInProcess = main.indexOf("bootInProcess =")
+        assertTrue(bootInProcess >= 0 && main.indexOf("prewarmInBackground(force = true)") > bootInProcess)
     }
 }
