@@ -167,6 +167,7 @@ app.post("/api/otp", async (ctx) => {
       body: JSON.stringify({ email, create_user: false }),
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     })
+    await resp.body?.cancel()
     if (resp.status === 429) return tooMany(60)
     if (resp.status >= 500) {
       console.error("otp upstream", resp.status)
@@ -265,7 +266,10 @@ app.post("/api/open", async (ctx) => {
 
   const result = await withUserToken(ctx.req, cfg, async (token) => {
     const list = await rpc(cfg, token, "fluck_web_list_instances", {})
-    if (!list.ok) return { status: list.status, body: null as OpenOutcome | null }
+    if (!list.ok) {
+      await list.body?.cancel()
+      return { status: list.status, body: null as OpenOutcome | null }
+    }
     const rows = await list.json().catch(() => null)
     const row = Array.isArray(rows) ? rows.find((r) => isInstanceRow(r) && r.instance_id === instanceId) : null
     if (!row || !row.online) return { status: 200, body: { error: "instance_unavailable" } as OpenOutcome }
@@ -344,6 +348,7 @@ async function withUserToken<T extends Response | { status: number }>(
   if (access) {
     const value = await call(access)
     if (!isUnauthorized(value)) return { kind: "ok", value, token: access, setCookies: [] }
+    if (value instanceof Response) await value.body?.cancel()
   }
   if (!refresh) return { kind: "unauthorized", setCookies: clear }
   const rotated = await gotrueRefresh(cfg, refresh)
@@ -467,6 +472,7 @@ async function gotruePkceExchange(cfg: Cfg, code: string, verifier: string): Pro
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     })
     if (!resp.ok) {
+      await resp.body?.cancel()
       console.warn("pkce exchange refused", resp.status)
       return null
     }
@@ -494,7 +500,10 @@ async function gotrueUser(cfg: Cfg, token: string): Promise<{ email?: string } |
       headers: { apikey: cfg.anonKey, Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     })
-    if (!resp.ok) return null
+    if (!resp.ok) {
+      await resp.body?.cancel()
+      return null
+    }
     const json = await resp.json() as Record<string, unknown>
     return { email: typeof json.email === "string" ? json.email : undefined }
   } catch (err) {
@@ -511,7 +520,10 @@ async function gotrueRefresh(cfg: Cfg, refreshToken: string): Promise<{ accessTo
       body: JSON.stringify({ refresh_token: refreshToken }),
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     })
-    if (!resp.ok) return null
+    if (!resp.ok) {
+      await resp.body?.cancel()
+      return null
+    }
     const json = await resp.json() as Record<string, unknown>
     if (typeof json.access_token !== "string" || !ACCESS_TOKEN_RE.test(json.access_token)) return null
     if (json.refresh_token === undefined) return { accessToken: json.access_token, refreshToken }

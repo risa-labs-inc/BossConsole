@@ -480,6 +480,37 @@ Deno.test("GET /api/instances rotates an expired access cookie via the refresh c
   }
 }))
 
+Deno.test("discarded upstream bodies are cancelled (expired-token rotation, failed refresh, GoTrue 429)", withEnv(async () => {
+  let cancelled = 0
+  const tracked = (status: number) =>
+    new Response(new ReadableStream({ cancel: () => void cancelled++ }), { status, headers: { "Content-Type": "application/json" } })
+  const fresh = fakeJwt("me@risalabs.ai") + "n"
+  let stub = stubFetch((call) => {
+    if (call.url.includes("grant_type=refresh_token")) return json({ access_token: fresh, refresh_token: "refresh-token-value-5678" })
+    return auth(call) === `Bearer ${fresh}` ? json([ROW]) : tracked(401)
+  })
+  try {
+    await app.request(`${BASE}/api/instances`, { headers: { ...SECURE, cookie: `__Secure-boss_fluck_at=${JWT}; __Secure-boss_fluck_rt=ujxg5ngyirim` } })
+    assertEquals(cancelled, 1, "the 401 that triggers rotation")
+  } finally {
+    stub.restore()
+  }
+  stub = stubFetch(() => tracked(400))
+  try {
+    await app.request(`${BASE}/api/instances`, { headers: { ...SECURE, cookie: "__Secure-boss_fluck_rt=refresh-token-value-dead" } })
+    assertEquals(cancelled, 2, "the refused refresh")
+  } finally {
+    stub.restore()
+  }
+  stub = stubFetch(() => tracked(429))
+  try {
+    await app.request(`${BASE}/api/otp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: "a@b.co" }) })
+    assertEquals(cancelled, 3, "GoTrue's 429")
+  } finally {
+    stub.restore()
+  }
+}))
+
 Deno.test("GET /api/instances with a dead refresh cookie is 401 and clears both cookies", withEnv(async () => {
   const stub = stubFetch((call) => call.url.includes("grant_type=refresh_token") ? json({ msg: "invalid" }, 400) : json({}, 401))
   try {
