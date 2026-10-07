@@ -115,8 +115,12 @@ class PluginUpdateLeaseTest {
             assertTrue(actual.suppressed.any { it === original })
             assertTrue(actual.suppressed.any { it === closeFailure })
             assertTrue(!channel.isOpen)
-            PluginUpdateLease.acquire(directory, "plugin").getOrThrow().close()
+            assertIs<PluginUpdateLeaseBusyException>(
+                PluginUpdateLease.acquire(directory, "plugin").exceptionOrNull(),
+            )
         } finally {
+            // Synthetic channel owns no OS descriptor; remove only this fixture's retained token.
+            removeSyntheticFence(directory)
             directory.deleteRecursively()
         }
     }
@@ -177,6 +181,116 @@ class PluginUpdateLeaseTest {
         }
     }
 
+    @Test
+    fun `ordinary and fatal native close failures keep the same fence across repeated close`() {
+        for (failure in listOf(IOException("close"), OutOfMemoryError("close"))) {
+            val directory = Files.createTempDirectory("plugin-update-sticky-close").toFile()
+            val channel = FailingLeaseChannel(null, failure)
+            val reports = mutableListOf<String>()
+            try {
+                val lease =
+                    PluginUpdateLease
+                        .acquire(
+                            directory,
+                            "plugin",
+                            openChannel = { channel },
+                            reportFailure = { phase, _ -> reports += phase },
+                        ).getOrThrow()
+                val owners = PluginUpdateProcessRegistry.owners()
+                val prefix = File(directory, ".plugin-update-locks").canonicalPath + File.separator
+                val path = owners.keys.single { it.startsWith(prefix) }
+                val token = assertNotNull(owners[path])
+                if (failure is Exception) {
+                    assertEquals("committed", lease.use { "committed" })
+                } else {
+                    assertSame(failure, assertFails { lease.close() })
+                }
+                assertTrue(!channel.isOpen, "Java marks closed before native close throws")
+                repeat(3) { lease.close() }
+                assertSame(token, owners[path], "Repeated close must retain the original fence")
+                assertIs<PluginUpdateLeaseBusyException>(
+                    PluginUpdateLease.acquire(directory, "plugin").exceptionOrNull(),
+                )
+                assertEquals(1, channel.closeAttempts)
+                assertEquals(if (failure is Exception) listOf("close") else emptyList(), reports)
+            } finally {
+                removeSyntheticFence(directory)
+                directory.deleteRecursively()
+            }
+        }
+    }
+
+    @Test
+    fun `failed acquisition retains fence after ordinary or fatal native close failure`() {
+        for (failure in listOf(IOException("close"), OutOfMemoryError("close"))) {
+            val directory = Files.createTempDirectory("plugin-update-acquire-close").toFile()
+            val original = IOException("acquire")
+            val channel = FailingLeaseChannel(original, failure)
+            try {
+                val acquire = {
+                    PluginUpdateLease.acquire(
+                        directory,
+                        "plugin",
+                        openChannel = { channel },
+                        reportFailure = { _, _ -> },
+                    )
+                }
+                if (failure is Exception) {
+                    assertSame(original, acquire().exceptionOrNull())
+                } else {
+                    val actual = assertFails { acquire() }
+                    assertSame(failure, actual)
+                    assertSame(original, actual.suppressed.single())
+                }
+                assertTrue(!channel.isOpen)
+                assertIs<PluginUpdateLeaseBusyException>(
+                    PluginUpdateLease.acquire(directory, "plugin").exceptionOrNull(),
+                )
+                assertEquals(1, channel.closeAttempts)
+            } finally {
+                removeSyntheticFence(directory)
+                directory.deleteRecursively()
+            }
+        }
+    }
+
+    @Test
+    fun `release failures with confirmed channel close free the production process fence`() {
+        for (failure in listOf(IOException("release"), OutOfMemoryError("release"))) {
+            val directory = Files.createTempDirectory("plugin-update-release-close").toFile()
+            val channel = FailingLeaseChannel(null, null, failure)
+            val reports = mutableListOf<String>()
+            try {
+                val lease =
+                    PluginUpdateLease
+                        .acquire(
+                            directory,
+                            "plugin",
+                            openChannel = { channel },
+                            reportFailure = { phase, _ -> reports += phase },
+                        ).getOrThrow()
+                if (failure is Exception) {
+                    assertEquals("committed", lease.use { "committed" })
+                } else {
+                    assertSame(failure, assertFails { lease.close() })
+                }
+                assertTrue(!channel.isOpen)
+                assertEquals(1, channel.closeAttempts)
+                assertEquals(if (failure is Exception) listOf("release") else emptyList(), reports)
+                PluginUpdateLease.acquire(directory, "plugin").getOrThrow().close()
+            } finally {
+                removeSyntheticFence(directory)
+                directory.deleteRecursively()
+            }
+        }
+    }
+
+    private fun removeSyntheticFence(directory: File) {
+        val prefix = File(directory, ".plugin-update-locks").canonicalPath + File.separator
+        val owners = PluginUpdateProcessRegistry.owners()
+        owners.entries.filter { it.key.startsWith(prefix) }.forEach { owners.remove(it.key, it.value) }
+    }
+
     private fun externalProbe(
         directory: File,
         path: String,
@@ -199,16 +313,35 @@ class PluginUpdateLeaseTest {
 
 /** Immutable per-acquisition fault fixture exercises production cleanup without global hooks. */
 private class FailingLeaseChannel(
-    private val acquisitionFailure: IOException,
-    private val closeFailure: IOException,
+    private val acquisitionFailure: IOException?,
+    private val closeFailure: Throwable?,
+    private val lockReleaseFailure: Throwable? = null,
 ) : FileChannel() {
+    var closeAttempts = 0
+        private set
+
     override fun tryLock(
         position: Long,
         size: Long,
         shared: Boolean,
-    ): FileLock = throw acquisitionFailure
+    ): FileLock {
+        acquisitionFailure?.let { throw it }
+        return object : FileLock(this, position, size, shared) {
+            private var valid = true
 
-    override fun implCloseChannel(): Unit = throw closeFailure
+            override fun isValid(): Boolean = valid && this@FailingLeaseChannel.isOpen
+
+            override fun release() {
+                lockReleaseFailure?.let { throw it }
+                valid = false
+            }
+        }
+    }
+
+    override fun implCloseChannel() {
+        closeAttempts++
+        closeFailure?.let { throw it }
+    }
 
     override fun read(dst: ByteBuffer): Int = error("unused")
 

@@ -17,7 +17,7 @@ internal class PluginUpdateLeaseBusyException(
 
 /** Shared disk and bootstrap-JDK process protocol with Toolbox; never delete lock files. */
 internal class PluginUpdateLease private constructor(
-    private val channel: FileChannel,
+    private val channelClose: PluginUpdateLeaseChannelClose,
     private val lock: FileLock,
     private val owners: ConcurrentHashMap<String, Any>,
     private val path: String,
@@ -26,7 +26,7 @@ internal class PluginUpdateLease private constructor(
 ) : Closeable {
     @Synchronized
     override fun close() {
-        reportFailure.cleanup(channel, lock, owners, path, token)
+        reportFailure.cleanup(channelClose, lock, owners, path, token)
     }
 
     companion object {
@@ -41,7 +41,7 @@ internal class PluginUpdateLease private constructor(
             },
             reportFailure: (String, String) -> Unit = ::reportCleanupFailure,
         ): Result<PluginUpdateLease> {
-            var channel: FileChannel? = null
+            val channelClose = PluginUpdateLeaseChannelClose()
             var lock: FileLock? = null
             var owners: ConcurrentHashMap<String, Any>? = null
             var path: String? = null
@@ -60,7 +60,8 @@ internal class PluginUpdateLease private constructor(
                 // On POSIX, closing ANY descriptor for this inode can release the process's
                 // existing lock. Reject same-JVM contenders before opening another channel.
                 claimProcessOwner(owners, path, token, pluginId)
-                channel = openChannel(file)
+                val channel = openChannel(file)
+                channelClose.attach(channel)
                 lock =
                     try {
                         channel.tryLock()
@@ -68,12 +69,12 @@ internal class PluginUpdateLease private constructor(
                         null
                     }
                 if (lock == null) throw PluginUpdateLeaseBusyException(pluginId)
-                Result.success(PluginUpdateLease(channel, lock, owners, path, token, reportFailure))
+                Result.success(PluginUpdateLease(channelClose, lock, owners, path, token, reportFailure))
             } catch (failure: Exception) {
-                cleanupFailedAcquisition(failure) { reportFailure.cleanup(channel, lock, owners, path, token) }
+                cleanupFailedAcquisition(failure) { reportFailure.cleanup(channelClose, lock, owners, path, token) }
                 Result.failure(failure)
             } catch (failure: Throwable) {
-                cleanupFailedAcquisition(failure) { reportFailure.cleanup(channel, lock, owners, path, token) }
+                cleanupFailedAcquisition(failure) { reportFailure.cleanup(channelClose, lock, owners, path, token) }
                 throw failure
             }
         }
@@ -114,7 +115,7 @@ internal class PluginUpdateLease private constructor(
         }
 
         private fun ((String, String) -> Unit).cleanup(
-            channel: FileChannel?,
+            channelClose: PluginUpdateLeaseChannelClose,
             lock: FileLock?,
             owners: ConcurrentHashMap<String, Any>?,
             path: String?,
@@ -122,14 +123,34 @@ internal class PluginUpdateLease private constructor(
         ) {
             cleanupPluginUpdateLease(
                 release = { if (lock?.isValid == true) lock.release() },
-                close = { channel?.close() },
+                close = channelClose::close,
                 afterClose = {
-                    // A failed close that leaves a live descriptor retains the process fence.
-                    if ((channel == null || !channel.isOpen) && path != null) owners?.remove(path, token)
+                    // isOpen becomes false before native close; only a successful close confirms teardown.
+                    if (channelClose.confirmed && path != null) owners?.remove(path, token)
                 },
                 reportFailure = this,
             )
         }
+    }
+}
+
+/** A failed native close is sticky even though AbstractInterruptibleChannel reports closed. */
+private class PluginUpdateLeaseChannelClose {
+    private var channel: FileChannel? = null
+    var confirmed: Boolean = true
+        private set
+    private var attempted = false
+
+    fun attach(channel: FileChannel) {
+        confirmed = false
+        this.channel = channel
+    }
+
+    fun close() {
+        if (attempted) return
+        attempted = true
+        channel?.close()
+        confirmed = channel?.isOpen != true
     }
 }
 
