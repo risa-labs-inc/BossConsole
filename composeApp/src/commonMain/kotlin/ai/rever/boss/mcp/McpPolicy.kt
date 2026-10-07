@@ -219,9 +219,11 @@ object McpMutatingToolCatalog {
             "terminal_open",
             "close_workspace",
             "workspace_close",
-            // BOSS profiles: start a process, mint a session
+            // BOSS profiles: open a window or start a process; the list names every profile and
+            // the Spaces bound to it, a sensitive read held for approval like get_workspace_context
             "profile_create",
             "profile_open",
+            "profile_list",
         )
 
     private val MUTATING_SUFFIXES =

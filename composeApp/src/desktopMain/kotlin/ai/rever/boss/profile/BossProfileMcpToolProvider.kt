@@ -20,8 +20,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * The API surface of BOSS profiles: separate BOSS accounts on one machine, each in its own
- * process and window, with its own sign-in, browser profile, plugins, plugin data and Spaces.
+ * The API surface of BOSS profiles: a window with its own browser profile under the main account
+ * (`shared`), or a separate BOSS account in its own process with its own sign-in, plugins, plugin
+ * data and Spaces (`separate`). Registered only while profiles are enabled.
  *
  * Hidden by design. Nothing in the UI creates or opens a profile, and a Space opened the ordinary
  * way still opens in the current window under the current profile; only these tools (and

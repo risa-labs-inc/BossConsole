@@ -6,7 +6,6 @@ import ai.rever.boss.mcp.sandbox.McpRiskLevel
 import ai.rever.boss.plugin.api.McpToolArgs
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /** The whole approval gate on tools that open a window or start a process: pinned name by name. */
@@ -14,14 +13,14 @@ class BossProfileMcpPolicyTest {
     private val emptyArgs = McpToolArgs(emptyMap(), "{}")
 
     @Test
-    fun `profile_create and profile_open are mutating and HIGH, profile_list is a read`() {
+    fun `every profile tool is held for approval and rated HIGH`() {
         val evaluator = DefaultMcpRiskEvaluator()
-        for (name in listOf("profile_create", "profile_open")) {
-            assertTrue(McpMutatingToolCatalog.isMutating(name), name)
+        // profile_list changes nothing, but names every profile and its bound Spaces, so it is
+        // held like get_workspace_context.
+        for (name in listOf("profile_create", "profile_open", "profile_list")) {
+            assertTrue(McpMutatingToolCatalog.isMutating(name, declaredReadOnly = name == "profile_list"), name)
             assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk(name, emptyArgs).level, name)
         }
-        assertFalse(McpMutatingToolCatalog.isMutating("profile_list", declaredReadOnly = true))
-        assertEquals(McpRiskLevel.LOW, evaluator.evaluateRisk("profile_list", emptyArgs).level)
     }
 
     @Test

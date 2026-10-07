@@ -123,6 +123,11 @@ fun ComponentContext.BossAppWithAuth(
                                 }
                             },
                             onFailure = { error ->
+                                if (error is AuthService.MagicLinkAlreadyTakenException) {
+                                    // Another window holds this link; its own result is what the user sees.
+                                    logger.info(LogCategory.AUTH, "Magic link already taken by another caller")
+                                    return@fold
+                                }
                                 logger.error(LogCategory.AUTH, "Magic link authentication failed", error = error)
                                 // Set error so UI can display it
                                 MagicLinkErrorService.setError(

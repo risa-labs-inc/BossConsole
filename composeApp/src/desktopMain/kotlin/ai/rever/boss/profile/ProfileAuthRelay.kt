@@ -41,6 +41,9 @@ object ProfileAuthRelay {
 
     private const val AUTH_HOST = "auth"
 
+    /** Bounds the sequential offers between a link click and a sign-in or a refusal. */
+    private const val OFFER_DEADLINE_MS = 15_000L
+
     /** What the main process does with a callback. */
     enum class Outcome {
         /** Handle it here, as without profiles. */
@@ -118,7 +121,10 @@ object ProfileAuthRelay {
         decision: Route.Offer,
         uri: String,
     ): Outcome {
+        val deadline = System.currentTimeMillis() + OFFER_DEADLINE_MS
         for (id in decision.profileIds) {
+            // Every profile asked so far declined, so stopping here leaves the link with no one.
+            if (System.currentTimeMillis() > deadline) break
             when (claimer(id, uri)) {
                 SingleInstanceManager.AuthClaimAnswer.CLAIMED -> {
                     logger.info(LogCategory.AUTH, "A BOSS profile claimed a sign-in callback", mapOf("profileId" to id))
@@ -152,8 +158,15 @@ object ProfileAuthRelay {
         return waitingFlows(kind, System.currentTimeMillis()).isNotEmpty()
     }
 
-    /** The flow kind a routable callback completes, or null for every link that is never routed. */
-    internal fun kindOf(uri: String): AuthFlowMarker.Kind? = if (BossDirectories.isProfile) null else callbackKind(uri)
+    /**
+     * The flow kind a routable callback completes, or null for every link that is never routed:
+     * in a profile, and in a main process with profiles off, which keeps every link as before
+     * profiles (it writes no marker of its own, so routing could hand its own link away).
+     */
+    internal fun kindOf(uri: String): AuthFlowMarker.Kind? = if (routes()) callbackKind(uri) else null
+
+    /** Whether this process routes callbacks; replaceable so the off state can be tested. */
+    internal var routes: () -> Boolean = { BossDirectories.profilesEnabled && !BossDirectories.isProfile }
 
     /** The routing rules, separated from the I/O so every case is testable. */
     internal fun route(

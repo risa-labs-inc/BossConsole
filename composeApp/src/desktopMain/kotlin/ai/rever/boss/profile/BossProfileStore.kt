@@ -80,6 +80,8 @@ object BossProfileStore {
     private val logger = BossLogger.forComponent("BossProfileStore")
 
     private const val PROFILE_FILE = BossDirectories.PROFILE_FILE_NAME
+    private const val RESERVATION_FILE = ".creating"
+    private const val STALE_RESERVATION_MS = 60 * 60 * 1000L
     private const val STORE_LOCK_FILE = ".store.lock"
     private const val MAX_NAME_LENGTH = 64
 
@@ -137,10 +139,13 @@ object BossProfileStore {
                 withStoreLock {
                     val profileId = explicitId ?: uniqueIdFor(displayName)
                     val root = BossDirectories.profileRoot(profileId)
+                    // A creation that died mid-seed leaves only its reservation; reclaim it once stale.
+                    if (isStaleReservation(root)) root.deleteRecursively()
                     // An existing root, registered or stray, is someone's data: never adopted.
                     if (root.exists() || !root.mkdirs()) {
                         throw FileAlreadyExistsException("Profile '$profileId' already exists")
                     }
+                    File(root, RESERVATION_FILE).createNewFile()
                     profileId to root
                 }
             val profile =
@@ -157,7 +162,10 @@ object BossProfileStore {
                     seedChromium(root)
                     if (plugins == ProfilePluginSeed.COPY_MAIN) seedPlugins(root)
                 }
-                withStoreLock { write(profile) }
+                withStoreLock {
+                    write(profile)
+                    File(root, RESERVATION_FILE).delete()
+                }
             }.onFailure { root.deleteRecursively() }
                 .getOrThrow()
             logger.info(
@@ -192,6 +200,14 @@ object BossProfileStore {
     ): String {
         val name = windowProfileId?.let { id -> get(id)?.name ?: id } ?: currentProfileName
         return name?.let { "$base - $it" } ?: base
+    }
+
+    /** A root reserved by a [create] that never finished: no profile.json, an old reservation. */
+    private fun isStaleReservation(root: File): Boolean {
+        val reservation = File(root, RESERVATION_FILE)
+        return !File(root, PROFILE_FILE).exists() &&
+            reservation.isFile &&
+            System.currentTimeMillis() - reservation.lastModified() > STALE_RESERVATION_MS
     }
 
     private val currentProfileName: String? by lazy {

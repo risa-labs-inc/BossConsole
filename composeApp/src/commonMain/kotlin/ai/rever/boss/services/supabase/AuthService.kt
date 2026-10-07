@@ -45,6 +45,14 @@ object AuthService {
         return sent
     }
 
+    /**
+     * A link this process has no flow left for while its own link may still arrive: most often the
+     * same link delivered to a second window, which another caller is already exchanging.
+     */
+    class MagicLinkAlreadyTakenException(
+        message: String,
+    ) : Exception(message)
+
     private const val STALE_LINK = "This sign-in link was already used or is not the newest one. Request a new link."
 
     /** The hidden profiles feature; while off, magic links take the pre-profiles path unchanged. */
@@ -117,7 +125,7 @@ object AuthService {
             }
 
             AuthFlowMarker.hasIssuedLive() -> {
-                Result.failure(Exception(STALE_LINK))
+                Result.failure(MagicLinkAlreadyTakenException(STALE_LINK))
             }
 
             else -> {

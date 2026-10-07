@@ -41,6 +41,7 @@ class ProfileAuthRelayTest {
     }
 
     private val savedClaimer = ProfileAuthRelay.claimer
+    private val savedRoutes = ProfileAuthRelay.routes
 
     @BeforeEach
     @AfterEach
@@ -49,6 +50,25 @@ class ProfileAuthRelayTest {
         AuthFlowMarker.fileFor(BossDirectories.rootDir).delete()
         AuthFlowMarker.resetForTest()
         ProfileAuthRelay.claimer = savedClaimer
+    }
+
+    /** The main process of an opted-in run; the off state is set per test. */
+    @BeforeEach
+    fun routeAsMain() {
+        ProfileAuthRelay.routes = { true }
+    }
+
+    @AfterEach
+    fun restoreRoutes() {
+        ProfileAuthRelay.routes = savedRoutes
+    }
+
+    @Test
+    fun `with profiles off the main process keeps every link, whatever a profile waits for`() {
+        ProfileAuthRelay.routes = { false }
+        writeFlow(BossDirectories.profileRoot("waiting"), Kind.MAGIC_LINK, System.currentTimeMillis(), a)
+        assertFalse(ProfileAuthRelay.mightRelay("boss://auth/verify?token=x"))
+        assertEquals(Outcome.KEEP, ProfileAuthRelay.relay("boss://auth/verify?token=x"))
     }
 
     @Test

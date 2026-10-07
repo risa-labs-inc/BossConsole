@@ -2240,13 +2240,16 @@ A **BOSS profile** gives a Space a window of its own with its own browser data, 
 its own BOSS account. It is a **hidden feature**: nothing in the UI creates or opens one, a Space
 opened the ordinary way still opens in the current window under the current profile, and the only
 entry points are the MCP tools in `profile/BossProfileMcpToolProvider.kt`: `profile_list`, which
-only reads, and `profile_create` and `profile_open`, which are approval-gated. `open_workspace` separately gained `newWindow`, which
+only reads but names every profile and its bound Spaces, so it is held for approval like
+`get_workspace_context`, and `profile_create` and `profile_open`, which are approval-gated. `open_workspace` separately gained `newWindow`, which
 opens a Space in a new window of the same profile with nothing else changed.
 
 **It is off by default.** `BossDirectories.profilesEnabled` is false unless the process opts in
 (`BOSS_PROFILES_ENABLED=1` or `-Dboss.profiles.enabled=true`) or runs as a profile. While it is
-off, the profile tools are not registered, no sign-in marker is written, and
-`AuthService.verifyEmail` takes the pre-profiles `verifyEmailOtp` path unchanged. `BOSS_PROFILE`
+off, the profile tools are not registered, no sign-in marker is written, no callback is routed
+to a profile (`ProfileAuthRelay.routes`), and `AuthService.verifyEmail` takes the pre-profiles
+`verifyEmailOtp` path unchanged. A separate-account profile therefore receives its sign-in link
+only while the main process runs with profiles on. `BOSS_PROFILE`
 names only a profile `profile_create` registered (its `profile.json`); any other id is ignored
 with a warning and the process runs as the main profile.
 

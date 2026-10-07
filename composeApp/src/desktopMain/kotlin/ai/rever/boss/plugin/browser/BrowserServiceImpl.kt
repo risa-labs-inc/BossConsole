@@ -670,7 +670,9 @@ object BrowserServiceImpl : BrowserService {
                     "url" to LogSanitizer.describeUri(config.url),
                     "profile" to (
                         managed?.profileName
-                            ?: WindowBrowserProfiles.profileIdFor(ownerWindowId)?.let { "boss-window-$it" }
+                            ?: WindowBrowserProfiles
+                                .profileIdFor(ownerWindowId)
+                                ?.let(WindowBrowserProfiles::jxProfileName)
                             ?: "default"
                     ),
                     "activeBrowsers" to activeBrowsers.size,

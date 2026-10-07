@@ -65,6 +65,18 @@ object PluginPersistence {
         return json.encodeToString(JsonElement.serializer(), JsonObject(root + ("plugins" to JsonArray(rebased))))
     }
 
+    /**
+     * One row of `installed.json`.
+     *
+     * The three build fields exist so a locally built or hot-reloaded plugin can still be
+     * identified as such after a restart. They are deliberately SEPARATE from
+     * [installedVersion]: that one feeds store update checks (`isNewerVersion`) and the
+     * `pluginId|version|sha256` signing anchor, so a suffixed string must never land in it.
+     *
+     * All three are nullable with defaults, and the reader sets `ignoreUnknownKeys`, so a file
+     * written by this build still loads on an older host (it ignores them) and a file written by
+     * an older host still loads here (they come back null).
+     */
     @Serializable
     data class InstalledPluginEntry(
         val pluginId: String,

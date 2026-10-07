@@ -157,16 +157,24 @@ object BossProfileLauncher {
         }
         val workspaceFile = workspace?.let { installWorkspace(profile, it) }
         val mutex = launchLocks.computeIfAbsent(profile.id) { Mutex() }
-        return mutex.withLock {
-            if (awaitRunningIfStarting(profile.id)) {
-                forward(profile, workspaceFile)
-                Outcome.Forwarded(profile, workspaceFile)
-            } else {
-                launch(profile, workspaceFile)
-                launchedAt[profile.id] = System.currentTimeMillis()
-                Outcome.Launched(profile, workspaceFile)
+        val outcome =
+            mutex.withLock {
+                if (awaitRunningIfStarting(profile.id)) {
+                    forward(profile, workspaceFile)
+                    Outcome.Forwarded(profile, workspaceFile)
+                } else {
+                    launch(profile, workspaceFile)
+                    launchedAt[profile.id] = System.currentTimeMillis()
+                    Outcome.Launched(profile, workspaceFile)
+                }
+            }
+        // Bound only once the Space reached the profile, so a failed hand-off binds nothing.
+        if (workspace != null) {
+            withContext(Dispatchers.IO) {
+                BossProfileStore.bindWorkspace(profile.id, workspace.id).getOrThrow()
             }
         }
+        return outcome
     }
 
     /**
@@ -206,8 +214,8 @@ object BossProfileLauncher {
 
     /**
      * Copies [workspace] into a separate-account profile's own Space store the first time it is
-     * opened there. After that the profile's copy is the profile's to change, and is never
-     * overwritten from here.
+     * opened there; the caller binds it once the hand-off succeeds. After that the profile's copy
+     * is the profile's to change, and is never overwritten from here.
      */
     private suspend fun installWorkspace(
         profile: BossProfile,
@@ -219,7 +227,6 @@ object BossProfileLauncher {
             if (!file.exists()) {
                 file.atomicWriteText(WorkspaceSerializer.serialize(workspace))
             }
-            BossProfileStore.bindWorkspace(profile.id, workspace.id).getOrThrow()
             file
         }
 

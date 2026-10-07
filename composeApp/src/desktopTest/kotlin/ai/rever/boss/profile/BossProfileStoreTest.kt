@@ -195,4 +195,15 @@ class BossProfileStoreTest {
         assertTrue(File(stray, "leftover").isFile)
         assertNull(BossProfileStore.get("stray"))
     }
+
+    @Test
+    fun `a reservation left by a creation that died is reclaimed once stale, and only then`() {
+        val root = BossDirectories.profileRoot("half").apply { mkdirs() }
+        val reservation = File(root, ".creating").apply { writeText("") }
+        assertTrue(create("Half", id = "half").isFailure, "a fresh reservation may still be seeding")
+        reservation.setLastModified(System.currentTimeMillis() - 2 * 60 * 60 * 1000L)
+        val profile = create("Half", id = "half").getOrThrow()
+        assertEquals(profile, BossProfileStore.get("half"))
+        assertFalse(File(root, ".creating").exists())
+    }
 }
