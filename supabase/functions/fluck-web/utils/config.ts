@@ -63,7 +63,25 @@ export function viaAlias(headers: Headers): boolean {
   return timingSafeEqual(secret, headers.get("x-fluck-web-alias-secret") ?? "")
 }
 
-function timingSafeEqual(a: string, b: string): boolean {
+/** Shortest FLUCK_ROUTE_SECRET honoured; a shorter one is treated as unset. */
+const MIN_ROUTE_SECRET_LENGTH = 32
+
+/**
+ * FLUCK_ROUTE_SECRET, shared with the alias Worker: it signs the `__Host-fluck_route` cookie and
+ * gates GET /internal/endpoint. Unset (or too short) => null, and /api/open keeps returning the
+ * tunnel URL, so a half deploy degrades to today's behaviour.
+ */
+export function routeSecret(): string | null {
+  const secret = Deno.env.get("FLUCK_ROUTE_SECRET") ?? ""
+  return secret.length >= MIN_ROUTE_SECRET_LENGTH ? secret : null
+}
+
+/** Platform-provided; used ONLY by the secret-gated GET /internal/endpoint. */
+export function serviceRoleKey(): string {
+  return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+}
+
+export function timingSafeEqual(a: string, b: string): boolean {
   const x = new TextEncoder().encode(a)
   const y = new TextEncoder().encode(b)
   let diff = x.length ^ y.length
@@ -76,7 +94,10 @@ export interface FluckWebConfig {
   anonKey: string
 }
 
-/** Anon key only: every database call is made AS THE USER with their own JWT. No service role. */
+/**
+ * Anon key: every user-facing database call is made AS THE USER with their own JWT. The service
+ * role (serviceRoleKey) is read only by the Worker-facing /internal/endpoint lookup.
+ */
 export function readConfig(): FluckWebConfig {
   return {
     supabaseUrl: (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, ""),

@@ -6,25 +6,43 @@
  * lands signed in on that Fluck's own web chat. Structure and security are copied from
  * live-sessions; read its app.ts for the long-form reasoning behind each choice.
  *
- * Routes (browser-facing base is /functions/v1/fluck-web, or "/" behind the alias Worker):
+ * Routes (browser-facing base is /functions/v1/fluck-web, or "/portal" behind the alias Worker,
+ * which strips that prefix, so the routes below are the same either way):
  *   GET  /, /auth           the page. /auth is the magic-link and Google / Apple landing.
  *   POST /api/otp           {email} -> magic link (create_user: false), redirect_to=<base>/auth
  *   POST /api/session       {access_token, refresh_token} -> HttpOnly session cookies
  *   GET  /api/oauth/{google|apple}  server-side PKCE start
  *   GET  /api/instances     cookie -> fluck_web_list_instances() as the user, plus the CSRF nonce
  *   POST /api/open          {instance_id} + CSRF nonce + exact Origin -> fluck_web_mint_ticket()
- *                           as the user -> {url: <endpoint_url>/#/t/<ticket>}
+ *                           as the user -> {url: <endpoint_url>/#/t/<ticket>}; with FLUCK_ROUTE_SECRET
+ *                           set, {url: <public origin>/#/t/<ticket>} plus the __Host-fluck_route
+ *                           cookie, and the Worker proxies the chat to the endpoint (utils/route.ts)
+ *   GET  /internal/endpoint ?user=<uuid>&instance=<id>, X-Fluck-Route-Secret -> {endpoint} for that
+ *                           owner's live instance.
+ *                           Worker-only (it never forwards /internal from the public); 404 otherwise
  *   POST /api/logout        clears the cookies
  *   GET  /health
  *
- * Trust model: no service-role key. Every database call carries the caller's own JWT, so
- * PostgREST validates it and RLS / the RPCs' auth.uid() checks decide what is visible and
- * mintable. Cookie routes refuse `Sec-Fetch-Site: cross-site`; /api/open additionally requires
+ * Trust model: every user-facing database call carries the caller's own JWT, so PostgREST
+ * validates it and RLS / the RPCs' auth.uid() checks decide what is visible and mintable. The one
+ * service-role read is /internal/endpoint, reachable only with FLUCK_ROUTE_SECRET. Cookie routes refuse `Sec-Fetch-Site: cross-site`; /api/open additionally requires
  * the exact public Origin and a CSRF nonce. NO CORS MIDDLEWARE, deliberately.
  */
 
 import { OpenAPIHono } from "@hono/zod-openapi"
-import { authPublicUrl, LIVE_WINDOW_SECONDS, publicBasePath, publicBaseUrl, publicOrigin, readConfig, viaAlias } from "./utils/config.ts"
+import {
+  authPublicUrl,
+  LIVE_WINDOW_SECONDS,
+  publicBasePath,
+  publicBaseUrl,
+  publicOrigin,
+  readConfig,
+  routeSecret,
+  serviceRoleKey,
+  timingSafeEqual,
+  viaAlias,
+} from "./utils/config.ts"
+import { base64Url, routeCookieHeader } from "./utils/route.ts"
 import { htmlResponse, jsonResponse, redirectResponse } from "./utils/responses.ts"
 import { clientKey, rateLimit } from "./utils/rate-limit.ts"
 import {
@@ -69,6 +87,8 @@ const AUTH_CODE_RE = /^[A-Za-z0-9._~-]{1,512}$/
 const OAUTH_ERROR_RE = /^[a-z_]{1,64}$/
 /** Same shape as the fluck_web_instances.instance_id CHECK. */
 export const INSTANCE_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
+/** auth.users.id, as GoTrue puts it in the JWT `sub`. */
+export const USER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** fluck_web_mint_ticket returns 32 bytes in unpadded base64url. */
 const TICKET_RE = /^[A-Za-z0-9_-]{43}$/
 const UPSTREAM_TIMEOUT_MS = 5000
@@ -267,6 +287,9 @@ app.post("/api/open", async (ctx) => {
   if (!INSTANCE_ID_RE.test(instanceId)) return jsonResponse({ error: "invalid_request" }, 400)
   const cfg = readConfig()
   if (!cfg.supabaseUrl || !cfg.anonKey) return jsonResponse({ error: "not_configured" }, 503)
+  // Set: the browser stays on the public host and the Worker routes by cookie. Unset: today's
+  // direct navigation to the tunnel.
+  const route = routeSecret()
 
   const result = await withUserToken(ctx.req, cfg, async (token) => {
     const list = await rpc(cfg, token, "fluck_web_list_instances", {})
@@ -288,7 +311,7 @@ app.post("/api/open", async (ctx) => {
     }
     const ticket = await minted.json().catch(() => null)
     if (typeof ticket !== "string" || !TICKET_RE.test(ticket)) return { status: 502, body: null }
-    return { status: 200, body: { url: `${endpoint}/#/t/${ticket}` } as OpenOutcome }
+    return { status: 200, body: { url: `${route ? origin : endpoint}/#/t/${ticket}` } as OpenOutcome }
   }, (out) => out.status === 401 || out.status === 403)
 
   if (result.kind === "unauthorized") return jsonResponse({ error: "unauthorized" }, 401, result.setCookies)
@@ -297,9 +320,68 @@ app.post("/api/open", async (ctx) => {
     console.error("open upstream", out.status)
     return jsonResponse({ error: "upstream" }, 502, result.setCookies)
   }
-  if ("url" in out.body) return jsonResponse(out.body, 200, result.setCookies)
+  if ("url" in out.body) {
+    if (!route) return jsonResponse(out.body, 200, result.setCookies)
+    // The owner is the caller whose token PostgREST just accepted for the list and the mint
+    // (auth.uid() there), never anything from the request body.
+    const userId = userIdFromJwt(result.token)
+    if (!userId) {
+      console.error("open: accepted token carries no user id; refusing to set a route")
+      return jsonResponse({ error: "upstream" }, 502, result.setCookies)
+    }
+    return jsonResponse(out.body, 200, [...result.setCookies, await routeCookieHeader(route, userId, instanceId)])
+  }
   if (out.body.error === "rate_limited") return tooMany(TICKET_TTL_SECONDS, result.setCookies)
   return jsonResponse(out.body, 409, result.setCookies)
+})
+
+/**
+ * The alias Worker's endpoint lookup for a verified `__Host-fluck_route` cookie. 404 for every
+ * refusal (no secret configured, wrong secret, bad id, unknown or offline instance) so the route
+ * is indistinguishable from a missing one. Same validity rules as /api/open: a bare https origin
+ * (httpsOrigin) heartbeated within LIVE_WINDOW_SECONDS.
+ *
+ * instance_id is unique per OWNER, not globally (PK is (user_id, instance_id)), so the lookup
+ * filters on both: the cookie's owner, then its instance. Exactly one live row, or 404.
+ */
+app.get("/internal/endpoint", async (ctx) => {
+  const secret = routeSecret()
+  if (!secret || !timingSafeEqual(secret, ctx.req.header("x-fluck-route-secret") ?? "")) return jsonResponse({ error: "not_found" }, 404)
+  const userId = (ctx.req.query("user") ?? "").toLowerCase()
+  const instanceId = ctx.req.query("instance") ?? ""
+  if (!USER_ID_RE.test(userId) || !INSTANCE_ID_RE.test(instanceId)) return jsonResponse({ error: "not_found" }, 404)
+  const cfg = readConfig()
+  const key = serviceRoleKey()
+  if (!cfg.supabaseUrl || !key) {
+    console.error("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set; cannot resolve endpoints")
+    return jsonResponse({ error: "not_configured" }, 503)
+  }
+  const since = new Date(Date.now() - LIVE_WINDOW_SECONDS * 1000)
+  const query = `select=endpoint_url,last_seen_at&user_id=eq.${userId}&instance_id=eq.${encodeURIComponent(instanceId)}` +
+    `&last_seen_at=gt.${encodeURIComponent(since.toISOString())}&limit=2`
+  let rows: unknown
+  try {
+    const resp = await deps.fetch(`${cfg.supabaseUrl}/rest/v1/fluck_web_instances?${query}`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    })
+    if (!resp.ok) {
+      await resp.body?.cancel()
+      console.error("endpoint lookup upstream", resp.status)
+      return jsonResponse({ error: "upstream" }, 502)
+    }
+    rows = await resp.json()
+  } catch (err) {
+    console.error("endpoint lookup failed", err)
+    return jsonResponse({ error: "upstream" }, 502)
+  }
+  // The primary key makes more than one row impossible; anything but exactly one is a miss.
+  if (!Array.isArray(rows) || rows.length !== 1) return jsonResponse({ error: "not_found" }, 404)
+  const r = rows[0] as Record<string, unknown>
+  const endpoint = httpsOrigin(r?.endpoint_url)
+  const seen = typeof r?.last_seen_at === "string" ? Date.parse(r.last_seen_at) : NaN
+  if (!endpoint || !(seen > since.getTime())) return jsonResponse({ error: "not_found" }, 404)
+  return jsonResponse({ endpoint })
 })
 
 app.notFound(() => jsonResponse({ error: "not_found" }, 404))
@@ -502,9 +584,6 @@ export async function codeChallenge(verifier: string): Promise<string> {
   return base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))))
 }
 
-function base64Url(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
-}
 
 async function gotrueUser(cfg: Cfg, token: string): Promise<{ email?: string } | null> {
   try {
@@ -560,14 +639,25 @@ async function readJson(req: Request): Promise<Record<string, unknown> | null> {
   }
 }
 
-/** Display-only email claim; read only after PostgREST accepted the same token. */
-export function emailFromJwt(token: string): string {
+/** The `sub` claim as a user id, or null; read only after PostgREST accepted the same token. */
+export function userIdFromJwt(token: string): string | null {
+  const sub = jwtClaims(token)?.sub
+  return typeof sub === "string" && USER_ID_RE.test(sub.toLowerCase()) ? sub.toLowerCase() : null
+}
+
+function jwtClaims(token: string): Record<string, unknown> | null {
   try {
     const payload = token.split(".")[1]
     const padded = payload.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - payload.length % 4) % 4)
     const json = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(padded), (c) => c.charCodeAt(0))))
-    return typeof json.email === "string" ? json.email : ""
+    return json && typeof json === "object" ? json : null
   } catch {
-    return ""
+    return null
   }
+}
+
+/** Display-only email claim; read only after PostgREST accepted the same token. */
+export function emailFromJwt(token: string): string {
+  const email = jwtClaims(token)?.email
+  return typeof email === "string" ? email : ""
 }

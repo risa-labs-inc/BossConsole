@@ -1,15 +1,28 @@
-# fluck.risaboss.com -> the fluck-web edge function, as a same-host proxy.
+# fluck.risaboss.com: the Fluck web chat (proxied by cookie to the owner's BOSS tunnel), with the
+# fluck-web edge function's sign-in portal under /portal. See worker.js for the routing.
 #
 # Supabase allows ONE custom domain per project and api.risaboss.com holds it, so a second
 # hostname has to be a reverse proxy. A Workers Custom Domain creates the DNS record for
 # fluck.risaboss.com by itself (the zone is on Cloudflare), so no manual DNS step.
 #
 # Deploy:  cd infra/cloudflare/fluck-web-alias && npx wrangler login && npx wrangler deploy
+#
+# Secrets (set before the first deploy of this version; the function side is documented in AGENTS.md):
+#   FLUCK_WEB_ALIAS_SECRET  same value as the function's FLUCK_WEB_ALIAS_SECRET (`openssl rand -hex 32`)
+#     npx wrangler secret put FLUCK_WEB_ALIAS_SECRET
+#   FLUCK_ROUTE_SECRET      the existing route secret, same value as the function's FLUCK_ROUTE_SECRET;
+#                           signs the owner-bound __Host-fluck_route cookie and gates /internal/endpoint
+#     npx wrangler secret put FLUCK_ROUTE_SECRET
+#   FLUCK_IP_SIGN_KEY       PKCS#8 PEM of the Ed25519 private key whose public half the Fluck plugin
+#                           pins (quQai_sQac5D6568f1e4O1YlWiPgO0z2QME5NeZEb_8); signs X-Fluck-Client-Ip
+#     npx wrangler secret put FLUCK_IP_SIGN_KEY < fluck-ip-sign-key.pem
+#
+# Function env (supabase secrets set): FLUCK_WEB_PUBLIC_BASE_URL=https://fluck.risaboss.com,
+# FLUCK_WEB_PUBLIC_BASE_PATH=/portal, FLUCK_ROUTE_SECRET. Supabase Auth -> Redirect URLs must list
+# https://fluck.risaboss.com/portal/auth.
 name = "fluck-web-alias"
 # The zone risaboss.com lives in the RISA Labs, Inc account.
 account_id = "804b4814a4615997b78ab1d30d12ff77"
 main = "worker.js"
 compatibility_date = "2026-09-01"
 routes = [{ pattern = "fluck.risaboss.com", custom_domain = true }]
-# Secret, set once (same value as the function's FLUCK_WEB_ALIAS_SECRET, e.g. `openssl rand -hex 32`):
-#   npx wrangler secret put FLUCK_WEB_ALIAS_SECRET

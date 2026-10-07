@@ -135,7 +135,7 @@ additional_redirect_urls = ["boss://auth/verify", "boss://auth/callback", "bosst
   # Optimist chat web callback (redirect/app.ts OPTIMIST_REDIRECTS)
   "https://optimist.risalabs.ai/auth/callback", "http://127.0.0.1:8796/auth/callback",
   # fluck-web page (functions/fluck-web, fluck.risaboss.com): same landing shape as live-sessions
-  "https://fluck.risaboss.com/auth", "https://api.risaboss.com/functions/v1/fluck-web/auth", "http://127.0.0.1:54321/functions/v1/fluck-web/auth"]
+  "https://fluck.risaboss.com/portal/auth", "https://fluck.risaboss.com/auth", "https://api.risaboss.com/functions/v1/fluck-web/auth", "http://127.0.0.1:54321/functions/v1/fluck-web/auth"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # Path to JWT signing key. DO NOT commit your signing keys file to git.
@@ -441,7 +441,8 @@ entrypoint = "./functions/live-sessions/index.ts"
 [functions.fluck-web]
 # MUST be false, for the same reasons as live-sessions: `/` and `/auth` are header-less page loads
 # and /api/otp is pre-authentication. Data routes forward the caller's own JWT (from the HttpOnly
-# cookie) to the fluck_web_* RPCs, where RLS and auth.uid() are the access model.
+# cookie) to the fluck_web_* RPCs, where RLS and auth.uid() are the access model. The Worker-only
+# /internal/endpoint is gated by FLUCK_ROUTE_SECRET and reads the table with the service role.
 verify_jwt = false
 import_map = "./functions/fluck-web/deno.json"
 entrypoint = "./functions/fluck-web/index.ts"

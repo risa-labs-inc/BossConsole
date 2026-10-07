@@ -769,8 +769,20 @@ Fluck redeems it with `fluck_web_consume_ticket` as its own signed-in user, so a
 another account can never be redeemed. No message content is stored. Security follows
 `live-sessions` (nonce CSP, no CORS, `__Secure-` cookies, cross-site refusal, token rotation), plus
 an exact-Origin and CSRF-nonce check on `POST /api/open`. Endpoints must be bare https origins (a
-table CHECK and a second check in the function). A Cloudflare Worker
-(`infra/cloudflare/fluck-web-alias`) proxies the vanity host onto the function.
+table CHECK and a second check in the function).
+
+A Cloudflare Worker (`infra/cloudflare/fluck-web-alias`) owns fluck.risaboss.com: `/portal/*` is
+the function (prefix stripped), everything else is the chat itself, proxied to the owner's BOSS
+tunnel. With `FLUCK_ROUTE_SECRET` set, `/api/open` also sets `__Host-fluck_route` (HMAC-signed
+`{u: user_id, i: instance_id, e: expiry}`, 30 days; `u` is the caller from the session token, since
+instance ids are unique only per account) and returns `https://fluck.risaboss.com/#/t/<ticket>`, so the
+browser never leaves the host. The Worker verifies the cookie, resolves the tunnel through the
+function's `GET /internal/endpoint?user=&instance=` (secret-gated, filters on both, the only
+service-role read; never forwarded from the public), and signs the visitor's IP for the BOSS with Ed25519 (`FLUCK_IP_SIGN_KEY`). A dead
+tunnel sends navigations to `/portal/?reopen=<id>`; `/portal/leave` clears the route. The portal
+receives only its own cookies; the chat never receives them or the route cookie.
+`/portal/?instance=<id>` (the plugin's link) and `?reopen=` highlight that row and never auto-open.
+Without `FLUCK_ROUTE_SECRET` the function returns the tunnel URL as before.
 
 Deploy is manual. Nothing below runs in CI:
 
@@ -778,21 +790,28 @@ Deploy is manual. Nothing below runs in CI:
 supabase link --project-ref pcnwqamqdnsadranufjv           # once
 supabase db push                                           # 20261006120000_fluck_web_instances.sql
 ALIAS_SECRET=$(openssl rand -hex 32)                        # shared by the function and the Worker
-supabase secrets set --project-ref pcnwqamqdnsadranufjv \
-  FLUCK_WEB_PUBLIC_BASE_URL=https://fluck.risaboss.com FLUCK_WEB_PUBLIC_BASE_PATH=/ \
-  FLUCK_WEB_AUTH_PUBLIC_URL=https://api.risaboss.com FLUCK_WEB_ALIAS_SECRET=$ALIAS_SECRET
+ROUTE_SECRET=<the existing Fluck route secret>              # shared by the function and the Worker
+cd infra/cloudflare/fluck-web-alias && npx wrangler login
+echo "$ALIAS_SECRET" | npx wrangler secret put FLUCK_WEB_ALIAS_SECRET
+echo "$ROUTE_SECRET" | npx wrangler secret put FLUCK_ROUTE_SECRET
+npx wrangler secret put FLUCK_IP_SIGN_KEY < fluck-ip-sign-key.pem   # Ed25519 PKCS#8 PEM; the plugin pins its public key
+cd -
 supabase functions deploy fluck-web --project-ref pcnwqamqdnsadranufjv --no-verify-jwt
 supabase functions deploy redirect --project-ref pcnwqamqdnsadranufjv --no-verify-jwt   # Fluck web arm
-cd infra/cloudflare/fluck-web-alias && npx wrangler login
-echo "$ALIAS_SECRET" | npx wrangler secret put FLUCK_WEB_ALIAS_SECRET && npx wrangler deploy
-curl -sf https://fluck.risaboss.com/ -o /dev/null -w '%{http_code}\n'   # 200; 503 alias_unverified = secrets differ
+# The next two together: each half alone breaks the portal until the other lands.
+supabase secrets set --project-ref pcnwqamqdnsadranufjv \
+  FLUCK_WEB_PUBLIC_BASE_URL=https://fluck.risaboss.com FLUCK_WEB_PUBLIC_BASE_PATH=/portal \
+  FLUCK_WEB_AUTH_PUBLIC_URL=https://api.risaboss.com FLUCK_WEB_ALIAS_SECRET=$ALIAS_SECRET FLUCK_ROUTE_SECRET=$ROUTE_SECRET
+(cd infra/cloudflare/fluck-web-alias && npx wrangler deploy)
+curl -sf https://fluck.risaboss.com/portal/ -o /dev/null -w '%{http_code}\n'   # 200; 503 alias_unverified = secrets differ
 ```
 
 The function trusts the Worker (serves the page, keys rate limits on the visitor's IP) only when
 `X-Fluck-Web-Alias-Secret` matches `FLUCK_WEB_ALIAS_SECRET` (32+ chars). Direct hits on
 `api.risaboss.com/functions/v1/fluck-web/` are always redirected to the vanity host.
 
-Dashboard, by hand: Auth -> URL Configuration -> Redirect URLs, add `https://fluck.risaboss.com/auth`;
+Dashboard, by hand: Auth -> URL Configuration -> Redirect URLs, add `https://fluck.risaboss.com/portal/auth`
+(keep `https://fluck.risaboss.com/auth` while old links are in flight);
 Auth -> Email Templates -> Magic Link, paste `supabase/templates/email/magic-link.html` (it gained a
 `$fluck` branch). Without the redirect URL GoTrue silently falls back to `boss://auth/verify`.
 Tests: `supabase/tests/fluck_web_instances_test.sql` (pgTAP, `supabase test db`) and

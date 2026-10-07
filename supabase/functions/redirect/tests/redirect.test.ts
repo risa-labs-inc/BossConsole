@@ -199,6 +199,13 @@ Deno.test("optimist redirect allow-list is in lockstep with config.toml and both
 
 // (h) Web arm, Fluck brand: fluck-web's redirect_to bounces to GoTrue's verify like live-sessions.
 
+Deno.test("fluck-web /portal/auth (the Worker-served portal) is the Fluck web arm", async () => {
+  const rt = "https://fluck.risaboss.com/portal/auth"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent("https://api.risaboss.com/auth/v1/verify?token=t1")}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
+  assertStringIncludes(html, "<h1>Fluck</h1>")
+  assert(!html.includes("boss://auth/verify"))
+})
+
 Deno.test("fluck-web redirect_to bounces to the GoTrue verify URL under the Fluck brand", async () => {
   const rt = "https://fluck.risaboss.com/auth"
   const html = await pageFor(`/redirect?url=${encodeURIComponent("https://api.risaboss.com/auth/v1/verify?token=t1")}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)

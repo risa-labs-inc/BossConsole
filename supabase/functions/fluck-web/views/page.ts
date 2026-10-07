@@ -6,14 +6,20 @@
  * asset and no third-party script, so the CSP stays `default-src 'none'`.
  *
  * Opening a Fluck is a TOP-LEVEL navigation to the URL /api/open returns
- * (`<endpoint>/#/t/<ticket>`), never an iframe: the Fluck sets its own session cookie, which a
+ * (`<endpoint>/#/t/<ticket>`, or `https://fluck.risaboss.com/#/t/<ticket>` when the alias Worker
+ * routes the chat by cookie), never an iframe: the Fluck sets its own session cookie, which a
  * browser blocking third-party cookies would drop inside a frame. Before leaving, the page
  * rewrites its own history entry to `?list=1`, so "back" shows the list instead of bouncing
  * straight into the Fluck again.
  *
- * `?instance=<id>` (the Fluck's own "Sign in with BOSS" button) survives sign-in in
+ * `?instance=<id>` (the Fluck's link to /portal/?instance=<id>) highlights and focuses that row,
+ * like ?reopen= below but without its line, and never auto-opens. It survives sign-in in
  * localStorage for 15 minutes: the magic link opens in a new tab and the OAuth hop leaves
  * the page. Storage may be unavailable; the list is the fallback.
+ *
+ * `?reopen=<id>` is where the Worker sends a browser whose routed BOSS stopped answering (its
+ * tunnel address changes on restart): that row is highlighted with a one-line explanation, and is
+ * never auto-opened, so a dead route cannot loop.
  *
  * Token handling is live-sessions': the fragment is posted once to /api/session, becomes
  * HttpOnly cookies, and leaves the address bar. The page never holds a token.
@@ -76,6 +82,8 @@ const STYLES = `
   .meta { color: var(--text-2); font-size: 13px; overflow-wrap: anywhere; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background-color: var(--line-strong); }
   .dot.on { background-color: var(--ok); }
+  ul.instances li.reopen { background-color: var(--wash); box-shadow: inset 3px 0 0 var(--signal);
+    border-radius: 0 7px 7px 0; padding: 14px 12px 14px 15px; }
   footer { margin-top: 28px; color: var(--text-2); font-size: 12px; text-align: center; }
   a { color: var(--signal-text); }
   .providers { display: grid; gap: 10px; }
@@ -102,6 +110,9 @@ const SCRIPT = `
   // ?list=1: we came back from a Fluck; never auto-open on this load.
   var autoOpenDone = params.get("list") === "1";
   var wanted = null;
+  // ?reopen=<id>: the Worker lost this BOSS (new tunnel address). Highlight, never auto-open.
+  var reopen = INSTANCE_RE.test(params.get("reopen") || "") ? params.get("reopen") : null;
+  if (reopen) autoOpenDone = true;
 
   function show(id) {
     ["signin", "sent", "loading", "list", "opening"].forEach(function (s) {
@@ -127,13 +138,15 @@ const SCRIPT = `
       var saved = store(function (s) { return JSON.parse(s.getItem(WANT_KEY) || "null"); });
       if (saved && typeof saved.id === "string" && INSTANCE_RE.test(saved.id) && Date.now() - saved.at < WANT_TTL_MS) wanted = saved.id;
     }
-    if (params.has("instance") || params.has("list")) {
-      params.delete("instance"); params.delete("list");
+    if (params.has("instance") || params.has("list") || params.has("reopen")) {
+      params.delete("instance"); params.delete("list"); params.delete("reopen");
       var rest = params.toString();
       history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
     }
   })();
-  function forgetWanted() { wanted = null; store(function (s) { s.removeItem(WANT_KEY); }); }
+  function forgetWanted() { store(function (s) { s.removeItem(WANT_KEY); }); }
+  // The row to highlight and focus: ?reopen= (with its own line) or ?instance=. Neither auto-opens.
+  var focusId = reopen || wanted;
 
   var OAUTH_ERRORS = {
     cancelled: "Sign-in was cancelled.",
@@ -208,16 +221,11 @@ const SCRIPT = `
 
   function render(instances) {
     if (opening || openTimer) return;
+    if (wanted) forgetWanted();
     if (!autoOpenDone) {
       autoOpenDone = true;
       var online = instances.filter(function (i) { return i.online; });
-      if (wanted) {
-        var hit = instances.filter(function (i) { return i.instance_id === wanted; })[0];
-        forgetWanted();
-        if (hit && hit.online) { openInstance(hit); return; }
-        if (hit) notice(title(hit) + " is offline. It will appear as online when its BOSS is running.", null);
-        else notice("That Fluck is not signed in with this account.", "error");
-      } else if (online.length === 1) {
+      if (!focusId && online.length === 1) {
         var only = online[0];
         $("opening-name").textContent = title(only);
         show("opening");
@@ -227,6 +235,11 @@ const SCRIPT = `
       }
     }
     var ul = $("instances");
+    var focusHit = focusId ? instances.filter(function (i) { return i.instance_id === focusId; })[0] : null;
+    if (focusHit && !focusHit.online) notice(title(focusHit) + " is offline. It will appear as online when its BOSS is running.", null);
+    else if (focusHit && reopen) notice("Your BOSS's address changed; open it again.", null);
+    else if (focusId && !focusHit) notice("That Fluck is not signed in with this account.", "error");
+    var focusBtn = null;
     ul.innerHTML = "";
     $("empty").classList.toggle("hidden", instances.length > 0);
     instances.forEach(function (i) {
@@ -242,15 +255,18 @@ const SCRIPT = `
       btn.type = "button"; btn.textContent = "Open"; btn.disabled = !i.online;
       if (!i.online) btn.className = "secondary";
       btn.addEventListener("click", function () { openInstance(i); });
+      if (focusHit && i.instance_id === focusId) { li.className = "reopen"; if (i.online) focusBtn = btn; }
       li.appendChild(left); li.appendChild(btn);
       ul.appendChild(li);
     });
     show("list");
+    if (focusBtn && document.activeElement === document.body) focusBtn.focus();
     startPolling();
   }
 
   async function openInstance(i) {
     if (opening) return;
+    if (focusId) { focusId = reopen = wanted = null; notice(""); }
     opening = true; cancelOpenTimer(); stopPolling();
     $("opening-name").textContent = title(i);
     show("opening");

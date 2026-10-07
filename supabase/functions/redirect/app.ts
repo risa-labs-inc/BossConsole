@@ -145,7 +145,8 @@ export function isLiveSessionsRedirect(redirectTo: string | undefined): boolean 
 // brand. Same EXACT-match rule and lockstep set: config.toml additional_redirect_urls,
 // fluck-web/utils/config.ts (+ FLUCK_WEB_PUBLIC_BASE_URL), and both email templates' `$fluck`.
 export const FLUCK_WEB_REDIRECTS: ReadonlySet<string> = new Set([
-  "https://fluck.risaboss.com/auth", // vanity host: a Cloudflare Worker proxies it onto the function
+  "https://fluck.risaboss.com/portal/auth", // vanity host: the Cloudflare Worker proxies /portal onto the function
+  "https://fluck.risaboss.com/auth", // pre-/portal landing; links already mailed still bounce through the Worker to /portal/
   "https://api.risaboss.com/functions/v1/fluck-web/auth",
   "http://127.0.0.1:54321/functions/v1/fluck-web/auth", // local `supabase start` stack
 ])
