@@ -345,24 +345,30 @@ interface Counter {
   resetAt: number
 }
 
-const counters = new Map<string, Counter>()
+// Two maps: keys a caller can choose freely (`ip:*` from x-forwarded-for, `p:*` from a POST
+// body) and keys derived from a verified token or signature. A flood of the first kind can only
+// evict its own kind, never the buckets that hold for verified callers.
+const spoofable = new Map<string, Counter>()
+const verifiedCounters = new Map<string, Counter>()
 
 /** Exported for the tests, which need a clean slate between cases. */
 export function resetRateLimits(): void {
-  counters.clear()
+  spoofable.clear()
+  verifiedCounters.clear()
 }
 
 const MAX_COUNTERS = 4096
 
-/** Exported for the tests: the number of live counters. */
-export function rateLimitEntries(): number {
-  return counters.size
+/** Exported for the tests: live counters as [caller-chosen keys, verified keys]. */
+export function rateLimitEntries(): [number, number] {
+  return [spoofable.size, verifiedCounters.size]
 }
 
 function hit(key: string, limit: number, windowMs: number, nowMs: number): boolean {
-  // Keys include a client-supplied address, so the map is hard capped. When full, drop expired
-  // entries and then the oldest (a Map iterates in insertion order) down to three quarters, so
-  // the sweep runs at most once per thousand new keys rather than on every insert.
+  const counters = key.startsWith("ip:") || key.startsWith("p:") ? spoofable : verifiedCounters
+  // Hard capped. When full, drop expired entries and then the oldest (a Map iterates in
+  // insertion order) down to three quarters, so the sweep runs at most once per thousand new
+  // keys rather than on every insert.
   if (!counters.has(key) && counters.size >= MAX_COUNTERS) {
     for (const [k, v] of counters) if (v.resetAt <= nowMs) counters.delete(k)
     let excess = counters.size - (MAX_COUNTERS * 3) / 4

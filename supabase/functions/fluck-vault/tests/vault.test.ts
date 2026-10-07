@@ -677,16 +677,30 @@ Deno.test("one address is capped across links", async () => {
   assert(limited > 0)
 })
 
-Deno.test("spoofed addresses cannot grow the rate-limit map without bound", async () => {
+Deno.test("spoofed addresses are capped and cannot evict a verified link's bucket", async () => {
   const { handler } = harness()
   const t = await token()
+  // Spend this link's GET budget, which is keyed by its verified jti.
+  for (let i = 0; i < 5; i++) assertEquals((await handler(get("/vault", t))).status, 200)
+  // An unsigned flood of distinct spoofed addresses on a signed route: each one is a new
+  // caller-chosen key, inserted before any signature is checked.
   for (let i = 0; i < 5000; i++) {
-    const request = new Request(`https://${AUD}/fluck-vault/vault?t=${t}`, {
-      headers: { ...BROWSER, "x-forwarded-for": `10.${i >> 16}.${(i >> 8) & 255}.${i & 255}` },
-    })
-    await handler(request)
+    await handler(
+      new Request(`https://${AUD}/fluck-vault/inbox/claim`, {
+        method: "POST",
+        body: "{}",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": `10.${i >> 16}.${(i >> 8) & 255}.${i & 255}`,
+        },
+      }),
+    )
   }
-  assert(rateLimitEntries() <= 4096, String(rateLimitEntries()))
+  const [spoofed, verified] = rateLimitEntries()
+  assert(spoofed > 3000 && spoofed <= 4096, String(spoofed))
+  assert(verified >= 1)
+  // The flood did not reset the link's budget.
+  assertEquals((await handler(get("/vault", t))).status, 429)
 })
 
 Deno.test("an oversized POST is refused before it is parsed or stored", async () => {
