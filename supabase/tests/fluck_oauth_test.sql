@@ -53,6 +53,9 @@ SELECT ok(public.fluck_oauth_bind_grant(repeat('a', 64), 'd1520000-0000-4000-800
 SELECT is(public.fluck_oauth_grant_owner(repeat('a', 64)), 'd1520000-0000-4000-8000-000000000001'::uuid, 'the binding names its owner');
 SELECT ok(public.fluck_oauth_bind_grant(repeat('a', 64), 'd1520000-0000-4000-8000-000000000001'), 'a retried bind is idempotent');
 SELECT is(public.fluck_oauth_grant_owner(repeat('b', 64)), NULL::uuid, 'an unknown token has no owner');
+SELECT ok(NOT public.fluck_oauth_bind_grant(repeat('a', 64), 'd1520000-0000-4000-8000-000000000002'), 'a token bound to one user cannot be re-bound to another');
+SELECT is(public.fluck_oauth_grant_owner(repeat('a', 64)), 'd1520000-0000-4000-8000-000000000001'::uuid, 'a refused re-bind leaves the original owner');
+SELECT ok(public.fluck_oauth_bind_grant(repeat('a', 64), 'd1520000-0000-4000-8000-000000000001'), 'the same user can still re-bind after a refused cross-user bind');
 SELECT ok(NOT public.fluck_oauth_bind_grant('not-a-hash', 'd1520000-0000-4000-8000-000000000001'), 'a malformed hash is refused');
 SELECT throws_ok($$INSERT INTO public.fluck_oauth_grants (token_sha256, user_id) VALUES (repeat('A', 64), 'd1520000-0000-4000-8000-000000000001')$$, '23514', NULL, 'only lowercase hex is stored');
 SELECT public.fluck_oauth_forget_grant(repeat('a', 64));
