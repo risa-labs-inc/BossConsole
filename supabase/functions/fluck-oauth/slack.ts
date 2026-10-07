@@ -76,6 +76,8 @@ export async function exchangeSlackCode(
   }
   const user = record(payload.authed_user)
   const team = record(payload.team)
+  // An org-wide (Enterprise Grid) install sends `team: null` and names the org under `enterprise`.
+  const enterprise = record(payload.enterprise)
   const userToken = stringField(user?.access_token)
   if (!userToken || !userToken.startsWith(USER_TOKEN_PREFIX)) {
     return { ok: false, reason: "no_refresh_token" }
@@ -85,7 +87,7 @@ export async function exchangeSlackCode(
     userToken,
     userId: stringField(user?.id) ?? "",
     teamId: stringField(team?.id) ?? "",
-    teamName: stringField(team?.name) ?? "",
+    teamName: stringField(team?.name) ?? stringField(enterprise?.name) ?? "",
   }
 }
 

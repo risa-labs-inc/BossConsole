@@ -631,11 +631,11 @@ Deno.test("a good Slack callback stores the xoxp token under the slack connector
 })
 
 Deno.test("PUBLIC_BASE_URL moves the Slack redirect uri too", async () => {
-  const h = slackHarness({ env: { PUBLIC_BASE_URL: "https://api.risaboss.com/fluck-oauth/" } })
+  const h = slackHarness({ env: { PUBLIC_BASE_URL: "https://oauth.example.test/fluck-oauth/" } })
   await slackCallback(h, `code=abc&state=${await state()}`)
   assertEquals(
     h.requests[0].body.get("redirect_uri"),
-    "https://api.risaboss.com/fluck-oauth/slack/callback",
+    "https://oauth.example.test/fluck-oauth/slack/callback",
   )
 })
 
@@ -765,6 +765,19 @@ Deno.test("the Slack account label falls back without naming a person", async ()
   })
   await slackCallback(teamOnly, `code=abc&state=${await state()}`)
   assertEquals(teamOnly.stored[0].username, "T0TEAM")
+})
+
+Deno.test("an Enterprise Grid install is labelled with the org name", async () => {
+  const h = slackHarness({
+    tokenResponse: {
+      ...SLACK_OK,
+      is_enterprise_install: true,
+      team: null,
+      enterprise: { id: "E0ORG", name: "Risa Grid" },
+    },
+  })
+  await slackCallback(h, `code=abc&state=${await state()}`)
+  assertEquals(h.stored[0].username, "Risa Grid (U0MEMBER)")
 })
 
 Deno.test("exchangeSlackCode reports an unparseable body as unreachable", async () => {

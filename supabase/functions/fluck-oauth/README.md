@@ -157,14 +157,17 @@ At api.slack.com/apps, on the Fluck app:
 
    ```
    https://pcnwqamqdnsadranufjv.functions.supabase.co/fluck-oauth/slack/callback
-   https://api.risaboss.com/fluck-oauth/slack/callback
+   https://api.risaboss.com/functions/v1/fluck-oauth/slack/callback
    ```
 
 2. **User Token Scopes**:
    `channels:history channels:read groups:history groups:read im:history
    im:read mpim:history mpim:read users:read users:read.email search:read chat:write`.
-3. **Token Rotation**: OFF. With rotation on Slack issues expiring `xoxe.xoxp-` tokens, which this
-   function refuses because nothing here refreshes them.
+3. **Token Rotation**: OFF, and it must stay OFF. The toggle is one way: Slack does not let rotation
+   be turned off once it is on. With rotation on Slack issues expiring `xoxe.xoxp-` tokens, which
+   this function refuses because nothing here refreshes them, so every connect would fail until a
+   Slack refresh path is built. [`slack-app-manifest.yaml`](slack-app-manifest.yaml) pins
+   `token_rotation_enabled: false`.
 4. Copy the Client ID and Client Secret into `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`.
 
 ## No PKCE
