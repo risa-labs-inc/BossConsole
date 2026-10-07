@@ -326,23 +326,30 @@ internal fun BossAppDialogs(state: BossAppState) {
         val place: (TabInfo) -> Unit = { tab ->
             // Capture the placement before a missing handler can suspend and dismissal clears it.
             val split = splitViewState.consumePendingSplit()
-            val target =
-                splitViewState.getActiveTabsComponent()
-                    ?: splitViewState.getLastInteractedTabComponent()
-                    ?: state.tabsComponent
             splitViewState.requireTabTypeThen(tab.typeId, "Opening ${tab.title}") {
-                if (split == null) {
-                    // The original pane may have closed while the handler was being installed.
-                    if (splitViewState.getAllPanels().any { it.tabsComponent === target }) {
-                        target.addTab(tab)
-                    }
-                } else if (splitViewState.getPanel(split.panelId) != null) {
+                // Resolved only now: installing a missing handler can take minutes, and a pane
+                // captured before that may have closed. Landing somewhere visible beats dropping
+                // the tab silently.
+                if (split != null && splitViewState.getPanel(split.panelId) != null) {
                     splitViewState.splitPanel(
                         split.panelId,
                         split.direction.orientation,
                         tabToMove = tab,
                         placeBefore = split.direction.placeBefore,
                     )
+                } else {
+                    if (split != null) {
+                        logger.info(
+                            LogCategory.UI,
+                            "Requested split pane closed before the tab opened - using the active pane",
+                            mapOf("panelId" to split.panelId),
+                        )
+                    }
+                    val target =
+                        splitViewState.getActiveTabsComponent()
+                            ?: splitViewState.getLastInteractedTabComponent()
+                            ?: state.tabsComponent
+                    target.addTab(tab)
                 }
             }
         }

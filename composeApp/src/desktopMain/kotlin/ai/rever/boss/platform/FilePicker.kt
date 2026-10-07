@@ -60,9 +60,14 @@ class DesktopFilePicker(
             val selectedDir = fileDialog.directory
 
             if (selectedFile != null && selectedDir != null) {
-                val selection = pickedFileSelection(File(selectedDir, selectedFile), readContent)
+                val file = File(selectedDir, selectedFile)
+                val selection = pickedFileSelection(file, readContent)
                 if (selection.tooLarge) {
-                    filePickerLogger.warn(LogCategory.FILE, "Picked file is too large to read - reporting no selection")
+                    filePickerLogger.warn(
+                        LogCategory.FILE,
+                        "Picked file is too large to read - reporting no selection",
+                        mapOf("bytes" to file.length()),
+                    )
                 }
                 onFileSelected(selection.path, selection.content, selection.tooLarge)
             } else {
