@@ -300,6 +300,7 @@ internal object CoreAuthService {
         recoveryJob =
             authScope.launch {
                 var backoff = SessionRecoveryPolicy.initialBackoff
+                var diagnosed: String? = null
                 while (isActive) {
                     // Also debounces the first attempt: RefreshFailure fires right
                     // after the library's own failed refresh, so retrying instantly
@@ -321,6 +322,7 @@ internal object CoreAuthService {
                             logger.info(LogCategory.AUTH, "Session was refreshed elsewhere; stopping session recovery")
                             return@launch
                         }
+                        diagnosed = session.refreshToken
                         refreshSession()
                         logger.info(LogCategory.AUTH, "Session recovered by manual refresh")
                         return@launch
@@ -334,7 +336,7 @@ internal object CoreAuthService {
                                     "Refresh token rejected by auth server; clearing session for re-login",
                                     error = e,
                                 )
-                                clearUnrecoverableSession()
+                                clearUnrecoverableSession(diagnosed)
                                 return@launch
                             }
 
@@ -366,7 +368,18 @@ internal object CoreAuthService {
      * session is gone, SessionManager's signOut step no-ops and it handles the
      * rest (persisted user data, auth state reset) for parity with [signOut].
      */
-    private suspend fun clearUnrecoverableSession() {
+    private suspend fun clearUnrecoverableSession(diagnosedRefreshToken: String?) {
+        val current = SupabaseConfig.client.auth.currentSessionOrNull()
+        if (SessionRecoveryPolicy.replacedSince(
+                diagnosedRefreshToken,
+                current?.refreshToken,
+                current?.expiresAt,
+                Clock.System.now(),
+            )
+        ) {
+            logger.info(LogCategory.AUTH, "A new session arrived during recovery; not clearing it")
+            return
+        }
         try {
             SupabaseConfig.client.auth.clearSession()
         } catch (e: CancellationException) {

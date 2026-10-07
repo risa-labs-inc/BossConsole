@@ -31,6 +31,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The import file is acted on only while signed out, only when it is a 0600 regular file owned by
@@ -67,9 +68,12 @@ class SessionFileImporterTest {
         pollInterval = 10.milliseconds,
     )
 
-    // A file is read only once it is unchanged across two polls.
+    // A file is read only once it is unchanged across two polls and one poll interval old.
     private suspend fun SessionFileImporter.settle(): Outcome {
-        repeat(3) { importOnce().let { if (it != Outcome.PENDING) return it } }
+        repeat(5) {
+            importOnce().let { if (it != Outcome.PENDING) return it }
+            delay(15)
+        }
         return Outcome.PENDING
     }
 
@@ -100,6 +104,7 @@ class SessionFileImporterTest {
             assertEquals(Outcome.PENDING, imp.importOnce())
             assertTrue(file.exists())
             assertTrue(adopted.isEmpty())
+            delay(15)
             assertEquals(Outcome.IMPORTED, imp.importOnce())
             assertEquals(listOf("rt-123"), adopted)
             assertEquals(false, fileExistedAtAdopt)
@@ -116,7 +121,7 @@ class SessionFileImporterTest {
             Files.write(file, """-123"}""".toByteArray(), StandardOpenOption.APPEND)
             assertEquals(Outcome.PENDING, imp.importOnce())
             assertTrue(file.exists())
-            assertEquals(Outcome.IMPORTED, imp.importOnce())
+            assertEquals(Outcome.IMPORTED, imp.settle())
             assertEquals(listOf("rt-123"), adopted)
         }
 
@@ -186,7 +191,9 @@ class SessionFileImporterTest {
         runBlocking {
             assumePosix()
             Files.createDirectory(file)
-            assertEquals(Outcome.REJECTED, importer().settle())
+            val imp = importer()
+            assertEquals(Outcome.REJECTED, imp.settle())
+            assertEquals("not a regular file", imp.lastRefusal)
             assertTrue(adopted.isEmpty())
         }
 
@@ -195,7 +202,9 @@ class SessionFileImporterTest {
         runBlocking {
             assumePosix()
             write()
-            assertEquals(Outcome.REJECTED, importer(currentUid = uid!! + 1).settle())
+            val imp = importer(currentUid = uid!! + 1)
+            assertEquals(Outcome.REJECTED, imp.settle())
+            assertEquals("is owned by uid $uid, not the process uid ${uid + 1}", imp.lastRefusal)
             assertTrue(file.exists())
             assertTrue(adopted.isEmpty())
         }
@@ -230,7 +239,8 @@ class SessionFileImporterTest {
             Assumptions.assumeFalse(Files.isWritable(dir), "running as root, the file can always be removed")
             val imp = importer()
             assertEquals(Outcome.REJECTED, imp.settle())
-            assertEquals(Outcome.REJECTED, imp.settle())
+            assertTrue(imp.lastRefusal!!.startsWith("cannot be removed"), imp.lastRefusal)
+            assertEquals(Outcome.REJECTED, imp.importOnce())
             assertTrue(file.exists())
             assertTrue(adopted.isEmpty())
             assertNull(fileExistedAtAdopt)
@@ -241,7 +251,9 @@ class SessionFileImporterTest {
         runBlocking {
             assumePosix()
             write(content = """{"refresh_token":"${"x".repeat(SessionFileImporter.MAX_BYTES)}"}""")
-            assertEquals(Outcome.REJECTED, importer().settle())
+            val imp = importer()
+            assertEquals(Outcome.REJECTED, imp.settle())
+            assertEquals("too large", imp.lastRefusal)
             assertTrue(file.exists())
             assertTrue(adopted.isEmpty())
         }
@@ -314,6 +326,56 @@ class SessionFileImporterTest {
             assertEquals(listOf("rt-123", "second"), adopted)
             assertFalse(file.exists())
             job.cancel()
+        }
+
+    @Test
+    fun `a refusal that never changes slows the poll like an absent file`(): Unit =
+        runBlocking {
+            assumePosix()
+            write(mode = "rw-r--r--")
+            var polls = 0
+            val imp =
+                SessionFileImporter(
+                    path = file,
+                    isSignedIn = {
+                        polls++
+                        false
+                    },
+                    adopt = { adopted += it },
+                    currentUid = uid,
+                    pollInterval = 1.milliseconds,
+                    idlePollInterval = 10.seconds,
+                    fastPolls = 3,
+                )
+            val job = launch { imp.run(MutableStateFlow(true)) }
+            delay(300)
+            job.cancel()
+            assertTrue(polls <= 6, "polled $polls times")
+            assertTrue(file.exists())
+        }
+
+    @Test
+    fun `a throwing dependency does not end the poll`(): Unit =
+        runBlocking {
+            assumePosix()
+            write()
+            var calls = 0
+            val done = CompletableDeferred<Unit>()
+            val imp =
+                SessionFileImporter(
+                    path = file,
+                    isSignedIn = { if (calls++ == 0) error("client not ready") else false },
+                    adopt = {
+                        adopted += it
+                        done.complete(Unit)
+                    },
+                    currentUid = uid,
+                    pollInterval = 10.milliseconds,
+                )
+            val job = launch { imp.run(MutableStateFlow(true)) }
+            withTimeout(5_000) { done.await() }
+            job.cancel()
+            assertEquals(listOf("rt-123"), adopted)
         }
 
     @Test

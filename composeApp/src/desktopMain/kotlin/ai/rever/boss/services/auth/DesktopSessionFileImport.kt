@@ -10,6 +10,7 @@ import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.exceptions.RestException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -43,7 +44,8 @@ internal actual fun startSessionFileImport(scope: CoroutineScope) {
             failureStatus = { (it as? RestException)?.statusCode },
         )
     val job =
-        scope.launch(start = CoroutineStart.LAZY) {
+        // Off the caller's (main) dispatcher: the loop does file I/O and a network round trip.
+        scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
             val status = SupabaseConfig.client.auth.sessionStatus
             importer.run(status.map(::wantsSessionImport))
         }

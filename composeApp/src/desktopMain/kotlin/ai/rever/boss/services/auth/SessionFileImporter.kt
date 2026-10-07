@@ -26,9 +26,11 @@ import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.FileTime
 import java.nio.file.attribute.PosixFileAttributes
 import java.nio.file.attribute.PosixFilePermission
+import java.time.Instant
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.toJavaDuration
 
 /**
  * Adopts a session from a refresh-token file that a headless host drops at [path].
@@ -36,15 +38,16 @@ import kotlin.time.Duration.Companion.seconds
  * The file is acted on only while there is no live session, and only if it is a regular file (not
  * a symlink) owned by this process's UID with mode exactly 0600, in a directory owned by the same
  * UID that nobody else can write to. A filesystem without POSIX attributes is refused. The file must
- * also be unchanged (same inode, size and mtime) across two consecutive polls, so a write still in
- * progress is never read. It is deleted before any network call, so a token is presented at most
- * once. A refused file is left where it is and the reason logged once. Its only accepted content
- * is `{"refresh_token":"..."}`. Nothing read from it is ever logged.
+ * also be unchanged (same inode, size and mtime) across two consecutive polls and at least one poll
+ * interval old, so a write still in progress is never read. It is deleted before any network call,
+ * so a token is presented at most once. A refused file is left where it is and the reason logged
+ * once. Its only accepted content is `{"refresh_token":"..."}`. Nothing read from it is ever logged.
+ * The read buffers are zeroed after parsing; the decoded JSON and token strings are not wipeable.
  *
  * Writer contract (also in AGENTS.md): `umask 077`, write `$path.tmp` in the same directory, then
  * `mv` it onto [path].
  */
-@Suppress("LongParameterList")
+@Suppress("LongParameterList", "TooManyFunctions")
 internal class SessionFileImporter(
     private val path: Path,
     private val isSignedIn: () -> Boolean,
@@ -57,6 +60,7 @@ internal class SessionFileImporter(
     private val idlePollInterval: Duration = 2.seconds,
     private val fastPolls: Int = 120,
     private val failureStatus: (Exception) -> Int? = { null },
+    private val now: () -> Instant = Instant::now,
 ) {
     enum class Outcome { ABSENT, PENDING, SIGNED_IN, REJECTED, MALFORMED, IMPORTED, FAILED }
 
@@ -65,6 +69,16 @@ internal class SessionFileImporter(
     // Last refusal logged, so a file left in place is reported once per reason, not every poll.
     @Volatile
     private var lastRejection: String? = null
+
+    // The latest refusal repeated the previous one, so a sticky refusal does not pin the fast poll.
+    @Volatile
+    private var rejectionRepeated = false
+
+    // The poll loop logs an unexpected failure once per exception type, then keeps polling.
+    private var lastPollFailure: String? = null
+
+    /** The reason the file was last refused, or null; for tests. */
+    internal val lastRefusal: String? get() = lastRejection
 
     // What the previous poll saw; a file is read only once it has not changed for a whole poll.
     @Volatile
@@ -78,15 +92,33 @@ internal class SessionFileImporter(
         signedOut.distinctUntilChanged().collectLatest { out ->
             var quiet = 0
             while (out) {
-                when (importOnce()) {
+                when (pollOnce()) {
                     Outcome.IMPORTED -> return@collectLatest
-                    Outcome.ABSENT -> quiet++
+                    Outcome.ABSENT, null -> quiet++
+                    Outcome.REJECTED -> if (rejectionRepeated) quiet++ else quiet = 0
                     else -> quiet = 0
                 }
                 delay(if (quiet < fastPolls) pollInterval else idlePollInterval)
             }
         }
     }
+
+    // A throwing dependency (e.g. the Supabase client not ready) must not end the hook for good.
+    private suspend fun pollOnce(): Outcome? =
+        try {
+            importOnce().also { lastPollFailure = null }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (
+            @Suppress("TooGenericExceptionCaught") e: Exception,
+        ) {
+            val type = e::class.simpleName
+            if (type != lastPollFailure) {
+                logger.warn(LogCategory.AUTH, "Session import poll failed", mapOf("error" to type))
+                lastPollFailure = type
+            }
+            null
+        }
 
     /** One check of [path]. */
     @Suppress("ReturnCount")
@@ -159,7 +191,8 @@ internal class SessionFileImporter(
             val attrs = Files.readAttributes(path, PosixFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
             problemWith(attrs)?.let { throw Refused(it) }
             val seen = Snapshot(attrs.fileKey(), attrs.size(), attrs.lastModifiedTime())
-            if (seen != lastSeen) {
+            val age = java.time.Duration.between(attrs.lastModifiedTime().toInstant(), now())
+            if (seen != lastSeen || age < pollInterval.toJavaDuration()) {
                 lastSeen = seen
                 return Read.Pending
             }
@@ -249,11 +282,11 @@ internal class SessionFileImporter(
         }
 
     private fun reject(reason: String): Read {
-        if (reason != lastRejection) {
+        rejectionRepeated = reason == lastRejection
+        if (!rejectionRepeated) {
             logger.warn(LogCategory.AUTH, "Session import file refused and left in place", mapOf("reason" to reason))
         }
         lastRejection = reason
-        lastSeen = null
         return Read.Rejected
     }
 

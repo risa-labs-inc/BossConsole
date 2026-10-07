@@ -717,13 +717,19 @@ file; BOSS adopts it as its own session (`refreshSession` then `importSession`).
   group or world writable. Only the immediate parent is checked, so pick a directory whose whole
   path is private.
 - **Stability**: the file is read only when its inode, size and mtime are unchanged across two
-  consecutive polls, so a write still in progress is never read.
+  consecutive polls and its mtime is at least one poll interval old, so a write still in progress
+  is never read. A writer stalled mid-write for longer than that can still lose the token, which
+  is why the contract below renames into place.
 - **Single use**: a file that passes is deleted before any network call, and a token that cannot
   be deleted is never presented. It is consumed even if the import then fails (invalid JSON, auth
   error); the host must write a new one to retry. Nothing read from the file is ever logged.
 - **A refused file is left in place** and the reason logged once (`Session import file refused
   and left in place`, with e.g. `mode is not 0600` or `is owned by uid 65534, not the process uid
-  1000`). Fixing the file (or replacing it) is picked up on a later poll.
+  1000`). Fixing the file (or replacing it) is picked up on a later poll. A refusal that repeats
+  slows the poll like an absent file.
+- **Session recovery**: `CoreAuthService` does not clear a session that replaced the one it was
+  recovering (`SessionRecoveryPolicy.replacedSince`), so a handoff that lands while recovery's
+  refresh of the old token is in flight survives that refresh's rejection.
 
 **Writer contract.** Create the file owner-only and rename it into place, in the same directory:
 
