@@ -204,11 +204,11 @@ function health(deps: Dependencies): Response {
   // Reports whether the function CAN work, not whether any particular secret is correct.
   // A boolean per variable, never a value, so this stays safe to curl from anywhere.
   const configured = {
-    clientId: Boolean(deps.env("GOOGLE_WEB_CLIENT_ID")),
-    clientSecret: Boolean(deps.env("GOOGLE_WEB_CLIENT_SECRET")),
-    githubClientId: Boolean(deps.env("GITHUB_OAUTH_CLIENT_ID")),
-    slackClientId: Boolean(deps.env("SLACK_CLIENT_ID")),
-    slackClientSecret: Boolean(deps.env("SLACK_CLIENT_SECRET")),
+    clientId: Boolean(deps.env("GOOGLE_WEB_CLIENT_ID")?.trim()),
+    clientSecret: Boolean(deps.env("GOOGLE_WEB_CLIENT_SECRET")?.trim()),
+    githubClientId: Boolean(deps.env("GITHUB_OAUTH_CLIENT_ID")?.trim()),
+    slackClientId: Boolean(deps.env("SLACK_CLIENT_ID")?.trim()),
+    slackClientSecret: Boolean(deps.env("SLACK_CLIENT_SECRET")?.trim()),
   }
   // GitHub and Slack are optional, so only the Google pair gates readiness.
   const ok = configured.clientId && configured.clientSecret
