@@ -156,8 +156,8 @@ use and short lived.
    binds grants: that version calls `fluck_oauth_bind_grant` on every callback and
    `fluck_oauth_grant_owner` on every refresh, and without the migration every callback fails and
    every refresh is a 502. `20261007120000_fluck_oauth_grant_no_rebind.sql` then makes a bind of a
-   hash already owned by another user return false (the callback answers 503 and writes nothing);
-   it needs no function change.
+   hash already owned by another user return false (the callback answers 503 and writes nothing); it
+   needs no function change.
 
 2. Set the environment:
 
