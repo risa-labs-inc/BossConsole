@@ -2207,6 +2207,8 @@ workspace by selecting the tools you need." Tools install app-wide, not into a S
 
 ## Documentation
 
+- [Create and publish plugins](https://github.com/risa-labs-inc/BossConsole/wiki/Create-and-Publish-a-Plugin) - Toolbox/Tool Creator, coding agents, GitHub repositories and publish keys. Hosted BOSS grants `plugins.create` + `api_key.create` to `user`; refresh the session after a grant.
+
 - [Authenticated IPC rollout](docs/authenticated-ipc-rollout.md): paired runtime release, ownership, and credential lifetime.
 
 - [MCP for agent-less operators](docs/mcp-agentless-operators.md) - Toolbox kill-switches and attach path
