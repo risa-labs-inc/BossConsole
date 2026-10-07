@@ -2,7 +2,9 @@
  * The single page this function serves (structure copied from live-sessions/views/page.ts).
  *
  * States driven by the inline, nonce-stamped script: sign-in, "check your email", loading,
- * "opening" (exactly one Fluck online, or ?instance=<id> named one), and the list. No external
+ * "opening" (shown only for a click in the list), and the list. A load that may auto-open (exactly
+ * one Fluck online, or ?instance=<id>) starts in body.launching: only a quiet "Opening your Fluck…"
+ * until the frame is up or the page has to ask (sign-in, several Flucks, offline, an error). No external
  * asset and no third-party script, so the CSP stays `default-src 'none'`.
  *
  * Opening a Fluck embeds the URL /api/open returns (`<endpoint>/#/t/<ticket>`) in a full-viewport
@@ -91,6 +93,11 @@ const STYLES = `
   body.viewing { overflow: hidden; }
   body.viewing main { max-width: none; padding: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
   body.viewing header, body.viewing #notice, body.viewing .card, body.viewing footer { display: none; }
+  /* Launching: until the page knows it must ask (sign-in, several Flucks, offline) it shows nothing
+     but a quiet line, so opening a Fluck never flashes the portal. */
+  body.launching header, body.launching #notice, body.launching .card, body.launching footer { display: none; }
+  #launch { display: none; }
+  body.launching:not(.viewing) #launch { display: flex; min-height: 60vh; align-items: center; justify-content: center; color: var(--text-2); font-size: 13px; }
   #viewer { display: none; flex: 1; flex-direction: column; min-height: 0; }
   body.viewing #viewer { display: flex; }
   #fluckframe { flex: 1; width: 100%; border: 0; background-color: var(--ink); }
@@ -122,13 +129,19 @@ const SCRIPT = `
   // A reload while a Fluck is open keeps its ?instance=<id> and reopens it with a fresh ticket.
   var autoOpenDone = params.get("list") === "1";
   var wanted = null;
+  // Starts true in the markup (body.launching) unless this load cannot auto-open.
+  var launching = true;
+  function stopLaunching() { launching = false; document.body.classList.remove("launching"); }
+  if (autoOpenDone) stopLaunching(); // ?list=1 asks for the list
 
   function show(id) {
+    if (launching && id !== "loading" && id !== "opening") stopLaunching();
     ["signin", "sent", "loading", "list", "opening"].forEach(function (s) {
       $(s).classList.toggle("hidden", s !== id);
     });
   }
   function notice(text, kind) {
+    if (text && launching) stopLaunching();
     var n = $("notice");
     n.textContent = text || "";
     n.className = "notice" + (kind ? " " + kind : "");
@@ -248,11 +261,7 @@ const SCRIPT = `
         if (hit) notice(title(hit) + " is offline. It will appear as online when its BOSS is running.", null);
         else notice("That Fluck is not signed in with this account.", "error");
       } else if (online.length === 1) {
-        var only = online[0];
-        $("opening-name").textContent = title(only);
-        show("opening");
-        $("opening-now").onclick = function () { cancelOpenTimer(); openInstance(only); };
-        openTimer = setTimeout(function () { openTimer = null; openInstance(only); }, 1500);
+        openInstance(online[0]);
         return;
       }
     }
@@ -335,6 +344,7 @@ const SCRIPT = `
     notice("");
     $("fluckframe").setAttribute("src", url);
     document.body.classList.add("viewing");
+    if (launching) stopLaunching();
     fitViewport();
     // ?instance=<id>, never the ticket: a reload reopens this Fluck with a fresh one. Opened from
     // the list it is a new entry, so Back returns to the list; a reload of it replaces in place.
@@ -457,7 +467,7 @@ export function fluckPage(model: PageModel, nonce: string): string {
 <link rel="icon" type="image/svg+xml" href="${esc(FAVICON)}">
 <style nonce="${esc(nonce)}">${STYLES}</style>
 </head>
-<body>
+<body class="launching">
 <!--email_off-->
 <main>
   <header>
@@ -487,6 +497,8 @@ export function fluckPage(model: PageModel, nonce: string): string {
     <p class="sub">We sent a sign-in link to <strong id="sent-email"></strong>. Open it in this browser and your Flucks will appear here.</p>
     <div class="row"><button id="sent-back" class="secondary" type="button">Use a different email</button></div>
   </section>
+
+  <div id="launch" role="status">Opening your Fluck…</div>
 
   <section id="loading" class="card hidden"><div class="sub">Loading your Flucks…</div></section>
 

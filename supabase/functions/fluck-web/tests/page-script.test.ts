@@ -55,6 +55,7 @@ function harness(search: string, initialState: unknown = null) {
   const frameWindow = {}
   get("fluckframe").contentWindow = frameWindow
   const body = new FakeElement()
+  if (/<body class="launching">/.test(html)) body.classList.add("launching") // as the markup ships
   const main = new FakeElement()
   const document = {
     title: "Fluck",
@@ -211,7 +212,6 @@ Deno.test("opening from the list pushes ?instance=<id>; switch and sign-out drop
   for (const close of ["switch", "signed-out"]) {
     const h = harness("")
     await h.settle()
-    h.fire(1500)
     await h.settle()
     assertEquals(h.pushed, [{ view: "fluck" }], "Back returns to the list")
     assertEquals(h.location.search, "?instance=i1")
@@ -221,10 +221,19 @@ Deno.test("opening from the list pushes ?instance=<id>; switch and sign-out drop
   }
 })
 
+Deno.test("one online Fluck opens straight away: no countdown, never the list or the portal chrome", async () => {
+  const h = harness("")
+  assert(h.body.classList.contains("launching"), "starts launching")
+  await h.settle()
+  assertEquals(h.pending(1500), 0, "no countdown")
+  assertEquals(h.get("fluckframe").getAttribute("src"), OPEN_URL)
+  assert(h.get("list").classList.contains("hidden"), "the list never showed")
+  assert(!h.body.classList.contains("launching"))
+})
+
 Deno.test("without the reload marker, a single online Fluck still auto-opens in the frame", async () => {
   const h = harness("")
   await h.settle()
-  h.fire(1500)
   await h.settle()
   assertEquals(h.get("fluckframe").getAttribute("src"), OPEN_URL)
 })
