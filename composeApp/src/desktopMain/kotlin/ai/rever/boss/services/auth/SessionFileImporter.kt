@@ -17,45 +17,73 @@ import kotlinx.serialization.json.JsonPrimitive
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.file.Files
+import java.nio.file.InvalidPathException
 import java.nio.file.LinkOption
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.FileTime
 import java.nio.file.attribute.PosixFileAttributes
 import java.nio.file.attribute.PosixFilePermission
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Adopts a session from a refresh-token file that a headless host drops at [path].
  *
- * The file is acted on only while there is no session, and only if it is a regular file (not a
- * symlink) owned by [currentUser] with mode exactly 0600; a filesystem without POSIX attributes is
- * refused. It is deleted before any network call, so a token is presented at most once. Its only
- * accepted content is `{"refresh_token":"..."}`. Nothing read from it is ever logged.
+ * The file is acted on only while there is no live session, and only if it is a regular file (not
+ * a symlink) owned by this process's UID with mode exactly 0600, in a directory owned by the same
+ * UID that nobody else can write to. A filesystem without POSIX attributes is refused. The file must
+ * also be unchanged (same inode, size and mtime) across two consecutive polls, so a write still in
+ * progress is never read. It is deleted before any network call, so a token is presented at most
+ * once. A refused file is left where it is and the reason logged once. Its only accepted content
+ * is `{"refresh_token":"..."}`. Nothing read from it is ever logged.
+ *
+ * Writer contract (also in AGENTS.md): `umask 077`, write `$path.tmp` in the same directory, then
+ * `mv` it onto [path].
  */
+@Suppress("LongParameterList")
 internal class SessionFileImporter(
     private val path: Path,
     private val isSignedIn: () -> Boolean,
     private val adopt: suspend (refreshToken: String) -> Unit,
+    // Numeric UIDs: a UID with no passwd entry has user.name "?" but an owner named by number.
+    private val currentUid: Int? = processUid(),
+    // Only consulted where the process UID is unknown (no /proc, i.e. macOS).
     private val currentUser: String? = System.getProperty("user.name"),
     private val pollInterval: Duration = 500.milliseconds,
+    private val idlePollInterval: Duration = 2.seconds,
+    private val fastPolls: Int = 120,
     private val failureStatus: (Exception) -> Int? = { null },
 ) {
-    enum class Outcome { ABSENT, SIGNED_IN, REJECTED, MALFORMED, IMPORTED, FAILED }
+    enum class Outcome { ABSENT, PENDING, SIGNED_IN, REJECTED, MALFORMED, IMPORTED, FAILED }
 
     private val logger = BossLogger.forComponent("SessionFileImporter")
 
-    // Last rejection logged, so a file that cannot be removed is reported once, not every poll.
+    // Last refusal logged, so a file left in place is reported once per reason, not every poll.
+    @Volatile
     private var lastRejection: String? = null
 
-    /** Polls while [signedOut] is true; a sign-in cancels the poll and a sign-out restarts it. */
+    // What the previous poll saw; a file is read only once it has not changed for a whole poll.
+    @Volatile
+    private var lastSeen: Snapshot? = null
+
+    /**
+     * Polls while [signedOut] is true; a sign-in cancels the poll and a sign-out restarts it. After
+     * [fastPolls] polls with no file it slows to [idlePollInterval] until a file shows up.
+     */
     suspend fun run(signedOut: Flow<Boolean>) {
         signedOut.distinctUntilChanged().collectLatest { out ->
+            var quiet = 0
             while (out) {
-                if (importOnce() == Outcome.IMPORTED) return@collectLatest
-                delay(pollInterval)
+                when (importOnce()) {
+                    Outcome.IMPORTED -> return@collectLatest
+                    Outcome.ABSENT -> quiet++
+                    else -> quiet = 0
+                }
+                delay(if (quiet < fastPolls) pollInterval else idlePollInterval)
             }
         }
     }
@@ -65,14 +93,21 @@ internal class SessionFileImporter(
     suspend fun importOnce(): Outcome {
         if (isSignedIn()) return Outcome.SIGNED_IN
         val bytes =
-            when (val read = withContext(Dispatchers.IO) { readAndDelete() }) {
+            when (val read = withContext(Dispatchers.IO) { readAndConsume() }) {
                 is Read.Absent -> return Outcome.ABSENT
+                is Read.Pending -> return Outcome.PENDING
+                is Read.SignedIn -> return Outcome.SIGNED_IN
                 is Read.Rejected -> return Outcome.REJECTED
                 is Read.Content -> read.bytes
             }
-        val token = parseRefreshToken(bytes) ?: return Outcome.MALFORMED
+        val token =
+            try {
+                parseRefreshToken(bytes)
+            } finally {
+                bytes.fill(0)
+            } ?: return Outcome.MALFORMED
         if (isSignedIn()) {
-            logger.info(LogCategory.AUTH, "Session import skipped: a session appeared meanwhile")
+            logger.info(LogCategory.AUTH, "Session import discarded: a session appeared after the file was consumed")
             return Outcome.SIGNED_IN
         }
         return try {
@@ -97,6 +132,10 @@ internal class SessionFileImporter(
     private sealed interface Read {
         data object Absent : Read
 
+        data object Pending : Read
+
+        data object SignedIn : Read
+
         data object Rejected : Read
 
         class Content(
@@ -104,20 +143,52 @@ internal class SessionFileImporter(
         ) : Read
     }
 
+    private data class Snapshot(
+        val key: Any?,
+        val size: Long,
+        val modified: FileTime,
+    )
+
     private class Refused(
         val reason: String,
     ) : IOException(reason)
 
-    private fun readAndDelete(): Read =
+    @Suppress("ReturnCount")
+    private fun readAndConsume(): Read =
         try {
             val attrs = Files.readAttributes(path, PosixFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
             problemWith(attrs)?.let { throw Refused(it) }
+            val seen = Snapshot(attrs.fileKey(), attrs.size(), attrs.lastModifiedTime())
+            if (seen != lastSeen) {
+                lastSeen = seen
+                return Read.Pending
+            }
             val bytes = readBounded()
+            if (bytes.size.toLong() != attrs.size()) {
+                bytes.fill(0)
+                lastSeen = null
+                return Read.Pending
+            }
+            if (isSignedIn()) {
+                bytes.fill(0)
+                return Read.SignedIn
+            }
             // Single use is the guarantee: a token that cannot be removed is never presented.
-            Files.delete(path)
+            try {
+                Files.delete(path)
+            } catch (e: NoSuchFileException) {
+                bytes.fill(0)
+                throw e
+            } catch (e: IOException) {
+                bytes.fill(0)
+                throw Refused("cannot be removed: ${e::class.simpleName}")
+            }
             lastRejection = null
+            lastSeen = null
             Read.Content(bytes)
         } catch (_: NoSuchFileException) {
+            lastRejection = null
+            lastSeen = null
             Read.Absent
         } catch (e: Refused) {
             reject(e.reason)
@@ -131,43 +202,58 @@ internal class SessionFileImporter(
         when {
             attrs.isSymbolicLink -> "symlink"
             !attrs.isRegularFile -> "not a regular file"
-            currentUser.isNullOrBlank() || attrs.owner().name != currentUser -> "not owned by the current user"
+            else -> ownerProblem(path, attrs, LinkOption.NOFOLLOW_LINKS) ?: contentProblem(attrs)
+        }
+
+    private fun contentProblem(attrs: PosixFileAttributes): String? =
+        when {
             attrs.permissions() != OWNER_RW -> "mode is not 0600"
             attrs.size() > MAX_BYTES -> "too large"
-            !parentIsPrivate() -> "parent directory is writable by others"
-            else -> null
+            else -> parentProblem()
         }
 
     // A directory others can write to lets them rename a different file in between check and read.
-    private fun parentIsPrivate(): Boolean {
-        val parent = path.parent ?: return false
+    @Suppress("ReturnCount")
+    private fun parentProblem(): String? {
+        val parent = path.parent ?: return "has no parent directory"
         val dir = Files.readAttributes(parent, PosixFileAttributes::class.java)
-        return dir.owner().name == currentUser && dir.permissions().none { it in OTHERS_WRITE }
+        ownerProblem(parent, dir)?.let { return "parent directory $it" }
+        return if (dir.permissions().any { it in OTHERS_WRITE }) "parent directory is writable by others" else null
+    }
+
+    private fun ownerProblem(
+        at: Path,
+        attrs: PosixFileAttributes,
+        vararg options: LinkOption,
+    ): String? {
+        val uid = currentUid
+        if (uid != null) {
+            // UIDs are not secret, and naming both makes a userns or bind-mount mismatch obvious.
+            val owner = Files.getAttribute(at, "unix:uid", *options) as? Int
+            return if (owner == uid) null else "is owned by uid $owner, not the process uid $uid"
+        }
+        val user = currentUser
+        return if (!user.isNullOrBlank() && attrs.owner().name == user) null else "is not owned by the current user"
     }
 
     private fun readBounded(): ByteArray =
         Files.newByteChannel(path, setOf(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)).use { ch ->
             val buf = ByteBuffer.allocate(MAX_BYTES + 1)
-            while (buf.hasRemaining() && ch.read(buf) >= 0) Unit
-            if (buf.position() > MAX_BYTES) throw Refused("too large")
-            buf.array().copyOf(buf.position())
+            try {
+                while (buf.hasRemaining() && ch.read(buf) >= 0) Unit
+                if (buf.position() > MAX_BYTES) throw Refused("too large")
+                buf.array().copyOf(buf.position())
+            } finally {
+                buf.array().fill(0)
+            }
         }
 
     private fun reject(reason: String): Read {
-        val removed =
-            try {
-                Files.deleteIfExists(path)
-            } catch (_: IOException) {
-                false
-            }
-        if (removed || reason != lastRejection) {
-            logger.warn(
-                LogCategory.AUTH,
-                "Session import file refused",
-                mapOf("reason" to reason, "removed" to removed),
-            )
+        if (reason != lastRejection) {
+            logger.warn(LogCategory.AUTH, "Session import file refused and left in place", mapOf("reason" to reason))
         }
-        lastRejection = if (removed) null else reason
+        lastRejection = reason
+        lastSeen = null
         return Read.Rejected
     }
 
@@ -196,7 +282,7 @@ internal class SessionFileImporter(
     companion object {
         const val ENV = "BOSS_SESSION_IMPORT"
         private const val FIELD = "refresh_token"
-        private const val MAX_BYTES = 16 * 1024
+        internal const val MAX_BYTES = 16 * 1024
         private val OTHERS_WRITE = setOf(PosixFilePermission.GROUP_WRITE, PosixFilePermission.OTHERS_WRITE)
         private val OWNER_RW = setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
 
@@ -207,10 +293,22 @@ internal class SessionFileImporter(
             val path =
                 try {
                     Paths.get(raw)
-                } catch (_: java.nio.file.InvalidPathException) {
+                } catch (_: InvalidPathException) {
                     return null
                 }
             return path.takeIf { it.isAbsolute }
         }
+
+        /** This process's UID where `/proc` exposes it (Linux), else null. */
+        fun processUid(): Int? =
+            try {
+                Files.getAttribute(Paths.get("/proc/self"), "unix:uid") as? Int
+            } catch (_: IOException) {
+                null
+            } catch (_: UnsupportedOperationException) {
+                null
+            } catch (_: IllegalArgumentException) {
+                null
+            }
     }
 }
