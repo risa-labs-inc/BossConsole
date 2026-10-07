@@ -18,6 +18,7 @@ import {
   looksLikePlaintext,
   money,
   PAGES,
+  rateLimitEntries,
   resetRateLimits,
   routePath,
   type StoreRequest,
@@ -674,6 +675,36 @@ Deno.test("one address is capped across links", async () => {
     if ((await handler(request)).status === 429) limited++
   }
   assert(limited > 0)
+})
+
+Deno.test("spoofed addresses cannot grow the rate-limit map without bound", async () => {
+  const { handler } = harness()
+  const t = await token()
+  for (let i = 0; i < 5000; i++) {
+    const request = new Request(`https://${AUD}/fluck-vault/vault?t=${t}`, {
+      headers: { ...BROWSER, "x-forwarded-for": `10.${i >> 16}.${(i >> 8) & 255}.${i & 255}` },
+    })
+    await handler(request)
+  }
+  assert(rateLimitEntries() <= 4096, String(rateLimitEntries()))
+})
+
+Deno.test("an oversized POST is refused before it is parsed or stored", async () => {
+  const h = harness()
+  const cookie = await opened(h)
+  const huge = post("/vault", { j: JTI, c: "A".repeat(64 * 1024) }, { cookie })
+  assertEquals((await h.handler(huge)).status, 400)
+  assertEquals(h.stored.length, 0)
+  for (const path of ["/requests", "/inbox/claim", "/instances"]) {
+    const response = await h.handler(
+      new Request(`https://${AUD}/fluck-vault${path}`, {
+        method: "POST",
+        body: JSON.stringify({ pad: "x".repeat(64 * 1024) }),
+        headers: { "content-type": "application/json" },
+      }),
+    )
+    assertEquals(response.status, 413, path)
+  }
 })
 
 // ---------------------------------------------------------------------------------------------

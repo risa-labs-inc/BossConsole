@@ -303,6 +303,42 @@ const SIGNED_IP_LIMIT = 1200
 // An inbox poller runs at one call per five seconds while a link is fresh.
 const SIGNED_KEY_LIMIT = 600
 const INSTANCES_IP_LIMIT = 20
+// The address is the client's own `x-forwarded-for`, so an IP bucket can be dodged and can also
+// be spent on someone else's behalf. Both are bounded by the per-link and per-install buckets,
+// which are keyed by verified values.
+
+/** Every POST body is read through this cap before it is parsed. Sealed blobs are under 8 KiB. */
+const MAX_BODY_BYTES = 16 * 1024
+
+/** The body as text, or null if it is larger than `MAX_BODY_BYTES`. Stops reading at the cap. */
+async function cappedText(request: Request): Promise<string | null> {
+  const declared = Number(request.headers.get("content-length") ?? "0")
+  if (declared > MAX_BODY_BYTES) {
+    await request.body?.cancel().catch(() => {})
+    return null
+  }
+  if (!request.body) return ""
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    size += value.byteLength
+    if (size > MAX_BODY_BYTES) {
+      await reader.cancel().catch(() => {})
+      return null
+    }
+    chunks.push(value)
+  }
+  const bytes = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(bytes)
+}
 
 interface Counter {
   count: number
@@ -316,11 +352,24 @@ export function resetRateLimits(): void {
   counters.clear()
 }
 
+const MAX_COUNTERS = 4096
+
+/** Exported for the tests: the number of live counters. */
+export function rateLimitEntries(): number {
+  return counters.size
+}
+
 function hit(key: string, limit: number, windowMs: number, nowMs: number): boolean {
-  // Bounded work, bounded memory: expired entries are dropped whenever the map gets large,
-  // so a long lived isolate cannot be grown without limit by hammering distinct keys.
-  if (counters.size > 4096) {
+  // Keys include a client-supplied address, so the map is hard capped. When full, drop expired
+  // entries and then the oldest (a Map iterates in insertion order) down to three quarters, so
+  // the sweep runs at most once per thousand new keys rather than on every insert.
+  if (!counters.has(key) && counters.size >= MAX_COUNTERS) {
     for (const [k, v] of counters) if (v.resetAt <= nowMs) counters.delete(k)
+    let excess = counters.size - (MAX_COUNTERS * 3) / 4
+    for (const k of counters.keys()) {
+      if (excess-- <= 0) break
+      counters.delete(k)
+    }
   }
   const existing = counters.get(key)
   if (!existing || existing.resetAt <= nowMs) {
@@ -901,7 +950,11 @@ export function cvvIntro(row: VaultRequestRow): string {
 async function post(request: Request, deps: Dependencies, purpose: Purpose): Promise<Response> {
   let body: FormData
   try {
-    body = await request.formData()
+    const text = await cappedText(request)
+    if (text === null) throw new Error("too large")
+    body = await new Response(text, {
+      headers: { "content-type": request.headers.get("content-type") ?? "" },
+    }).formData()
   } catch {
     await request.body?.cancel().catch(() => {})
     // Named, because this catch fires for a body that is not a form at all and a silent 400
@@ -1030,7 +1083,8 @@ async function signedRoute(
   deps: Dependencies,
   path: string,
 ): Promise<Response> {
-  const body = await request.text()
+  const body = await cappedText(request)
+  if (body === null) return json(413, { error: "body" })
   const nowSeconds = Math.floor(deps.now() / 1000)
 
   if (!hit(`ip:signed:${clientAddress(request)}`, SIGNED_IP_LIMIT, IP_WINDOW_MS, deps.now())) {
@@ -1241,7 +1295,8 @@ function standardBase64(bytes: Uint8Array): string {
  * `fluck_vault_revoke_my_instance`, which frees its slot, and registers a fresh instance id.
  */
 async function instancesRoute(request: Request, deps: Dependencies): Promise<Response> {
-  const body = await request.text()
+  const body = await cappedText(request)
+  if (body === null) return json(413, { error: "body" })
   if (
     !hit(`ip:instances:${clientAddress(request)}`, INSTANCES_IP_LIMIT, IP_WINDOW_MS, deps.now())
   ) {
