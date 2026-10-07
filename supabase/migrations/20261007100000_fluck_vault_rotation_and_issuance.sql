@@ -193,7 +193,8 @@ GRANT EXECUTE ON FUNCTION "public"."fluck_vault_rotate_instance"("p_instance_id"
 -- Issuance approval: the operator's switch. service_role only; there is no user-facing path.
 -- ---------------------------------------------------------------------------------------------
 
--- Returns true if the install exists and is live.
+-- Returns true if the install exists and is live. Withdrawing approval also expires the
+-- install's unconsumed links, so it takes down pages already minted as well as new ones.
 CREATE OR REPLACE FUNCTION "public"."fluck_vault_set_instance_issuance"(
     "p_instance_id" "text",
     "p_approved" boolean
@@ -206,7 +207,17 @@ BEGIN
     SET issuance_approved_at = CASE WHEN p_approved THEN now() ELSE NULL END
     WHERE instance_id = p_instance_id
       AND revoked_at IS NULL;
-    RETURN FOUND;
+    IF NOT FOUND THEN
+        RETURN false;
+    END IF;
+    IF NOT p_approved THEN
+        UPDATE public.fluck_vault_requests
+        SET expires_at = now()
+        WHERE instance_id = p_instance_id
+          AND consumed_at IS NULL
+          AND expires_at > now();
+    END IF;
+    RETURN true;
 END;
 $$;
 
