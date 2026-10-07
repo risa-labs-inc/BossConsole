@@ -135,7 +135,7 @@ Deno.test("the page script parses and frames only an https /#/t/ URL; top-level 
   assertEquals(script.match(/location\.assign\(/g)?.length, 1, "one top-level navigation")
   assertStringIncludes(script, "function navigateTopLevel(url) {")
   assert(!script.includes("location.href ="))
-  assertStringIncludes(script, "openFrame(data.url, title(i))")
+  assertStringIncludes(script, "openFrame(data.url, title(i), i.instance_id)")
   assertStringIncludes(html, '<iframe id="fluckframe" title="Fluck" allow="clipboard-read; clipboard-write; fullscreen" allowfullscreen src="about:blank"></iframe>')
   const re = /^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?\/#\/t\/[A-Za-z0-9_-]{43}$/
   assertStringIncludes(script, "var OPEN_URL_RE = " + re.toString())

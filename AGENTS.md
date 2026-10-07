@@ -769,8 +769,9 @@ lists `fluck_web_list_instances()`, and on Open mints a 60 s single-use ticket w
 fluck.risaboss.com. The Fluck redeems the ticket with `fluck_web_consume_ticket` as its own
 signed-in user, so a ticket minted by another account can never be redeemed; it keeps its session
 token in the frame's sessionStorage (no third-party cookie) and allows framing only by
-`https://fluck.risaboss.com`. Opening pushes a ticket-free history entry: browser Back closes the
-frame, and a reload shows the list. The frame posts `{type:"fluck-signed-out"}` (close, reload the
+`https://fluck.risaboss.com`. Opening from the list pushes `?instance=<id>` (never the ticket):
+browser Back closes the frame, and a reload reopens that Fluck with a fresh ticket; switch and
+sign-out drop `?instance`. The frame posts `{type:"fluck-signed-out"}` (close, reload the
 list), `{type:"fluck-switch"}` (close, show the list) and `{type:"fluck-title", title}` (sets
 `document.title`, capped, text only); the page accepts them only from the frame's window and the
 endpoint's origin and ignores anything else. Backwards compatibility: a framing-capable Fluck first

@@ -9,8 +9,9 @@
  * iframe, as live-sessions does with its viewer, so the address bar stays on fluck.risaboss.com.
  * Framing needs no cookie: the Fluck redeems the ticket and keeps its session token in the
  * frame's own sessionStorage, and it allows framing only by https://fluck.risaboss.com. Opening
- * pushes a history entry, so "back" closes the frame and shows the list; the ticket is single-use
- * and never enters the address bar, so a reload shows the list too. The frame talks back with
+ * from the list pushes `?instance=<id>`, so "back" closes the frame and shows the list, and a
+ * reload reopens that Fluck with a fresh ticket (the single-use ticket never enters the address
+ * bar). Switching Fluck or signing out drops `?instance`. The frame talks back with
  * postMessage (onFrameMessage): hello, signed out, switch Fluck, and its title.
  *
  * Fallback for Flucks older than framing: a framing-capable Fluck posts `fluck-hello` as soon as
@@ -117,13 +118,9 @@ const SCRIPT = `
   var viewing = null; // { url, label } while a Fluck is framed
   var helloTimer = null; // pending top-level fallback until the frame says fluck-hello
   var params = new URLSearchParams(location.search);
-  // ?list=1 (older Fluck builds link back with it), or a reload of the entry a framed Fluck
-  // pushed: show the list, never auto-open on this load.
+  // ?list=1 (older Fluck builds link back with it): show the list, never auto-open on this load.
+  // A reload while a Fluck is open keeps its ?instance=<id> and reopens it with a fresh ticket.
   var autoOpenDone = params.get("list") === "1";
-  if (history.state && history.state.view === "fluck") {
-    autoOpenDone = true;
-    history.replaceState(null, "", location.pathname + location.search);
-  }
   var wanted = null;
 
   function show(id) {
@@ -139,7 +136,7 @@ const SCRIPT = `
   }
   function store(fn) { try { return fn(window.localStorage); } catch (_) { return null; } }
 
-  // ?instance=<id>: remember it across sign-in, then take it out of the address bar.
+  // ?instance=<id>: remember it across sign-in; it stays in the address bar so a reload reopens it.
   (function readWanted() {
     var id = params.get("instance");
     if (id && INSTANCE_RE.test(id)) {
@@ -150,13 +147,21 @@ const SCRIPT = `
       var saved = store(function (s) { return JSON.parse(s.getItem(WANT_KEY) || "null"); });
       if (saved && typeof saved.id === "string" && INSTANCE_RE.test(saved.id) && Date.now() - saved.at < WANT_TTL_MS) wanted = saved.id;
     }
-    if (params.has("instance") || params.has("list")) {
-      params.delete("instance"); params.delete("list");
+    if (params.has("list")) {
+      params.delete("list");
       var rest = params.toString();
       history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
     }
   })();
   function forgetWanted() { wanted = null; store(function (s) { s.removeItem(WANT_KEY); }); }
+  // The list's own address: no ?instance, so a reload shows the list.
+  function dropInstanceFromUrl() {
+    var p = new URLSearchParams(location.search);
+    if (!p.has("instance")) return;
+    p.delete("instance");
+    var rest = p.toString();
+    history.replaceState(null, "", location.pathname + (rest ? "?" + rest : ""));
+  }
 
   var OAUTH_ERRORS = {
     cancelled: "Sign-in was cancelled.",
@@ -239,6 +244,7 @@ const SCRIPT = `
         var hit = instances.filter(function (i) { return i.instance_id === wanted; })[0];
         forgetWanted();
         if (hit && hit.online) { openInstance(hit); return; }
+        dropInstanceFromUrl();
         if (hit) notice(title(hit) + " is offline. It will appear as online when its BOSS is running.", null);
         else notice("That Fluck is not signed in with this account.", "error");
       } else if (online.length === 1) {
@@ -284,10 +290,11 @@ const SCRIPT = `
       var data = await r.json().catch(function () { return {}; });
       if (r.ok && typeof data.url === "string" && OPEN_URL_RE.test(data.url)) {
         opening = false;
-        openFrame(data.url, title(i));
+        openFrame(data.url, title(i), i.instance_id);
         return;
       }
       opening = false;
+      dropInstanceFromUrl();
       if (r.status === 409) notice(title(i) + " just went offline. Try again when it is back.", "error");
       else if (r.status === 429) notice("Too many attempts. Wait a minute and try again.", "error");
       else notice("Could not open " + title(i) + ". Try again.", "error");
@@ -320,7 +327,7 @@ const SCRIPT = `
   }
   window.addEventListener("resize", fitViewport);
 
-  function openFrame(url, label) {
+  function openFrame(url, label, instanceId) {
     if (viewing) return;
     requestGeneration++;
     viewing = { url: url, label: label };
@@ -329,8 +336,16 @@ const SCRIPT = `
     $("fluckframe").setAttribute("src", url);
     document.body.classList.add("viewing");
     fitViewport();
-    // Same URL, no ticket: a reload of this entry shows the list (see the history.state check).
-    try { history.pushState({ view: "fluck" }, "", location.pathname + location.search); } catch (_) {}
+    // ?instance=<id>, never the ticket: a reload reopens this Fluck with a fresh one. Opened from
+    // the list it is a new entry, so Back returns to the list; a reload of it replaces in place.
+    try {
+      var p = new URLSearchParams(location.search);
+      var here = p.get("instance") === instanceId;
+      p.set("instance", instanceId);
+      var target = location.pathname + "?" + p.toString();
+      if (here) history.replaceState({ view: "fluck" }, "", target);
+      else history.pushState({ view: "fluck" }, "", target);
+    } catch (_) {}
     helloTimer = setTimeout(function () { helloTimer = null; navigateTopLevel(url); }, HELLO_TIMEOUT_MS);
   }
   function cancelHelloTimer() { if (helloTimer) { clearTimeout(helloTimer); helloTimer = null; } }
@@ -366,8 +381,8 @@ const SCRIPT = `
     var d = ev.data;
     if (!d || typeof d !== "object") return;
     if (d.type === "fluck-hello") cancelHelloTimer();
-    else if (d.type === "fluck-signed-out") closeFrame(true);
-    else if (d.type === "fluck-switch") closeFrame("quiet");
+    else if (d.type === "fluck-signed-out") { dropInstanceFromUrl(); closeFrame(true); }
+    else if (d.type === "fluck-switch") { dropInstanceFromUrl(); closeFrame("quiet"); }
     else if (d.type === "fluck-title" && typeof d.title === "string") document.title = frameTitle(d.title);
   }
   window.addEventListener("message", onFrameMessage);

@@ -91,7 +91,11 @@ function harness(search: string, initialState: unknown = null) {
   const pushed: unknown[] = []
   const history = {
     state: initialState,
-    pushState(state: unknown) { pushed.push(state); this.state = state },
+    pushState(state: unknown, _t: string, url: string) {
+      pushed.push(state); this.state = state
+      const u = new URL(url, "https://fluck.risaboss.com")
+      location.pathname = u.pathname; location.search = u.search; location.hash = u.hash
+    },
     replaceState(state: unknown, _t: string, url: string) {
       this.state = state
       const u = new URL(url, "https://fluck.risaboss.com")
@@ -130,10 +134,11 @@ async function opened() {
   return h
 }
 
-Deno.test("?instance= opens the Fluck in the frame, pushes a ticket-free history entry, never navigates", async () => {
+Deno.test("?instance= opens the Fluck in the frame in place, keeps ?instance, never navigates", async () => {
   const h = await opened()
-  assertEquals(h.pushed, [{ view: "fluck" }])
-  assertEquals(h.location.search, "", "?instance leaves the address bar")
+  assertEquals(h.pushed, [], "already on this Fluck's address: replaced, not pushed")
+  assertEquals(h.history.state, { view: "fluck" })
+  assertEquals(h.location.search, "?instance=i1", "?instance stays so a reload reopens it")
   assert(!h.location.hash.includes("/t/"), "the ticket never enters the address bar")
 })
 
@@ -187,19 +192,33 @@ Deno.test("fluck-switch closes the frame and shows the list", async () => {
   assertEquals(h.document.title, "Fluck", "messages after close are ignored")
 })
 
-Deno.test("browser Back closes the frame; a reload of the pushed entry shows the list", async () => {
+Deno.test("browser Back closes the frame; a reload of an open Fluck reopens it with a fresh ticket", async () => {
   const h = await opened()
   h.popstate()
   assertEquals(h.get("fluckframe").getAttribute("src"), "about:blank")
   await h.settle()
   assertEquals(h.calls.filter((c) => c === "/api/open").length, 1)
 
-  // Reload of the entry openFrame pushed: history.state survives, the single online Fluck is not reopened.
-  const r = harness("", { view: "fluck" })
+  // Reload while framed: the address still carries ?instance, so the same Fluck opens again.
+  const r = harness("?instance=i1", { view: "fluck" })
   await r.settle()
-  assertEquals(r.calls.filter((c) => c === "/api/open").length, 0, "a reload never auto-opens")
-  assertEquals(r.history.state, null)
-  assert(!r.get("list").classList.contains("hidden"))
+  assertEquals(r.calls.filter((c) => c === "/api/open").length, 1, "a fresh ticket, no list")
+  assertEquals(r.get("fluckframe").getAttribute("src"), OPEN_URL)
+  assertEquals(r.location.search, "?instance=i1")
+})
+
+Deno.test("opening from the list pushes ?instance=<id>; switch and sign-out drop it", async () => {
+  for (const close of ["switch", "signed-out"]) {
+    const h = harness("")
+    await h.settle()
+    h.fire(1500)
+    await h.settle()
+    assertEquals(h.pushed, [{ view: "fluck" }], "Back returns to the list")
+    assertEquals(h.location.search, "?instance=i1")
+    h.message({ type: "fluck-hello" })
+    h.message({ type: "fluck-" + close })
+    assertEquals(h.location.search, "", close + ": a reload shows the list")
+  }
 })
 
 Deno.test("without the reload marker, a single online Fluck still auto-opens in the frame", async () => {
