@@ -190,7 +190,9 @@ function health(deps: Dependencies): Response {
   const configured = {
     clientId: isSet(deps.env("GOOGLE_WEB_CLIENT_ID")),
     clientSecret: isSet(deps.env("GOOGLE_WEB_CLIENT_SECRET")),
+    githubClientId: isSet(deps.env("GITHUB_OAUTH_CLIENT_ID")),
   }
+  // GitHub is optional, so only the Google pair gates readiness.
   const ok = configured.clientId && configured.clientSecret
   return new Response(JSON.stringify({ ok, configured }), {
     status: ok ? 200 : 503,
@@ -206,11 +208,18 @@ async function client(request: Request, deps: Dependencies): Promise<Response> {
   }
   // Untrimmed: the exchange sends the env value as is, and the two must be the same string.
   const clientId = deps.env("GOOGLE_WEB_CLIENT_ID")
-  if (!isSet(clientId)) {
+  // Trimmed: nothing here sends it to GitHub. A server-side GitHub exchange must reuse this value.
+  const githubClientId = deps.env("GITHUB_OAUTH_CLIENT_ID")?.trim()
+  // Each id is optional and omitted, not null, when unset; 503 only when none is configured.
+  const ids = {
+    ...(isSet(clientId) ? { client_id: clientId } : {}),
+    ...(isSet(githubClientId) ? { github_client_id: githubClientId } : {}),
+  }
+  if (Object.keys(ids).length === 0) {
     deps.log("client unconfigured")
     return json(503, { error: "unconfigured" })
   }
-  return json(200, { client_id: clientId })
+  return json(200, ids)
 }
 
 async function callback(request: Request, deps: Dependencies): Promise<Response> {

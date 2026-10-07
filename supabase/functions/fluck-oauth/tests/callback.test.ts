@@ -159,9 +159,19 @@ Deno.test("health reports readiness as booleans and never a value", async () => 
   const body = await response.json()
   assertEquals(body, {
     ok: true,
-    configured: { clientId: true, clientSecret: true },
+    configured: { clientId: true, clientSecret: true, githubClientId: false },
   })
   assertEquals(JSON.stringify(body).includes("secret"), false)
+})
+
+Deno.test("health reports the optional GitHub client id without gating on it", async () => {
+  const h = harness({ env: { GITHUB_OAUTH_CLIENT_ID: "Ov23liTestClientId00" } })
+  const response = await h.handler(new Request("https://example.test/fluck-oauth/health"))
+  assertEquals(response.status, 200)
+  assertEquals(await response.json(), {
+    ok: true,
+    configured: { clientId: true, clientSecret: true, githubClientId: true },
+  })
 })
 
 Deno.test("health is 503 when the client secret is missing", async () => {
@@ -184,6 +194,37 @@ Deno.test("client returns the configured client id, uncached", async () => {
   assertEquals(routePath("/fluck-oauth/client/"), "/client")
 })
 
+Deno.test("client adds the GitHub client id only when it is set", async () => {
+  const h = harness({ env: { GITHUB_OAUTH_CLIENT_ID: "Ov23liTestClientId00" } })
+  const response = await h.handler(new Request("https://example.test/fluck-oauth/client"))
+  assertEquals(response.status, 200)
+  assertEquals(await response.json(), {
+    client_id: "294223497390-test.apps.googleusercontent.com",
+    github_client_id: "Ov23liTestClientId00",
+  })
+  for (const value of ["", "  "]) {
+    const blank = harness({ env: { GITHUB_OAUTH_CLIENT_ID: value } })
+    const blankResponse = await blank.handler(
+      new Request("https://example.test/fluck-oauth/client"),
+    )
+    assertEquals(blankResponse.status, 200)
+    assertEquals(await blankResponse.json(), {
+      client_id: "294223497390-test.apps.googleusercontent.com",
+    })
+    const health = await (await blank.handler(
+      new Request("https://example.test/fluck-oauth/health"),
+    )).json()
+    assertEquals(health.configured.githubClientId, false)
+  }
+})
+
+Deno.test("client serves the Google id exactly as configured, untrimmed", async () => {
+  const padded = " 294223497390-test.apps.googleusercontent.com "
+  const h = harness({ env: { GOOGLE_WEB_CLIENT_ID: padded } })
+  const response = await h.handler(new Request("https://example.test/fluck-oauth/client"))
+  assertEquals(await response.json(), { client_id: padded })
+})
+
 Deno.test("client is 503 when the client id is missing or blank", async () => {
   for (const value of ["", "  "]) {
     const h = harness({ env: { GOOGLE_WEB_CLIENT_ID: value } })
@@ -192,6 +233,22 @@ Deno.test("client is 503 when the client id is missing or blank", async () => {
     assertEquals(await response.json(), { error: "unconfigured" })
     assertEquals(h.logs, ["client unconfigured"])
   }
+})
+
+Deno.test("client serves the GitHub id alone when the Google pair is missing", async () => {
+  const h = harness({
+    env: {
+      GOOGLE_WEB_CLIENT_ID: "",
+      GOOGLE_WEB_CLIENT_SECRET: "",
+      GITHUB_OAUTH_CLIENT_ID: "Ov23liTestClientId00",
+    },
+  })
+  const response = await h.handler(new Request("https://example.test/fluck-oauth/client"))
+  assertEquals(response.status, 200)
+  assertEquals(await response.json(), { github_client_id: "Ov23liTestClientId00" })
+  const health = await h.handler(new Request("https://example.test/fluck-oauth/health"))
+  assertEquals(health.status, 503)
+  assertEquals((await health.json()).ok, false)
 })
 
 Deno.test("a POST to client is refused and its body drained", async () => {
