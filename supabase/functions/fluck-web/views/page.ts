@@ -11,7 +11,13 @@
  * frame's own sessionStorage, and it allows framing only by https://fluck.risaboss.com. Opening
  * pushes a history entry, so "back" closes the frame and shows the list; the ticket is single-use
  * and never enters the address bar, so a reload shows the list too. The frame talks back with
- * postMessage (onFrameMessage): signed out, switch Fluck, and its title.
+ * postMessage (onFrameMessage): hello, signed out, switch Fluck, and its title.
+ *
+ * Fallback for Flucks older than framing: a framing-capable Fluck posts `fluck-hello` as soon as
+ * its script starts, before redeeming the ticket. If none arrives within HELLO_TIMEOUT_MS the
+ * Fluck is assumed to refuse framing (frame-ancestors 'none'), so it never ran and the ticket is
+ * still unredeemed: the frame closes and the page navigates top-level to the same URL, first
+ * replacing its own history entry with `?list=1` so "back" shows the list instead of reopening.
  *
  * `?instance=<id>` (the Fluck's own "Sign in with BOSS" button) survives sign-in in
  * localStorage for 15 minutes: the magic link opens in a new tab and the OAuth hop leaves
@@ -109,9 +115,10 @@ const SCRIPT = `
   var INSTANCE_RE = /^[A-Za-z0-9._:-]{1,128}$/;
   var OPEN_URL_RE = /^https:\\/\\/[A-Za-z0-9.-]+(:[0-9]{1,5})?\\/#\\/t\\/[A-Za-z0-9_-]{43}$/;
   var WANT_KEY = "fluck-web.instance", WANT_TTL_MS = 15 * 60 * 1000;
-  var TITLE_MAX = 120, PAGE_TITLE = "Fluck";
+  var TITLE_MAX = 120, PAGE_TITLE = "Fluck", HELLO_TIMEOUT_MS = 8000;
   var pollTimer = null, openTimer = null, csrf = "", opening = false, requestGeneration = 0;
   var viewing = null; // { url, label } while a Fluck is framed
+  var helloTimer = null; // pending top-level fallback until the frame says fluck-hello
   var params = new URLSearchParams(location.search);
   // ?list=1 (older Fluck builds link back with it), or a reload of the entry a framed Fluck
   // pushed: show the list, never auto-open on this load.
@@ -328,11 +335,21 @@ const SCRIPT = `
     fitViewport();
     // Same URL, no ticket: a reload of this entry shows the list (see the history.state check).
     try { history.pushState({ view: "fluck" }, "", location.pathname + location.search); } catch (_) {}
+    helloTimer = setTimeout(function () { helloTimer = null; navigateTopLevel(url); }, HELLO_TIMEOUT_MS);
+  }
+  function cancelHelloTimer() { if (helloTimer) { clearTimeout(helloTimer); helloTimer = null; } }
+  // An older Fluck refused the frame and never redeemed the ticket: open it the pre-iframe way.
+  function navigateTopLevel(url) {
+    closeFrame(false);
+    // Back from the Fluck lands on the list, not on another auto-open.
+    history.replaceState(null, "", location.pathname + "?list=1");
+    location.assign(url);
   }
   // reload: true refetches the list behind a loading state, "quiet" refetches it in place,
   // false leaves it to the caller.
   function closeFrame(reload) {
     if (!viewing) return;
+    cancelHelloTimer();
     requestGeneration++;
     viewing = null;
     $("fluckframe").setAttribute("src", "about:blank");
@@ -352,7 +369,8 @@ const SCRIPT = `
     if (!viewing || !frame.contentWindow || ev.source !== frame.contentWindow || ev.origin !== new URL(viewing.url).origin) return;
     var d = ev.data;
     if (!d || typeof d !== "object") return;
-    if (d.type === "fluck-signed-out") closeFrame(true);
+    if (d.type === "fluck-hello") cancelHelloTimer();
+    else if (d.type === "fluck-signed-out") closeFrame(true);
     else if (d.type === "fluck-switch") closeFrame("quiet");
     else if (d.type === "fluck-title" && typeof d.title === "string") document.title = frameTitle(d.title);
   }

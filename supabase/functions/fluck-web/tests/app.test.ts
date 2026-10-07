@@ -128,11 +128,12 @@ Deno.test("GET / renders the Fluck page with nonce'd script and style, strict CS
   assert(!html.includes("\u2014"), "no em-dash")
 }))
 
-Deno.test("the page script parses and frames only an https /#/t/ URL, never navigating to it", withEnv(async () => {
+Deno.test("the page script parses and frames only an https /#/t/ URL; top-level navigation is only the no-hello fallback", withEnv(async () => {
   const html = await (await app.request(`${BASE}/`)).text()
   const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(html)![1]
   new Function(script) // syntax check; throws on a parse error
-  assert(!script.includes("location.assign"), "a Fluck is framed, not navigated to")
+  assertEquals(script.match(/location\.assign\(/g)?.length, 1, "one top-level navigation")
+  assertStringIncludes(script, "function navigateTopLevel(url) {")
   assert(!script.includes("location.href ="))
   assertStringIncludes(script, "openFrame(data.url, title(i))")
   assertStringIncludes(html, '<iframe id="fluckframe" title="Fluck" allow="clipboard-read; clipboard-write; fullscreen" allowfullscreen src="about:blank"></iframe>')

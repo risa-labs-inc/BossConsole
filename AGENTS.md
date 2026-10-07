@@ -773,7 +773,10 @@ token in the frame's sessionStorage (no third-party cookie) and allows framing o
 frame, and a reload shows the list. The frame posts `{type:"fluck-signed-out"}` (close, reload the
 list), `{type:"fluck-switch"}` (close, show the list) and `{type:"fluck-title", title}` (sets
 `document.title`, capped, text only); the page accepts them only from the frame's window and the
-endpoint's origin and ignores anything else. CSP adds `frame-src https:`; the portal itself keeps
+endpoint's origin and ignores anything else. Backwards compatibility: a framing-capable Fluck first
+posts `{type:"fluck-hello"}` (before redeeming the ticket); with no hello within 8 s the page
+assumes an older Fluck that refuses framing, closes the frame and navigates top-level to the same
+URL (replacing its entry with `?list=1` first), so the portal can ship before every Fluck frames. CSP adds `frame-src https:`; the portal itself keeps
 `frame-ancestors 'none'`. No message content is stored. Security follows
 `live-sessions` (nonce CSP, no CORS, `__Secure-` cookies, cross-site refusal, token rotation), plus
 an exact-Origin and CSRF-nonce check on `POST /api/open`. Endpoints must be bare https origins (a

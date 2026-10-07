@@ -77,7 +77,17 @@ function harness(search: string, initialState: unknown = null) {
       removeItem: (k: string) => void storage.delete(k),
     },
   }
-  const location = { pathname: "/", search, hash: "" }
+  const assigned: string[] = []
+  const location = { pathname: "/", search, hash: "", assign: (u: string) => void assigned.push(u) }
+  // Fake timers for the page script only; the test's own awaits use the real ones.
+  let nextTimer = 1
+  const timers = new Map<number, { fn: () => void; ms: number }>()
+  const fakeSetTimeout = (fn: () => void, ms: number) => { timers.set(nextTimer, { fn, ms }); return nextTimer++ }
+  const fakeClearTimeout = (id: number) => void timers.delete(id)
+  const fire = (ms: number) => {
+    for (const [id, t] of [...timers]) if (t.ms === ms) { timers.delete(id); t.fn() }
+  }
+  const pending = (ms: number) => [...timers.values()].filter((t) => t.ms === ms).length
   const pushed: unknown[] = []
   const history = {
     state: initialState,
@@ -101,15 +111,15 @@ function harness(search: string, initialState: unknown = null) {
     return Promise.resolve(new Response("{}", { status: 404 }))
   }
   const script = /<script nonce="test">([\s\S]*?)<\/script>/.exec(html)![1]
-  new Function("document", "window", "location", "history", "fetch", "setInterval", "clearInterval", script)(
-    document, window, location, history, fetch, () => 1, () => {},
+  new Function("document", "window", "location", "history", "fetch", "setInterval", "clearInterval", "setTimeout", "clearTimeout", script)(
+    document, window, location, history, fetch, () => 1, () => {}, fakeSetTimeout, fakeClearTimeout,
   )
   const message = (data: unknown, opts: { origin?: string; source?: object } = {}) => {
     for (const fn of winListeners.message ?? []) fn({ data, origin: opts.origin ?? ENDPOINT, source: opts.source ?? frameWindow })
   }
   const popstate = () => { for (const fn of winListeners.popstate ?? []) fn({}) }
   const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0)) }
-  return { get, body, document, history, location, pushed, calls, frameWindow, message, popstate, settle }
+  return { get, body, document, history, location, pushed, calls, frameWindow, message, popstate, settle, assigned, fire, pending }
 }
 
 async function opened() {
@@ -195,7 +205,46 @@ Deno.test("browser Back closes the frame; a reload of the pushed entry shows the
 
 Deno.test("without the reload marker, a single online Fluck still auto-opens in the frame", async () => {
   const h = harness("")
-  await new Promise((r) => setTimeout(r, 1700))
+  await h.settle()
+  h.fire(1500)
   await h.settle()
   assertEquals(h.get("fluckframe").getAttribute("src"), OPEN_URL)
+})
+
+const HELLO_MS = 8000
+
+Deno.test("fluck-hello from the frame cancels the top-level fallback", async () => {
+  const h = await opened()
+  assertEquals(h.pending(HELLO_MS), 1, "opening arms the fallback")
+  h.message({ type: "fluck-hello" }, { origin: "https://evil.example" })
+  h.message({ type: "fluck-hello" }, { source: {} })
+  assertEquals(h.pending(HELLO_MS), 1, "a hello from the wrong origin or window does not count")
+  h.message({ type: "fluck-hello" })
+  assertEquals(h.pending(HELLO_MS), 0)
+  assertEquals(h.assigned, [])
+  assert(h.body.classList.contains("viewing"), "the Fluck stays framed")
+})
+
+Deno.test("no fluck-hello in time: close the frame, replace the entry with ?list=1, navigate top-level", async () => {
+  const h = await opened()
+  h.fire(HELLO_MS)
+  assertEquals(h.assigned, [OPEN_URL])
+  assertEquals(h.get("fluckframe").getAttribute("src"), "about:blank")
+  assert(!h.body.classList.contains("viewing"))
+  assertEquals(h.location.search, "?list=1")
+  assertEquals(h.history.state, null)
+  await h.settle()
+  assertEquals(h.calls.filter((c) => c === "/api/open").length, 1, "the same ticket, not a new one")
+})
+
+Deno.test("closing the frame or Back before the hello timeout cancels the fallback", async () => {
+  for (const close of ["switch", "signed-out", "back", "popstate"]) {
+    const h = await opened()
+    if (close === "back") for (const fn of h.get("viewer-back").listeners.click) fn({})
+    else if (close === "popstate") h.popstate()
+    else h.message({ type: "fluck-" + close })
+    assertEquals(h.pending(HELLO_MS), 0, close)
+    await h.settle()
+    assertEquals(h.assigned, [], close)
+  }
 })
