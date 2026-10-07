@@ -39,23 +39,35 @@ export const NON_TWO_DIGIT_EXPONENTS: Readonly<Record<string, number>> = {
   UYW: 4,
 }
 
-const KNOWN: ReadonlySet<string> = (() => {
-  const codes = new Set<string>(Object.keys(NON_TWO_DIGIT_EXPONENTS))
-  try {
-    for (const code of Intl.supportedValuesOf("currency")) codes.add(code)
-  } catch { /* an older runtime: the table above still decides the exponent */ }
-  return codes
-})()
+/**
+ * Active ISO 4217 codes with a two-digit minor unit. A fixed list rather than
+ * `Intl.supportedValuesOf`, which a runtime may lack and which also lists codes with no minor
+ * unit at all (XAU, XDR, XXX, ...) that must never render as an amount.
+ */
+const TWO_DIGIT_CODES: readonly string[] = [
+  "AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BMD BND BOB BOV BRL BSD",
+  "BTN BWP BYN BZD CAD CDF CHE CHF CHW CNY COP COU CRC CUP CVE CZK DKK DOP DZD EGP",
+  "ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD GTQ GYD HKD HNL HTG HUF IDR ILS INR IRR",
+  "JMD KES KGS KHR KPW KYD KZT LAK LBP LKR LRD LSL MAD MDL MGA MKD MMK MNT MOP MRU",
+  "MUR MVR MWK MXN MXV MYR MZN NAD NGN NIO NOK NPR NZD PAB PEN PGK PHP PKR PLN QAR",
+  "RON RSD RUB SAR SBD SCR SDG SEK SGD SHP SLE SOS SRD SSP STN SVC SYP SZL THB TJS",
+  "TMT TOP TRY TTD TWD TZS UAH USD USN UYU UZS VED VES WST XCD XCG YER ZAR ZMW ZWG",
+].join(" ").split(" ")
+
+/** Every code this function knows, with its ISO 4217 minor unit exponent. */
+export const MINOR_UNIT_EXPONENTS: Readonly<Record<string, number>> = Object.freeze({
+  ...Object.fromEntries(TWO_DIGIT_CODES.map((code) => [code, 2])),
+  ...NON_TWO_DIGIT_EXPONENTS,
+})
 
 /** True for an ISO 4217 code this function can render. */
 export function isKnownCurrency(code: string): boolean {
-  return /^[A-Z]{3}$/.test(code) && KNOWN.has(code)
+  return /^[A-Z]{3}$/.test(code) && Object.hasOwn(MINOR_UNIT_EXPONENTS, code)
 }
 
 /** The ISO 4217 minor unit exponent, or null for a code this function does not know. */
 export function minorUnitExponent(code: string): number | null {
-  if (!isKnownCurrency(code)) return null
-  return NON_TWO_DIGIT_EXPONENTS[code] ?? 2
+  return isKnownCurrency(code) ? MINOR_UNIT_EXPONENTS[code] : null
 }
 
 /**
