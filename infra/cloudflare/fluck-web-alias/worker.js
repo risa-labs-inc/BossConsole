@@ -51,7 +51,10 @@ export default {
     const ip = request.headers.get("CF-Connecting-IP");
     if (ip) headers.set("X-Fluck-Web-Client-Ip", ip);
     const init = { method: request.method, headers, redirect: "manual" };
-    if (request.method !== "GET" && request.method !== "HEAD") init.body = request.body;
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      init.body = request.body;
+      init.duplex = "half"; // required by the Fetch standard for a streamed body
+    }
     let upstream;
     try {
       upstream = await fetch(target, init);
