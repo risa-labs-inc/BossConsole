@@ -204,11 +204,25 @@ Deno.test("client adds the GitHub client id only when it is set", async () => {
   })
   for (const value of ["", "  "]) {
     const blank = harness({ env: { GITHUB_OAUTH_CLIENT_ID: value } })
-    const body = await (await blank.handler(
+    const blankResponse = await blank.handler(
       new Request("https://example.test/fluck-oauth/client"),
+    )
+    assertEquals(blankResponse.status, 200)
+    assertEquals(await blankResponse.json(), {
+      client_id: "294223497390-test.apps.googleusercontent.com",
+    })
+    const health = await (await blank.handler(
+      new Request("https://example.test/fluck-oauth/health"),
     )).json()
-    assertEquals("github_client_id" in body, false)
+    assertEquals(health.configured.githubClientId, false)
   }
+})
+
+Deno.test("client serves the Google id exactly as configured, untrimmed", async () => {
+  const padded = " 294223497390-test.apps.googleusercontent.com "
+  const h = harness({ env: { GOOGLE_WEB_CLIENT_ID: padded } })
+  const response = await h.handler(new Request("https://example.test/fluck-oauth/client"))
+  assertEquals(await response.json(), { client_id: padded })
 })
 
 Deno.test("client is 503 when the client id is missing or blank", async () => {
