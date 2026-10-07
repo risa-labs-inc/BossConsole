@@ -25,6 +25,54 @@ BOSS (Business Operating System Service) is a desktop application built with Kot
 
 **IMPORTANT**: Do NOT run `./gradlew run` in a blocking/foreground way just to test - the user runs and tests the app themselves. **Exception:** launching the app **in a dedicated bottom split pane is allowed** (backgrounded so it doesn't wedge the pane).
 
+### Testing automatic app updates
+
+Automatic Updates in Settings downloads new releases and prepares installation after
+manual quit. It never quits or relaunches BOSS. Release distributions default this on;
+Gradle development runs default it off. Explicit preferences are saved. Update
+banners and prompts stay hidden in automatic mode; progress and errors remain in
+Settings. The next start of a newer version shows a one-time success toast.
+
+Build a separate older distribution for installation testing:
+
+```bash
+./gradlew :composeApp:createDistributable -PtestAutoUpdate=true
+```
+
+This uses v1.0.0, enables automatic updates by default, stores updater preferences in
+`composeApp/build/auto-update-test-settings`, and writes the distribution under
+`composeApp/build/compose-auto-update-test/binaries/main/app/`. On macOS, manually
+launch `BOSS.app` from that directory. Quit manually to let the helper install, then
+open it again after installation finishes. Do not use `run` for installation testing:
+the updater refuses automatic installation from a Gradle development process.
+
+### Automatic plugin updates
+
+Settings > Updates has an independent Automatic Plugin Updates switch. It defaults
+on in packaged release builds and off in Gradle development runs. Preferences persist.
+Every eligible plugin is included by default. The per-plugin list stores explicit opt-outs,
+so newly installed plugins update automatically too. Opt-outs are rechecked before activation.
+The worker starts after workspace restoration, uses compatible store candidates, and
+waits for all plugin tabs and mounted panels to close. It rechecks views after download;
+a reopened view defers installation again. Downloads use `.part` files until admitted.
+Failed promoted artifacts are quarantined; a `.rejected-update` marker fences startup
+selection if a live loader prevents removal. Host and Toolbox updates/installVersion
+share SHA-256 plugin-ID file locks under `.plugin-update-locks`; never delete lock files.
+Ordinary idle plugins reload without restarting BOSS; native plugins, disabled plugins,
+plugins with loaded dependents, and multiwindow updates are staged for the next manual
+start. Disabled plugins remain disabled. Protected API/runtime ids use their existing
+host-managed lifecycle. Activation failures attempt to restore the previous JAR; status
+and errors appear in Settings. Supabase Realtime is the primary trigger, with a six-hour
+fallback and a local 30-second check for views closing. Three failed attempts pause
+that release for this process; a new release gets a fresh budget. Busy views and another
+installer's lock do not consume attempts.
+
+Toolbox honors the optional `boss.plugins.autoUpdate.enabled` JVM property to suppress
+manual update toasts in automatic mode. The `boss.plugins.autoUpdate.optOuts` property
+keeps manual prompts available for explicitly excluded plugins. Its companion change needs to ship too; older
+Toolbox builds may still show a manual prompt. Turning the mode off stops pending work
+before activation; already-staged updates apply at the next manual start.
+
 ### `composeApp` test home isolation
 
 Every `composeApp` `Test` task points `user.home` at its own fresh
@@ -824,22 +872,44 @@ callers or engine-level forced closure.
 
 ## JxBrowser's native libraries swap the process's malloc zones when they load
 
-On macOS each of JxBrowser's JNI libraries (`libtoolkit`, `libipc`, `libawt_toolkit`) makes
-PartitionAlloc the default malloc zone in a static initializer, briefly unregistering the system
-zone; a `free()` on another thread in that gap is an uncatchable SIGTRAP. `ChromiumToolkitPreload`
-loads the first two on the main thread before the engine pre-warm. Its KDoc is the canonical
-account (mechanism, measurements, what it does not cover); keep it there rather than here.
+On macOS the FIRST of JxBrowser's JNI libraries to load (normally `libtoolkit`) makes PartitionAlloc
+the default malloc zone in a static initializer, briefly unregistering the system zone; a `free()` on
+another thread in that gap is an uncatchable SIGTRAP at `libtoolkit+0x4c9f4`. Later libraries
+(`libipc`, `libawt_toolkit`) see PartitionAlloc already registered and do not swap again (measured
+with an interposer). Two layers close the window:
+
+- **The native agent** (`native/toolkit-preload-agent`, built by `prepareToolkitPreloadAgent`, shipped
+  as `$APPDIR/resources/toolkit-preload/libbosstoolkitpreload.dylib` and named by `-agentpath` in the
+  launcher). It loads the toolkit from `Agent_OnLoad`, when the only threads are the launcher's two
+  idle ones, so nothing can free during the swap. It decides nothing: it loads what
+  `ToolkitPreloadManifest` recorded on the previous launch, and only while every file that decision
+  read is unchanged. 9.5.37 still crashed because the JVM's own C2 compiler thread freed mid-swap,
+  which no Java-side ordering can prevent.
+- **`ChromiumToolkitPreload`**, the in-JVM preload on the main thread before AppKit. It still runs
+  every launch (a no-op after the agent), covers the launches the agent skips, and writes the
+  manifest for the next one. Its KDoc is the canonical account; keep detail there.
 
 Rules for anyone touching it:
 
-- **Preload only from the directory `FluckEngine.resolveEngineDir` boots**, or the library loads
-  twice from two paths and swaps zones twice.
+- **Preload only from the directory `FluckEngine.resolveEngineDir` boots.** A second copy from
+  another path does not swap again, but it registers duplicate Objective-C classes (including
+  `NSWindowSwizzler`), so the agent skips on ANY doubt rather than guess.
+- **Anything the engine decision starts reading must be guarded in the manifest**
+  (`ToolkitPreloadManifest.inputsFor`), or the agent can load an engine this launch would not pick.
+- **A packaged launcher must never name an agent it does not carry**: a missing `-agentpath` library
+  stops the JVM from starting. `verifyToolkitPreloadAgent` fails the build for that, and
+  `Agent_OnLoad` always returns `JNI_OK`.
 - **JxBrowser must stay in the host class loader.** A plugin that bundled JxBrowser would get
   `already loaded in another classloader` for a library the host preloaded.
-- **Known gaps:** `libawt_toolkit` is not preloaded (it links `libjawt` and must follow AWT), and
-  a first-run download-then-boot gets no preload. Off switch: `BOSS_TOOLKIT_PRELOAD=false`.
-- **Re-measure after a JxBrowser bump.** The offsets in the KDoc are for 9.5.0 / Chromium
-  152.0.7977.65; check the zone swap still sits in a static initializer before trusting them.
+- **Known gaps:** the first launch after an install, engine change or app update has no valid
+  manifest and keeps only the in-JVM preload; a first-run download-then-boot gets no preload, so
+  packaged macOS relaunches after the download (`ChromiumBootstrap.onEngineDownloadComplete`)
+  instead of booting with AppKit running (9.5.39 crashed there on a fresh install), carrying
+  queued `boss://` links and files across in `RelaunchHandoff` (replayed as `EXTERNAL`); a
+  native allocation failure is still a `brk #0` (only moving JxBrowser out of process fixes that).
+  Off switch for both layers: `BOSS_TOOLKIT_PRELOAD=false`.
+- **Re-measure after a JxBrowser bump.** Check the zone swap still sits in a static initializer and
+  still happens only once per process before trusting any of the above.
 
 ## Browser telemetry, and how to turn it off
 
@@ -1032,7 +1102,11 @@ covering all eight duplicated packages rather than this one field.
 
 ## Deep Links
 
-App registers `boss://` protocol for authentication callbacks from external browsers.
+App registers `boss://` protocol for authentication callbacks from external browsers. That
+includes `boss://auth/callback`, the Google / Apple sign-in return, which is acted on only
+while a sign-in this process started is waiting (`OAuthSignInService`). Linux registers the
+scheme at startup through `LinuxProtocolHandler`, as Windows does through
+`WindowsProtocolHandler`.
 
 Because the scheme is registered with the OS, a `boss://` link is not evidence
 that the operator asked for anything - any program that can ask the OS to open a
@@ -2207,6 +2281,8 @@ workspace by selecting the tools you need." Tools install app-wide, not into a S
 
 ## Documentation
 
+- [Create and publish plugins](https://github.com/risa-labs-inc/BossConsole/wiki/Create-and-Publish-a-Plugin) - Toolbox/Tool Creator, coding agents, GitHub repositories and publish keys. Hosted BOSS grants `plugins.create` + `api_key.create` to `user`; refresh the session after a grant.
+
 - [Authenticated IPC rollout](docs/authenticated-ipc-rollout.md): paired runtime release, ownership, and credential lifetime.
 
 - [MCP for agent-less operators](docs/mcp-agentless-operators.md) - Toolbox kill-switches and attach path
@@ -2220,6 +2296,7 @@ workspace by selecting the tools you need." Tools install app-wide, not into a S
 - [RBAC Guide](docs/RBAC_GUIDE.md) - Role-based access control
 - [Role Creation](docs/ROLE_CREATION_GUIDE.md) - Creating and managing roles
 - [Windows Deep Link](docs/WINDOWS_DEEP_LINK_SETUP.md) - Windows protocol handler setup
+- [Google and Apple sign-in](docs/OAUTH_SIGN_IN_SETUP.md) - PKCE flow over `boss://auth/callback`, provider setup, Apple secret rotation
 - [Release Rebuild](docs/RELEASE_REBUILD_GUIDE.md) - Re-running release builds
 ### Governed MCP invocation (#371)
 
@@ -2617,6 +2694,13 @@ background and Compose chrome use the same tint. Menus and dialogs retain opaque
 is an opt-in macOS smoke test using its own small unfocusable window. It verifies native install,
 light/clear updates, and detach; it does not establish visual correctness of an entire app layout.
 
+`MacSidebarToolbar` must keep a unique identifier for each controller lifetime. AppKit implicitly
+synchronizes item insertions/removals among toolbars with the same identifier, even when user
+customization is disabled. Each window's active tab supplies different items, so a shared identifier
+can ask another window's delegate for an unavailable item and abort the process in AppKit.
+`BOSS_TEST_NATIVE_TOOLBAR=1 ./gradlew :composeApp:desktopTest --tests '*MacSidebarToolbarSmokeTest'`
+checks independent item lists, updates, and closing one of two owned unfocusable windows.
+
 The vertical sidebar uses `SidebarGlass` washes only while the native backdrop is active.
 `IntegratedSidebarSurface` keeps the rounded outline; full-window glass tint belongs to the root.
 `WindowVerticalTabBar.surfacePainted` prevents duplicate fills for sidebar-only coverage. Favorites,
@@ -2649,3 +2733,10 @@ Native NSWindow background stays clear in glass mode, including fullscreen. The 
 after it shows the focused terminal tab's live title and disappears on other tabs.
 GlassSurfaceRenderingTest renders the actual integrated sidebar and verifies that both surfaces
 continue through their headers without tint overlap, in both palettes.
+
+## Tab inventory before a Space is assigned
+
+The current split tree may contain live tabs while `currentWorkspaceId` is null. Both tab
+inventories must include that tree using a window-local `unsaved-window-<windowId>` identity,
+without assigning or persisting a workspace. Browser lookup matches the shared `TabInfo.id`;
+dynamic browser tabs are not instances of the host's built-in `FluckTabInfo`.

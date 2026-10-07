@@ -259,6 +259,8 @@ object PluginStoreSetup {
      * This should be called early in the application lifecycle.
      */
     fun initialize() {
+        ai.rever.boss.updater.UpdateSettingsManager
+            .ensureLoaded()
         if (initialized) {
             logger.debug(LogCategory.SYSTEM, "Plugin store already initialized")
             return
@@ -2090,7 +2092,8 @@ object PluginStoreSetup {
                 // This handles cases where user manually added a newer version with different filename.
                 val existingJarsInPluginDir =
                     _pluginDir.listFiles()?.filter {
-                        it.name.endsWith(".jar") && readPluginManifest(it)?.pluginId == pluginId
+                        it.name.endsWith(".jar") && !File("${it.absolutePath}.rejected-update").exists() &&
+                            readPluginManifest(it)?.pluginId == pluginId
                     } ?: emptyList()
 
                 logger.info(

@@ -44,6 +44,7 @@ class UpdateBannerVisibilityTest {
             UpdateState.CheckingForUpdates,
             UpdateState.UpToDate,
             UpdateState.Installing,
+            UpdateState.InstallOnNextRestart,
         )
 
     @Test
@@ -54,6 +55,15 @@ class UpdateBannerVisibilityTest {
     @Test
     fun `every other state draws nothing`() {
         silent.forEach { assertFalse(it.drawsBanner(), "$it should draw no banner") }
+    }
+
+    @Test
+    fun `automatic mode hides banners and update prompts for every state`() {
+        (drawing + silent).forEach {
+            assertFalse(it.drawsBanner(automaticUpdates = true))
+            assertEquals(UpdateState.Idle, it.bannerState(true))
+        }
+        assertFalse(shouldShowUpdatePrompt(requested = true, automaticUpdates = true))
     }
 
     @Test

@@ -15,10 +15,8 @@ import java.awt.Frame
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
 import java.awt.Window
-import java.awt.event.ActionEvent
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
-import java.awt.event.KeyEvent
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import java.lang.ref.WeakReference
@@ -26,10 +24,7 @@ import java.util.concurrent.ExecutionException
 import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
-import javax.swing.AbstractAction
-import javax.swing.JComponent
 import javax.swing.JFrame
-import javax.swing.KeyStroke
 import javax.swing.SwingUtilities
 import javax.swing.Timer
 
@@ -579,7 +574,6 @@ object FullscreenBrowserWindow {
     // Exit needs more time because we need to ensure the Swing view fully releases the surface
     private const val SWING_RELEASE_DELAY_MS = 200
     private const val EDT_CLEANUP_TIMEOUT_MS = 2_000L
-    private const val EXIT_FULLSCREEN_ACTION = "exit-fullscreen"
 
     fun showFullscreen(
         browser: Browser,
@@ -788,6 +782,7 @@ object FullscreenBrowserWindow {
 
             fullscreenFrame = frame
             currentBrowserView = browserView
+            observeFullscreenBrowserInput(browser, currentOwnerWindowId, frame)
 
             if (isMacOS) {
                 enterMacOSFullscreen(frame, browser, ownerWindow, expectedEpoch)
@@ -967,6 +962,7 @@ object FullscreenBrowserWindow {
             )
         fullscreenFrame = overlay.frame
         currentBrowserView = overlay.browserView
+        observeFullscreenBrowserInput(browser, currentOwnerWindowId, overlay.frame)
         usesNativeMacOSFullscreen = false
         hasReachedFullscreen = true
         overlay.frame.isAlwaysOnTop = true
@@ -1061,26 +1057,18 @@ object FullscreenBrowserWindow {
             false
         }
 
-    private fun installExitShortcut(frame: JFrame) {
-        frame.rootPane
-            .getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
-            .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), EXIT_FULLSCREEN_ACTION)
-        frame.rootPane.actionMap.put(
-            EXIT_FULLSCREEN_ACTION,
-            object : AbstractAction() {
-                override fun actionPerformed(event: ActionEvent?) {
-                    logger.info(LogCategory.BROWSER, "Fullscreen exit requested from host UI")
-                    requestPageExit()
-                }
-            },
-        )
-    }
+    private fun installExitShortcut(frame: JFrame) =
+        installFullscreenExitShortcut(frame) {
+            logger.info(LogCategory.BROWSER, "Fullscreen exit requested from host UI")
+            requestPageExit()
+        }
 
     /**
      * Reset all state variables.
      */
     private fun resetState(): Long {
         lifecycleEpoch++
+        fullscreenBrowserInput.clear()
         overlayCoordinator.clear()
         videoFullscreenTracker.clear()
         fullscreenFrame = null

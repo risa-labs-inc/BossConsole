@@ -3,11 +3,13 @@ package ai.rever.boss.components.auth
 import BossTheme
 import ai.rever.boss.components.auth.screens.LoginFormScreen
 import ai.rever.boss.components.auth.screens.MagicLinkWaitingScreen
+import ai.rever.boss.components.auth.screens.OAuthWaitingScreen
 import ai.rever.boss.components.auth.screens.PasskeySelectionScreen
 import ai.rever.boss.components.auth.screens.PasskeyWaitingScreen
 import ai.rever.boss.components.dialogs.CrossDeviceAuthenticationDialog
 import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.services.auth.MagicLinkErrorService
+import ai.rever.boss.services.auth.OAuthSignInState
 import ai.rever.boss.services.supabase.AuthService
 import ai.rever.boss.utils.DeepLinkHandler
 import ai.rever.boss.utils.logging.BossLogger
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.launch
 
 private val logger = BossLogger.forComponent("AuthScreenContainer")
 
@@ -54,6 +57,9 @@ fun AuthScreenContainer(onLoginSuccess: () -> Unit) {
 
     // Watch AuthService state directly to handle 2FA
     val authState by AuthService.authState.collectAsState()
+    val oauthState by AuthService.oauthState.collectAsState()
+    val oauthStarting by AuthService.oauthStarting.collectAsState()
+    val oauthScope = rememberCoroutineScope()
 
     // React to AuthState changes (only for certain transitions)
     LaunchedEffect(authState) {
@@ -148,28 +154,54 @@ fun AuthScreenContainer(onLoginSuccess: () -> Unit) {
         ) {
             when (currentScreen) {
                 AuthScreen.LOGIN -> {
-                    LoginFormScreen(
-                        viewModel = viewModel,
-                        onLoginSuccess = onLoginSuccess,
-                        isLoading = isLoading,
-                        errorMessage = errorMessage,
-                        onMagicLinkSent = { email ->
-                            magicLinkEmail = email
-                            currentScreen = AuthScreen.MAGIC_LINK_WAITING
-                        },
-                        onPasskeyAuthInitiated = { email ->
-                            passkeyEmail = email
-                            currentScreen = AuthScreen.PASSKEY_WAITING
-                            // Initiate passkey authentication when navigating to waiting screen
-                            viewModel.authenticateWithEmailAndPasskey(email) {
-                                onLoginSuccess()
-                            }
-                        },
-                        onPasskeySelectionRequired = { email ->
-                            passkeySelectionEmail = email
-                            currentScreen = AuthScreen.PASSKEY_SELECTION
-                        },
-                    )
+                    // A Google or Apple sign-in in the browser takes over the login step until it
+                    // finishes, is cancelled, or ends in an error (back to the form, with it). A
+                    // failed callback keeps it here, with a notice.
+                    val oauth = oauthState
+                    val waitingProvider =
+                        oauth.provider.takeIf {
+                            oauth is OAuthSignInState.WaitingForBrowser || oauth is OAuthSignInState.Exchanging
+                        }
+                    if (waitingProvider != null) {
+                        val waiting = oauth as? OAuthSignInState.WaitingForBrowser
+                        OAuthWaitingScreen(
+                            provider = waitingProvider,
+                            authorizeUrl = waiting?.authorizeUrl,
+                            notice = waiting?.notice,
+                            exchanging = oauth is OAuthSignInState.Exchanging,
+                            onExpireIfStale = { AuthService.expireStaleOAuth() },
+                            onReopenBrowser = { oauthScope.launch { AuthService.reopenOAuthBrowser() } },
+                            onPasteCallback = { link -> oauthScope.launch { AuthService.completeOAuth(link) } },
+                            onCancel = { oauthScope.launch { AuthService.cancelOAuth() } },
+                        )
+                    } else {
+                        LoginFormScreen(
+                            viewModel = viewModel,
+                            onLoginSuccess = onLoginSuccess,
+                            isLoading = isLoading,
+                            errorMessage = errorMessage,
+                            onMagicLinkSent = { email ->
+                                magicLinkEmail = email
+                                currentScreen = AuthScreen.MAGIC_LINK_WAITING
+                            },
+                            onPasskeyAuthInitiated = { email ->
+                                passkeyEmail = email
+                                currentScreen = AuthScreen.PASSKEY_WAITING
+                                // Initiate passkey authentication when navigating to waiting screen
+                                viewModel.authenticateWithEmailAndPasskey(email) {
+                                    onLoginSuccess()
+                                }
+                            },
+                            onPasskeySelectionRequired = { email ->
+                                passkeySelectionEmail = email
+                                currentScreen = AuthScreen.PASSKEY_SELECTION
+                            },
+                            oauthError = (oauth as? OAuthSignInState.Error)?.message,
+                            oauthStarting = oauthStarting,
+                            onOAuthSignIn = { provider -> oauthScope.launch { AuthService.signInWithOAuth(provider) } },
+                            onDismissOAuthError = { AuthService.dismissOAuthError() },
+                        )
+                    }
                 }
 
                 AuthScreen.MAGIC_LINK_WAITING -> {

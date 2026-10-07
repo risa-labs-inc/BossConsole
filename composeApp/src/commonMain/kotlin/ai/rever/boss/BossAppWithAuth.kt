@@ -98,6 +98,16 @@ fun ComponentContext.BossAppWithAuth(
                     DeepLinkHandler.clearDeepLink()
                 }
 
+                is AuthDeepLink.OAuthCallback -> {
+                    // Consumed before anything else: every window's collector sees this link,
+                    // and the service acts only on a sign-in this process started.
+                    DeepLinkHandler.clearDeepLink()
+                    coroutineScope.launch {
+                        val outcome = AuthService.completeOAuth(link)
+                        logger.info(LogCategory.AUTH, "OAuth callback handled", mapOf("outcome" to outcome.name))
+                    }
+                }
+
                 is AuthDeepLink.MagicLinkVerify -> {
                     logger.debug(LogCategory.AUTH, "Extracted verification token", mapOf("type" to link.type))
                     coroutineScope.launch {

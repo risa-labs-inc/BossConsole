@@ -63,6 +63,7 @@ private fun stateName(state: UpdateState): String =
         is UpdateState.Downloading -> "downloading"
         is UpdateState.ReadyToInstall -> "ready_to_install"
         UpdateState.Installing -> "installing"
+        UpdateState.InstallOnNextRestart -> "install_on_next_restart"
         UpdateState.RestartRequired -> "restart_required"
         is UpdateState.Error -> "error"
     }

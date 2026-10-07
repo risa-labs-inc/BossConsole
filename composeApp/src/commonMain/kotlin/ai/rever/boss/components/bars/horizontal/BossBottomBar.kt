@@ -5,10 +5,7 @@ import ai.rever.boss.components.bars.getBarScrollbarConfig
 import ai.rever.boss.components.bars.horizontalScrollWithScrollbar
 import ai.rever.boss.components.bars.rememberBarContextMenuItems
 import ai.rever.boss.components.buttons.BossActionButton
-import ai.rever.boss.components.dialogs.McpActivityLogDialog
 import ai.rever.boss.components.dialogs.McpPolicyManagerDialog
-import ai.rever.boss.components.dialogs.McpProviderTrustDialog
-import ai.rever.boss.components.dialogs.McpSessionTrustDialog
 import ai.rever.boss.components.dialogs.McpToolIdentity
 import ai.rever.boss.components.events.PanelEventBus
 import ai.rever.boss.components.overlays.ContextMenu
@@ -23,7 +20,6 @@ import ai.rever.boss.layout.BossChrome
 import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.mcp.McpToolPolicyConfig
 import ai.rever.boss.mcp.McpToolRegistryImpl
-import ai.rever.boss.mcp.McpYoloPrompt
 import ai.rever.boss.performance.PerformanceState
 import ai.rever.boss.plugin.api.PanelId
 import ai.rever.boss.plugin.api.RegisteredMcpTool
@@ -76,9 +72,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @Composable
 fun BossBottomBar(tabsComponent: BossTabsComponent? = null) {
@@ -337,49 +331,18 @@ fun BossRightBottomBar() {
     )
 }
 
-/**
- * The bottom bar's single MCP consent item, and the menu behind it:
- *
- * - **Tool policies** - inspect and revoke a rule saved via the approval dialog's "Always allow" /
- *   "Always deny", or set one proactively for a tool nothing has asked about yet (the gap
- *   AGENTS.md's governance section names as reachable only by hand-editing
- *   `~/.boss/mcp-tool-policy.json` and restarting).
- * - **Trusted plugins** - the provider-wide ALLOWs ("Trust plugin"), listed and revoked
- *   individually, since these are durable grants an operator made deliberately.
- * - **Session trust** - the tools allowed for this session only, listed and revoked
- *   individually or all at once.
- *
- * Session trust is the grant that is live right now and bypasses prompts, so while any exists the
- * item carries its count in the alert colour: collapsing three controls into one must not hide
- * that. [persistedPolicyConfig] is collected by the caller, once.
- */
 @Composable
-@Suppress("LongMethod") // Declarative Compose layout.
 private fun McpAccessStatusItem(persistedPolicyConfig: McpToolPolicyConfig) {
-    val allTools by McpToolRegistryImpl.allTools.collectAsState()
-    val sessionTrusted by McpToolRegistryImpl.policyEngine.sessionTrustedTools.collectAsState()
+    val menu = rememberMcpAccessMenu(persistedPolicyConfig)
+    val summary = menu.summary
     var showMenu by remember { mutableStateOf(false) }
-    var showPolicyManager by remember { mutableStateOf(false) }
-    var showTrustedPlugins by remember { mutableStateOf(false) }
-    var showSessionTrust by remember { mutableStateOf(false) }
-    val yolo by McpToolRegistryImpl.yoloMode.collectAsState()
-    val windowId = LocalWindowId.current
-    val scope = rememberCoroutineScope()
-    val summary =
-        McpAccessSummary(
-            savedRules = persistedPolicyConfig.rules.size,
-            trustedPlugins = persistedPolicyConfig.providerRules.count { it.value == McpPolicyAction.ALLOW },
-            sessionGrants = sessionTrusted.size,
-            yolo = yolo,
-            yoloAvailable = McpToolRegistryImpl.yoloAvailable,
-        )
-    if (summary.isVisible(hasTools = allTools.isNotEmpty())) {
+    if (menu.visible) {
         var anchorHeight by remember { mutableStateOf(0) }
         Box(modifier = Modifier.onSizeChanged { anchorHeight = it.height }) {
             StatusBarTextButton(
                 text = summary.label,
-                color = if (yolo) BossTheme.colors.alert else BossTheme.colors.textSecondary,
-                leadingIcon = if (yolo) Icons.Outlined.GppMaybe else Icons.Outlined.Security,
+                color = if (summary.yolo) BossTheme.colors.alert else BossTheme.colors.textSecondary,
+                leadingIcon = if (summary.yolo) Icons.Outlined.GppMaybe else Icons.Outlined.Security,
                 badge = summary.sessionGrants.takeIf { it > 0 }?.toString(),
                 badgeDescription = summary.sessionGrantsDescription(),
                 tooltip = summary.tooltip(),
@@ -388,100 +351,13 @@ private fun McpAccessStatusItem(persistedPolicyConfig: McpToolPolicyConfig) {
             )
             if (showMenu) {
                 ContextMenu(
-                    items =
-                        mcpAccessMenuItems(
-                            summary = summary,
-                            onPolicies = { showPolicyManager = true },
-                            onSessionTrust = { showSessionTrust = true },
-                            onTrustedPlugins = { showTrustedPlugins = true },
-                            onYolo = {
-                                if (yolo) {
-                                    scope.launch { McpToolRegistryImpl.setYoloMode(false) }
-                                } else {
-                                    windowId?.let(McpYoloPrompt::request)
-                                }
-                            },
-                        ),
-                    // Opens upward from the item: the bar sits at the bottom edge of the window.
+                    items = menu.items,
                     alignment = Alignment.BottomStart,
                     offset = IntOffset(0, -anchorHeight),
                     onDismissRequest = { showMenu = false },
                 )
             }
         }
-    }
-    if (showSessionTrust) {
-        McpSessionTrustDialog(
-            trusted = sessionTrusted,
-            // The exact (provider, tool) pair: a same-named tool from another provider keeps its
-            // own grant. In-memory only, so there is no disk write to move off the UI thread.
-            onRevoke = { McpToolRegistryImpl.policyEngine.revokeSessionTrust(it.toolName, it.providerId) },
-            onRevokeAll = { McpToolRegistryImpl.policyEngine.clearSessionTrusts() },
-            onDismiss = { showSessionTrust = false },
-        )
-    }
-    if (showTrustedPlugins) {
-        McpProviderTrustDialog(
-            providerRules = persistedPolicyConfig.providerRules,
-            // Dispatchers.IO: revokeProviderPolicy performs the same synchronized atomicWriteText
-            // disk write as revokePersistedPolicy, off the UI thread for the same reason.
-            onRevoke = { providerId ->
-                withContext(Dispatchers.IO) {
-                    McpToolRegistryImpl.policyEngine.revokeProviderPolicy(providerId)
-                }
-            },
-            onDismiss = { showTrustedPlugins = false },
-        )
-    }
-    if (showPolicyManager) {
-        val disabledToolNames by McpToolRegistryImpl.disabledToolNames.collectAsState()
-        var candidateRefresh by remember { mutableStateOf(0) }
-        val availableTools =
-            remember(allTools, persistedPolicyConfig.rules, disabledToolNames, candidateRefresh) {
-                mcpProactivePolicyCandidates(
-                    allTools,
-                    persistedPolicyConfig.rules,
-                    disabledToolNames,
-                    McpToolRegistryImpl.policyEngine::revocationVersion,
-                )
-            }
-        McpPolicyManagerDialog(
-            rules = persistedPolicyConfig.rules,
-            availableTools = availableTools,
-            // Dispatchers.IO: revokePersistedPolicy and setToolPolicyIfAbsent both do a
-            // synchronized atomicWriteText disk write - this call site was the one still running
-            // it on the UI thread, where a click could block behind another write holding the
-            // same lock from a slow, networked or AV-scanned home directory.
-            onRevoke = { toolName ->
-                withContext(Dispatchers.IO) {
-                    McpToolRegistryImpl.policyEngine.revokePersistedPolicy(toolName)
-                }
-            },
-            // setToolPolicyIfAbsent, not setToolPolicy: this path must add a rule only while the
-            // tool still has none of its own, atomically re-checked at write time - not just
-            // refuse a DENY, and not only when the revocation counter moved. An intervening
-            // explicit ASK or ALLOW, made through the reactive approval dialog for this same tool
-            // between "this row was offered" and this click reaching disk, never bumps that
-            // counter, so a `preserveDeny`-style guard alone would let this write silently
-            // clobber it (review on #636). tool.expectedRevocation is still passed, and still
-            // checked first, to catch a DENY or provider-wide reset the same way the reactive
-            // path's own capture-then-recheck does.
-            onSetPolicy = ::saveProactiveToolPolicy,
-            onRefreshCandidates = { candidateRefresh++ },
-            onDismiss = { showPolicyManager = false },
-            sectionTools =
-                remember(allTools, persistedPolicyConfig.rules, disabledToolNames, candidateRefresh) {
-                    mcpProactivePolicyCandidates(
-                        allTools,
-                        emptyMap(),
-                        disabledToolNames,
-                        McpToolRegistryImpl.policyEngine::revocationVersion,
-                    )
-                },
-            onApplySection = { changes ->
-                withContext(Dispatchers.IO) { McpToolRegistryImpl.policyEngine.setSectionPolicies(changes) }
-            },
-        )
     }
 }
 
@@ -525,51 +401,19 @@ internal fun mcpProactivePolicyCandidates(
         }.sortedBy { it.toolName }
         .toList()
 
-/**
- * The single most recent MCP tool call, clickable into [McpActivityLogDialog] for everything
- * behind it. Split out of [BossRightBottomBar] because that function's own branching was already
- * at detekt's [CyclomaticComplexMethod] ceiling before this existed.
- *
- * Reachable even with no activity yet ([McpToolRegistryImpl.ledger]'s ring buffer empty): "has
- * anything used MCP this session?" is a question worth being able to ask before the first call,
- * not only after one - and is when an operator is most likely to be checking (review on #636).
- */
 @Composable
 private fun McpActivityStatusItem() {
+    val item = rememberMcpActivityItem()
     val recentOps by McpToolRegistryImpl.ledger.recentOperations.collectAsState()
-    var showActivityLog by remember { mutableStateOf(false) }
     val tools by McpToolRegistryImpl.tools.collectAsState()
-    if (recentOps.isEmpty() && tools.isEmpty() && !showActivityLog) return
-    // The most recent CALL: a YOLO on/off marker is in the ledger for audit but is not a call.
+    if (recentOps.isEmpty() && tools.isEmpty()) return
     val lastOp = recentOps.firstOrNull { !it.approvalDisposition.isGovernanceEvent }
-    val statusText =
-        if (lastOp != null) {
-            "MCP: ${lastOp.toolName} (${formatMcpDuration(lastOp.durationMs)}) ${if (lastOp.isError) "✕" else "✓"}"
-        } else {
-            "MCP: no activity yet"
-        }
-    val statusColor = if (lastOp?.isError == true) BossTheme.colors.alert else BossTheme.colors.textSecondary
     StatusBarTextButton(
-        text = statusText,
-        color = statusColor,
+        text = item.text,
+        color = if (lastOp?.isError == true) BossTheme.colors.alert else BossTheme.colors.textSecondary,
         tooltip = "Open the MCP activity log",
-        onClick = { showActivityLog = true },
+        onClick = item.onClick,
     )
-    if (showActivityLog) {
-        val totalCalls by McpToolRegistryImpl.ledger.totalCalls.collectAsState()
-        val totalErrors by McpToolRegistryImpl.ledger.totalErrors.collectAsState()
-        val pendingWriteIds by McpToolRegistryImpl.ledger.pendingWriteIds.collectAsState()
-        val droppedWrites by McpToolRegistryImpl.ledger.droppedWrites.collectAsState()
-        McpActivityLogDialog(
-            operations = recentOps,
-            totalCalls = totalCalls,
-            totalErrors = totalErrors,
-            ledgerPath = McpToolRegistryImpl.ledger.persistencePath,
-            pendingWriteIds = pendingWriteIds,
-            droppedWrites = droppedWrites,
-            onDismiss = { showActivityLog = false },
-        )
-    }
 }
 
 /**

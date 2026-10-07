@@ -11,6 +11,7 @@ import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.LocalWindowId
+import ai.rever.boss.window.MenuActionsHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Circle
@@ -135,6 +136,7 @@ fun WorkspaceButton(
     val windowId = LocalWindowId.current
     val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
     val workspaces by workspaceManager.visibleWorkspaces.collectAsState()
+    val spaceMenuSettings by WorkspaceSettingsManager.currentSettings.collectAsState()
 
     // A BOSS theme belongs to a Space, so this menu is where one is given: both are collected
     // rather than read, because the submenu's tick has to move the moment the theme does - the
@@ -262,11 +264,13 @@ fun WorkspaceButton(
             )
         }
 
+    // Capture composable colors before building row helpers.
+    val menuColors = BossTheme.colors
     // Build context menu items
     val contextMenuItems =
         buildList {
             // Workspaces at the top
-            workspaces.forEach { workspace ->
+            fun spaceItem(workspace: LayoutWorkspace): ContextMenuItem {
                 // Two independent facts per row - where it is running, and whether it holds
                 // work that is not on disk. See [SpaceRowMarks] for why they are not one mark.
                 val marks =
@@ -277,42 +281,55 @@ fun WorkspaceButton(
                         unsavedWorkspaceIds = unsavedWorkspaceIds,
                     )
 
-                add(
-                    ContextMenuItem(
-                        text = workspace.name,
-                        icon = null,
-                        trailingIcon = marks.run.dotIcon(),
-                        trailingIconColor =
-                            when (marks.run) {
-                                SpaceRunState.Current -> BossTheme.colors.ok
-                                SpaceRunState.Running -> BossTheme.colors.textSecondary
-                                SpaceRunState.Idle -> null
-                            },
-                        // The unsaved mark, in the second trailing slot so it sits beside the
-                        // running dot rather than replacing it. Same glyph and same `signalText`
-                        // as the vertical bar's dot, because it is the same fact: a reader should
-                        // not have to learn a second vocabulary between the bar and this menu.
-                        secondaryTrailingIcon = Icons.Filled.Circle.takeIf { marks.unsaved },
-                        secondaryTrailingIconColor = BossTheme.colors.signalText,
-                        secondaryTrailingDescription = SPACE_UNSAVED_ROW_DESCRIPTION,
-                        // `onOpenWorkspace` is `WorkspaceSwitch.request`, which does the whole
-                        // job - it materialises a template, loads what that produced and applies
-                        // it. Loading the picked row HERE was redundant and did two kinds of harm.
-                        //
-                        // A BOSS theme belongs to a Space, so entering the row was entering a
-                        // Space: picking a TEMPLATE applied its theme, and the materialised copy
-                        // that actually opened a moment later applied its own. That flash is gone
-                        // with this line rather than made to land on the same colour, because the
-                        // intermediate entry was doing everything else twice as well.
-                        //
-                        // It also lied to the switch. `request` reads `currentWorkspace` as the
-                        // Space being LEFT, so pre-setting it to the one being entered made
-                        // `leaving.id == workspace.id` and skipped the keep-or-close question
-                        // outright.
-                        onClick = { onOpenWorkspace(workspace) },
-                    ),
+                return ContextMenuItem(
+                    text = workspace.name,
+                    icon = null,
+                    trailingIcon = marks.run.dotIcon(),
+                    trailingIconColor =
+                        when (marks.run) {
+                            SpaceRunState.Current -> menuColors.ok
+                            SpaceRunState.Running -> menuColors.textSecondary
+                            SpaceRunState.Idle -> null
+                        },
+                    // The unsaved mark, in the second trailing slot so it sits beside the
+                    // running dot rather than replacing it. Same glyph and same `signalText`
+                    // as the vertical bar's dot, because it is the same fact: a reader should
+                    // not have to learn a second vocabulary between the bar and this menu.
+                    secondaryTrailingIcon = Icons.Filled.Circle.takeIf { marks.unsaved },
+                    secondaryTrailingIconColor = menuColors.signalText,
+                    secondaryTrailingDescription = SPACE_UNSAVED_ROW_DESCRIPTION,
+                    // `onOpenWorkspace` is `WorkspaceSwitch.request`, which does the whole
+                    // job - it materialises a template, loads what that produced and applies
+                    // it. Loading the picked row HERE was redundant and did two kinds of harm.
+                    //
+                    // A BOSS theme belongs to a Space, so entering the row was entering a
+                    // Space: picking a TEMPLATE applied its theme, and the materialised copy
+                    // that actually opened a moment later applied its own. That flash is gone
+                    // with this line rather than made to land on the same colour, because the
+                    // intermediate entry was doing everything else twice as well.
+                    //
+                    // It also lied to the switch. `request` reads `currentWorkspace` as the
+                    // Space being LEFT, so pre-setting it to the one being entered made
+                    // `leaving.id == workspace.id` and skipped the keep-or-close question
+                    // outright.
+                    onClick = { onOpenWorkspace(workspace) },
                 )
             }
+
+            val groups = spaceMenuGroups(workspaces, spaceMenuSettings.recentSpaceIds)
+            add(
+                ContextMenuItem(
+                    text = "Create New Space…",
+                    onClick = { windowId?.let(MenuActionsHandler::triggerCreateSpace) },
+                ),
+            )
+            add(ContextMenuItem(isDivider = true))
+            addAll(groups.recent.map(::spaceItem))
+            if (groups.more.isNotEmpty()) {
+                add(ContextMenuItem(text = "More", subMenu = groups.more.map(::spaceItem)))
+            }
+            add(ContextMenuItem(isDivider = true))
+            add(ContextMenuItem(text = "Template Spaces", subMenu = groups.templates.map(::spaceItem)))
 
             add(ContextMenuItem(isDivider = true))
 

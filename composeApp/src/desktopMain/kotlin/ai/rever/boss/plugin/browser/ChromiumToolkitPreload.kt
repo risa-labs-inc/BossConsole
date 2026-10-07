@@ -28,17 +28,47 @@ import java.nio.file.Path
  * (`0x4b250`). The 27 July 2026 release crash (9.2.60, +514ms, libtoolkit on a `free` path under
  * `libxpc` dealloc) has the same signature.
  *
- * **What this changes.** The swap still happens, but on the main thread, before the startup class
- * loading and before the pre-warm thread exists - so the busiest `free()` callers of that moment
- * cannot be in the window. JxBrowser's own later `System.load` of the same canonical path, from
- * the same class loader, is a no-op in the JVM.
+ * A second instance, after this preload shipped (9.5.33, 2026-09-29, JxBrowser 9.5.2 / Chromium
+ * 154.0.8037.58): +1.9s, `brk #0` at `libtoolkit+0x4c9f4` (the same fallback loop, four zones
+ * checked), on the AppKit thread under `CA::Transaction::commit`. The preload then ran after
+ * `DefaultWindowIcon.install()` had created the AWT toolkit, so Core Animation was committing
+ * transactions (and freeing) on the AppKit thread during the swap. Reproduced outside BOSS, same
+ * PC: a JVM with four threads freeing continuously trapped in 3 of 20 runs when it loaded these
+ * libraries after starting them, 0 of 20 when it loaded them first. Memory allocated before the
+ * swap and freed after it is harmless (20,000 blocks, no trap) - only a free() *during* the
+ * swap traps.
  *
- * **What it does not.** It narrows the race rather than removing it: JVM service threads (GC,
- * JIT) still run. `libawt_toolkit` is deliberately NOT preloaded - it links `@rpath/libjawt.dylib`
- * and so must load after AWT - and it still swaps zones when JxBrowser loads it for the first
- * browser view. A first-run download-then-boot gets no preload either (see the call site). Only
- * moving JxBrowser out of the host process removes the family. The offsets above are for this
- * JxBrowser build: re-measure after a bump before relying on them.
+ * **What this changes.** The swap still happens, but on the main thread, before AWT creates
+ * AppKit, before the startup class loading and before the pre-warm thread exists - so neither
+ * Core Animation nor the busiest `free()` callers of that moment can be in the window.
+ * `ChromiumBootstrap.preflight()` enforces the order. JxBrowser's own later
+ * `System.load` of the same canonical path, from the same class loader, is a no-op in the JVM.
+ *
+ * **Why that was not enough, and the agent.** A third instance on 9.5.37 (2026-10-04, +1.09s,
+ * same `libtoolkit+0x4c9f4`) had the free on the JVM's own `C2 CompilerThread4`, in
+ * `Chunk::operator delete` after register allocation. GC and JIT threads free constantly and
+ * nothing in Java code can hold them still, so on macOS packaged builds the native agent in
+ * `native/toolkit-preload-agent` now does the swap from `Agent_OnLoad`, before the JVM has created
+ * any of those threads (three threads exist then: the launcher's idle primordial thread, the
+ * launcher thread blocked in `pthread_join`, and the one running the agent). The agent loads only
+ * what this object recorded on the previous launch in [ToolkitPreloadManifest], and only while every
+ * file that decision read is unchanged; otherwise it skips and this preload runs as before. Measured
+ * with a JVM harness that churns `free()` on four native threads while loading the real toolkit:
+ * 23 of 30 runs trapped at `libtoolkit+0x4c9f4` without the agent, 0 of 30 with it, and 20 of 30
+ * again with the agent present but its manifest stale.
+ *
+ * Only the FIRST library to load swaps: measured with an interposer on `malloc_zone_register` /
+ * `malloc_zone_unregister`, `libipc` and `libawt_toolkit` leave the zones alone once `libtoolkit`
+ * has registered PartitionAlloc, and `libawt_toolkit` swaps only when it is the first. So once
+ * `libtoolkit` is in, by either route, nothing later in the session repeats the swap.
+ *
+ * **What it does not.** The first launch after an install, an engine change or an app update has no
+ * valid manifest, so that one launch keeps the in-JVM preload and its narrower window. A first-run
+ * download-then-boot gets no preload at all, so packaged macOS relaunches once the download lands
+ * (`ChromiumBootstrap.onEngineDownloadComplete`); Gradle runs still boot in process. Nothing here touches the other
+ * PartitionAlloc failure mode, a native allocation failure, which is also `brk #0`; only moving
+ * JxBrowser out of the host process removes that. The offsets above are for this JxBrowser build:
+ * re-measure after a bump before relying on them.
  *
  * Off switch: `BOSS_TOOLKIT_PRELOAD=false` (also `0` / `no` / `off`) or
  * `-Dboss.toolkit.preload=false`.
@@ -52,10 +82,35 @@ object ChromiumToolkitPreload {
     private const val DISABLED_KEY = "BOSS_TOOLKIT_PRELOAD"
     private const val DISABLED_PROPERTY = "boss.toolkit.preload"
 
+    /**
+     * First instrumented toolkit-creation entry point. This diagnostic covers calls to
+     * [noteAwtToolkitCreating]; it does not probe uninstrumented library initialization.
+     * `StartupOrderingTest` separately pins the known startup order and the icon entry point.
+     */
+    private val awtToolkitOrigin = ToolkitCreationOrigin()
+
+    /**
+     * Called by whatever is about to create the AWT toolkit (today `DefaultWindowIcon.install()`).
+     * The first caller wins, so the report names the real culprit.
+     */
+    fun noteAwtToolkitCreating(by: String) {
+        awtToolkitOrigin.record(by)
+    }
+
+    /**
+     * Why a preload about to run is late, or null when it is not: on macOS, a toolkit created before
+     * the preload means AppKit and Core Animation are already freeing on the AppKit thread.
+     */
+    internal fun lateLoadReason(
+        createdBy: String?,
+        isMac: Boolean,
+    ): String? = if (isMac && createdBy != null) "the AWT toolkit was already created by $createdBy" else null
+
     /** What [plan] decided: the files to load, in order, or why nothing is loaded. */
     internal sealed interface Plan {
         data class Load(
             val files: List<File>,
+            val executableName: String,
         ) : Plan
 
         data class Skip(
@@ -99,7 +154,7 @@ object ChromiumToolkitPreload {
         return when {
             files.any { !it.canonicalFile.startsWith(root) } -> Plan.Skip("library outside the engine directory")
             files.any { !it.isFile } -> Plan.Skip("engine does not carry Chromium $chromiumVersion")
-            else -> Plan.Load(files)
+            else -> Plan.Load(files, name)
         }
     }
 
@@ -140,12 +195,15 @@ object ChromiumToolkitPreload {
     // TooGenericExceptionCaught: the guarantee is "never throws"; LinkageError covers
     // UnsatisfiedLinkError, which is an Error, and nothing narrower would keep the promise.
     @Suppress("TooGenericExceptionCaught")
-    fun preload(
+    // handOff defaults to null rather than AgentHandOff.live(): a default argument is evaluated
+    // in the caller's bridge, outside this try, so a throwing live() would escape preflight().
+    internal fun preload(
         engineDir: Path?,
+        handOff: AgentHandOff? = null,
         load: (String) -> Unit = System::load,
     ): Int =
         try {
-            preloadUnguarded(engineDir, load)
+            preloadUnguarded(engineDir, load, handOff ?: AgentHandOff.live())
         } catch (e: Exception) {
             runCatching { logger.warn(LogCategory.BROWSER, "Native toolkit preload aborted", error = e) }
             0
@@ -154,24 +212,29 @@ object ChromiumToolkitPreload {
             0
         }
 
+    private val isMacHost: Boolean
+        get() =
+            System
+                .getProperty("os.name")
+                .orEmpty()
+                .lowercase()
+                .contains("mac")
+
     @Suppress("ReturnCount") // One early return per named skip.
     private fun preloadUnguarded(
         engineDir: Path?,
         load: (String) -> Unit,
+        handOff: AgentHandOff,
     ): Int {
-        if (engineDir == null) return skipped("no engine directory")
+        if (engineDir == null) return skipped("no engine directory", handOff)
         if (disabledFrom(System.getenv(DISABLED_KEY), System.getProperty(DISABLED_PROPERTY))) {
-            return skipped("disabled by $DISABLED_KEY / -D$DISABLED_PROPERTY")
+            return skipped("disabled by $DISABLED_KEY / -D$DISABLED_PROPERTY", handOff)
         }
+        val isMac = isMacHost
         val plan =
             plan(
                 engineDir = engineDir,
-                isMac =
-                    System
-                        .getProperty("os.name")
-                        .orEmpty()
-                        .lowercase()
-                        .contains("mac"),
+                isMac = isMac,
                 executableName = {
                     engineDir
                         .resolve("executable.name")
@@ -183,11 +246,21 @@ object ChromiumToolkitPreload {
                     com.teamdev.jxbrowser.VersionInfo
                         .chromiumVersion(),
             )
-        val files =
+        val loadPlan =
             when (plan) {
-                is Plan.Skip -> return skipped(plan.reason)
-                is Plan.Load -> plan.files
+                is Plan.Skip -> return skipped(plan.reason, handOff)
+                is Plan.Load -> plan
             }
+        val files = loadPlan.files
+        handOff.reportAgent(files.map { it.canonicalPath })
+        // Report the late entry, but do not skip: JxBrowser would load the same toolkit later anyway.
+        lateLoadReason(awtToolkitOrigin.createdBy, isMac)?.let { reason ->
+            logger.error(
+                LogCategory.BROWSER,
+                "Native toolkit preload is running after AppKit started; its malloc zone swap can race it",
+                mapOf("reason" to reason),
+            )
+        }
         val startNanos = System.nanoTime()
         var loaded = 0
         for (file in files) {
@@ -205,7 +278,17 @@ object ChromiumToolkitPreload {
                 mapOf("libraries" to loaded, "durationMs" to (System.nanoTime() - startNanos) / 1_000_000),
             )
         }
+        handOff.recordOutcome(engineDir, loadPlan.executableName, files, loaded)
         return loaded
+    }
+
+    /**
+     * Forgets the agent manifest when the engine will not boot from disk at startup (download
+     * pending, or booting a mismatched engine to report it), so the next launch does not preload
+     * from a decision this launch did not make.
+     */
+    fun forgetNextLaunch(reason: String) {
+        runCatching { AgentHandOff.live().forget(reason) }
     }
 
     /** Loads [file], returning what went wrong instead of throwing. */
@@ -223,8 +306,13 @@ object ChromiumToolkitPreload {
             e
         }
 
-    private fun skipped(reason: String): Int {
+    private fun skipped(
+        reason: String,
+        handOff: AgentHandOff,
+    ): Int {
         logger.info(LogCategory.BROWSER, "Native toolkit preload skipped", mapOf("reason" to reason))
+        handOff.reportAgentWithoutPlan(reason)
+        handOff.forget(reason)
         return 0
     }
 

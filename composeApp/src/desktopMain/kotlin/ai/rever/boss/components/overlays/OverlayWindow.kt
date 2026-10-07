@@ -1,12 +1,13 @@
 package ai.rever.boss.components.overlays
 
 import ai.rever.boss.plugin.browser.LocalAwtWindow
-import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.window.ApplyBossWindowIcon
 import ai.rever.boss.window.BossWindowIcon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.awt.ComposeDialog
 import androidx.compose.ui.input.key.KeyEvent
@@ -19,7 +20,7 @@ import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import kotlin.math.roundToInt
 
-/** On macOS, overlays belong to their owner rather than floating over every Space and app. */
+/** Keep overlays in their actual owner's native window tree on every desktop platform. */
 @Composable
 internal fun OverlayWindow(
     onCloseRequest: () -> Unit,
@@ -29,7 +30,7 @@ internal fun OverlayWindow(
     content: @Composable (java.awt.Window) -> Unit,
 ) {
     val parent = LocalAwtWindow.current
-    if (!SystemUtils.isMacOS || parent == null) {
+    if (parent == null) {
         Window(
             onCloseRequest,
             state = state,
@@ -42,37 +43,45 @@ internal fun OverlayWindow(
             onKeyEvent = onKeyEvent,
         ) {
             ApplyBossWindowIcon(window)
-            content(window)
+            CompositionLocalProvider(LocalAwtWindow provides window) {
+                content(window)
+            }
         }
     } else {
-        DialogWindow(
-            create = {
-                ComposeDialog(parent, Dialog.ModalityType.MODELESS).apply {
-                    isUndecorated = true
-                    isTransparent = true
-                    type = java.awt.Window.Type.UTILITY
-                    isResizable = false
-                    focusableWindowState = focusable
-                    isAutoRequestFocus = focusable
-                    background = java.awt.Color(0, 0, 0, 0)
+        key(parent) {
+            DialogWindow(
+                create = {
+                    ComposeDialog(parent, Dialog.ModalityType.MODELESS).apply {
+                        isUndecorated = true
+                        isTransparent = true
+                        type = java.awt.Window.Type.UTILITY
+                        isResizable = false
+                        focusableWindowState = focusable
+                        isAutoRequestFocus = focusable
+                        background = java.awt.Color(0, 0, 0, 0)
+                    }
+                },
+                dispose = ComposeDialog::dispose,
+                update = { dialog ->
+                    dialog.focusableWindowState = focusable
+                    dialog.isAutoRequestFocus = focusable
+                    val at = state.position
+                    if (at is WindowPosition.Absolute) dialog.setLocation(at.x.value.toInt(), at.y.value.toInt())
+                    dialog.setSize(
+                        state.size.width.value
+                            .roundToInt(),
+                        state.size.height.value
+                            .roundToInt(),
+                    )
+                },
+                onKeyEvent = onKeyEvent,
+            ) {
+                ApplyBossWindowIcon(window)
+                OverlayCloseListener(window, onCloseRequest)
+                CompositionLocalProvider(LocalAwtWindow provides window) {
+                    content(window)
                 }
-            },
-            dispose = ComposeDialog::dispose,
-            update = { dialog ->
-                val at = state.position
-                if (at is WindowPosition.Absolute) dialog.setLocation(at.x.value.toInt(), at.y.value.toInt())
-                dialog.setSize(
-                    state.size.width.value
-                        .roundToInt(),
-                    state.size.height.value
-                        .roundToInt(),
-                )
-            },
-            onKeyEvent = onKeyEvent,
-        ) {
-            ApplyBossWindowIcon(window)
-            OverlayCloseListener(window, onCloseRequest)
-            content(window)
+            }
         }
     }
 }

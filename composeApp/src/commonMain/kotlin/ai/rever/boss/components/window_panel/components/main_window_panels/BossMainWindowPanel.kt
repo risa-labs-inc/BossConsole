@@ -1262,6 +1262,9 @@ fun BossTabsComponent.BossMainPanel(
             CompositionLocalProvider(
                 LocalIsPanelActive provides isActivePanel,
                 LocalInMainWindowPanel provides true,
+                LocalActivateMainWindowPanel provides {
+                    currentPanelId?.let { splitViewState?.setActivePanel(it) }
+                },
             ) {
                 BossMainPanelContent(modifier = contentModifier)
             }
@@ -2601,3 +2604,6 @@ internal fun convertTabInfoToTabConfig(tabInfo: TabInfo): TabConfig =
  * Defaults to `false`, so the only thing that reads as a main-panel surface is one that actually is.
  */
 val LocalInMainWindowPanel: ProvidableCompositionLocal<Boolean> = compositionLocalOf { false }
+
+/** Direct Chromium input bypasses Compose's pointer handler; activate only its owning panel. */
+val LocalActivateMainWindowPanel: ProvidableCompositionLocal<() -> Unit> = compositionLocalOf { {} }

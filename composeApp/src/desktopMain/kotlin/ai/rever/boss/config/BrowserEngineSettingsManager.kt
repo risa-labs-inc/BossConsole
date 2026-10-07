@@ -37,7 +37,11 @@ data class BrowserEngineSettings(
  */
 object BrowserEngineSettingsManager {
     private val logger = BossLogger.forComponent("BrowserEngineSettingsManager")
-    private val settingsFile = BossDirectories.resolve("browser-engine-settings.json")
+
+    /** Also guarded by the native toolkit agent's manifest: a pin change must invalidate it. */
+    const val SETTINGS_FILE_NAME = "browser-engine-settings.json"
+
+    private val settingsFile = BossDirectories.resolve(SETTINGS_FILE_NAME)
     private val json =
         Json {
             prettyPrint = true
