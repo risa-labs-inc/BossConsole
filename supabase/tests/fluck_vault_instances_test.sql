@@ -84,6 +84,7 @@ SELECT ok(public.fluck_vault_create(
   'a re-approved install mints, and the row describes with the new seal key');
 SELECT is((SELECT instance_seal_public_key FROM public.fluck_vault_describe('00000000-0000-4000-8000-000000000007'::uuid)), (SELECT seal_b FROM k), 'a link minted after the rotation seals to the new key');
 SELECT ok(public.fluck_vault_set_instance_issuance('inst-alice-0123456789', false), 'the operator withdraws approval');
+SELECT is((SELECT count(*)::int FROM public.fluck_vault_describe('00000000-0000-4000-8000-000000000007'::uuid)), 0, 'withdrawing approval also takes down the install''s open links');
 SELECT throws_ok($$
   SELECT public.fluck_vault_create(
     '00000000-0000-4000-8000-000000000005'::uuid, 'ws-test', 'cvv', NULL, NULL, 'purchase-1',

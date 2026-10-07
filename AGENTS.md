@@ -701,6 +701,46 @@ supabase functions deploy <function-name> --project-ref pcnwqamqdnsadranufjv --n
 supabase link --project-ref pcnwqamqdnsadranufjv  # First time
 ```
 
+### fluck.risaboss.com (`fluck-web`)
+
+A sign-in page for the owner's Fluck web chats. The Fluck plugin heartbeats
+`fluck_web_upsert_instance` (as the user, every 30 s) into `public.fluck_web_instances`; the
+`fluck-web` function signs the user in (Google, Apple, magic link with `create_user: false`),
+lists `fluck_web_list_instances()`, and on Open mints a 60 s single-use ticket with
+`fluck_web_mint_ticket` and navigates the top-level page to `<endpoint_url>/#/t/<ticket>`. The
+Fluck redeems it with `fluck_web_consume_ticket` as its own signed-in user, so a ticket minted by
+another account can never be redeemed. No message content is stored. Security follows
+`live-sessions` (nonce CSP, no CORS, `__Secure-` cookies, cross-site refusal, token rotation), plus
+an exact-Origin and CSRF-nonce check on `POST /api/open`. Endpoints must be bare https origins (a
+table CHECK and a second check in the function). A Cloudflare Worker
+(`infra/cloudflare/fluck-web-alias`) proxies the vanity host onto the function.
+
+Deploy is manual. Nothing below runs in CI:
+
+```bash
+supabase link --project-ref pcnwqamqdnsadranufjv           # once
+supabase db push                                           # 20261006120000_fluck_web_instances.sql
+ALIAS_SECRET=$(openssl rand -hex 32)                        # shared by the function and the Worker
+supabase secrets set --project-ref pcnwqamqdnsadranufjv \
+  FLUCK_WEB_PUBLIC_BASE_URL=https://fluck.risaboss.com FLUCK_WEB_PUBLIC_BASE_PATH=/ \
+  FLUCK_WEB_AUTH_PUBLIC_URL=https://api.risaboss.com FLUCK_WEB_ALIAS_SECRET=$ALIAS_SECRET
+supabase functions deploy fluck-web --project-ref pcnwqamqdnsadranufjv --no-verify-jwt
+supabase functions deploy redirect --project-ref pcnwqamqdnsadranufjv --no-verify-jwt   # Fluck web arm
+cd infra/cloudflare/fluck-web-alias && npx wrangler login
+echo "$ALIAS_SECRET" | npx wrangler secret put FLUCK_WEB_ALIAS_SECRET && npx wrangler deploy
+curl -sf https://fluck.risaboss.com/ -o /dev/null -w '%{http_code}\n'   # 200; 503 alias_unverified = secrets differ
+```
+
+The function trusts the Worker (serves the page, keys rate limits on the visitor's IP) only when
+`X-Fluck-Web-Alias-Secret` matches `FLUCK_WEB_ALIAS_SECRET` (32+ chars). Direct hits on
+`api.risaboss.com/functions/v1/fluck-web/` are always redirected to the vanity host.
+
+Dashboard, by hand: Auth -> URL Configuration -> Redirect URLs, add `https://fluck.risaboss.com/auth`;
+Auth -> Email Templates -> Magic Link, paste `supabase/templates/email/magic-link.html` (it gained a
+`$fluck` branch). Without the redirect URL GoTrue silently falls back to `boss://auth/verify`.
+Tests: `supabase/tests/fluck_web_instances_test.sql` (pgTAP, `supabase test db`) and
+`cd supabase/functions/fluck-web && deno test --allow-all`.
+
 ### Decoding Supabase payloads
 
 Two rules in `ai.rever.boss.services.supabase`, both enforced by `SupabaseWiringTest`:
