@@ -91,7 +91,7 @@ object PluginJarReconciler {
         val jars =
             pluginDir
                 .listFiles { file ->
-                    file.isFile && file.name.endsWith(".jar") && !isMicrokernelRuntimeName(file.name)
+                    isStartupCandidate(file, ::isMicrokernelRuntimeName)
                 }?.toList() ?: emptyList()
 
         val skipped = mutableListOf<String>()
@@ -422,3 +422,10 @@ object PluginJarReconciler {
         fileName.startsWith(MicrokernelRuntime.ARTIFACT_PREFIX) ||
             fileName.startsWith(MicrokernelRuntime.PLUGIN_ID.replace('.', '_'))
 }
+
+private fun isStartupCandidate(
+    file: File,
+    isRuntime: (String) -> Boolean,
+): Boolean =
+    file.isFile && file.name.endsWith(".jar") &&
+        !File("${file.absolutePath}.rejected-update").exists() && !isRuntime(file.name)

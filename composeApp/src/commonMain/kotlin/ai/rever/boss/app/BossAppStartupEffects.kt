@@ -485,7 +485,10 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                         defaultPlugin.awaitInitialPluginLoad()
                     }
                 if (loadFinished == null) {
-                    logger.warn(LogCategory.SYSTEM, "Startup plugin load still running after 30s; skipping wizard check")
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Startup plugin load still running after 30s; skipping wizard check",
+                    )
                     state.pluginWizardChecked = true
                     return@LaunchedEffect
                 }
@@ -652,7 +655,11 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                                 throw e
                             } catch (e: Exception) {
                                 state.sessionRestoreRefused = true
-                                logger.error(LogCategory.WORKSPACE, "Last Session restore failed - continuing startup", error = e)
+                                logger.error(
+                                    LogCategory.WORKSPACE,
+                                    "Last Session restore failed - continuing startup",
+                                    error = e,
+                                )
                             }
                         } else {
                             // No Last Session: this is the layout a fresh install opens on.
@@ -704,6 +711,22 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         }
     }
 
+    // Give new/unassigned windows a real default Space without rebuilding their live tabs.
+    LaunchedEffect(state.workspaceRestorationComplete, splitViewState.currentWorkspaceId) {
+        if (state.workspaceRestorationComplete &&
+            (
+                splitViewState.currentWorkspaceId == null ||
+                    splitViewState.currentWorkspaceId?.startsWith("unsaved-window-") == true
+            )
+        ) {
+            val space =
+                workspaceManager.savedCopyOf(ai.rever.boss.components.workspaces.DefaultSpace.ID)
+                    ?: ai.rever.boss.components.workspaces.DefaultSpace.planetBerul
+            splitViewState.rebindCurrentWorkspace(space.id)
+            workspaceManager.loadWorkspace(space)
+        }
+    }
+
     // Separate effect to handle session resolution AFTER Last Session may have loaded
     // This ensures terminal handler is marked ready even if session resolves late
     LaunchedEffect(isSessionResolved, workspaceManager.currentWorkspace.value) {
@@ -726,6 +749,13 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         if (refs.isNotEmpty()) {
             ai.rever.boss.components.plugin.PluginUpdateBridge
                 .refreshAll(refs)
+        }
+    }
+
+    LaunchedEffect(state.currentDefaultPlugin, state.workspaceRestorationComplete) {
+        if (state.currentDefaultPlugin != null && state.workspaceRestorationComplete) {
+            ai.rever.boss.components.plugin.PluginUpdateBridge
+                .startAutomaticUpdates()
         }
     }
 

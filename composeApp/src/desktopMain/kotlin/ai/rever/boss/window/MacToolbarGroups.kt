@@ -14,8 +14,14 @@ internal object MacToolbarGroups {
             "utility_controls" to listOf("search", "tools", "toolbox"),
         )
 
-    fun identifiers(actions: List<String>): List<String> =
-        actions.map { id -> members.entries.firstOrNull { id in it.value }?.key ?: id }.distinct()
+    fun groupId(id: String): String? = members.entries.firstOrNull { id in it.value }?.key
+
+    fun identifiers(ids: List<String>): List<String> = ids.map { groupId(it) ?: it }.distinct()
+
+    fun presentMembers(
+        id: String,
+        actions: Map<String, NativeTitleBarAction>,
+    ): List<String> = members.getValue(id).filter { it in actions }
 
     fun create(id: String): Pointer {
         val group =
@@ -38,7 +44,7 @@ internal object MacToolbarGroups {
         previous: MutableMap<String, List<String>>,
         makeItem: (Pointer?) -> Pointer?,
     ) {
-        val present = members.getValue(id).filter { it in actions }
+        val present = presentMembers(id, actions)
         if (previous[id] != present) {
             val array = pointer(clazz("NSMutableArray"), "array")
             present.mapNotNull { makeItem(string(it)) }.forEach { send(array, "addObject:", it) }

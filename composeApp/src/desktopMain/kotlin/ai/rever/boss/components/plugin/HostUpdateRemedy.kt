@@ -22,6 +22,10 @@ internal fun applyHostUpdateRemedy(
             Result.success("A BOSS update is installing. Wait for installation to finish, then restart BOSS.")
         }
 
+        UpdateState.InstallOnNextRestart -> {
+            Result.success("A BOSS update is ready. Quit BOSS to install it, then open BOSS again manually.")
+        }
+
         UpdateState.RestartRequired -> {
             Result.success("A BOSS update has been installed. Restart BOSS to use it.")
         }

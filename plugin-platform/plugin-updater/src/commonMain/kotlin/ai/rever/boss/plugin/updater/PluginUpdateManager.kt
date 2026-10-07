@@ -425,6 +425,15 @@ class PluginUpdateManager(
             _availableUpdates.value.find { it.pluginId == pluginId }
                 ?: return Result.failure(Exception("No update available for plugin: $pluginId"))
 
+        return downloadSnapshot(update, targetPath, onProgress)
+    }
+
+    private suspend fun downloadSnapshot(
+        update: UpdateInfo,
+        targetPath: String,
+        onProgress: ((Float) -> Unit)?,
+    ): Result<String> {
+        val pluginId = update.pluginId
         _state.value = UpdateState.Downloading(pluginId, 0f)
         listeners.forEach { it.onUpdateDownloading(pluginId, 0f) }
 
@@ -493,6 +502,19 @@ class PluginUpdateManager(
             _availableUpdates.value.find { it.pluginId == pluginId }
                 ?: return Result.failure(Exception("No update available for plugin: $pluginId"))
 
+        return updatePluginSnapshot(update, downloadPath, unloadPlugin, loadPlugin, onProgress, onInstalling)
+    }
+
+    /** Download and activate the same compatible candidate even if another check replaces the shared list. */
+    suspend fun updatePluginSnapshot(
+        update: UpdateInfo,
+        downloadPath: String,
+        unloadPlugin: suspend (String) -> Result<Unit>,
+        loadPlugin: suspend (String) -> Result<Unit>,
+        onProgress: ((Float) -> Unit)? = null,
+        onInstalling: (() -> Unit)? = null,
+    ): Result<Unit> {
+        val pluginId = update.pluginId
         logger.info(
             LogCategory.SYSTEM,
             "Starting plugin update",
@@ -504,12 +526,21 @@ class PluginUpdateManager(
         )
 
         // Download new version
-        val downloadResult = downloadUpdate(pluginId, downloadPath, onProgress)
-        if (downloadResult.isFailure) {
-            return Result.failure(downloadResult.exceptionOrNull() ?: Exception("Download failed"))
-        }
+        val downloadResult = downloadSnapshot(update, downloadPath, onProgress)
+        return downloadResult.fold(
+            onSuccess = { path -> activateDownloadedSnapshot(update, path, unloadPlugin, loadPlugin, onInstalling) },
+            onFailure = { Result.failure(it) },
+        )
+    }
 
-        val downloadedPath = downloadResult.getOrThrow()
+    private suspend fun activateDownloadedSnapshot(
+        update: UpdateInfo,
+        downloadedPath: String,
+        unloadPlugin: suspend (String) -> Result<Unit>,
+        loadPlugin: suspend (String) -> Result<Unit>,
+        onInstalling: (() -> Unit)?,
+    ): Result<Unit> {
+        val pluginId = update.pluginId
 
         // Download-verify boundary (BossConsole#927): vet the jar's declared identity
         // BEFORE the swap unloads anything, so a mismatched jar is refused while the
@@ -583,10 +614,18 @@ class PluginUpdateManager(
 
         // Success
         _state.value = UpdateState.Completed(pluginId, update.newVersion)
-        listeners.forEach { it.onUpdateCompleted(pluginId, update.newVersion) }
+        listeners.forEach { listener ->
+            runCatching { listener.onUpdateCompleted(pluginId, update.newVersion) }
+                .onFailure { error ->
+                    logger.warn(LogCategory.SYSTEM, "Plugin update completion listener failed", error = error)
+                }
+        }
 
         // Remove from available updates
-        _availableUpdates.value = _availableUpdates.value.filter { it.pluginId != pluginId }
+        _availableUpdates.value =
+            _availableUpdates.value.filter {
+                it.pluginId != pluginId || isNewerVersion(it.newVersion, update.newVersion)
+            }
 
         logger.info(
             LogCategory.SYSTEM,

@@ -16,17 +16,35 @@ on:
     branches: [main]
     paths:
       - 'supabase/functions/**'
+      - 'supabase/tests/app-sharing/**'
+      - 'composeApp/src/desktopMain/resources/app-sharing/**'
+      - 'composeApp/src/desktopTest/js/app-sharing/**'
+      - 'scripts/sync-app-viewer-assets.mjs'
+      - 'scripts/app-sharing/**'
+      - 'scripts/app-sharing-maintenance.mjs'
       - 'infra/cloudflare/terminal-relay/**'
       # The function's behaviour is coupled to the passkey migrations (columns,
       # the session_id index, the RPC grant), so schema edits run these too
       - 'supabase/migrations/**'
+      # redirect tests keep its allow-list in lockstep with these
+      - 'supabase/templates/email/**'
+      - 'supabase/config.toml'
       - '.github/workflows/edge-functions.yml'
   pull_request:
     branches: [main, dev, develop]
     paths:
       - 'supabase/functions/**'
+      - 'supabase/tests/app-sharing/**'
+      - 'composeApp/src/desktopMain/resources/app-sharing/**'
+      - 'composeApp/src/desktopTest/js/app-sharing/**'
+      - 'scripts/sync-app-viewer-assets.mjs'
+      - 'scripts/app-sharing/**'
+      - 'scripts/app-sharing-maintenance.mjs'
       - 'infra/cloudflare/terminal-relay/**'
       - 'supabase/migrations/**'
+      # redirect tests keep its allow-list in lockstep with these
+      - 'supabase/templates/email/**'
+      - 'supabase/config.toml'
       - '.github/workflows/edge-functions.yml'
   workflow_dispatch:
 
@@ -216,6 +234,31 @@ jobs:
       - name: 🧹 Lint
         run: deno lint
 
+  fluck-web:
+    name: Fluck Web function - check and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/fluck-web
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: 🦕 Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: 🔎 Type check
+        run: find . -name '*.ts' -print0 | sort -z | xargs -0 -r deno check
+
+      - name: 🧪 Tests
+        # --allow-all: the suite sets SUPABASE_URL / SUPABASE_ANON_KEY / FLUCK_WEB_* env vars.
+        run: deno test --allow-all
+
+      - name: 🧹 Lint
+        run: deno lint
+
   user-settings:
     name: User settings — check and test
     runs-on: ubuntu-latest
@@ -246,6 +289,28 @@ jobs:
       - run: deno lint
       - run: deno test --allow-all
 
+  app-sharing:
+    name: 'Application sharing: authorization and signaling'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno check *.ts && deno lint && deno test --allow-env
+        working-directory: supabase/functions/app-sharing
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: supabase/tests/app-sharing/package-lock.json
+      - run: deno check *.ts && deno lint && deno test --allow-env
+        working-directory: supabase/functions/app-sharing-maintenance
+      - run: node --test composeApp/src/desktopTest/js/app-sharing/*.test.mjs
+      - run: node scripts/sync-app-viewer-assets.mjs --check
+      - run: npm ci && npm test
+        working-directory: supabase/tests/app-sharing
+
   terminal-relay:
     name: Terminal relay — check and test
     runs-on: ubuntu-latest
@@ -254,7 +319,7 @@ jobs:
         working-directory: infra/cloudflare/terminal-relay
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: npm

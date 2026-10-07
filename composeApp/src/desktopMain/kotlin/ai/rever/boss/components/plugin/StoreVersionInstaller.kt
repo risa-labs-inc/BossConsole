@@ -7,6 +7,7 @@ import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.loader.PluginSignatureSidecar
 import ai.rever.boss.plugin.repository.PluginRepository
 import ai.rever.boss.plugin.requireDeferredVersion
+import ai.rever.boss.plugin.verifyApprovedDownload
 import ai.rever.boss.utils.atomicMoveFrom
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -72,6 +73,7 @@ data class StoreVersionRequest(
     val runningJarPath: String?,
     val hasLiveInstance: Boolean,
     val firstInstall: Boolean = false,
+    val expectedSha256: String? = null,
 )
 
 /**
@@ -123,6 +125,12 @@ internal class StoreVersionInstaller(
                 throw e
             }
 
+        val integrityError = verifyApprovedDownload(downloaded, request.expectedSha256)
+        if (integrityError != null) {
+            hooks.discardFiles(downloaded)
+            hooks.discardFiles(part.absolutePath)
+            return Result.failure(integrityError)
+        }
         // Past the point of no return: the swap can no longer be abandoned safely, so a
         // caller offering Cancel withdraws it here rather than after the unload.
         onInstalling?.invoke()

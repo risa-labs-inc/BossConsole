@@ -211,3 +211,48 @@ Deno.test("RPC adapter handles explicit HTTP conflicts and legacy serialization 
     else Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", previousKey);
   }
 });
+Deno.test("application settings share cookie ownership and CSRF but keep independent revisions", async () => {
+  const calls: { name: string; args: Record<string, unknown> }[] = [];
+  const app = createApp(config, (name, args) => {
+    calls.push({ name, args });
+    return Promise.resolve(
+      name === "get_user_terminal_preferences"
+        ? prefs
+        : { auto_admit: true, auto_control: true, revision: 4 },
+    );
+  });
+  const session = await cookie();
+  const page = await app(new Request(base, { headers: { cookie: session } }));
+  assertEquals(page.status, 200);
+  assertMatch(await page.text(), /BossConsole application sharing/);
+  calls.length = 0;
+  const post = (token: string) =>
+    app(
+      new Request(base, {
+        method: "POST",
+        headers: {
+          cookie: session,
+          origin,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          action: "save-app",
+          csrf: token,
+          revision: "4",
+          auto_admit: "on",
+        }).toString(),
+      }),
+    );
+  assertEquals((await post("forged")).status, 403);
+  assertEquals(calls.length, 0);
+  assertEquals((await post(csrf)).status, 303);
+  assertEquals(calls, [{
+    name: "set_user_app_sharing_preferences",
+    args: {
+      p_actor_id: sub,
+      p_auto_admit: true,
+      p_auto_control: false,
+      p_revision: 4,
+    },
+  }]);
+});

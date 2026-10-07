@@ -1,6 +1,7 @@
 package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.theme.dialogPanelColor
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,8 +26,13 @@ internal fun engineDownloadStatus(
     engineLabel: String,
     isExtracting: Boolean,
     totalBytes: Long,
+    isRestarting: Boolean = false,
 ): String =
     when {
+        // The download is done and BOSS is about to quit and reopen (macOS); without this the
+        // window falls back to the "Connecting" line below, at 0%, for its last seconds on screen.
+        isRestarting -> "Restarting BOSS to finish setting up $engineLabel\u2026"
+
         // isExtracting arrives with totalBytes still set from the download, so this
         // branch has to come first or the dialog claims it is still downloading
         // while it unpacks.
@@ -58,7 +64,7 @@ private fun DownloadSurface(
                 .width(450.dp)
                 .wrapContentHeight(),
         shape = RoundedCornerShape(8.dp),
-        color = BossTheme.colors.panel,
+        color = dialogPanelColor,
     ) {
         Column(
             modifier = Modifier.padding(24.dp),

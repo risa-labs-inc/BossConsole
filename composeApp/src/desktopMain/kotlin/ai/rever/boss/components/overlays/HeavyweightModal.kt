@@ -2,6 +2,7 @@ package ai.rever.boss.components.overlays
 
 import ai.rever.boss.plugin.browser.LocalAwtWindow
 import ai.rever.boss.window.ApplyBossWindowIcon
+import ai.rever.boss.window.RegisterLogicalModalBoundary
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
@@ -73,6 +74,7 @@ fun HeavyweightModal(
             }
         },
     ) { window ->
+        RegisterLogicalModalBoundary(window)
         EnsureOverlayWindowTransparent(window, kind = "modal")
         ApplyBossWindowIcon(window)
 

@@ -215,6 +215,9 @@ object DefaultWindowIcon {
      */
     fun install() {
         runCatching {
+            // getDefaultToolkit() below is what creates the toolkit (and with it AppKit on macOS).
+            ai.rever.boss.plugin.browser.ChromiumToolkitPreload
+                .noteAwtToolkitCreating("DefaultWindowIcon.install")
             Toolkit.getDefaultToolkit().addAWTEventListener({ event ->
                 if (event.id == WindowEvent.WINDOW_OPENED) {
                     ((event as? WindowEvent)?.window as? Frame)?.let(::brandIfUnbranded)

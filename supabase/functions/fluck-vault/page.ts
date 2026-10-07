@@ -23,7 +23,7 @@
  * did. Someone reads these at a petrol station at eleven at night.
  */
 import { SEAL_INFO_PREFIX } from "./seal.ts"
-import { MAX_MINOR_AMOUNT, NON_TWO_DIGIT_EXPONENTS } from "./currency.ts"
+import { MAX_MINOR_AMOUNT, MINOR_UNIT_EXPONENTS } from "./currency.ts"
 
 /** Shared by every page. Hashed into the CSP, so it is a constant like the script. */
 export const STYLE = `*{box-sizing:border-box}
@@ -70,7 +70,7 @@ function luhn(n){if(n.length<13||n.length>19)return false;var sum=0,alt=false;
 for(var i=n.length-1;i>=0;i--){var d=n.charCodeAt(i)-48;
 if(alt){d*=2;if(d>9)d-=9}sum+=d;alt=!alt}return sum%10===0}
 function fail(m){err.textContent=m;return null}
-var EXP=${JSON.stringify(NON_TWO_DIGIT_EXPONENTS)};
+var EXP=${JSON.stringify(MINOR_UNIT_EXPONENTS)};
 var ex=form.elements["f3"];if(ex)ex.addEventListener("input",function(){var d=digits(ex.value).slice(0,4);
 ex.value=d.length>2?d.slice(0,2)+"/"+d.slice(2):d});
 function payload(){
@@ -78,6 +78,12 @@ var kind=form.getAttribute("data-kind");
 if(kind==="password"){var p=field("f2");
 if(!p)return fail("Enter the password.");
 return{kind:"password",username:field("f1"),password:p}}
+if(kind==="secret"){var label=field("f1").trim();var v=field("f2");
+if(!label)return fail("Enter what this key is for.");
+if(!v)return fail("Paste the key.");
+var s={kind:"secret",label:label,value:v};
+if(enc.encode(JSON.stringify(s)).length>8000)return fail("That is too long to save here.");
+return s}
 if(kind==="card"){var pan=digits(field("f2"));
 if(!luhn(pan))return fail("That card number does not look right.");
 var ed=digits(field("f3"));if(ed.length!==4)return fail("Enter the expiry as MM/YY.");
@@ -91,7 +97,8 @@ var postal=field("f6").trim();
 if(!postal)return fail("Enter the billing postcode.");
 var cur=field("f10").trim().toUpperCase();
 if(!/^[A-Z]{3}$/.test(cur))return fail("Enter the limit currency as three letters, like USD.");
-var xp=Object.prototype.hasOwnProperty.call(EXP,cur)?EXP[cur]:2;
+if(!Object.prototype.hasOwnProperty.call(EXP,cur))return fail("That is not a currency code. Try USD, EUR or GBP.");
+var xp=EXP[cur];
 var lim=field("f9").trim();var lm=/^([0-9]+)(?:\\.([0-9]+))?$/.exec(lim);
 if(!lm||(lm[2]||"").length>xp)return fail(xp===0?"Enter the spending limit as a whole number, like 200.":"Enter the spending limit, like 200 or 200."+"0000".slice(0,xp)+".");
 var minor=parseInt(lm[1]+((lm[2]||"")+"0000").slice(0,xp),10);
@@ -231,7 +238,9 @@ export async function message(
 export interface FormPage {
   title: string
   intro: string
-  kind: "password" | "card" | "cvv"
+  kind: "password" | "card" | "cvv" | "secret"
+  /** A secret's fixed label, shown read only. Never a value from the stored item. */
+  label?: string
   jti: string
   sealKey: string
   action: string
@@ -240,7 +249,7 @@ export interface FormPage {
 }
 
 /**
- * The form pages. Three of them, one function, because they differ only in their fields.
+ * The form pages. Four of them, one function, because they differ only in their fields.
  *
  * Field names are `f1`..`f11` rather than `cardnumber` or `cvv`. A password manager, a browser
  * autofill heuristic or a crash reporter that recognises a field by name is one more thing
@@ -251,6 +260,15 @@ export async function form(page: FormPage): Promise<Response> {
   const fields = page.kind === "password"
     ? `<label>Username or email<input name="f1" type="text" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
 <label>Password<input name="f2" type="password" autocomplete="off" required></label>`
+    : page.kind === "secret"
+    ? `${
+      page.label
+        ? `<label>For<input name="f1" type="text" value="${
+          escapeHtml(page.label)
+        }" readonly autocomplete="off" spellcheck="false"></label>`
+        : `<label>What is it for<input name="f1" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" required></label>`
+    }
+<label>Key<input name="f2" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required></label>`
     : page.kind === "card"
     ? `<label>Name on the card<input name="f1" type="text" autocomplete="off" spellcheck="false" required></label>
 <label>Card number<input name="f2" type="text" inputmode="numeric" autocomplete="off" required></label>

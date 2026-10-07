@@ -6,16 +6,29 @@
 --    install would seal to them. It returns 'rotation_requires_proof' instead. Keys change only
 --    through `fluck_vault_rotate_instance` (service_role), which the edge function calls after
 --    verifying a signature made with the install's CURRENT link key, as a compare-and-swap on
---    that key. The previous link key and the time are kept on the row.
+--    that key. The previous link key and the time are kept on the row. A rotation also clears
+--    the install's issuance approval and expires its unconsumed links, so a stolen link key plus
+--    a session cannot point pages the owner is about to open at a seal key the thief holds, nor
+--    mint new ones, until an operator approves the new keys.
 --
 -- 2. Issuance. A registered install may not create request rows until an operator approves
 --    it (`fluck_vault_set_instance_issuance`, service_role only). Enforced by a trigger on
 --    `fluck_vault_requests`, so it holds whatever signature `fluck_vault_create` has. Rows with
 --    a NULL `instance_id` are the operator's own environment key and are unaffected.
 --
+-- 3. Lifecycle. `fluck_vault_my_instances` lists the caller's installs and
+--    `fluck_vault_revoke_my_instance` revokes one, freeing its slot under the ten-install ceiling.
+--    A lost link key is recovered by revoking that install and registering a fresh id.
+--
+-- Compatibility: a plugin that calls `fluck_vault_register_my_instance` with new keys for an id
+-- it registered before now gets 'rotation_requires_proof' instead of 'ok', and registration
+-- fails. It must sign a rotation with its current key (POST /instances), or revoke the old id
+-- and register a new one.
+--
 -- Deploy order: this migration first, then the function. The function deployed before it
 -- keeps working for legacy rows; an install's mint fails closed until it is approved.
--- Existing installs start unapproved.
+-- Existing installs start unapproved. The new function answers 503 'schema' on an install
+-- request if this migration is missing.
 
 ALTER TABLE "public"."fluck_vault_instances"
     ADD COLUMN IF NOT EXISTS "issuance_approved_at" timestamp with time zone,
@@ -150,12 +163,20 @@ BEGIN
         RETURN 'stale';
     END IF;
 
+    -- previous_link_public_key is a record only, never accepted as a proof.
     UPDATE public.fluck_vault_instances
     SET link_public_key = p_link_public_key,
         seal_public_key = p_seal_public_key,
         previous_link_public_key = v_row.link_public_key,
-        rotated_at = now()
+        rotated_at = now(),
+        issuance_approved_at = NULL
     WHERE instance_id = p_instance_id;
+    -- Links minted under the old keys must not start sealing to the new seal key.
+    UPDATE public.fluck_vault_requests
+    SET expires_at = now()
+    WHERE instance_id = p_instance_id
+      AND consumed_at IS NULL
+      AND expires_at > now();
     RETURN 'ok';
 END;
 $$;
@@ -172,7 +193,8 @@ GRANT EXECUTE ON FUNCTION "public"."fluck_vault_rotate_instance"("p_instance_id"
 -- Issuance approval: the operator's switch. service_role only; there is no user-facing path.
 -- ---------------------------------------------------------------------------------------------
 
--- Returns true if the install exists and is live.
+-- Returns true if the install exists and is live. Withdrawing approval also expires the
+-- install's unconsumed links, so it takes down pages already minted as well as new ones.
 CREATE OR REPLACE FUNCTION "public"."fluck_vault_set_instance_issuance"(
     "p_instance_id" "text",
     "p_approved" boolean
@@ -185,7 +207,17 @@ BEGIN
     SET issuance_approved_at = CASE WHEN p_approved THEN now() ELSE NULL END
     WHERE instance_id = p_instance_id
       AND revoked_at IS NULL;
-    RETURN FOUND;
+    IF NOT FOUND THEN
+        RETURN false;
+    END IF;
+    IF NOT p_approved THEN
+        UPDATE public.fluck_vault_requests
+        SET expires_at = now()
+        WHERE instance_id = p_instance_id
+          AND consumed_at IS NULL
+          AND expires_at > now();
+    END IF;
+    RETURN true;
 END;
 $$;
 
@@ -205,12 +237,17 @@ RETURNS trigger
     SET "search_path" TO ''
 AS $$
 BEGIN
-    IF NEW.instance_id IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM public.fluck_vault_instances i
-        WHERE i.instance_id = NEW.instance_id
-          AND i.revoked_at IS NULL
-          AND i.issuance_approved_at IS NOT NULL
-    ) THEN
+    -- FOR SHARE serialises against a concurrent rotation or revocation, so a row cannot slip in
+    -- under keys that are being replaced and survive the expiry those apply.
+    IF NEW.instance_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    PERFORM 1 FROM public.fluck_vault_instances i
+    WHERE i.instance_id = NEW.instance_id
+      AND i.revoked_at IS NULL
+      AND i.issuance_approved_at IS NOT NULL
+    FOR SHARE;
+    IF NOT FOUND THEN
         RAISE EXCEPTION 'fluck vault install is not approved for issuance'
             USING ERRCODE = 'insufficient_privilege';
     END IF;
@@ -275,3 +312,88 @@ ALTER TABLE "public"."fluck_vault_requests"
 
 COMMENT ON COLUMN "public"."fluck_vault_requests"."total_cents" IS
     'Amount in the ISO 4217 minor unit of currency (JPY: yen, USD: cents, KWD: fils). Not always hundredths, despite the name.';
+
+-- ---------------------------------------------------------------------------------------------
+-- The owner's view: list and revoke their own installs.
+-- ---------------------------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION "public"."fluck_vault_my_instances"()
+RETURNS TABLE (
+    "instance_id" "text",
+    "created_at" timestamp with time zone,
+    "rotated_at" timestamp with time zone,
+    "revoked_at" timestamp with time zone,
+    "issuance_approved" boolean
+)
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+AS $$
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RETURN;
+    END IF;
+    RETURN QUERY
+    SELECT i.instance_id, i.created_at, i.rotated_at, i.revoked_at,
+           i.issuance_approved_at IS NOT NULL
+    FROM public.fluck_vault_instances i
+    WHERE i.user_id = auth.uid()
+    ORDER BY i.created_at DESC
+    LIMIT 100;
+END;
+$$;
+
+ALTER FUNCTION "public"."fluck_vault_my_instances"() OWNER TO "postgres";
+
+COMMENT ON FUNCTION "public"."fluck_vault_my_instances"() IS
+    'The signed-in caller''s Fluck vault installs, newest first, revoked ones included. No keys.';
+
+REVOKE ALL ON FUNCTION "public"."fluck_vault_my_instances"() FROM PUBLIC;
+REVOKE ALL ON FUNCTION "public"."fluck_vault_my_instances"() FROM "anon";
+GRANT EXECUTE ON FUNCTION "public"."fluck_vault_my_instances"() TO "authenticated";
+GRANT EXECUTE ON FUNCTION "public"."fluck_vault_my_instances"() TO "service_role";
+
+-- Returns 'ok' (revoked now, or already), 'not_found' (unknown, or another user's: one answer
+-- for both) or 'unauthorized' (no session). Revocation is final for that id: its unconsumed links
+-- expire, its staged blobs are dropped, and it no longer counts toward the ceiling.
+CREATE OR REPLACE FUNCTION "public"."fluck_vault_revoke_my_instance"("p_instance_id" "text")
+RETURNS "text"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+AS $$
+DECLARE
+    v_user uuid := auth.uid();
+    v_row public.fluck_vault_instances%ROWTYPE;
+BEGIN
+    IF v_user IS NULL THEN
+        RETURN 'unauthorized';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('fluck_vault_instances:' || v_user::text, 0));
+    SELECT * INTO v_row
+    FROM public.fluck_vault_instances i
+    WHERE i.instance_id = p_instance_id AND i.user_id = v_user
+    FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN 'not_found';
+    END IF;
+    IF v_row.revoked_at IS NOT NULL THEN
+        RETURN 'ok';
+    END IF;
+    UPDATE public.fluck_vault_instances
+    SET revoked_at = now(), issuance_approved_at = NULL
+    WHERE instance_id = p_instance_id;
+    UPDATE public.fluck_vault_requests
+    SET expires_at = now()
+    WHERE instance_id = p_instance_id
+      AND consumed_at IS NULL
+      AND expires_at > now();
+    DELETE FROM public.fluck_vault_inbox WHERE instance_id = p_instance_id;
+    RETURN 'ok';
+END;
+$$;
+
+ALTER FUNCTION "public"."fluck_vault_revoke_my_instance"("p_instance_id" "text") OWNER TO "postgres";
+
+REVOKE ALL ON FUNCTION "public"."fluck_vault_revoke_my_instance"("p_instance_id" "text") FROM PUBLIC;
+REVOKE ALL ON FUNCTION "public"."fluck_vault_revoke_my_instance"("p_instance_id" "text") FROM "anon";
+GRANT EXECUTE ON FUNCTION "public"."fluck_vault_revoke_my_instance"("p_instance_id" "text") TO "authenticated";
+GRANT EXECUTE ON FUNCTION "public"."fluck_vault_revoke_my_instance"("p_instance_id" "text") TO "service_role";

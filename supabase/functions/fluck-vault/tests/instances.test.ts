@@ -11,7 +11,9 @@ import {
   DEFAULT_PUBLIC_BASE_URL,
   type Dependencies,
   type Instance,
+  instanceFromRow,
   PAGES,
+  type RegisterOutcome,
   resetRateLimits,
   type Rotation,
   type RowInstance,
@@ -75,7 +77,9 @@ interface Harness {
   logs: string[]
 }
 
-function harness(options: { row?: VaultRequestRow | null; env?: boolean } = {}): Harness {
+function harness(
+  options: { row?: VaultRequestRow | null; env?: boolean; registerOutcome?: RegisterOutcome } = {},
+): Harness {
   resetRateLimits()
   const instances = new Map<string, Instance & { revoked?: boolean }>()
   const created: CreateRequest[] = []
@@ -94,7 +98,7 @@ function harness(options: { row?: VaultRequestRow | null; env?: boolean } = {}):
     store: () => Promise.resolve({ outcome: "stored", kind: "cvv" }),
     createRequest: (request) => {
       created.push(request)
-      return Promise.resolve(true)
+      return Promise.resolve("created")
     },
     claimInbox: (ws, instanceId) => {
       claimed.push([ws, instanceId])
@@ -106,6 +110,7 @@ function harness(options: { row?: VaultRequestRow | null; env?: boolean } = {}):
     },
     // Mirrors fluck_vault_register_instance: never a key change.
     registerInstance: (registration) => {
+      if (options.registerOutcome) return Promise.resolve(options.registerOutcome)
       const existing = instances.get(registration.instanceId)
       if (existing && existing.userId !== registration.userId) return Promise.resolve("conflict")
       if (existing?.revoked) return Promise.resolve("revoked")
@@ -128,6 +133,8 @@ function harness(options: { row?: VaultRequestRow | null; env?: boolean } = {}):
       }
       existing.linkPublicKey = rotation.linkPublicKey
       existing.sealPublicKey = rotation.sealPublicKey
+      // The SQL also clears approval and expires the install's unconsumed links.
+      existing.issuanceApproved = false
       return Promise.resolve("ok")
     },
     userFromToken: (token) => Promise.resolve(tokens[token] ?? null),
@@ -663,4 +670,113 @@ Deno.test("a vault request carries no purchase details", async () => {
 
 Deno.test("the cvv copy is constant and never claims a charge", () => {
   assertEquals(PAGES.cvvSubmit, "Send code")
+})
+
+// --------------------------------------------------------------------------------------------
+// Rotation and approval, lifecycle, limits, schema
+// --------------------------------------------------------------------------------------------
+
+Deno.test("a proven rotation does not inherit the operator's approval to mint", async () => {
+  const h = harness()
+  seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL, true)
+  assertEquals((await h.handler(await rotation(TO_B, A.pair.privateKey))).status, 200)
+  resetRateLimits()
+  const response = await h.handler(
+    await signed("/requests", CVV_MINT, B.pair.privateKey, INSTANCE_A),
+  )
+  assertEquals(response.status, 403)
+  assertEquals(await response.json(), { error: "issuance" })
+  assertEquals(h.created.length, 0)
+})
+
+Deno.test("the eleventh live install is refused with 429 limit", async () => {
+  const h = harness({ registerOutcome: "limit" })
+  const response = await h.handler(
+    register({ instanceId: INSTANCE_A, linkPublicKey: A.base64, sealPublicKey: A_SEAL }),
+  )
+  assertEquals(response.status, 429)
+  assertEquals(await response.json(), { error: "limit" })
+})
+
+Deno.test("an install polling its inbox is not throttled by the page limit, nor throttles pages", async () => {
+  const h = harness({ row: row(ROW_A) })
+  seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL)
+  const from = { "x-forwarded-for": "198.51.100.9" }
+  // Ten minutes of five second polling from one address.
+  for (let i = 0; i < 120; i++) {
+    const response = await h.handler(
+      await signed("/inbox/claim", { ws: WS }, A.pair.privateKey, INSTANCE_A, from),
+    )
+    assertEquals(response.status, 200, `poll ${i}`)
+  }
+  // The owner, behind the same address, can still open the link.
+  const opened = await h.handler(
+    new Request(`${DEFAULT_PUBLIC_BASE_URL}/v/${shortId(JTI)}`, {
+      headers: { ...BROWSER, ...from },
+    }),
+  )
+  assertEquals(opened.status, 200)
+})
+
+Deno.test("signed calls are capped per install, not per unverified header", async () => {
+  const h = harness()
+  seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL)
+  seed(h, INSTANCE_B, BOB, B.base64, B_SEAL)
+  let limited = 0
+  for (let i = 0; i < 610; i++) {
+    const response = await h.handler(
+      await signed("/inbox/claim", { ws: WS }, A.pair.privateKey, INSTANCE_A),
+    )
+    if (response.status === 429) limited++
+  }
+  assertEquals(limited, 10)
+  // Unsigned calls naming Bob's install do not spend Bob's budget.
+  for (let i = 0; i < 50; i++) {
+    await h.handler(await signed("/inbox/claim", { ws: WS }, A.pair.privateKey, INSTANCE_B))
+  }
+  const bob = await h.handler(
+    await signed("/inbox/claim", { ws: WS }, B.pair.privateKey, INSTANCE_B),
+  )
+  assertEquals(bob.status, 200)
+})
+
+Deno.test("registration is capped per address", async () => {
+  const h = harness()
+  const body = { instanceId: INSTANCE_A, linkPublicKey: A.base64, sealPublicKey: A_SEAL }
+  const statuses: number[] = []
+  for (let i = 0; i < 21; i++) statuses.push((await h.handler(register(body))).status)
+  assertEquals(statuses.filter((s) => s === 200).length, 20)
+  assertEquals(statuses[20], 429)
+})
+
+Deno.test("a database without the issuance column fails minting with a clear 503", async () => {
+  const old = instanceFromRow(INSTANCE_A, {
+    user_id: ALICE,
+    link_public_key: A.base64,
+    seal_public_key: A_SEAL,
+  })
+  assertEquals(old?.issuanceApproved, null)
+  assertEquals(
+    instanceFromRow(INSTANCE_A, {
+      user_id: ALICE,
+      link_public_key: A.base64,
+      seal_public_key: A_SEAL,
+      issuance_approved: "yes",
+    })?.issuanceApproved,
+    false,
+  )
+  const h = harness()
+  h.instances.set(INSTANCE_A, old!)
+  const response = await h.handler(
+    await signed("/requests", CVV_MINT, A.pair.privateKey, INSTANCE_A),
+  )
+  assertEquals(response.status, 503)
+  assertEquals(await response.json(), { error: "schema" })
+  assertEquals(h.created.length, 0)
+  // Claiming does not depend on the column.
+  resetRateLimits()
+  const claim = await h.handler(
+    await signed("/inbox/claim", { ws: WS }, A.pair.privateKey, INSTANCE_A),
+  )
+  assertEquals(claim.status, 200)
 })

@@ -11,18 +11,27 @@ package ai.rever.boss.updater
  * It mirrors the `when` in [UpdateBanner], which does have an `else`; UpdateBannerVisibilityTest is
  * what keeps the two from drifting.
  */
-fun UpdateState.drawsBanner(): Boolean =
-    when (this) {
-        is UpdateState.UpdateAvailable,
-        is UpdateState.Downloading,
-        is UpdateState.ReadyToInstall,
-        is UpdateState.RestartRequired,
-        is UpdateState.Error,
-        -> true
+internal fun UpdateState.bannerState(automatic: Boolean): UpdateState = if (automatic) UpdateState.Idle else this
 
-        is UpdateState.Idle,
-        is UpdateState.CheckingForUpdates,
-        is UpdateState.UpToDate,
-        is UpdateState.Installing,
-        -> false
-    }
+internal fun shouldShowUpdatePrompt(
+    requested: Boolean,
+    automaticUpdates: Boolean,
+): Boolean = requested && !automaticUpdates
+
+fun UpdateState.drawsBanner(automaticUpdates: Boolean = false): Boolean =
+    !automaticUpdates &&
+        when (this) {
+            is UpdateState.UpdateAvailable,
+            is UpdateState.Downloading,
+            is UpdateState.ReadyToInstall,
+            is UpdateState.RestartRequired,
+            is UpdateState.Error,
+            -> true
+
+            is UpdateState.Idle,
+            is UpdateState.CheckingForUpdates,
+            is UpdateState.UpToDate,
+            is UpdateState.Installing,
+            is UpdateState.InstallOnNextRestart,
+            -> false
+        }

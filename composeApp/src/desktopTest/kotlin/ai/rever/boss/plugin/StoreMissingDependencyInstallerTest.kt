@@ -598,6 +598,57 @@ class StoreMissingDependencyInstallerTest {
             )
         }
 
+    @Test
+    fun `approved artifact must bind the downloaded bytes`() =
+        runTest {
+            val approvedBytes = "approved artifact".toByteArray()
+            val replacementBytes = "replacement artifact".toByteArray()
+            val approvedHash =
+                java.util.HexFormat
+                    .of()
+                    .formatHex(
+                        java.security.MessageDigest
+                            .getInstance("SHA-256")
+                            .digest(approvedBytes),
+                    )
+            var loaded = false
+            val store =
+                FakeStore(info(version = JAR_VERSION).copy(sha256 = approvedHash), downloadBytes = replacementBytes)
+            val result =
+                installer(store, load = {
+                    loaded = true
+                    Result.success(Unit)
+                })
+                    .installArtifact(ApprovedArtifact(PLUGIN_ID, JAR_VERSION, approvedHash))
+            assertTrue(result.isFailure, "Replacement bytes were accepted after matching only metadata; loaded=$loaded")
+            assertFalse(loaded, "No artifact outside the approved digest may be loaded")
+            assertTrue(temp.walkTopDown().none { it.isFile }, "The rejected JAR and signature must be discarded")
+        }
+
+    @Test
+    fun `matching approved artifact is accepted`() =
+        runTest {
+            val bytes = "approved artifact".toByteArray()
+            val hash =
+                java.util.HexFormat
+                    .of()
+                    .formatHex(
+                        java.security.MessageDigest
+                            .getInstance("SHA-256")
+                            .digest(bytes),
+                    )
+            var loaded = false
+            val store = FakeStore(info(version = JAR_VERSION).copy(sha256 = hash), downloadBytes = bytes)
+            val result =
+                installer(store, load = {
+                    loaded = true
+                    Result.success(Unit)
+                })
+                    .installArtifact(ApprovedArtifact(PLUGIN_ID, JAR_VERSION, hash))
+            assertTrue(result.isSuccess, "The matching-artifact control must succeed")
+            assertTrue(loaded)
+        }
+
     /** Counts downloads, to prove two concurrent installs collapse into one. */
     private class CountingStore(
         private val plugin: PluginInfo,

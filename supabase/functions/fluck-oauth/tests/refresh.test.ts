@@ -11,6 +11,7 @@ import { assert, assertEquals } from "@std/assert"
 import { createHandler, type Dependencies, type GrantOwner, type Instance } from "../app.ts"
 import { refreshAccessToken } from "../google.ts"
 import { bodyDigest, signingString } from "../signed.ts"
+import { mintState } from "../state.ts"
 
 const NOW_SECONDS = 1_800_000_000
 const INSTANCE_ID = "instance-abcdefgh-0001"
@@ -252,6 +253,65 @@ Deno.test("a signed but malformed body is a 400, not a Google call", async () =>
     assertEquals(await response.json(), { error: "body" }, body)
     assertEquals(h.sent.length, 0, body)
   }
+})
+
+Deno.test("a body over the cap is a 413 before auth, by declared length or by bytes read", async () => {
+  // 1366 three byte characters: under 4096 UTF-16 units, over 4096 bytes.
+  const wide = JSON.stringify({ refresh_token: "\u20ac".repeat(1366) })
+  assert(wide.length <= 4096 && new TextEncoder().encode(wide).length > 4096)
+  const declared = await signed(BODY)
+  const lying = new Request(declared.url, {
+    method: "POST",
+    headers: { ...Object.fromEntries(declared.headers), "Content-Length": "5000" },
+    body: BODY,
+  })
+  const streamed = await signed("")
+  const chunked = new Request(streamed.url, {
+    method: "POST",
+    headers: Object.fromEntries([...streamed.headers].filter(([k]) => k !== "content-length")),
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(4097))
+        controller.close()
+      },
+    }),
+  })
+  for (const request of [await signed(wide), lying, chunked]) {
+    const h = harness()
+    const response = await h.handler(request)
+    assertEquals(response.status, 413)
+    assertEquals(await response.json(), { error: "body" })
+    assertEquals(h.sent.length, 0)
+    assertEquals(h.logs, ["refresh refused: body size"])
+  }
+})
+
+Deno.test("a body exactly at the cap is read and authenticated", async () => {
+  const pad = 4096 - JSON.stringify({ refresh_token: "1//refresh-token", p: "" }).length
+  const body = JSON.stringify({ refresh_token: "1//refresh-token", p: "x".repeat(pad) })
+  assertEquals(new TextEncoder().encode(body).length, 4096)
+  const response = await harness().handler(await signed(body))
+  assertEquals(response.status, 200)
+})
+
+Deno.test("a valid state signature is not a valid request signature", async () => {
+  const token = await mintState(INSTALL.privateKey, {
+    v: 1,
+    iid: INSTANCE_ID,
+    uid: USER_ID,
+    ws: "ws-abcdefghij",
+    nonce: "n",
+    exp: NOW_SECONDS + 600,
+  })
+  const request = await signed(BODY)
+  const headers = Object.fromEntries(request.headers)
+  headers["x-fluck-signature"] = token.split(".")[1]
+  const h = harness()
+  const response = await h.handler(
+    new Request(request.url, { method: "POST", headers, body: BODY }),
+  )
+  assertEquals(response.status, 401)
+  assertEquals(h.sent.length, 0)
 })
 
 Deno.test("an unconfigured client is a 503 after auth", async () => {

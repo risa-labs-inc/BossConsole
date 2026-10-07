@@ -77,6 +77,32 @@ function form(p: Preferences, s: Session, base: string, saved: boolean) {
   <button class="primary" name="action" value="save">Save settings</button><button name="action" value="reset">Reset to defaults</button></form>`,
   );
 }
+interface AppPreferences {
+  auto_admit: boolean;
+  auto_control: boolean;
+  revision: number;
+}
+function validAppPreferences(value: unknown): value is AppPreferences {
+  const p = value as AppPreferences;
+  return !!p && typeof p.auto_admit === "boolean" &&
+    typeof p.auto_control === "boolean" && Number.isSafeInteger(p.revision) &&
+    p.revision >= 0;
+}
+function appForm(p: AppPreferences, session: Session, base: string): string {
+  return `<h2>BossConsole application sharing</h2><p>These settings govern access after a device explicitly shares its selected windows. They never start screen capture. Guests and manual approval are not supported in this first version; disabling automatic admission prevents new connections.</p>
+  <form method="post" action="${
+    esc(base)
+  }"><input type="hidden" name="csrf" value="${
+    esc(session.csrf)
+  }"><input type="hidden" name="revision" value="${p.revision}">
+  <label><input type="checkbox" name="auto_admit" ${
+    p.auto_admit ? "checked" : ""
+  }> Allow your signed-in devices without approval</label>
+  <label><input type="checkbox" name="auto_control" ${
+    p.auto_control ? "checked" : ""
+  }> Allow your signed-in devices to take control without approval</label>
+  <button class="primary" name="action" value="save-app">Save application sharing settings</button></form>`;
+}
 function validPreferences(v: unknown): v is Preferences {
   const p = v as Preferences;
   return !!p && ["batch", "preview"].includes(p.unfocused_mode) &&
@@ -194,8 +220,20 @@ export function createApp(config?: Config, rpc: Rpc = defaultRpc()) {
           p_actor_id: session.sub,
         });
         if (!validPreferences(prefs)) throw new Error("preferences");
+        let application = "";
+        try {
+          const appPrefs = await rpc("get_user_app_sharing_preferences", {
+            p_actor_id: session.sub,
+          });
+          if (validAppPreferences(appPrefs)) {
+            application = appForm(appPrefs, session, base);
+          }
+        } catch {
+          /* Older backends retain the terminal settings page unchanged. */
+        }
         return response(
-          form(prefs, session, base, url.searchParams.get("saved") === "1"),
+          form(prefs, session, base, url.searchParams.get("saved") === "1")
+            .replace("</main>", application + "</main>"),
         );
       }
       if (req.method !== "POST") {
@@ -239,6 +277,22 @@ export function createApp(config?: Config, rpc: Rpc = defaultRpc()) {
         return response(page("<h2>Invalid request</h2>"), 403);
       }
       const action = fields.get("action");
+      if (action === "save-app") {
+        const revision = Number(fields.get("revision"));
+        if (
+          !fields.get("revision") || !Number.isSafeInteger(revision) ||
+          revision < 0 ||
+          ![null, "on"].includes(fields.get("auto_admit")) ||
+          ![null, "on"].includes(fields.get("auto_control"))
+        ) return response("", 400);
+        await rpc("set_user_app_sharing_preferences", {
+          p_actor_id: session.sub,
+          p_auto_admit: fields.get("auto_admit") === "on",
+          p_auto_control: fields.get("auto_control") === "on",
+          p_revision: revision,
+        });
+        return response("", 303, { "Location": base + "?saved=1" });
+      }
       const mode = action === "reset" ? "batch" : fields.get("mode");
       const fps = action === "reset" ? 4 : Number(fields.get("fps"));
       const revisionText = fields.get("revision");

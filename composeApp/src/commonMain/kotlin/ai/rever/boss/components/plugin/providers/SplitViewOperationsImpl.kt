@@ -2,6 +2,9 @@ package ai.rever.boss.components.plugin.providers
 
 import ai.rever.boss.components.events.FileEventBus
 import ai.rever.boss.components.events.PanelEventBus
+import ai.rever.boss.components.events.TerminalLinkEventBus
+import ai.rever.boss.components.events.parseFileReference
+import ai.rever.boss.components.events.stripFilePrefix
 import ai.rever.boss.components.window_panel.SplitOrientation
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.workspaces.extractRunningWorkspaces
@@ -54,6 +57,18 @@ class SplitViewOperationsImpl(
     ) {
         if (routePluginDeepLink(url, DeepLinkHandler::processDeepLink)) return
         splitViewState.openUrlInActivePanel(url, title, forceNewTab)
+    }
+
+    override val supportsOpenTerminalLink: Boolean get() = true
+
+    override fun openTerminalLink(
+        url: String,
+        sourceTerminalId: String?,
+    ) {
+        if (!isSupportedTerminalLinkRequest(url)) return
+        scope.launch {
+            TerminalLinkEventBus.emitLinkClick(url, sourceTerminalId, windowId)
+        }
     }
 
     override fun openFileInActivePanel(
@@ -317,4 +332,16 @@ internal fun routePluginDeepLink(
     if (!url.startsWith("boss://", ignoreCase = true)) return false
     dispatch(url)
     return true
+}
+
+/** Terminal output must not invoke app schemes or network file openers through this API. */
+internal fun isSupportedTerminalLinkRequest(url: String): Boolean {
+    val isWebLink = url.startsWith("https://", ignoreCase = true) || url.startsWith("http://", ignoreCase = true)
+    if (isWebLink || !url.startsWith("file:")) return isWebLink
+    val path = parseFileReference(stripFilePrefix(url)).path
+    val isNetworkPath = path.length >= 2 && path.take(2).all { it == '/' || it == '\\' }
+    return !isNetworkPath && (
+        path.startsWith("/") ||
+            Regex("^[A-Za-z]:[/\\\\\\\\]").containsMatchIn(path)
+    )
 }

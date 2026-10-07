@@ -32,6 +32,18 @@ actual object PluginUpdateBridge {
     // same plugin directory. Admission therefore belongs to this process-wide bridge.
     private val updates = ExclusivePluginUpdates()
 
+    actual fun startAutomaticUpdates() = AutomaticPluginUpdater.start()
+
+    actual val automaticUpdateStatus: kotlinx.coroutines.flow.StateFlow<String> = AutomaticPluginUpdater.status
+
+    internal suspend fun performAutomaticUpdate(
+        update: UpdateInfo,
+        manager: DynamicPluginManager,
+    ): Result<String> =
+        updates.run(update.pluginId) {
+            performAdmittedUpdate(update.pluginId, manager, update)
+        }
+
     actual suspend fun refreshAll(installed: List<InstalledPluginRef>) {
         // Never offer an update for a protected id: UpdateJarIdentityVet can only
         // refuse such a jar, so the button would re-offer forever, paying a
@@ -61,6 +73,18 @@ actual object PluginUpdateBridge {
                 )
             },
         )
+    }
+
+    private suspend fun performAdmittedUpdate(
+        pluginId: String,
+        manager: DynamicPluginManager,
+        automaticUpdate: UpdateInfo? = null,
+    ): Result<String> {
+        val lease =
+            PluginUpdateLease
+                .acquire(PluginStoreSetup.getPluginDir(), pluginId)
+                .getOrElse { return Result.failure(it) }
+        return lease.use { performLockedUpdate(pluginId, manager, automaticUpdate) }
     }
 
     // Guard returns preserve the protected-id short-circuit and the uninitialized-store
@@ -117,15 +141,17 @@ actual object PluginUpdateBridge {
 
     // Guard returns preserve the distinct preflight failures before any destructive update stage.
     @Suppress("ReturnCount")
-    private suspend fun performAdmittedUpdate(
+    private suspend fun performLockedUpdate(
         pluginId: String,
         manager: DynamicPluginManager,
+        automaticUpdate: UpdateInfo? = null,
     ): Result<String> {
+        val automatic = automaticUpdate != null
         val mgr =
             PluginStoreSetup.updateManager
                 ?: return Result.failure(Exception("Plugin store not initialized"))
         val update =
-            mgr.availableUpdates.value.firstOrNull { it.pluginId == pluginId }
+            automaticUpdate ?: mgr.availableUpdates.value.firstOrNull { it.pluginId == pluginId }
                 ?: return Result.failure(Exception("No update available"))
 
         // This plugin owns a native OS peer bound to the classloader that created it - force-
@@ -135,15 +161,15 @@ actual object PluginUpdateBridge {
         // plugin's classloader, so nothing depending on it is affected either, and asking would
         // be a confusing prompt about an unload that is not going to happen.
         val deferHotReload =
-            manager.getPluginInfo(pluginId)?.state == PluginState.LOADED &&
-                HotReloadPolicy.requiresRestartInsteadOfHotReload(pluginId)
+            initialPluginUpdatePlan(pluginId, manager, automatic)
+                .getOrElse { return Result.failure(it) }
 
         // Ask before downloading anything. This path unloads with `force = true`, so it never
         // met the dependents veto - and never restarted the dependents either, which left them
         // holding a handle into the classloader this update is about to close. Asked here rather
         // than inside `updatePlugin`'s unload lambda so a decline costs no download, and so the
         // question arrives before the "Updating…" status message stops making sense.
-        if (!deferHotReload &&
+        if (!automatic && !deferHotReload &&
             !confirmDependentRestart(pluginId, update.displayName, PluginUnloadIntent.UPDATE, manager)
         ) {
             return Result.failure(DependentRestartDeclinedException(pluginId))
@@ -153,7 +179,6 @@ actual object PluginUpdateBridge {
         val targetFile =
             downloadTargetIn(pluginDir, pluginId, update.newVersion)
                 ?: return Result.failure(Exception("Refusing to download update outside the plugin directory"))
-        val targetPath = targetFile.absolutePath
 
         // Keep the jar this update is about to make unreachable, BEFORE anything downloads.
         //
@@ -171,39 +196,68 @@ actual object PluginUpdateBridge {
             PluginRollbackStore.snapshot(pluginDir, pluginId, installedJar)
         }
 
-        val ownsTransfer = beginTransfer(pluginId, update, currentCoroutineContext()[Job])
-        // Set from `onInstalling`; see discardPartialDownload for what it gates.
-        var swapStarted = false
-        val result =
-            try {
-                mgr.updatePlugin(
-                    pluginId = pluginId,
-                    downloadPath = targetPath,
-                    unloadPlugin = { id ->
-                        if (deferHotReload) Result.success(Unit) else manager.uninstallPlugin(id, force = true).map { }
-                    },
-                    loadPlugin = { path ->
-                        activateUpdate(pluginId, path, manager, deferHotReload)
-                    },
-                    onProgress = { DownloadCenter.progress(pluginId, it) },
-                    onInstalling = {
-                        swapStarted = true
-                        DownloadCenter.phase(pluginId, TransferPhase.INSTALLING)
-                    },
-                )
-            } catch (e: CancellationException) {
-                discardIfUnswapped(swapStarted, targetFile)
-                throw e
-            } finally {
-                if (ownsTransfer) DownloadCenter.end(pluginId)
-            }
+        val artifact = PluginUpdateArtifact(targetFile)
+        val context =
+            PluginUpdateApplyContext(
+                pluginId,
+                manager,
+                automatic,
+                deferHotReload,
+                runningJarPath,
+                artifact::promote,
+            )
+        val result = downloadAndActivate(update, artifact, context)
         return if (result.isSuccess) {
             PluginUpdateRegistry.clear(pluginId)
-            reconcileUpdatedPlugin(pluginDir, pluginId, deferHotReload)
+            reconcileUpdatedPlugin(pluginDir, pluginId, context.deferred)
             Result.success(update.newVersion)
         } else {
-            discardIfUnswapped(swapStarted, targetFile)
+            artifact.discardRejected().onFailure {
+                logger.warn(LogCategory.SYSTEM, "Could not quarantine a rejected update", error = it)
+            }
             Result.failure(result.exceptionOrNull() ?: Exception("Update failed"))
+        }
+    }
+
+    @Suppress("TooGenericExceptionCaught") // Arbitrary plugin/store callbacks cannot strand downloaded artifacts.
+    private suspend fun downloadAndActivate(
+        update: UpdateInfo,
+        artifact: PluginUpdateArtifact,
+        context: PluginUpdateApplyContext,
+    ): Result<Unit> {
+        val mgr = checkNotNull(PluginStoreSetup.updateManager)
+        val ownsTransfer = beginTransfer(context.pluginId, update, currentCoroutineContext()[Job])
+        return try {
+            mgr.updatePluginSnapshot(
+                update = update,
+                downloadPath = artifact.download.absolutePath,
+                unloadPlugin = context::unload,
+                loadPlugin = { _ ->
+                    context
+                        .load(artifact.target.absolutePath) {
+                            activateUpdate(
+                                context.pluginId,
+                                artifact.target.absolutePath,
+                                context.manager,
+                                context.deferred,
+                            )
+                        }.onSuccess { artifact.commit() }
+                },
+                onProgress = { DownloadCenter.progress(context.pluginId, it) },
+                onInstalling = {
+                    DownloadCenter.phase(context.pluginId, TransferPhase.INSTALLING)
+                },
+            )
+        } catch (e: CancellationException) {
+            artifact.discardRejected().onFailure {
+                logger.warn(LogCategory.SYSTEM, "Could not quarantine a rejected update", error = it)
+            }
+            throw e
+        } catch (e: Exception) {
+            artifact.discardRejected().onFailure { cleanup -> e.addSuppressed(cleanup) }
+            Result.failure(e)
+        } finally {
+            if (ownsTransfer) DownloadCenter.end(context.pluginId)
         }
     }
 
@@ -252,7 +306,10 @@ actual object PluginUpdateBridge {
         PluginPersistence.addInstalledPlugin(
             pluginId = pluginId,
             jarPath = jarPath,
-            enabled = existing?.enabled ?: true,
+            enabled =
+                existing?.enabled
+                    ?: PluginPersistence.getInstalledPlugins().firstOrNull { it.pluginId == pluginId }?.enabled
+                    ?: true,
             sourceUrl = PluginPersistence.getSourceUrl(pluginId),
             installedVersion = manifest.version,
         )

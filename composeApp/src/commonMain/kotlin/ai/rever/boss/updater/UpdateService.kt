@@ -96,6 +96,8 @@ expect class UpdateService() {
 
     suspend fun installUpdate(downloadPath: String): InstallOutcome
 
+    suspend fun scheduleUpdate(downloadPath: String): InstallOutcome
+
     /**
      * Delete a staged download the user decided not to install.
      *

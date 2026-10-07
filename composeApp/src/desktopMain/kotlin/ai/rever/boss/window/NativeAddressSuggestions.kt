@@ -40,6 +40,7 @@ internal fun NativeAddressSuggestions(
             initialSize = DpSize(width.dp, 420.dp),
             regionInWindow = region,
             focusable = false,
+            owned = true,
         ) {
             Box(Modifier.padding(8.dp)) { address.suggestions() }
         }

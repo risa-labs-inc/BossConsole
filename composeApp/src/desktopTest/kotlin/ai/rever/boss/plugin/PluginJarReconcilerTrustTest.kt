@@ -118,6 +118,24 @@ class PluginJarReconcilerTrustTest {
     }
 
     @Test
+    fun `a rejected signed higher version never wins startup and persistence returns to the working version`() {
+        val dir = tempPluginDir()
+        val pluginId = "ai.rever.boss.plugin.test.rejected"
+        val working = manifestJar(dir, "working.jar", pluginId, "1.0.0")
+        val rejected = manifestJar(dir, "rejected.jar", pluginId, "2.0.0")
+        signWithTestKey(working, pluginId, "1.0.0")
+        signWithTestKey(rejected, pluginId, "2.0.0")
+        recordInstalled(pluginId, rejected)
+        File("${rejected.absolutePath}.rejected-update").writeText("Failed activation")
+
+        val result = PluginJarReconciler.reconcilePluginDir(dir, pluginIds = null)
+
+        assertEquals(listOf(working), result.winners)
+        assertEquals(working.absolutePath, PluginPersistence.getInstalledPlugin(pluginId)?.jarPath)
+        assertTrue(rejected.exists(), "a failed artifact held by a loader need not be deleted to fence startup")
+    }
+
+    @Test
     fun `a signed jar wins over an unsigned higher version and keeps the persisted path`() {
         val dir = tempPluginDir()
         val pluginId = "ai.rever.boss.plugin.test.trust"
