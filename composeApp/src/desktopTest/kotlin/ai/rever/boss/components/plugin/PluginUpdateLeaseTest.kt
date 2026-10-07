@@ -12,7 +12,10 @@ import java.nio.channels.ReadableByteChannel
 import java.nio.channels.WritableByteChannel
 import java.nio.file.Files
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
@@ -23,6 +26,46 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class PluginUpdateLeaseTest {
+    @Test
+    fun `concurrent first acquisitions for different plugins share newly created lock directory`() {
+        val directory = Files.createTempDirectory("plugin-update-directory-race").toFile()
+        val ready = CountDownLatch(8)
+        val start = CountDownLatch(1)
+        val failures = ConcurrentLinkedQueue<Throwable>()
+        val completed = ConcurrentHashMap.newKeySet<Int>()
+        val workers =
+            (0 until 8).map { index ->
+                thread(name = "plugin-lease-directory-$index", isDaemon = true) {
+                    ready.countDown()
+                    val result =
+                        runCatching {
+                            check(start.await(10, TimeUnit.SECONDS)) { "Start barrier timed out" }
+                            PluginUpdateLease.acquire(directory, "plugin-$index").getOrThrow().use {
+                                completed += index
+                            }
+                        }
+                    result.exceptionOrNull()?.let { failures += it }
+                }
+            }
+        try {
+            assertTrue(ready.await(10, TimeUnit.SECONDS), "Workers did not reach ready barrier")
+            start.countDown()
+            workers.forEach { it.join(TimeUnit.SECONDS.toMillis(10)) }
+            assertTrue(workers.none { it.isAlive }, "Lease acquisition worker did not finish")
+            assertTrue(failures.isEmpty(), "Concurrent acquisition failures: $failures")
+            assertEquals((0 until 8).toSet(), completed)
+            val locks = File(directory, ".plugin-update-locks").listFiles()!!.toList()
+            assertEquals(8, locks.size)
+            assertEquals(8, locks.map { it.name }.toSet().size)
+            val prefix = File(directory, ".plugin-update-locks").canonicalPath + File.separator
+            assertTrue(PluginUpdateProcessRegistry.owners().keys.none { it.startsWith(prefix) })
+        } finally {
+            start.countDown()
+            workers.forEach { it.join(TimeUnit.SECONDS.toMillis(10)) }
+            if (workers.none { it.isAlive }) directory.deleteRecursively()
+        }
+    }
+
     @Test
     fun `separate installers contend for the same disk lease and exceptions release it`() {
         val directory = Files.createTempDirectory("plugin-update-lease").toFile()

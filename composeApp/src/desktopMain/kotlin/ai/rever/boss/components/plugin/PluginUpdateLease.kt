@@ -48,7 +48,7 @@ internal class PluginUpdateLease private constructor(
             val token = Any()
             return try {
                 val directory = File(pluginDir, ".plugin-update-locks")
-                check(directory.isDirectory || directory.mkdirs()) { "Cannot create plugin update lock directory" }
+                check(directory.mkdirs() || directory.isDirectory) { "Cannot create plugin update lock directory" }
                 val name =
                     MessageDigest
                         .getInstance("SHA-256")
