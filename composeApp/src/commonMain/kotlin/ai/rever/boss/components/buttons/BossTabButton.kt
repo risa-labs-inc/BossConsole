@@ -1,5 +1,6 @@
 package ai.rever.boss.components.buttons
 
+import ai.rever.boss.components.common.rememberFaviconContrastFilter
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
 import ai.rever.boss.components.model.detectTabDragGestures
@@ -446,6 +447,7 @@ fun BossTabButton(
                                 painter = painter,
                                 contentDescription = fileName,
                                 modifier = Modifier.size(14.dp),
+                                colorFilter = rememberFaviconContrastFilter(painter, Color.Transparent, colors.panel),
                             )
                         }
 

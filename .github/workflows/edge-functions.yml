@@ -26,6 +26,9 @@ on:
       # The function's behaviour is coupled to the passkey migrations (columns,
       # the session_id index, the RPC grant), so schema edits run these too
       - 'supabase/migrations/**'
+      # redirect tests keep its allow-list in lockstep with these
+      - 'supabase/templates/email/**'
+      - 'supabase/config.toml'
       - '.github/workflows/edge-functions.yml'
   pull_request:
     branches: [main, dev, develop]
@@ -39,6 +42,9 @@ on:
       - 'scripts/app-sharing-maintenance.mjs'
       - 'infra/cloudflare/terminal-relay/**'
       - 'supabase/migrations/**'
+      # redirect tests keep its allow-list in lockstep with these
+      - 'supabase/templates/email/**'
+      - 'supabase/config.toml'
       - '.github/workflows/edge-functions.yml'
   workflow_dispatch:
 

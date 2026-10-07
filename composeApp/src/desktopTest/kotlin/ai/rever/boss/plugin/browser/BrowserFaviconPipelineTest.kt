@@ -49,7 +49,7 @@ class BrowserFaviconPipelineTest {
                 executor = executor,
                 urlProvider = { "https://example.com/" },
                 notifyListeners = { recorder.notified.add(it) },
-                saveFavicon = { url, bitmap ->
+                saveFavicon = { url, bitmap, _ ->
                     recorder.saves.add(url to bitmap)
                     "key-${recorder.saves.size}"
                 },

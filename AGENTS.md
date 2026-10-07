@@ -58,6 +58,21 @@ a reopened view defers installation again. Downloads use `.part` files until adm
 Failed promoted artifacts are quarantined; a `.rejected-update` marker fences startup
 selection if a live loader prevents removal. Host and Toolbox updates/installVersion
 share SHA-256 plugin-ID file locks under `.plugin-update-locks`; never delete lock files.
+Both participants claim a process gate before opening a lease descriptor. Their
+String-only system properties use keys `boss.plugins.updateLease.protocol3.` followed
+by SHA-256 of the UTF-8 canonical lock-file path, with UUID String ownership tokens.
+Capture the Properties object and computed key once per acquisition. Properties.putIfAbsent
+admits exactly one owner; every existing value is busy, including foreign values. Never
+replace an occupied value. Remove only the exact owning String token after confirmed
+successful channel closure. No host/plugin objects or access contexts enter global state;
+Properties.store/list remain string-compatible. Keep this protocol identical to Toolbox's
+PluginUpdateProcessRegistry and PluginUpdateLease. Closing a second same-process descriptor
+can release the holder's POSIX OS lock, so busy contenders must never open it. isOpen=false
+alone is not proof after a failed native close; any uncertain close retains its token across
+repeated closes and requires restarting BOSS. Registry mutation, clearing properties, or
+System.setProperties by arbitrary in-process code is outside this cooperative protocol;
+plugins already share JVM/file access. Both host and Toolbox releases must use protocol 3
+for the shared guarantee. Persistent disk lock names remain SHA-256 of the plugin ID.
 Ordinary idle plugins reload without restarting BOSS; native plugins, disabled plugins,
 plugins with loaded dependents, and multiwindow updates are staged for the next manual
 start. Disabled plugins remain disabled. Protected API/runtime ids use their existing
@@ -2313,6 +2328,8 @@ agents" (`AuthBrandArt.kt` and `auth-brand/index.html`) and the Toolbox wizard's
 workspace by selecting the tools you need." Tools install app-wide, not into a Space.
 
 ## Documentation
+
+- [Create and publish plugins](https://github.com/risa-labs-inc/BossConsole/wiki/Create-and-Publish-a-Plugin) - Toolbox/Tool Creator, coding agents, GitHub repositories and publish keys. Hosted BOSS grants `plugins.create` + `api_key.create` to `user`; refresh the session after a grant.
 
 - [Authenticated IPC rollout](docs/authenticated-ipc-rollout.md): paired runtime release, ownership, and credential lifetime.
 

@@ -12,6 +12,7 @@ This directory contains detailed release notes for each version of BOSS.
 <!-- RELEASE_INDEX_START -->
 | Version | Date | Summary |
 |---------|------|---------|
+| [v9.5.41](v9.5.41.md) | 2026-10-06 | Organisation secrets keep their ownership, management permissions and share attribution when they reach plugins, in process and in KERNEL mode (#554). The IPC contract moves to 1.5.0. |
 | [v9.5.40](v9.5.40.md) | 2026-10-06 | A fresh macOS install no longer crashes on first launch: BOSS restarts itself after the browser engine download, carrying queued links and files across (#1834). The hidden sidebar no longer opens at the window edge in fullscreen. |
 | [v9.5.39](v9.5.39.md) | 2026-10-05 | New windows start in the Planet Berul default Space, and the Space menus lead with your recent Spaces (#1828). Onboarding only offers the default browser and can be skipped, and the sidebar reveals at the window edge. |
 | [v9.5.38](v9.5.38.md) | 2026-10-05 | Compatible plugin updates install automatically once their views close, with per-plugin opt-outs (#1812). The remaining macOS startup crash is fixed by loading the browser toolkit before the JVM starts its threads (#1815). |

@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.cache.FaviconCache
+import ai.rever.boss.cache.FaviconScheme
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import java.awt.image.BufferedImage
@@ -22,7 +23,13 @@ internal class BrowserFaviconPipeline(
     private val executor: Executor,
     private val urlProvider: () -> String,
     private val notifyListeners: (String?) -> Unit,
-    private val saveFavicon: (String, ImageBitmap) -> String? = FaviconCache::saveFavicon,
+    /**
+     * The scheme the page was rendered under, read when the icon is saved. It must be the engine's
+     * own `prefers-color-scheme`, not the BOSS theme: the engine follows the theme asynchronously,
+     * and an icon emitted in between belongs to the scheme the page actually saw.
+     */
+    private val schemeProvider: () -> FaviconScheme? = { null },
+    private val saveFavicon: (String, ImageBitmap, FaviconScheme?) -> String? = FaviconCache::saveFavicon,
     private val warn: (String, Map<String, String>) -> Unit = { _, _ -> },
 ) {
     private sealed interface Pending {
@@ -88,7 +95,7 @@ internal class BrowserFaviconPipeline(
         val cacheKey =
             when (next) {
                 Pending.Cleared -> null
-                is Pending.Icon -> saveFavicon(urlProvider(), next.toImageBitmap())
+                is Pending.Icon -> saveFavicon(urlProvider(), next.toImageBitmap(), schemeProvider())
             }
         notifyListeners(cacheKey)
     }

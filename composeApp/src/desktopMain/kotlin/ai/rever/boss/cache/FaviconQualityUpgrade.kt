@@ -63,6 +63,15 @@ internal fun qualityRefreshDue(
             }
         )
 
+/**
+ * [candidate] when it is larger and shows the same artwork as [page], else [page].
+ *
+ * A monochrome theme variant (GitHub's black octocat for a page showing the white one) is returned
+ * as a recoloured copy in the page's own polarity, never as-is: the site's icon files are fetched
+ * outside the browser, with no `prefers-color-scheme`, so they are usually the light-theme variant,
+ * and handing that back drew a black glyph on a dark tab. Callers that ask "is this the candidate
+ * itself?" (`=== candidate`) therefore see only same-polarity matches.
+ */
 internal fun sharperMatchingFavicon(
     page: TabIcon.Image,
     candidate: TabIcon.Image?,
@@ -70,13 +79,28 @@ internal fun sharperMatchingFavicon(
     val originalSize = page.painter.intrinsicSize
     val newSize = candidate?.painter?.intrinsicSize ?: Size.Zero
     val larger = newSize.width > originalSize.width && newSize.height > originalSize.height
-    return if (candidate != null && larger && matchingArtwork(page, candidate)) candidate else page
+    if (candidate == null || !larger) return page
+    return when (matchingArtwork(page, candidate)) {
+        ArtworkMatch.SAME -> {
+            candidate
+        }
+
+        ArtworkMatch.INVERTED -> {
+            invertedFavicon(candidate)?.takeIf { matchingArtwork(page, it) == ArtworkMatch.SAME } ?: page
+        }
+
+        ArtworkMatch.NONE -> {
+            page
+        }
+    }
 }
+
+private enum class ArtworkMatch { NONE, SAME, INVERTED }
 
 private fun matchingArtwork(
     first: TabIcon.Image,
     second: TabIcon.Image,
-): Boolean {
+): ArtworkMatch {
     val firstSample = faviconSample(first)
     val secondSample = faviconSample(second)
     val a = firstSample.bitmap.toPixelMap()
@@ -88,28 +112,40 @@ private fun matchingArtwork(
     val aspectChange =
         maxOf(firstSample.aspectRatio, secondSample.aspectRatio) /
             minOf(firstSample.aspectRatio, secondSample.aspectRatio)
-    if (aspectChange > 1.5f || coloursA.none { it.alpha > 0.01f } || coloursB.none { it.alpha > 0.01f }) return false
+    val comparable = aspectChange <= 1.5f && coloursA.any { it.alpha > 0.01f } && coloursB.any { it.alpha > 0.01f }
     val colourError = coloursA.indices.sumOf { i -> pixelDifference(coloursA[i], coloursB[i]).toDouble() }.toFloat()
-    return colourError / (coloursA.size * 4) < ARTWORK_DIFFERENCE_LIMIT || monochromeArtworkMatches(coloursA, coloursB)
+    return when {
+        !comparable -> ArtworkMatch.NONE
+        colourError / (coloursA.size * 4) < ARTWORK_DIFFERENCE_LIMIT -> ArtworkMatch.SAME
+        else -> monochromeArtworkMatch(coloursA, coloursB)
+    }
 }
 
-/** Only achromatic artwork can match after inversion; coloured logos must keep their colours. */
-private fun monochromeArtworkMatches(
+/**
+ * Only achromatic artwork can match after inversion; coloured logos must keep their colours.
+ * SAME wins over INVERTED: an icon that looks identical on some background needs no recolouring.
+ */
+private fun monochromeArtworkMatch(
     a: Array<Color>,
     b: Array<Color>,
-): Boolean {
-    if (!a.all(::isMonochrome) || !b.all(::isMonochrome)) return false
-    return listOf(0f, 1f).any { backgroundA ->
-        val first = a.map { compositeLuminance(it, backgroundA) }
-        listOf(0f, 1f).any { backgroundB ->
-            val second = b.map { compositeLuminance(it, backgroundB) }
-            // White artwork on white (or black on black) is blank, not proof of identity.
-            first.max() - first.min() >= 0.25f && second.max() - second.min() >= 0.25f &&
-                (
-                    luminanceDifference(first, second, invert = false) < MONOCHROME_DIFFERENCE_LIMIT ||
-                        luminanceDifference(first, second, invert = true) < MONOCHROME_DIFFERENCE_LIMIT
-                )
+): ArtworkMatch {
+    if (!a.all(::isMonochrome) || !b.all(::isMonochrome)) return ArtworkMatch.NONE
+    val backgrounds = listOf(0f, 1f)
+
+    // White artwork on white (or black on black) is blank, not proof of identity.
+    fun visible(colours: Array<Color>) =
+        backgrounds.map { bg -> colours.map { compositeLuminance(it, bg) } }.filter { it.max() - it.min() >= 0.25f }
+    val firsts = visible(a)
+    val seconds = visible(b)
+
+    fun anyPair(invert: Boolean) =
+        firsts.any { first ->
+            seconds.any { second -> luminanceDifference(first, second, invert) < MONOCHROME_DIFFERENCE_LIMIT }
         }
+    return when {
+        anyPair(invert = false) -> ArtworkMatch.SAME
+        anyPair(invert = true) -> ArtworkMatch.INVERTED
+        else -> ArtworkMatch.NONE
     }
 }
 

@@ -55,7 +55,6 @@ import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.html.HtmlFileOpenMode
 import ai.rever.boss.html.HtmlFileSettingsManager
-import ai.rever.boss.icons.FileIcons
 import ai.rever.boss.keymap.KeymapRecoveryDialog
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.model.KeymapActions
@@ -67,7 +66,6 @@ import ai.rever.boss.plugin.api.PluginLoaderDelegate
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.sandbox.notification.ToastMessage
 import ai.rever.boss.plugin.sandbox.notification.ToastType
-import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
 import ai.rever.boss.plugin.tab.jupyter.JupyterTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabType
@@ -326,20 +324,33 @@ internal fun BossAppDialogs(state: BossAppState) {
         // to do nothing at all - which is exactly what the pane menu's split did until this
         // existed.
         val place: (TabInfo) -> Unit = { tab ->
+            // Capture the placement before a missing handler can suspend and dismissal clears it.
             val split = splitViewState.consumePendingSplit()
-            if (split == null) {
-                val target =
-                    splitViewState.getActiveTabsComponent()
-                        ?: splitViewState.getLastInteractedTabComponent()
-                        ?: state.tabsComponent
-                target.addTab(tab)
-            } else {
-                splitViewState.splitPanel(
-                    split.panelId,
-                    split.direction.orientation,
-                    tabToMove = tab,
-                    placeBefore = split.direction.placeBefore,
-                )
+            splitViewState.requireTabTypeThen(tab.typeId, "Opening ${tab.title}") {
+                // Resolved only now: installing a missing handler can take minutes, and a pane
+                // captured before that may have closed. Landing somewhere visible beats dropping
+                // the tab silently.
+                if (split != null && splitViewState.getPanel(split.panelId) != null) {
+                    splitViewState.splitPanel(
+                        split.panelId,
+                        split.direction.orientation,
+                        tabToMove = tab,
+                        placeBefore = split.direction.placeBefore,
+                    )
+                } else {
+                    if (split != null) {
+                        logger.info(
+                            LogCategory.UI,
+                            "Requested split pane closed before the tab opened - using the active pane",
+                            mapOf("panelId" to split.panelId),
+                        )
+                    }
+                    val target =
+                        splitViewState.getActiveTabsComponent()
+                            ?: splitViewState.getLastInteractedTabComponent()
+                            ?: state.tabsComponent
+                    target.addTab(tab)
+                }
             }
         }
 
@@ -381,20 +392,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                     }
 
                     TabType.FILE -> {
-                        val fileName = path.extractFileName()
-                        val fileIconInfo = FileIcons.forFile(fileName)
-                        val tab =
-                            EditorTabInfo(
-                                id = "editor-${Random.nextLong()}",
-                                typeId = TabTypeId("editor"),
-                                title = fileName,
-                                icon = fileIconInfo.icon,
-                                tabIcon =
-                                    ai.rever.boss.plugin.api.TabIcon
-                                        .Vector(fileIconInfo.icon, fileIconInfo.color),
-                                filePath = path,
-                            )
-                        place(tab)
+                        place(newTabFileInfo(path))
                     }
 
                     TabType.TERMINAL -> {

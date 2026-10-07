@@ -1,5 +1,7 @@
 package ai.rever.boss.platform
 
+import ai.rever.boss.plugin.browser.ownedFileDialog
+import ai.rever.boss.plugin.browser.showModal
 import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -19,7 +21,7 @@ private val filePickerLogger = BossLogger.forComponent("FilePicker")
  * Ceiling on a picked file's size.
  *
  * A 100k-entry export is roughly 10 MB, so this is comfortably above anything
- * real while keeping the read — and the plaintext String it decodes into —
+ * real while keeping the read and the plaintext String it decodes into
  * small enough not to stall the UI or balloon the heap.
  */
 private const val MAX_PICKED_FILE_BYTES = 16L * 1024 * 1024
@@ -29,27 +31,29 @@ actual fun rememberFilePicker(
     onFileSelected: (path: String?, content: String?, tooLarge: Boolean) -> Unit,
     fileExtensions: List<String>,
     title: String,
+    readContent: Boolean,
 ): FilePicker =
-    remember {
-        DesktopFilePicker(onFileSelected, fileExtensions, title)
+    remember(onFileSelected, fileExtensions, title, readContent) {
+        DesktopFilePicker(onFileSelected, fileExtensions, title, readContent)
     }
 
 class DesktopFilePicker(
     private val onFileSelected: (path: String?, content: String?, tooLarge: Boolean) -> Unit,
     private val fileExtensions: List<String>,
     private val title: String = "Select File",
+    private val readContent: Boolean = true,
 ) : FilePicker {
     override fun pickFile() {
         try {
             val fileDialog =
-                FileDialog(null as Frame?, title, FileDialog.LOAD).apply {
-                    // Set file filter for JSON files
+                ownedFileDialog(title, FileDialog.LOAD).apply {
+                    // An empty filter allows any file type.
                     if (fileExtensions.isNotEmpty()) {
                         setFilenameFilter { _, name ->
                             fileExtensions.any { name.endsWith(".$it", ignoreCase = true) }
                         }
                     }
-                    isVisible = true
+                    showModal(directories = false)
                 }
 
             val selectedFile = fileDialog.file
@@ -57,21 +61,15 @@ class DesktopFilePicker(
 
             if (selectedFile != null && selectedDir != null) {
                 val file = File(selectedDir, selectedFile)
-
-                // Bounded read: this runs on the caller's thread (the EDT for a
-                // dialog), and an accidentally-picked multi-gigabyte file would
-                // otherwise freeze the UI on its way to an OutOfMemoryError.
-                if (file.length() > MAX_PICKED_FILE_BYTES) {
+                val selection = pickedFileSelection(file, readContent)
+                if (selection.tooLarge) {
                     filePickerLogger.warn(
                         LogCategory.FILE,
                         "Picked file is too large to read - reporting no selection",
                         mapOf("bytes" to file.length()),
                     )
-                    onFileSelected(null, null, true)
-                    return
                 }
-
-                onFileSelected(file.absolutePath, file.readText(), false)
+                onFileSelected(selection.path, selection.content, selection.tooLarge)
             } else {
                 onFileSelected(null, null, false)
             }
@@ -81,6 +79,23 @@ class DesktopFilePicker(
         }
     }
 }
+
+internal data class PickedFileSelection(
+    val path: String?,
+    val content: String? = null,
+    val tooLarge: Boolean = false,
+)
+
+/** Path-only opens must not inherit the text importer's size limit or decode binary data. */
+internal fun pickedFileSelection(
+    file: File,
+    readContent: Boolean,
+): PickedFileSelection =
+    when {
+        !readContent -> PickedFileSelection(file.absolutePath)
+        file.length() > MAX_PICKED_FILE_BYTES -> PickedFileSelection(null, tooLarge = true)
+        else -> PickedFileSelection(file.absolutePath, file.readText())
+    }
 
 /**
  * Desktop implementation of pickSaveFile using AWT FileDialog.

@@ -172,6 +172,8 @@ fun ApplicationScope.BossWindow(
         undecorated = SystemUtils.isMacOS,
         transparent = SystemUtils.isMacOS,
     ) {
+        // First, before the window is shown maximized: see MaximizedBoundsPin.kt.
+        PinMaximizedBounds(window)
         ApplyBossWindowIcon(window)
         val windowGlass = rememberNativeWindowGlass(window, isFullScreen)
 

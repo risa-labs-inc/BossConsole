@@ -134,7 +134,7 @@ export const LIVE_SESSIONS_REDIRECTS: ReadonlySet<string> = new Set([
 // templates' `$optimist` predicate.
 export const OPTIMIST_REDIRECTS: ReadonlySet<string> = new Set([
   "https://optimist.risalabs.ai/auth/callback",
-  "https://spark-7226.basa-tone.ts.net/auth/callback", // DGX tailnet host, pre-domain
+  "http://127.0.0.1:8796/auth/callback", // local optimist chat server (OPTIMIST_PORT default)
 ])
 
 export function isLiveSessionsRedirect(redirectTo: string | undefined): boolean {
@@ -152,6 +152,10 @@ export const FLUCK_WEB_REDIRECTS: ReadonlySet<string> = new Set([
 
 export function isFluckWebRedirect(redirectTo: string | undefined): boolean {
   return !!redirectTo && FLUCK_WEB_REDIRECTS.has(redirectTo)
+}
+
+export function isOptimistRedirect(redirectTo: string | undefined): boolean {
+  return !!redirectTo && OPTIMIST_REDIRECTS.has(redirectTo)
 }
 
 /**
@@ -405,7 +409,7 @@ app.get("/", (c) => {
   // emitted: the origin comes from `url=` after an allow-list check, never from the caller freely.
   const webBrand = isLiveSessionsRedirect(redirectTo)
     ? BRANDS.web
-    : redirectTo && OPTIMIST_REDIRECTS.has(redirectTo) ? BRANDS.optimist
+    : isOptimistRedirect(redirectTo) ? BRANDS.optimist
     : isFluckWebRedirect(redirectTo) ? BRANDS.fluck : null
   if (webBrand) {
     const origin = firstPartyGoTrueOrigin(confirmationUrl)

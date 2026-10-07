@@ -14,7 +14,7 @@
   Fifth brand ($fluck): the fluck-web function (fluck.risaboss.com), same web shape, own name.
   Exact-match URLs only, disjoint from optimist/web, so fluck never matches those.
 */}}{{ $bossterm := eq .RedirectTo "bossterm://auth/verify" -}}
-{{ $optimist := or (eq .RedirectTo "https://optimist.risalabs.ai/auth/callback") (eq .RedirectTo "https://spark-7226.basa-tone.ts.net/auth/callback") -}}
+{{ $optimist := eq .RedirectTo "https://optimist.risalabs.ai/auth/callback" -}}
 {{ $fluck := or (eq .RedirectTo "https://fluck.risaboss.com/auth") (eq .RedirectTo "https://api.risaboss.com/functions/v1/fluck-web/auth") -}}
 {{ $web := or (eq .RedirectTo "https://cli.risaboss.com/auth") (eq .RedirectTo "https://api.risaboss.com/functions/v1/live-sessions/auth") -}}
 <!DOCTYPE html>

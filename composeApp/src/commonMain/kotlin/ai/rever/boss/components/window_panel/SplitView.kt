@@ -269,7 +269,7 @@ class SplitViewState(
      *
      * @param purpose what the user was trying to do, for the dialog's copy.
      */
-    private fun requireTabTypeThen(
+    internal fun requireTabTypeThen(
         typeId: TabTypeId,
         purpose: String,
         open: () -> Unit,
