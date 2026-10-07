@@ -34,6 +34,7 @@ import java.nio.channels.SocketChannel
 import java.nio.charset.StandardCharsets
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
@@ -264,7 +265,7 @@ internal fun parseInstanceDescriptor(text: String): InstanceDescriptor? {
     val fieldsUsable = transport != null && endpoint != null && token != null
 
     return if (fieldsUsable && (pidField == null || pid != null)) {
-        InstanceDescriptor(transport, endpoint, token, pid)
+        InstanceDescriptor(transport, endpoint, token, pid?.takeIf { it > 0 })
     } else {
         null
     }
@@ -295,12 +296,35 @@ internal enum class DescriptorTrust {
 
 /**
  * Checks whether the OS process with [pid] is currently alive.
- * Returns false if the process does not exist, has exited, or cannot be queried.
+ *
+ * Advisory-when-alive, authoritative-when-dead:
+ * - Returns false ONLY when the process is definitely known to be dead (ProcessHandle says not alive).
+ * - Returns true if the process is alive, OR if checking fails (security exception, etc.),
+ *   or if pid <= 0, ensuring we fall back to the channel-token ping check rather than prematurely
+ *   reclaiming resources.
+ *
+ * Note: PIDs are only meaningful on the local machine and namespace that wrote the descriptor.
+ * Across containers, VMs, or network filesystems (e.g. NFS ~/.boss), a foreign PID may appear
+ * nonexistent locally, causing fallback to ping when the safe default (true) is used on error.
  */
-internal fun isProcessAlive(pid: Long): Boolean =
-    runCatching {
+internal fun isProcessAlive(pid: Long): Boolean {
+    if (pid <= 0) return true
+    return runCatching {
         ProcessHandle.of(pid).map { it.isAlive }.orElse(false)
-    }.getOrDefault(false)
+    }.getOrDefault(true)
+}
+
+/**
+ * Decides whether [descriptor] can be treated as definitively stale without a network ping.
+ *
+ * Advisory-when-alive, authoritative-when-dead:
+ * Only returns true if the descriptor has a recorded positive PID, is owned by the current
+ * user without symlinks, and the OS confirms the process is dead.
+ */
+internal fun isDefinitelyStale(descriptor: InstanceDescriptor): Boolean =
+    descriptor.pid != null &&
+        SingleInstanceFiles.isOwnedByCurrentUser() &&
+        !isProcessAlive(descriptor.pid)
 
 /**
  * Decides how much trust a descriptor's recorded pid buys the endpoint.
@@ -879,6 +903,30 @@ internal object SingleInstanceFiles {
     }
 
     /**
+     * Checks whether [descriptorFile] is owned by the current user.
+     * Returns false if the file does not exist, is a symlink, cannot be inspected,
+     * or is owned by another user, ensuring we never infer a dead-PID verdict across user
+     * or privilege boundaries.
+     */
+    fun isOwnedByCurrentUser(): Boolean =
+        runCatching {
+            val path = descriptorFile.toPath()
+            if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(path)) {
+                false
+            } else {
+                val expectedOwner = System.getProperty("user.name")
+                val actualOwner = Files.getOwner(path, LinkOption.NOFOLLOW_LINKS)?.name
+                if (expectedOwner == null || actualOwner == null) {
+                    false
+                } else {
+                    // On Windows, elevated instances may be owned by BUILTIN\Administrators,
+                    // in which case this safely falls back to false (requiring ping).
+                    actualOwner == expectedOwner || actualOwner.endsWith("\\$expectedOwner")
+                }
+            }
+        }.getOrDefault(false)
+
+    /**
      * Withdraws the descriptor, then the socket file. That order matters: a
      * descriptor pointing at a removed socket is the state
      * [SingleInstanceManager.acquireLock] reclaims cleanly, while a socket with no
@@ -1023,8 +1071,10 @@ internal object SingleInstanceWire {
 
         return try {
             // A socket file left by a crashed instance would make bind fail with
-            // "address already in use". The caller has already established that
-            // nothing answers there, so removing it is safe.
+            // "address already in use". The caller has already either established that
+            // nothing answers there via respondsToPing, or inferred staleness from a dead PID.
+            // Note: a false dead-PID verdict would unlink a live instance's socket and bind
+            // over it, which is why isProcessAlive must never fail open.
             Files.deleteIfExists(path)
 
             val channel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
@@ -1854,7 +1904,7 @@ object SingleInstanceManager {
     }
 
     private fun shouldReclaimExisting(existing: InstanceDescriptor): Boolean {
-        if (existing.pid != null && !isProcessAlive(existing.pid)) {
+        if (isDefinitelyStale(existing)) {
             logger.debug(
                 LogCategory.SYSTEM,
                 "Reclaiming a single-instance descriptor whose recorded process is gone",
@@ -2620,9 +2670,10 @@ object SingleInstanceManager {
         if (!validPluginDevId(pluginId)) {
             return ReloadResult.Failed("Invalid plugin id for dev reload: '$pluginId'")
         }
-        val target =
-            readSafeDescriptor()
-                ?: return ReloadResult.HostOffline("BossConsole is not running.")
+        val (target, offlineResult) = resolveTargetForReload()
+        if (target == null) {
+            return offlineResult ?: ReloadResult.HostOffline("BossConsole is not running.")
+        }
         val message = "$PROTOCOL_VERSION ${target.token} $VERB_PLUGIN_DEV_RELOAD $pluginId"
         return try {
             val response =
@@ -2631,14 +2682,7 @@ object SingleInstanceManager {
                     message,
                     timeoutMs = timeoutMs.toLong(),
                     maxResponseBytes = MAX_RESPONSE_BYTES,
-                ) ?: return if (SingleInstanceWire.respondsToPing(target)) {
-                    ReloadResult.TimedOut(
-                        "BossConsole is running but did not confirm the reload within $timeoutMs ms; " +
-                            "it may still be reloading",
-                    )
-                } else {
-                    ReloadResult.HostOffline("BossConsole is offline or the channel stopped answering")
-                }
+                ) ?: return handleReloadExchangeTimeout(target, timeoutMs)
 
             when {
                 response == RESPONSE_BUSY -> {
@@ -2670,6 +2714,59 @@ object SingleInstanceManager {
             ReloadResult.HostOffline("BossConsole is offline (connection refused)")
         } catch (e: Exception) {
             ReloadResult.Failed("IPC communication error: ${e.message}")
+        }
+    }
+
+    private fun resolveTargetForReload(): Pair<InstanceDescriptor?, ReloadResult.HostOffline?> {
+        val target =
+            SingleInstanceFiles.read()
+                ?: return null to ReloadResult.HostOffline("BossConsole is not running.")
+        val trust = descriptorTrust(target)
+        return when {
+            isDefinitelyStale(target) -> {
+                null to ReloadResult.HostOffline("BossConsole is offline (instance process is not running)")
+            }
+
+            trust == DescriptorTrust.FORGED -> {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Ignoring a single-instance descriptor whose recorded owner is not the live process",
+                    mapOf(
+                        "transport" to target.transport.name,
+                        "endpoint" to target.endpoint,
+                        "pid" to target.pid,
+                        "trust" to trust.name,
+                    ),
+                )
+                null to ReloadResult.HostOffline("BossConsole is not running.")
+            }
+
+            else -> {
+                target to null
+            }
+        }
+    }
+
+    private fun handleReloadExchangeTimeout(
+        target: InstanceDescriptor,
+        timeoutMs: Int,
+    ): ReloadResult {
+        val freshTarget = SingleInstanceFiles.read()
+        return when {
+            freshTarget != null && isDefinitelyStale(freshTarget) -> {
+                ReloadResult.HostOffline("BossConsole is offline (instance process is not running)")
+            }
+
+            SingleInstanceWire.respondsToPing(target) -> {
+                ReloadResult.TimedOut(
+                    "BossConsole is running but did not confirm the reload within $timeoutMs ms; " +
+                        "it may still be reloading",
+                )
+            }
+
+            else -> {
+                ReloadResult.HostOffline("BossConsole is offline or the channel stopped answering")
+            }
         }
     }
 
