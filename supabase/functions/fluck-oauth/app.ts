@@ -225,19 +225,22 @@ async function client(request: Request, deps: Dependencies): Promise<Response> {
     return json(405, { error: "method" })
   }
   // Untrimmed: the exchange sends the env value as is, and the two must be the same string.
+  // Slack's is untrimmed for the same reason.
   const clientId = deps.env("GOOGLE_WEB_CLIENT_ID")
-  if (!clientId?.trim()) {
+  const slackClientId = deps.env("SLACK_CLIENT_ID")
+  // Trimmed: nothing here sends it to GitHub. A server-side GitHub exchange must reuse this value.
+  const githubClientId = deps.env("GITHUB_OAUTH_CLIENT_ID")?.trim()
+  // Each id is optional and omitted, not null, when unset; 503 only when none is configured.
+  const ids = {
+    ...(clientId?.trim() ? { client_id: clientId } : {}),
+    ...(githubClientId ? { github_client_id: githubClientId } : {}),
+    ...(slackClientId?.trim() ? { slack_client_id: slackClientId } : {}),
+  }
+  if (Object.keys(ids).length === 0) {
     deps.log("client unconfigured")
     return json(503, { error: "unconfigured" })
   }
-  // The GitHub device flow and Slack ids are public too and optional: omitted, not null, when
-  // unset. Slack's is untrimmed for the same reason as Google's.
-  const body: Record<string, string> = { client_id: clientId }
-  const githubClientId = deps.env("GITHUB_OAUTH_CLIENT_ID")?.trim()
-  if (githubClientId) body.github_client_id = githubClientId
-  const slackClientId = deps.env("SLACK_CLIENT_ID")
-  if (slackClientId?.trim()) body.slack_client_id = slackClientId
-  return json(200, body)
+  return json(200, ids)
 }
 
 /** A callback whose state verified and whose nonce this request now owns. */

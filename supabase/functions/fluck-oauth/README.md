@@ -37,7 +37,7 @@ that crosses between them is the secret, through the Secret Manager.
 | `GET /slack/callback` | the signed `state`  | Slack: verifies, exchanges, stores the `xoxp-` user token, renders one sentence                                   |
 | `POST /refresh`       | signed install call | Google refresh token in, access token out; nothing stored or logged                                               |
 | `GET /health`         | none                | `{ ok, configured: { clientId, clientSecret, githubClientId, slackClientId, slackClientSecret } }`, booleans only |
-| `GET /client`         | none                | `{ client_id, github_client_id?, slack_client_id? }`, the public ids the plugin needs                             |
+| `GET /client`         | none                | `{ client_id?, github_client_id?, slack_client_id? }`, the public ids set; 503 only if none                       |
 
 `ok` is the Google pair only; GitHub and Slack are optional and never make `/health` a 503.
 
@@ -86,14 +86,14 @@ them.
 Set with `supabase secrets set --project-ref pcnwqamqdnsadranufjv …`. `SUPABASE_URL` and
 `SUPABASE_SERVICE_ROLE_KEY` are injected by the platform and are not set by hand.
 
-| Variable                   | Required | What it is                                                                                                                 |
-| -------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `GOOGLE_WEB_CLIENT_ID`     | yes      | The Google OAuth client of type **Web application**                                                                        |
-| `GOOGLE_WEB_CLIENT_SECRET` | yes      | Its client secret. This function is the only holder; the plugin never sees it                                              |
-| `GITHUB_OAUTH_CLIENT_ID`   | no       | Public client id of the risa-labs-inc GitHub OAuth App with Device Flow enabled; served at `/client` as `github_client_id` |
-| `SLACK_CLIENT_ID`          | no       | Public client id of the Fluck Slack app; served at `/client` as `slack_client_id`                                          |
-| `SLACK_CLIENT_SECRET`      | no       | Its client secret. Without both Slack variables `/slack/callback` renders the unconfigured page                            |
-| `PUBLIC_BASE_URL`          | no       | Defaults to `https://pcnwqamqdnsadranufjv.functions.supabase.co/fluck-oauth`. Set it when the custom domain lands          |
+| Variable                   | Required | What it is                                                                                                                                                  |
+| -------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GOOGLE_WEB_CLIENT_ID`     | yes      | The Google OAuth client of type **Web application**                                                                                                         |
+| `GOOGLE_WEB_CLIENT_SECRET` | yes      | Its client secret. This function is the only holder; the plugin never sees it                                                                               |
+| `GITHUB_OAUTH_CLIENT_ID`   | no       | Public client id (`Ov23…`) of the risa-labs-inc GitHub **OAuth App** (not a GitHub App) with Device Flow enabled; served at `/client` as `github_client_id` |
+| `SLACK_CLIENT_ID`          | no       | Public client id of the Fluck Slack app; served at `/client` as `slack_client_id`                                                                           |
+| `SLACK_CLIENT_SECRET`      | no       | Its client secret. Without both Slack variables `/slack/callback` renders the unconfigured page                                                             |
+| `PUBLIC_BASE_URL`          | no       | Defaults to `https://pcnwqamqdnsadranufjv.functions.supabase.co/fluck-oauth`. Set it when the custom domain lands                                           |
 
 There is no state key. Each install signs with the Ed25519 key it registered through fluck-vault's
 `POST /instances`, and the install row (not the token) decides whose secrets it may write.
