@@ -90,6 +90,13 @@ class CLICommandHandler private constructor() {
     }
 
     /**
+     * Removes and returns the commands still waiting for [initialize], for a process about to
+     * relaunch itself (see `RelaunchHandoff`). The queue stays not-ready, so a command that arrives
+     * after this call waits as before and is lost only if the relaunch then goes ahead.
+     */
+    fun takeQueuedForRelaunch(): List<CLICommand> = initializationQueue.drainQueued()
+
+    /**
      * Mark terminal handler as ready and process queued terminal events.
      * Should be called from BossApp.kt after TerminalEventBus listener is set up.
      */
@@ -569,6 +576,16 @@ internal class ReadinessQueue<T> {
             } else {
                 deferred.addLast(value)
                 false
+            }
+        }
+
+    /** Transfers every deferred value to the caller in FIFO order without marking the queue ready. */
+    fun drainQueued(): List<T> =
+        synchronized(lock) {
+            buildList(deferred.size) {
+                while (deferred.isNotEmpty()) {
+                    add(deferred.removeFirst())
+                }
             }
         }
 

@@ -1,5 +1,12 @@
 package ai.rever.boss.plugin.packs
 
+import ai.rever.boss.mcp.ApprovedArtifact
+import ai.rever.boss.mcp.McpPreparationResult
+import ai.rever.boss.mcp.McpToolPreparer
+import ai.rever.boss.mcp.PackPluginDisplay
+import ai.rever.boss.mcp.PackRuleDisplay
+import ai.rever.boss.mcp.PreparedPackDisplayModel
+import ai.rever.boss.mcp.executionObject
 import ai.rever.boss.plugin.api.McpToolArgs
 import ai.rever.boss.plugin.api.McpToolDefinition
 import ai.rever.boss.plugin.api.McpToolProvider
@@ -23,7 +30,8 @@ import kotlinx.serialization.json.put
 class PluginPackMcpToolProvider(
     private val effects: PluginPackEffects,
     private val jobs: PluginPackJobs,
-) : McpToolProvider {
+) : McpToolProvider,
+    McpToolPreparer {
     override val providerId: String = PluginPackParser.PACK_PROVIDER_ID
 
     override fun tools(): List<McpToolDefinition> =
@@ -57,6 +65,202 @@ class PluginPackMcpToolProvider(
             ),
         )
 
+    @Suppress("ReturnCount", "LongMethod")
+    override suspend fun prepareInvocation(
+        toolName: String,
+        args: McpToolArgs,
+    ): McpPreparationResult? {
+        if (toolName != "pack_apply") return null
+
+        val running = jobs.status(null)?.takeIf { it.state == PackJobState.RUNNING }
+        if (running != null) {
+            return McpPreparationResult.Rejected(
+                McpToolResult(
+                    "Pack '${running.packId}' is still being applied (job ${running.id}). " +
+                        "Wait for it with pack_status, then apply again.",
+                    isError = true,
+                ),
+            )
+        }
+
+        val pack =
+            PluginPackParser.parse(args.raw).getOrElse {
+                return McpPreparationResult.Rejected(invalid(it))
+            }
+
+        val snapshot = effects.snapshot(pack)
+        val plan = PluginPackPlanner.plan(pack, snapshot)
+
+        // Reject an apply whose dependency closure is unresolved, cyclic, truncated, or too large to display fully.
+        for (step in plan.plugins) {
+            val rejection = validateClosure(pack.id, step)
+            if (rejection != null) return rejection
+        }
+
+        val pluginsDisplay =
+            plan.plugins.map { step ->
+                val extraArtifacts =
+                    step.closure?.let { closure ->
+                        closure.artifacts
+                            .filterNot { it.pluginId == step.plugin.pluginId }
+                            .ifEmpty {
+                                closure.alsoInstalls.map { id ->
+                                    val listing = snapshot.store[id] as? StoreListing.Published
+                                    val ver = listing?.latest.orEmpty()
+                                    val sha = listing?.latestSha256.orEmpty()
+                                    ApprovedArtifact(id, ver, sha)
+                                }
+                            }
+                    } ?: emptyList()
+                PackPluginDisplay(
+                    pluginId = step.plugin.pluginId,
+                    action = step.kind.name.lowercase(),
+                    targetVersion = step.targetVersion,
+                    targetSha256 = step.targetSha256,
+                    installedVersion = step.installedVersion,
+                    optional = step.plugin.optional,
+                    extraDependencies = extraArtifacts,
+                )
+            }
+
+        val rulesDisplay =
+            plan.rules.map { step ->
+                PackRuleDisplay(
+                    scope =
+                        step.rule.scope.name
+                            .lowercase(),
+                    subject = step.rule.subject,
+                    action = step.rule.action.name,
+                    outcome = step.kind.name.lowercase(),
+                    existing = step.existing?.name,
+                )
+            }
+
+        val displayModel =
+            PreparedPackDisplayModel(
+                packId = pack.id,
+                plugins = pluginsDisplay,
+                rules = rulesDisplay,
+            )
+
+        val artifacts = mutableListOf<ApprovedArtifact>()
+        for (step in plan.plugins) {
+            val closure = step.closure
+            if (closure != null && closure.artifacts.isNotEmpty()) {
+                artifacts.addAll(closure.artifacts)
+            } else if (step.targetVersion != null) {
+                artifacts.add(
+                    ApprovedArtifact(
+                        pluginId = step.plugin.pluginId,
+                        version = step.targetVersion,
+                        sha256 = step.targetSha256 ?: "",
+                    ),
+                )
+            }
+        }
+
+        val blankArtifact = artifacts.firstOrNull { it.sha256.isBlank() }
+        if (blankArtifact != null) {
+            return McpPreparationResult.Rejected(
+                McpToolResult(
+                    "Cannot apply pack '${pack.id}': store provides no SHA-256 hash for plugin " +
+                        "'${blankArtifact.pluginId}'.",
+                    isError = true,
+                ),
+            )
+        }
+
+        val prepared =
+            PreparedPackApply(
+                pack = pack,
+                plan = plan,
+                snapshot = snapshot,
+                stamps = snapshot.stamps,
+                artifacts = artifacts,
+                displayModel = displayModel,
+            )
+
+        return McpPreparationResult.Prepared(
+            displayModel = displayModel,
+            executionObject = prepared,
+            requiresFreshApproval = true,
+        )
+    }
+
+    @Suppress("ReturnCount")
+    private fun validateClosure(
+        packId: String,
+        step: PluginStep,
+    ): McpPreparationResult.Rejected? {
+        val closure = step.closure ?: return null
+        if (closure.cyclic) {
+            return McpPreparationResult.Rejected(
+                McpToolResult(
+                    "Cannot apply pack '$packId': dependency cycle detected for plugin " +
+                        "'${step.plugin.pluginId}'.",
+                    isError = true,
+                ),
+            )
+        }
+        if (closure.truncated) {
+            return McpPreparationResult.Rejected(
+                McpToolResult(
+                    "Cannot apply pack '$packId': dependency closure for plugin " +
+                        "'${step.plugin.pluginId}' was truncated.",
+                    isError = true,
+                ),
+            )
+        }
+        if (closure.unresolved.isNotEmpty()) {
+            val unresolved = closure.unresolved.sorted().joinToString(", ")
+            return McpPreparationResult.Rejected(
+                McpToolResult(
+                    "Cannot apply pack '$packId': unresolved dependencies for plugin " +
+                        "'${step.plugin.pluginId}': $unresolved.",
+                    isError = true,
+                ),
+            )
+        }
+        if (closure.order.size > MAX_CLOSURE_DISPLAY_SIZE) {
+            return McpPreparationResult.Rejected(
+                McpToolResult(
+                    "Cannot apply pack '$packId': dependency closure for plugin '${step.plugin.pluginId}' " +
+                        "is too large to display (${closure.order.size} plugins).",
+                    isError = true,
+                ),
+            )
+        }
+        return validateClosureArtifacts(packId, step, closure)
+    }
+
+    @Suppress("ReturnCount")
+    private fun validateClosureArtifacts(
+        packId: String,
+        step: PluginStep,
+        closure: InstallClosure,
+    ): McpPreparationResult.Rejected? {
+        if (closure.artifacts.size != closure.order.size) {
+            return McpPreparationResult.Rejected(
+                McpToolResult(
+                    "Cannot apply pack '$packId': incomplete artifact resolution for plugin " +
+                        "'${step.plugin.pluginId}'.",
+                    isError = true,
+                ),
+            )
+        }
+        val blankClosureArtifact = closure.artifacts.firstOrNull { it.sha256.isBlank() }
+        if (blankClosureArtifact != null) {
+            return McpPreparationResult.Rejected(
+                McpToolResult(
+                    "Cannot apply pack '$packId': store provides no SHA-256 hash for dependency " +
+                        "'${blankClosureArtifact.pluginId}'.",
+                    isError = true,
+                ),
+            )
+        }
+        return null
+    }
+
     private suspend fun plan(args: McpToolArgs): McpToolResult {
         val pack = PluginPackParser.parse(args.raw).getOrElse { return invalid(it) }
         val plan = PluginPackPlanner.plan(pack, effects.snapshot(pack))
@@ -64,8 +268,14 @@ class PluginPackMcpToolProvider(
     }
 
     private fun apply(args: McpToolArgs): McpToolResult {
-        val pack = PluginPackParser.parse(args.raw).getOrElse { return invalid(it) }
-        return when (val start = jobs.start(pack)) {
+        val prepared =
+            args.executionObject<PreparedPackApply>()
+                ?: return McpToolResult(
+                    "Preparation was required for pack_apply but the prepared execution plan is missing.",
+                    isError = true,
+                )
+        val start = jobs.start(prepared)
+        return when (start) {
             is PluginPackJobs.Start.Started -> {
                 McpToolResult(PluginPackJson.job(start.job).toString())
             }
@@ -102,6 +312,7 @@ class PluginPackMcpToolProvider(
     }
 
     private companion object {
+        private const val MAX_CLOSURE_DISPLAY_SIZE = 25
         private const val STRING_LIST = """{"type":"array","items":{"type":"string"}}"""
         val PACK_SCHEMA =
             """{"type":"object","required":["pack"],"properties":{""" +

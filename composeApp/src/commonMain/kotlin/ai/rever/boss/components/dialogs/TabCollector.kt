@@ -2,6 +2,7 @@ package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.components.workspaces.WorkspaceManager
+import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.topofmind.ActiveTab
 import ai.rever.boss.topofmind.TopOfMindStateHolder
 
@@ -20,7 +21,10 @@ object TabCollector {
      * @param workspaceManager The workspace manager for resolving workspace info
      * @return List of all active tabs across all windows
      */
-    fun collectAllTabs(workspaceManager: WorkspaceManager): List<ActiveTab> {
+    fun collectAllTabs(
+        workspaceManager: WorkspaceManager =
+            ai.rever.boss.components.workspaces.workspaceManager,
+    ): List<ActiveTab> {
         val allWindowStates = SplitViewStateRegistry.getAllStates()
         val allTabs = mutableListOf<ActiveTab>()
 

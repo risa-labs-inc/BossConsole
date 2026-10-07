@@ -88,6 +88,13 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 )
             }
 
+            normalizedName in setOf("get_workspace_context", "get_active_editor_file") -> {
+                McpRiskAssessment(
+                    McpRiskLevel.HIGH,
+                    "Discloses open URLs, file paths, and project structure across workspaces via '$toolName'",
+                )
+            }
+
             // Read-only / safe tools
             normalizedName in READ_ONLY_TOOLS -> {
                 McpRiskAssessment(McpRiskLevel.LOW, "Read-only tool (returned data may be sensitive) '$toolName'")

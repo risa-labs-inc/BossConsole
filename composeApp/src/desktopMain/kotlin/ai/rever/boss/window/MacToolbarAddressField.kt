@@ -23,9 +23,10 @@ internal class MacToolbarAddressField {
         val view = field ?: create(item, target)
         field = view
         val changedBrowser = identity != input.identity
-        if (changedBrowser) send(pointer(view, "window"), "makeFirstResponder:", null)
+        if (changedBrowser) editing.releaseForPage()
         editing.view = view
         editing.update(input, changedBrowser)
+        claimEditorFocus()
         val searchCell = pointer(pointer(view, "cell"), "searchButtonCell")
         val image =
             favicon.takeIf { input.address?.text == input.value } ?: pointer(
@@ -41,7 +42,7 @@ internal class MacToolbarAddressField {
     }
 
     fun updateBounds(window: Pointer) {
-        val view = field?.takeIf { pointer(it, "window") == window } ?: return
+        val view = field?.takeIf { ownsNativeToolbarView(window, it) } ?: return
         val next = nativeAddressBounds(view, window) ?: return
         javax.swing.SwingUtilities.invokeLater { if (!editing.closed) bounds.value = next }
     }
@@ -50,19 +51,41 @@ internal class MacToolbarAddressField {
         val view = field ?: return
         send(pointer(view, "window"), "makeFirstResponder:", view)
         send(view, "selectText:", null)
+        claimEditorFocus()
+    }
+
+    fun performShortcut(command: String): Boolean {
+        val available = !editing.closed && editing.input != null
+        if (available && command == "focusAddress") focus()
+        val editor = editing.view?.takeIf { available }?.let { pointer(it, "currentEditor") } ?: return false
+        val window = pointer(editing.view, "window")
+        val ownsEditor = !editing.closed && editing.active && pointer(window, "firstResponder") == editor
+        val handled = ownsEditor && (command == "focusAddress" || MacToolbarRuntime.supports(editor, command))
+        if (handled && command != "focusAddress") {
+            send(editor, command, null)
+            revealNativeAddressCaret(editor)
+        }
+        return handled
+    }
+
+    fun claimEditorFocus() {
+        val editor = pointer(editing.view, "currentEditor")
+        if (editor != null && pointer(pointer(editing.view, "window"), "firstResponder") == editor) {
+            editing.notification("begin")
+        }
     }
 
     private fun create(
         item: Pointer,
         target: Pointer?,
     ): Pointer {
-        val view = checkNotNull(pointer(clazz("NSSearchField"), "new"))
+        val view = checkNotNull(pointer(MacAddressFocusField.fieldClass, "new"))
         send(view, "setEditable:", 1.toByte())
         send(view, "setSelectable:", 1.toByte())
         send(view, "setBezeled:", 1.toByte())
-        send(view, "setBezelStyle:", 1L)
         send(view, "setPlaceholderString:", string("Search or enter address"))
         send(view, "setUsesSingleLineMode:", 1.toByte())
+        send(pointer(view, "cell"), "setScrollable:", 1.toByte())
         send(view, "setDelegate:", target)
         send(view, "setSendsWholeSearchString:", 1.toByte())
         send(view, "setSendsSearchStringImmediately:", 0.toByte())
@@ -71,9 +94,9 @@ internal class MacToolbarAddressField {
         // insertNewline command should navigate, never a search-field change action.
         send(view, "setAction:", null)
         copyButton.install(view, target)
-        installNativeAddressBackground(item, view)
-        send(item, "setMinSize:", ToolbarIconSize(180.0, 24.0))
-        send(item, "setMaxSize:", ToolbarIconSize(500.0, 24.0))
+        val height = installNativeAddressBackground(item, view)
+        send(item, "setMinSize:", ToolbarIconSize(180.0, height))
+        send(item, "setMaxSize:", ToolbarIconSize(10_000.0, height))
         send(item, "setVisibilityPriority:", 2000L)
         send(item, "setAutovalidates:", 0.toByte())
         send(item, "setEnabled:", 1.toByte())

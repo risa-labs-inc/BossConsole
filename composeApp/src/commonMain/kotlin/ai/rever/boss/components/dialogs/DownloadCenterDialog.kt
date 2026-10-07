@@ -6,6 +6,7 @@ import ai.rever.boss.downloads.transferStatusLine
 import ai.rever.boss.plugin.api.TransferPhase
 import ai.rever.boss.plugin.ui.BossAlertDialog
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.theme.dialogPanelColor
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -90,7 +91,7 @@ fun DownloadCenterDialog(onDismiss: () -> Unit) {
                 Text("Minimize", fontSize = 13.sp)
             }
         },
-        backgroundColor = BossTheme.colors.panel,
+        backgroundColor = dialogPanelColor,
         contentColor = BossTheme.colors.textPrimary,
     )
 }

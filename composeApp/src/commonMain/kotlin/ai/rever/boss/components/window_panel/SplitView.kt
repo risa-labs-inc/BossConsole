@@ -21,10 +21,12 @@ import ai.rever.boss.components.window_panel.components.main_window_panels.BossM
 import ai.rever.boss.components.window_panel.components.main_window_panels.BossTabsComponent
 import ai.rever.boss.components.window_panel.components.main_window_panels.TabBarLayout
 import ai.rever.boss.components.window_panel.components.main_window_panels.TabBarRevealState
+import ai.rever.boss.components.window_panel.components.main_window_panels.TrackTabBarRevealPointer
 import ai.rever.boss.components.window_panel.components.main_window_panels.VerticalTabBarResizeHandle
 import ai.rever.boss.components.window_panel.components.main_window_panels.WindowRevealedTabBarDrawer
 import ai.rever.boss.components.window_panel.components.main_window_panels.WindowVerticalTabBar
 import ai.rever.boss.components.window_panel.components.main_window_panels.createBossAppContext
+import ai.rever.boss.components.window_panel.components.main_window_panels.edgeRevealTracking
 import ai.rever.boss.components.window_panel.components.main_window_panels.overlayRegionInWindow
 import ai.rever.boss.components.window_panel.components.main_window_panels.paneGlyphs
 import ai.rever.boss.components.window_panel.components.main_window_panels.paneLabel
@@ -59,6 +61,7 @@ import ai.rever.boss.topofmind.ActiveTab
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.window.LocalWindowFullscreen
 import ai.rever.boss.window.WindowAppearanceSettingsManager
 import ai.rever.boss.window.WindowProjectStateRegistry
 import androidx.compose.foundation.background
@@ -1536,7 +1539,11 @@ class SplitViewState(
      * @param excludePanelId The panel ID to exclude from the search
      * @return The first available panel with a different ID, or null if only one panel exists
      */
-    fun getFirstOtherPanelExcluding(excludePanelId: String): SplitNode.Panel? = getAllPanels().firstOrNull { it.id != excludePanelId }
+    fun getFirstOtherPanelExcluding(excludePanelId: String): SplitNode.Panel? =
+        getAllPanels().firstOrNull {
+            it.id !=
+                excludePanelId
+        }
 
     /**
      * Find the panel that contains a tab with the given ID.
@@ -2333,12 +2340,26 @@ class SplitViewState(
         }
     }
 
+    private fun inventoryWorkspaceId(windowId: String) = _currentWorkspaceId ?: "unsaved-window-$windowId"
+
+    private fun defaultInventoryWorkspaceName(
+        workspaceId: String,
+        windowId: String,
+    ): String =
+        when (workspaceId) {
+            "last-session" -> "Last Session"
+            "unsaved-window-$windowId" -> "Current Window"
+            else -> "Space $workspaceId"
+        }
+
     fun collectAllActiveFluckTabs(windowId: String = "unknown"): List<ActiveTab> {
         val result = mutableListOf<ActiveTab>()
         val seenTabIds = mutableSetOf<String>()
 
-        // Collect from current state
-        _currentWorkspaceId?.let { workspaceId ->
+        // The visible tree exists even before a Space has been assigned.
+        // Use a window-local inventory identity without creating a saved workspace.
+        run {
+            val workspaceId = inventoryWorkspaceId(windowId)
             // Get the actual workspace name from preserved states or use a default
             val workspaceName =
                 preservedWorkspaceStates[workspaceId]?.workspaceName
@@ -2437,18 +2458,21 @@ class SplitViewState(
                 ?.find { it.id == workspaceId }
                 ?.name
                 ?: preservedWorkspaceStates[workspaceId]?.workspaceName
-                ?: when (workspaceId) {
-                    "last-session" -> "Last Session"
-                    else -> "Space $workspaceId"
-                }
+                ?: defaultInventoryWorkspaceName(workspaceId, windowId)
 
-        // Collect from current state (only if it has tabs)
-        _currentWorkspaceId?.let { workspaceId ->
+        // Include visible tabs in a window that has not yet been assigned a Space.
+        run {
+            val workspaceId = inventoryWorkspaceId(windowId)
             val currentTabs = mutableListOf<ActiveTab>()
 
             val panels = getAllPanels()
             val splitPositions = splitPositionsFor(panels)
+            val currentActivePanelId = _activePanelId.value
             panels.forEach { panel ->
+                val isPanelActive = panel.id == currentActivePanelId
+                val selectedTabId =
+                    panel.tabsComponent.tabsState.value.activeTab
+                        ?.id
                 panel.tabsComponent.tabsState.value.tabs.forEach { tab ->
                     if (!seenTabIds.contains(tab.id)) {
                         currentTabs.add(
@@ -2459,6 +2483,8 @@ class SplitViewState(
                                 panelId = panel.id,
                                 windowId = windowId,
                                 splitPosition = splitPositions[panel.id],
+                                isSelected = tab.id == selectedTabId,
+                                isPanelActive = isPanelActive,
                             ),
                         )
                         seenTabIds.add(tab.id)
@@ -2504,6 +2530,9 @@ class SplitViewState(
     ) {
         when (node) {
             is SplitNode.Panel -> {
+                val selectedTabId =
+                    node.tabsComponent.tabsState.value.activeTab
+                        ?.id
                 node.tabsComponent.tabsState.value.tabs.forEach { tab ->
                     if (!seenTabIds.contains(tab.id) && (tab is FluckTabInfo || tab.typeId.typeId == "fluck")) {
                         result.add(
@@ -2514,6 +2543,8 @@ class SplitViewState(
                                 panelId = node.id,
                                 windowId = context.windowId,
                                 splitPosition = context.splitPositions[node.id],
+                                isSelected = tab.id == selectedTabId,
+                                isPanelActive = false,
                             ),
                         )
                         seenTabIds.add(tab.id)
@@ -2541,6 +2572,9 @@ class SplitViewState(
     ) {
         when (node) {
             is SplitNode.Panel -> {
+                val selectedTabId =
+                    node.tabsComponent.tabsState.value.activeTab
+                        ?.id
                 node.tabsComponent.tabsState.value.tabs.forEach { tab ->
                     if (!seenTabIds.contains(tab.id)) {
                         result.add(
@@ -2551,6 +2585,8 @@ class SplitViewState(
                                 panelId = node.id,
                                 windowId = context.windowId,
                                 splitPosition = context.splitPositions[node.id],
+                                isSelected = tab.id == selectedTabId,
+                                isPanelActive = false,
                             ),
                         )
                         seenTabIds.add(tab.id)
@@ -2590,6 +2626,7 @@ fun rememberSplitViewState(
  * has no room to render groups and TOP is the default.
  */
 @Composable
+@Suppress("LongMethod") // Keep the cohesive dialog/window composition in one scope.
 fun SplitViewPanel(
     splitViewState: SplitViewState,
     modifier: Modifier = Modifier,
@@ -2670,6 +2707,13 @@ fun SplitViewPanel(
     // This area's rectangle in dp relative to the window's content pane, for the drawer's
     // heavyweight overlay window. Null until measured, and the drawer draws nothing while it is.
     var contentRegion by remember { mutableStateOf<IntRect?>(null) }
+
+    TrackTabBarRevealPointer(
+        state = reveal,
+        enabled = edgeRevealTracking(bar.railShown, bar.hoverExpand, LocalWindowFullscreen.current),
+        region = contentRegion,
+        sidebarWidth = bar.width + if (sidebarToggleRequests != null) 0.dp else tabBarRailWidth,
+    )
 
     // In an effect, not during composition: the window turns this into a placement decision that
     // feeds back into what this composable is given, and writing it inline would be a state write

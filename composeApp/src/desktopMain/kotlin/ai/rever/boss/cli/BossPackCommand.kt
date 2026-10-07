@@ -34,8 +34,9 @@ private const val MAX_WAIT_MS = 30L * 60L * 1_000L
  * `boss pack`: plan and apply plugin packs in the running BOSS.
  *
  * A thin client over the host's `pack_plan`, `pack_apply` and `pack_status` MCP tools, so a pack
- * applied from a shell is governed exactly like one applied by an agent: `pack_apply` waits for the
- * operator in the MCP approval dialog unless their policy already allows it.
+ * applied from a shell is governed exactly like one applied by an agent: `pack_apply` resolves the
+ * plan first and requires fresh operator approval of that resolved plan in the MCP approval dialog
+ * for each invocation, even if a standing ALLOW or session trust exists.
  */
 class BossPackCommand : NoOpCliktCommand(name = "pack") {
     override fun help(context: Context) = "Plans and applies plugin packs in the running BOSS instance"
@@ -89,7 +90,7 @@ class BossPackStatusCommand : CliktCommand(name = "status") {
 private const val STATUS_HINT = "Check it with: boss pack status"
 
 private const val APPLY_HELP =
-    "Applies a pack. BOSS asks for approval first unless your MCP policy already allows pack_apply"
+    "Applies a pack. BOSS resolves the plan and requires fresh approval in the MCP approval dialog before applying"
 
 private fun jobArgs(jobId: String): String = JsonObject(mapOf("job" to JsonPrimitive(jobId))).toString()
 

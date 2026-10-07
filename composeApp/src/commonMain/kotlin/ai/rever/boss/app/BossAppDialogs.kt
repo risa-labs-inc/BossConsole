@@ -12,6 +12,7 @@ import ai.rever.boss.components.dialogs.NewProjectWizardDialog
 import ai.rever.boss.components.dialogs.NewTabDialog
 import ai.rever.boss.components.dialogs.ProjectOpenModeDialog
 import ai.rever.boss.components.dialogs.ProjectSelectionDialog
+import ai.rever.boss.components.dialogs.RenameDialog
 import ai.rever.boss.components.dialogs.ShortcutHelpDialog
 import ai.rever.boss.components.dialogs.TabType
 import ai.rever.boss.components.dialogs.TerminalLinkOpenDialog
@@ -126,6 +127,27 @@ internal fun BossAppDialogs(state: BossAppState) {
     // ShortcutHelpDialog uses the current keymap below.
     val keymapSettings by KeymapSettingsManager.currentSettings.collectAsState()
     KeymapRecoveryDialog()
+
+    if (state.showCreateSpaceDialog) {
+        RenameDialog(
+            title = "Create New Space",
+            currentName = "",
+            label = "Space name",
+            confirmLabel = "Create Space",
+            onDismiss = { state.showCreateSpaceDialog = false },
+            onRename = { name ->
+                state.showCreateSpaceDialog = false
+                coroutineScope.launch {
+                    val space = workspaceManager.createSpace(name)
+                    if (space != null) {
+                        MenuActionsHandler.triggerApplyWorkspace(windowId, space)
+                    } else {
+                        StatusMessageManager.showMessage("Could not create Space")
+                    }
+                }
+            },
+        )
+    }
 
     // Plugin update confirmation prompt (from "Check for Updates" or the header badge).
     state.pluginUpdatePrompt?.let { prompt ->
@@ -431,7 +453,6 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.pendingWorkspacePrompt = null
                 // New Space places the project only now, so dismissing the list opened nothing.
                 if (prompt.placeOnPick) placeProjectHere(state, windowProjectState, prompt.project)
-                if (prompt.showCodebase) state.draggablePanelComponent.setPanelVisible(left.top, true)
                 coroutineScope.launch {
                     // Preserve, apply, load: the same steps the top bar's workspace switch
                     // takes, in the order that leaves nothing destroyed when the apply is
@@ -573,7 +594,11 @@ internal fun BossAppDialogs(state: BossAppState) {
 
                             "editor" -> {
                                 bookmark.tabConfig.filePath?.let { filePath ->
-                                    FileEventBus.openFile(filePath, sourceWindowId = windowId, projectPath = selectedProject.path)
+                                    FileEventBus.openFile(
+                                        filePath,
+                                        sourceWindowId = windowId,
+                                        projectPath = selectedProject.path,
+                                    )
                                 }
                             }
 
@@ -581,7 +606,11 @@ internal fun BossAppDialogs(state: BossAppState) {
                             // it in the notebook tab when the plugin is present, else the editor.
                             "jupyter" -> {
                                 bookmark.tabConfig.filePath?.takeIf { it.isNotBlank() }?.let { filePath ->
-                                    FileEventBus.openFile(filePath, sourceWindowId = windowId, projectPath = selectedProject.path)
+                                    FileEventBus.openFile(
+                                        filePath,
+                                        sourceWindowId = windowId,
+                                        projectPath = selectedProject.path,
+                                    )
                                 }
                             }
 
@@ -1161,10 +1190,9 @@ internal fun BossAppDialogs(state: BossAppState) {
         rememberDirectoryPicker { path ->
             path?.let {
                 val projectName = it.extractFileName().ifEmpty { "Unknown" }
-                // Asked where it goes, like every other way of opening a project. The CodeBase
-                // panel this picker has always shown opens once the project lands HERE.
+                // Asked where it goes, like every other way of opening a project.
                 val picked = Project(name = projectName, path = it)
-                requestProjectOpen(state, windowProjectState, picked, showCodebase = true)
+                requestProjectOpen(state, windowProjectState, picked)
                 // Close the dialog after selection
                 state.showProjectDialog = false
             }
@@ -1224,25 +1252,20 @@ internal fun BossAppDialogs(state: BossAppState) {
             project = project,
             onDismiss = {
                 state.projectToOpen = null
-                state.projectToOpenShowsCodebase = false
                 state.focusRequester.requestFocus()
             },
             onOpenInThisSpace = { selectedProj ->
                 placeProjectHere(state, windowProjectState, selectedProj)
-                if (state.projectToOpenShowsCodebase) state.draggablePanelComponent.setPanelVisible(left.top, true)
                 state.projectToOpen = null
-                state.projectToOpenShowsCodebase = false
                 state.focusRequester.requestFocus()
             },
             onOpenInNewSpace = { selectedProj ->
                 state.pendingWorkspacePrompt =
-                    SpacePrompt(selectedProj, placeOnPick = true, showCodebase = state.projectToOpenShowsCodebase)
+                    SpacePrompt(selectedProj, placeOnPick = true)
                 state.projectToOpen = null
-                state.projectToOpenShowsCodebase = false
                 state.focusRequester.requestFocus()
             },
             onOpenInNewWindow = { selectedProj ->
-                state.projectToOpenShowsCodebase = false
                 // Create new window with the project - each window has independent project state
                 WindowOperations.createNewWindowWithProject(selectedProj)
                 state.projectToOpen = null
@@ -1437,14 +1460,11 @@ internal fun requestProjectOpen(
     state: BossAppState,
     windowProjectState: WindowProjectState,
     project: Project,
-    showCodebase: Boolean = false,
 ) {
     if (WorkspaceSettingsManager.currentSettings.value.resolveOnProjectSelection() is ProjectSelectionWorkspace.Ask) {
         state.projectToOpen = project
-        state.projectToOpenShowsCodebase = showCodebase
     } else {
         selectProjectInWindow(windowProjectState, project)
-        if (showCodebase) state.draggablePanelComponent.setPanelVisible(left.top, true)
     }
 }
 

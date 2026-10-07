@@ -265,7 +265,9 @@ actual object DeepLinkHandler {
     }
 
     private fun setupDefaultHandler() {
-        // Linux and other platforms
+        // Linux and other platforms. Off the startup path: it forks xdg-mime, and nothing
+        // needs boss:// before a sign-in the user has yet to start.
+        scope.launch(Dispatchers.IO) { LinuxProtocolHandler.ensureRegistered() }
         if (Desktop.isDesktopSupported()) {
             try {
                 Desktop.getDesktop().setOpenURIHandler { event ->

@@ -13,10 +13,16 @@ import ai.rever.boss.ipc.proto.services.UnshareSecretProtoRequest
 import ai.rever.boss.ipc.proto.services.UpdateSecretProtoRequest
 import ai.rever.boss.plugin.api.CreateSecretRequestData
 import ai.rever.boss.plugin.api.PaginatedSecretsData
+import ai.rever.boss.plugin.api.PaginatedSecretsWithAccessData
+import ai.rever.boss.plugin.api.PaginatedSecretsWithSharingAccessData
 import ai.rever.boss.plugin.api.PaginatedSecretsWithSharingData
 import ai.rever.boss.plugin.api.SecretDataProvider
 import ai.rever.boss.plugin.api.SecretEntryData
+import ai.rever.boss.plugin.api.SecretEntryWithAccessData
+import ai.rever.boss.plugin.api.SecretEntryWithSharingAccessData
+import ai.rever.boss.plugin.api.SecretEntryWithSharingData
 import ai.rever.boss.plugin.api.SecretShareData
+import ai.rever.boss.plugin.api.SecretShareWithTargetData
 import ai.rever.boss.plugin.api.ShareSecretRequestData
 import ai.rever.boss.plugin.api.UnshareSecretRequestData
 import ai.rever.boss.plugin.api.UpdateSecretRequestData
@@ -37,6 +43,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -292,6 +299,87 @@ class SecretServiceBridgeTest {
             assertEquals(0, provider.getSecretSharesCalls.get())
         }
 
+    @Test
+    fun `authenticated list round trip preserves organisation access and paging`() =
+        runBlocking {
+            val response = authenticated.getUserSecrets(page(limit = 7, offset = 3))
+
+            assertTrue(response.success)
+            assertEquals(7 to 3, provider.pageRequest)
+            response.secretsList.single().let { row ->
+                assertEquals("org-1", row.orgId)
+                assertEquals("acme", row.orgSlug)
+                assertTrue(row.isOrgOwned)
+                assertTrue(row.canManage)
+            }
+        }
+
+    @Test
+    fun `authenticated search round trip preserves a server deny`() =
+        runBlocking {
+            provider.canManage = false
+            val request =
+                SearchSecretsRequest
+                    .newBuilder()
+                    .setQuery("git")
+                    .setLimit(9)
+                    .setOffset(4)
+                    .build()
+
+            val response = authenticated.searchSecrets(request)
+
+            assertEquals(Triple("git", 9, 4), provider.searchRequest)
+            assertFalse(response.secretsList.single().canManage)
+        }
+
+    @Test
+    fun `authenticated share list round trip preserves organisation target`() =
+        runBlocking {
+            val response = authenticated.getSecretShares(SecretIdRequest.newBuilder().setId("s1").build())
+
+            response.sharesList.single().let { share ->
+                assertEquals("org-1", share.sharedWithOrgId)
+                assertEquals("acme", share.sharedWithOrgSlug)
+            }
+        }
+
+    @Test
+    fun `authenticated sharing list retains personal secret organisation attribution`() =
+        runBlocking {
+            val response = authenticated.getUserSecretsWithSharingInfo(page(limit = 5, offset = 1))
+
+            assertTrue(response.success)
+            response.secretsList.single().secret.let { row ->
+                assertEquals("", row.orgId)
+                assertEquals("", row.orgSlug)
+                assertEquals("partner-org", row.sharedWithOrgSlug)
+                assertFalse(row.isOrgOwned)
+                assertFalse(row.canManage)
+                assertEquals("read", row.accessLevel)
+            }
+        }
+
+    @Test
+    fun `authenticated list failure remains explicit`() =
+        runBlocking {
+            provider.fail = true
+
+            val response = authenticated.getUserSecrets(page(limit = 50, offset = 0))
+
+            assertFalse(response.success)
+            assertEquals("offline", response.errorMessage)
+            assertTrue(response.secretsList.isEmpty())
+        }
+
+    private fun page(
+        limit: Int,
+        offset: Int,
+    ) = SecretPaginatedRequest
+        .newBuilder()
+        .setLimit(limit)
+        .setOffset(offset)
+        .build()
+
     companion object {
         private const val DEFAULT_PROCESS = "ai.rever.boss.plugin.dynamic.test-plugin"
         private const val SHUTDOWN_TIMEOUT_MS = 5_000L
@@ -318,6 +406,10 @@ private class SingleServiceRegistry(
 
 /** Records every call so a refusal test can assert the vault was never actually reached. */
 private class FakeSecretDataProvider : SecretDataProvider {
+    var canManage = true
+    var fail = false
+    var pageRequest: Pair<Int, Int>? = null
+    var searchRequest: Triple<String, Int, Int>? = null
     val getUserSecretsCalls = AtomicInteger(0)
     val getUserSecretsWithSharingCalls = AtomicInteger(0)
     val searchSecretsCalls = AtomicInteger(0)
@@ -327,6 +419,86 @@ private class FakeSecretDataProvider : SecretDataProvider {
     val getSecretSharesCalls = AtomicInteger(0)
     val shareSecretCalls = AtomicInteger(0)
     val unshareSecretCalls = AtomicInteger(0)
+
+    override suspend fun getUserSecretsWithAccess(
+        limit: Int,
+        offset: Int,
+    ): Result<PaginatedSecretsWithAccessData> {
+        getUserSecretsCalls.incrementAndGet()
+        pageRequest = limit to offset
+        return accessResult()
+    }
+
+    override suspend fun searchSecretsWithAccess(
+        query: String,
+        limit: Int,
+        offset: Int,
+    ): Result<PaginatedSecretsWithAccessData> {
+        searchSecretsCalls.incrementAndGet()
+        searchRequest = Triple(query, limit, offset)
+        return accessResult()
+    }
+
+    override suspend fun getUserSecretsWithSharingAccess(
+        limit: Int,
+        offset: Int,
+    ): Result<PaginatedSecretsWithSharingAccessData> {
+        getUserSecretsWithSharingCalls.incrementAndGet()
+        return Result.success(
+            PaginatedSecretsWithSharingAccessData(
+                data =
+                    listOf(
+                        SecretEntryWithSharingAccessData(
+                            secret = sharingSecret(),
+                            sharedWithOrgSlug = "partner-org",
+                            isOrgOwned = false,
+                            canManage = false,
+                        ),
+                    ),
+                hasMore = false,
+            ),
+        )
+    }
+
+    override suspend fun getSecretSharesWithTargets(secretId: String): Result<List<SecretShareWithTargetData>> {
+        getSecretSharesCalls.incrementAndGet()
+        return Result.success(
+            listOf(
+                SecretShareWithTargetData(
+                    share =
+                        SecretShareData(
+                            shareId = "share-1",
+                            accessLevel = "read",
+                            sharedByEmail = "owner@example.com",
+                            createdAt = "now",
+                        ),
+                    sharedWithOrgId = "org-1",
+                    sharedWithOrgSlug = "acme",
+                ),
+            ),
+        )
+    }
+
+    private fun accessResult(): Result<PaginatedSecretsWithAccessData> =
+        if (fail) {
+            Result.failure(IllegalStateException("offline"))
+        } else {
+            Result.success(
+                PaginatedSecretsWithAccessData(
+                    data =
+                        listOf(
+                            SecretEntryWithAccessData(
+                                secret = secret(),
+                                orgId = "org-1",
+                                orgSlug = "acme",
+                                isOrgOwned = true,
+                                canManage = canManage,
+                            ),
+                        ),
+                    hasMore = false,
+                ),
+            )
+        }
 
     override suspend fun getUserSecrets(
         limit: Int,
@@ -383,3 +555,26 @@ private class FakeSecretDataProvider : SecretDataProvider {
         return Result.success(Unit)
     }
 }
+
+private fun secret() =
+    SecretEntryData(
+        id = "s1",
+        website = "github.com",
+        username = "octocat",
+        password = "hunter2",
+        createdAt = "then",
+        updatedAt = "now",
+    )
+
+private fun sharingSecret() =
+    SecretEntryWithSharingData(
+        id = "s1",
+        website = "github.com",
+        username = "octocat",
+        password = "hunter2",
+        createdAt = "then",
+        updatedAt = "now",
+        isOwner = false,
+        sharedByEmail = "owner@example.com",
+        accessLevel = "read",
+    )

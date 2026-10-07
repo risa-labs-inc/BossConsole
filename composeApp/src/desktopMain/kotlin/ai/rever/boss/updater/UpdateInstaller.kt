@@ -469,7 +469,15 @@ object UpdateInstaller {
      * @param downloadPath Path to the downloaded update file
      * @return InstallResult indicating success, restart required, or error
      */
-    suspend fun installUpdate(downloadPath: String): InstallResult {
+    suspend fun installUpdate(
+        downloadPath: String,
+        restartAutomatically: Boolean = true,
+    ): InstallResult {
+        if (!restartAutomatically && ai.rever.boss.plugin.pathutils.BossDirectories.isDevMode) {
+            return InstallResult.Error(
+                "Automatic installation requires a packaged app. Build a distribution to test installation.",
+            )
+        }
         return try {
             val downloadFile = File(downloadPath)
 
@@ -536,23 +544,23 @@ object UpdateInstaller {
             // e.g., when .deb isn't available but .jar is for Linux ARM64
             when {
                 fileName.endsWith(".dmg") -> {
-                    installMacOSUpdate(downloadFile)
+                    installMacOSUpdate(downloadFile, restartAutomatically)
                 }
 
                 fileName.endsWith(".msi") -> {
-                    installWindowsUpdate(downloadFile)
+                    installWindowsUpdate(downloadFile, restartAutomatically)
                 }
 
                 fileName.endsWith(".deb") -> {
-                    installLinuxDebUpdate(downloadFile)
+                    installLinuxDebUpdate(downloadFile, restartAutomatically)
                 }
 
                 fileName.endsWith(".rpm") -> {
-                    installLinuxRpmUpdate(downloadFile)
+                    installLinuxRpmUpdate(downloadFile, restartAutomatically)
                 }
 
                 fileName.endsWith(".jar") -> {
-                    installJarUpdate(downloadFile)
+                    installJarUpdate(downloadFile, restartAutomatically)
                 }
 
                 else -> {
@@ -575,7 +583,10 @@ object UpdateInstaller {
      * 3. Return RequiresRestart to signal the app should quit
      * 4. Script waits for app to quit, then installs update
      */
-    private suspend fun installMacOSUpdate(downloadFile: File): InstallResult {
+    private suspend fun installMacOSUpdate(
+        downloadFile: File,
+        restartAutomatically: Boolean,
+    ): InstallResult {
         return withContext(Dispatchers.IO) {
             try {
                 logger.info(LogCategory.SYSTEM, "Starting macOS update installation")
@@ -584,10 +595,16 @@ object UpdateInstaller {
                 validateDownloadFile(downloadFile, ".dmg")
 
                 // Get current application bundle path
-                val currentAppPath = getCurrentApplicationPath()
+                val currentAppPath = getCurrentApplicationPath(allowInstalledFallback = restartAutomatically)
                 if (currentAppPath == null) {
                     logger.warn(LogCategory.SYSTEM, "Could not determine app path - falling back to manual DMG install")
-                    return@withContext openDMGForManualInstallation(downloadFile)
+                    return@withContext if (restartAutomatically) {
+                        openDMGForManualInstallation(
+                            downloadFile,
+                        )
+                    } else {
+                        InstallResult.Error("Automatic installation requires running from an app bundle")
+                    }
                 }
 
                 logger.debug(LogCategory.SYSTEM, "Target application path", mapOf("path" to currentAppPath))
@@ -676,6 +693,7 @@ object UpdateInstaller {
                     UpdateScriptGenerator.generateMacOSUpdateScript(
                         dmgPath = downloadFile.absolutePath,
                         targetAppPath = currentAppPath,
+                        restartAutomatically = restartAutomatically,
                         appPid = currentPid,
                     )
 
@@ -685,7 +703,11 @@ object UpdateInstaller {
 
                 // Return RequiresRestart - the UpdateManager will handle quitting
                 InstallResult.RequiresRestart(
-                    "Update is ready to install. The app will quit and install the update.",
+                    if (restartAutomatically) {
+                        "Update is ready to install. The app will quit and install the update."
+                    } else {
+                        "Update will install after you quit BOSS. Open BOSS again manually."
+                    },
                 )
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Error during update preparation", error = e)
@@ -698,7 +720,10 @@ object UpdateInstaller {
      * Install Windows update using helper script pattern
      * Similar to macOS, but uses MSI installer
      */
-    private suspend fun installWindowsUpdate(downloadFile: File): InstallResult =
+    private suspend fun installWindowsUpdate(
+        downloadFile: File,
+        restartAutomatically: Boolean,
+    ): InstallResult =
         withContext(Dispatchers.IO) {
             try {
                 logger.info(LogCategory.SYSTEM, "Starting Windows update installation")
@@ -727,6 +752,7 @@ object UpdateInstaller {
                         msiPath = downloadFile.absolutePath,
                         appPid = currentPid,
                         targetExePath = launcherPath,
+                        restartAutomatically = restartAutomatically,
                     )
 
                 // Launch the script in the background
@@ -735,7 +761,11 @@ object UpdateInstaller {
 
                 // Return RequiresRestart
                 InstallResult.RequiresRestart(
-                    "Update is ready to install. The app will quit and install the update.",
+                    if (restartAutomatically) {
+                        "Update is ready to install. The app will quit and install the update."
+                    } else {
+                        "Update will install after you quit BOSS. Open BOSS again manually."
+                    },
                 )
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Error during update preparation", error = e)
@@ -747,7 +777,10 @@ object UpdateInstaller {
      * Install JAR update (Linux/other platforms)
      * JAR files can be replaced while running, so no restart needed
      */
-    private suspend fun installJarUpdate(downloadFile: File): InstallResult {
+    private suspend fun installJarUpdate(
+        downloadFile: File,
+        restartAutomatically: Boolean,
+    ): InstallResult {
         return withContext(Dispatchers.IO) {
             try {
                 logger.info(LogCategory.SYSTEM, "Starting JAR update installation")
@@ -760,6 +793,19 @@ object UpdateInstaller {
                 if (currentJar == null) {
                     logger.error(LogCategory.SYSTEM, "Could not determine current JAR path")
                     return@withContext InstallResult.Error("Could not locate current JAR")
+                }
+
+                if (!restartAutomatically) {
+                    val script =
+                        generateDeferredJarUpdateScript(
+                            downloadFile.absolutePath,
+                            currentJar.absolutePath,
+                            ProcessHandle.current().pid(),
+                        )
+                    UpdateScriptGenerator.launchScript(script)
+                    return@withContext InstallResult.RequiresRestart(
+                        "Update will install after you quit BOSS. Open BOSS again manually.",
+                    )
                 }
 
                 // Backup current JAR
@@ -783,7 +829,10 @@ object UpdateInstaller {
      * Install Linux DEB update using helper script pattern
      * Uses pkexec (graphical sudo) or sudo for privilege escalation
      */
-    private suspend fun installLinuxDebUpdate(downloadFile: File): InstallResult =
+    private suspend fun installLinuxDebUpdate(
+        downloadFile: File,
+        restartAutomatically: Boolean,
+    ): InstallResult =
         withContext(Dispatchers.IO) {
             try {
                 logger.info(LogCategory.SYSTEM, "Starting Linux DEB update installation")
@@ -798,6 +847,7 @@ object UpdateInstaller {
                 val scriptFile =
                     UpdateScriptGenerator.generateLinuxDebUpdateScript(
                         debPath = downloadFile.absolutePath,
+                        restartAutomatically = restartAutomatically,
                         appPid = currentPid,
                     )
 
@@ -807,7 +857,11 @@ object UpdateInstaller {
 
                 // Return RequiresRestart
                 InstallResult.RequiresRestart(
-                    "Update is ready to install. The app will quit and install the update.",
+                    if (restartAutomatically) {
+                        "Update is ready to install. The app will quit and install the update."
+                    } else {
+                        "Update will install after you quit BOSS. Open BOSS again manually."
+                    },
                 )
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Error during DEB update preparation", error = e)
@@ -819,7 +873,10 @@ object UpdateInstaller {
      * Install Linux RPM update using helper script pattern
      * Uses pkexec (graphical sudo) or sudo for privilege escalation
      */
-    private suspend fun installLinuxRpmUpdate(downloadFile: File): InstallResult =
+    private suspend fun installLinuxRpmUpdate(
+        downloadFile: File,
+        restartAutomatically: Boolean,
+    ): InstallResult =
         withContext(Dispatchers.IO) {
             try {
                 logger.info(LogCategory.SYSTEM, "Starting Linux RPM update installation")
@@ -834,6 +891,7 @@ object UpdateInstaller {
                 val scriptFile =
                     UpdateScriptGenerator.generateLinuxRpmUpdateScript(
                         rpmPath = downloadFile.absolutePath,
+                        restartAutomatically = restartAutomatically,
                         appPid = currentPid,
                     )
 
@@ -843,7 +901,11 @@ object UpdateInstaller {
 
                 // Return RequiresRestart
                 InstallResult.RequiresRestart(
-                    "Update is ready to install. The app will quit and install the update.",
+                    if (restartAutomatically) {
+                        "Update is ready to install. The app will quit and install the update."
+                    } else {
+                        "Update will install after you quit BOSS. Open BOSS again manually."
+                    },
                 )
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Error during RPM update preparation", error = e)
@@ -916,7 +978,7 @@ object UpdateInstaller {
      * Get current application path for macOS .app bundle
      * Returns null if running in development mode or path cannot be determined
      */
-    fun getCurrentApplicationPath(): String? {
+    fun getCurrentApplicationPath(allowInstalledFallback: Boolean = true): String? {
         return try {
             logger.debug(LogCategory.SYSTEM, "Detecting current application path")
 
@@ -957,6 +1019,8 @@ object UpdateInstaller {
                 )
                 return resolveRealAppPath(appBundle.file.absolutePath)
             }
+
+            if (!allowInstalledFallback) return null
 
             // Method 3: Check if running from Applications folder
             if (appBundle != null) {

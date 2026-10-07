@@ -13,6 +13,8 @@ data class ActiveTab(
     val panelId: String,
     val windowId: String,
     val splitPosition: String? = null, // "Left", "Right", "Top", "Bottom", or null for single panel
+    val isSelected: Boolean = false,
+    val isPanelActive: Boolean = false,
 )
 
 /**

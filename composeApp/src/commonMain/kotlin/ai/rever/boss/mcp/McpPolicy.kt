@@ -199,6 +199,10 @@ object McpMutatingToolCatalog {
             // Sensitive reads use the approval-requiring default too: download URLs can
             // contain bearer tokens. A read-only declaration must not bypass that default.
             "downloads_history_list",
+            // Sensitive reads: workspace context and active editor file expose absolute file
+            // paths and browser URLs across all windows and background workspaces.
+            "get_workspace_context",
+            "get_active_editor_file",
             // File & OS Execution
             "codebase_write",
             "run_command",

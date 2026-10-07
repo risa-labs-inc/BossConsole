@@ -141,6 +141,14 @@ internal class AppUpdateCommands(
     }
 
     private companion object {
-        val BUSY_STATES = setOf("checking", "downloading", "ready_to_install", "installing", "restart_required")
+        val BUSY_STATES =
+            setOf(
+                "checking",
+                "downloading",
+                "ready_to_install",
+                "installing",
+                "restart_required",
+                "install_on_next_restart",
+            )
     }
 }

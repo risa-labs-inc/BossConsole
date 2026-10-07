@@ -59,6 +59,16 @@ class PluginPackJobs(
         ) : Start
     }
 
+    fun start(prepared: PreparedPackApply): Start =
+        synchronized(lock) {
+            jobs.values.firstOrNull { it.state == PackJobState.RUNNING }?.let { return Start.Busy(it) }
+            val job = PackJob(id = newId(), packId = prepared.pack.id, state = PackJobState.RUNNING)
+            jobs[job.id] = job
+            trim()
+            handles[job.id] = scope.launch { runPrepared(job.id, prepared) }
+            Start.Started(job)
+        }
+
     fun start(pack: PluginPack): Start =
         synchronized(lock) {
             jobs.values.firstOrNull { it.state == PackJobState.RUNNING }?.let { return Start.Busy(it) }
@@ -74,6 +84,40 @@ class PluginPackJobs(
         synchronized(lock) {
             if (id == null) jobs.values.lastOrNull() else jobs[id]
         }
+
+    @Suppress("TooGenericExceptionCaught") // A crashed apply must end as a reported job, never a stuck RUNNING one.
+    private suspend fun runPrepared(
+        id: String,
+        prepared: PreparedPackApply,
+    ) {
+        try {
+            val result =
+                applier.apply(prepared) { done, total, current ->
+                    update(id) { it.copy(done = done, total = total, current = current) }
+                }
+            val errorMsg =
+                if (result.status == PackApplyStatus.PLAN_CHANGED) {
+                    "The pack plan changed before execution started. Apply again for a new preview."
+                } else {
+                    null
+                }
+            update(id) { it.copy(state = PackJobState.FINISHED, current = "", result = result, error = errorMsg) }
+            logger.info(
+                LogCategory.SYSTEM,
+                "Applied plugin pack",
+                mapOf("pack" to prepared.pack.id, "status" to result.status.name),
+            )
+        } catch (e: CancellationException) {
+            update(id) { it.copy(state = PackJobState.CANCELLED, current = "") }
+            throw e
+        } catch (e: Exception) {
+            val reason = e.message ?: e.javaClass.simpleName
+            update(id) { it.copy(state = PackJobState.CRASHED, current = "", error = reason) }
+            logger.error(LogCategory.SYSTEM, "Plugin pack apply crashed", mapOf("pack" to prepared.pack.id), error = e)
+        } finally {
+            synchronized(lock) { handles.remove(id) }
+        }
+    }
 
     @Suppress("TooGenericExceptionCaught") // A crashed apply must end as a reported job, never a stuck RUNNING one.
     private suspend fun run(
