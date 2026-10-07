@@ -5,11 +5,13 @@
  * "opening" (exactly one Fluck online, or ?instance=<id> named one), and the list. No external
  * asset and no third-party script, so the CSP stays `default-src 'none'`.
  *
- * Opening a Fluck is a TOP-LEVEL navigation to the URL /api/open returns
- * (`<endpoint>/#/t/<ticket>`), never an iframe: the Fluck sets its own session cookie, which a
- * browser blocking third-party cookies would drop inside a frame. Before leaving, the page
- * rewrites its own history entry to `?list=1`, so "back" shows the list instead of bouncing
- * straight into the Fluck again.
+ * Opening a Fluck embeds the URL /api/open returns (`<endpoint>/#/t/<ticket>`) in a full-viewport
+ * iframe, as live-sessions does with its viewer, so the address bar stays on fluck.risaboss.com.
+ * Framing needs no cookie: the Fluck redeems the ticket and keeps its session token in the
+ * frame's own sessionStorage, and it allows framing only by https://fluck.risaboss.com. Opening
+ * pushes a history entry, so "back" closes the frame and shows the list; the ticket is single-use
+ * and never enters the address bar, so a reload shows the list too. The frame talks back with
+ * postMessage (onFrameMessage): signed out, switch Fluck, and its title.
  *
  * `?instance=<id>` (the Fluck's own "Sign in with BOSS" button) survives sign-in in
  * localStorage for 15 minutes: the magic link opens in a new tab and the OAuth hop leaves
@@ -78,6 +80,16 @@ const STYLES = `
   .dot.on { background-color: var(--ok); }
   footer { margin-top: 28px; color: var(--text-2); font-size: 12px; text-align: center; }
   a { color: var(--signal-text); }
+  /* Embedded Fluck: the page becomes a thin bar over a full-height frame (as live-sessions). */
+  body.viewing { overflow: hidden; }
+  body.viewing main { max-width: none; padding: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  body.viewing header, body.viewing #notice, body.viewing .card, body.viewing footer { display: none; }
+  #viewer { display: none; flex: 1; flex-direction: column; min-height: 0; }
+  body.viewing #viewer { display: flex; }
+  #viewerbar { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background-color: var(--raised); border-bottom: 1px solid var(--line); font-size: 13px; }
+  #viewerbar .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #viewerbar button { padding: 5px 10px; font-size: 12px; }
+  #fluckframe { flex: 1; width: 100%; border: 0; background-color: var(--ink); }
   .providers { display: grid; gap: 10px; }
   a.btn.provider { display: flex; align-items: center; justify-content: center; gap: 10px;
     background-color: transparent; color: var(--text); border-color: var(--line-strong); }
@@ -97,10 +109,17 @@ const SCRIPT = `
   var INSTANCE_RE = /^[A-Za-z0-9._:-]{1,128}$/;
   var OPEN_URL_RE = /^https:\\/\\/[A-Za-z0-9.-]+(:[0-9]{1,5})?\\/#\\/t\\/[A-Za-z0-9_-]{43}$/;
   var WANT_KEY = "fluck-web.instance", WANT_TTL_MS = 15 * 60 * 1000;
+  var TITLE_MAX = 120, PAGE_TITLE = "Fluck";
   var pollTimer = null, openTimer = null, csrf = "", opening = false, requestGeneration = 0;
+  var viewing = null; // { url, label } while a Fluck is framed
   var params = new URLSearchParams(location.search);
-  // ?list=1: we came back from a Fluck; never auto-open on this load.
+  // ?list=1 (older Fluck builds link back with it), or a reload of the entry a framed Fluck
+  // pushed: show the list, never auto-open on this load.
   var autoOpenDone = params.get("list") === "1";
+  if (history.state && history.state.view === "fluck") {
+    autoOpenDone = true;
+    history.replaceState(null, "", location.pathname + location.search);
+  }
   var wanted = null;
 
   function show(id) {
@@ -188,6 +207,7 @@ const SCRIPT = `
 
   async function signOut() {
     stopPolling(); cancelOpenTimer(); requestGeneration++;
+    if (viewing) closeFrame(false);
     try { await api("/api/logout", { method: "POST", body: {} }); } catch (_) {}
     notice(""); show("signin");
   }
@@ -207,7 +227,7 @@ const SCRIPT = `
   }
 
   function render(instances) {
-    if (opening || openTimer) return;
+    if (viewing || opening || openTimer) return; // closeFrame reloads the list
     if (!autoOpenDone) {
       autoOpenDone = true;
       var online = instances.filter(function (i) { return i.online; });
@@ -259,9 +279,8 @@ const SCRIPT = `
       if (r.status === 401) { opening = false; show("signin"); return; }
       var data = await r.json().catch(function () { return {}; });
       if (r.ok && typeof data.url === "string" && OPEN_URL_RE.test(data.url)) {
-        // Back from the Fluck lands on the list, not on another auto-open.
-        history.replaceState(null, "", location.pathname + "?list=1");
-        location.assign(data.url);
+        opening = false;
+        openFrame(data.url, title(i));
         return;
       }
       opening = false;
@@ -275,6 +294,70 @@ const SCRIPT = `
       loadInstances(false).catch(function () {});
     }
   }
+
+  // The Fluck is embedded in an iframe rather than navigated to, so the address bar stays on
+  // this page and "back" is instant. The Fluck allows framing only by this origin; the frame
+  // tells us when it signs out, when the user wants another Fluck, and its title.
+  // The on-screen keyboard is only visible to the TOP document: on iOS the layout viewport never
+  // shrinks, only window.visualViewport does, and a cross-origin iframe sees neither. While a
+  // Fluck is framed the page sizes <main> to the visual viewport and follows its offset, so the
+  // chat's composer sits just above the keyboard. Android already shrinks the window (no-op).
+  function fitViewport() {
+    var m = document.querySelector("main");
+    if (!viewing) { m.style.height = ""; m.style.transform = ""; return; }
+    var vv = window.visualViewport;
+    if (!vv) { m.style.height = window.innerHeight + "px"; m.style.transform = ""; return; }
+    m.style.height = Math.round(vv.height) + "px";
+    m.style.transform = vv.offsetTop ? "translateY(" + Math.round(vv.offsetTop) + "px)" : "";
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", fitViewport);
+    window.visualViewport.addEventListener("scroll", fitViewport);
+  }
+  window.addEventListener("resize", fitViewport);
+
+  function openFrame(url, label) {
+    if (viewing) return;
+    requestGeneration++;
+    viewing = { url: url, label: label };
+    stopPolling(); cancelOpenTimer();
+    notice("");
+    $("viewer-name").textContent = label;
+    $("fluckframe").setAttribute("src", url);
+    document.body.classList.add("viewing");
+    fitViewport();
+    // Same URL, no ticket: a reload of this entry shows the list (see the history.state check).
+    try { history.pushState({ view: "fluck" }, "", location.pathname + location.search); } catch (_) {}
+  }
+  // reload: true refetches the list behind a loading state, "quiet" refetches it in place,
+  // false leaves it to the caller.
+  function closeFrame(reload) {
+    if (!viewing) return;
+    requestGeneration++;
+    viewing = null;
+    $("fluckframe").setAttribute("src", "about:blank");
+    document.body.classList.remove("viewing");
+    document.title = PAGE_TITLE;
+    fitViewport();
+    autoOpenDone = true; // do not bounce straight back into a Fluck that was just closed
+    if (reload === "quiet") { show("list"); loadInstances(true).catch(function () {}); }
+    else if (reload !== false) loadInstances(false).catch(function () {});
+  }
+  function frameTitle(t) {
+    var clean = String(t).replace(/[\\u0000-\\u001f\\u007f]/g, " ").replace(/\\s+/g, " ").trim().slice(0, TITLE_MAX);
+    return clean || PAGE_TITLE;
+  }
+  function onFrameMessage(ev) {
+    var frame = $("fluckframe");
+    if (!viewing || !frame.contentWindow || ev.source !== frame.contentWindow || ev.origin !== new URL(viewing.url).origin) return;
+    var d = ev.data;
+    if (!d || typeof d !== "object") return;
+    if (d.type === "fluck-signed-out") closeFrame(true);
+    else if (d.type === "fluck-switch") closeFrame("quiet");
+    else if (d.type === "fluck-title" && typeof d.title === "string") document.title = frameTitle(d.title);
+  }
+  window.addEventListener("message", onFrameMessage);
+  window.addEventListener("popstate", function () { if (viewing) closeFrame(true); });
 
   function startPolling() {
     stopPolling();
@@ -305,14 +388,16 @@ const SCRIPT = `
     cancelOpenTimer();
     loadInstances(false).catch(function () {});
   });
-  // Coming back via bfcache after a navigation to a Fluck: show the list, do not reopen.
+  $("viewer-back").addEventListener("click", function () { closeFrame(true); });
+  // Restored from bfcache with no Fluck framed: refresh the list, do not reopen.
   window.addEventListener("pageshow", function (ev) {
-    if (ev.persisted) { opening = false; autoOpenDone = true; loadInstances(false).catch(function () {}); }
+    if (ev.persisted && !viewing) { opening = false; autoOpenDone = true; loadInstances(false).catch(function () {}); }
   });
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "visible" && !$("list").classList.contains("hidden")) loadInstances(true).catch(function () {});
   });
 
+  // Boot
   oauthErrorNotice();
   harvestFragment().then(function () {
     return loadInstances(false);
@@ -399,6 +484,14 @@ export function fluckPage(model: PageModel, nonce: string): string {
       <span class="sub">A Fluck shows as offline about ${esc(String(model.liveWindowSeconds))} seconds after its BOSS stops.</span>
     </div>
   </section>
+
+  <div id="viewer">
+    <div id="viewerbar">
+      <button id="viewer-back" class="secondary" type="button">&#8592; Flucks</button>
+      <span class="name" id="viewer-name"></span>
+    </div>
+    <iframe id="fluckframe" title="Fluck" allow="clipboard-read; clipboard-write; fullscreen" allowfullscreen src="about:blank"></iframe>
+  </div>
 
   <footer>Only you can see this list. Each Fluck admits only the BOSS account it is signed in as.</footer>
 </main>

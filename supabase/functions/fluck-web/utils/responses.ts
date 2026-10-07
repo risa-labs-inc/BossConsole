@@ -13,10 +13,10 @@ import { cspNonce } from "./html.ts"
  *
  * - `no-store`, and `Vary: Cookie` behind it, because the session lives in cookies and the
  *   page is per-user: a shared cache serving one user's list to another is the whole failure.
- * - `Referrer-Policy: no-referrer`: the page navigates to a Fluck with a ticket in the
+ * - `Referrer-Policy: no-referrer`: the page frames a Fluck with a ticket in the
  *   fragment, and its own /auth landing carries tokens in the fragment; nothing here may
  *   leak into a Referer.
- * - `X-Frame-Options: DENY`: nothing embeds this page.
+ * - `X-Frame-Options: DENY`: nothing embeds this page (it embeds the Fluck, not the reverse).
  */
 function baseSecurityHeaders(): Record<string, string> {
   return {
@@ -42,8 +42,11 @@ function contentSecurityPolicy(nonce: string): string {
     `style-src 'nonce-${nonce}'`,
     "img-src data:",
     "connect-src 'self'",
-    // No frame-src: a Fluck is opened by top-level navigation, never framed (third-party
-    // cookie blocking would break its session cookie inside a frame).
+    // The Fluck is embedded in an iframe so the address bar stays here. Its host is the
+    // user's own endpoint (a different, unpredictable https origin per Fluck), so this is the one
+    // directive that cannot be pinned to a host; the frame src is always one of the user's own
+    // registry rows, https-only via httpsOrigin (and OPEN_URL_RE in the page).
+    "frame-src https:",
     "form-action 'self'",
     "base-uri 'none'",
     "frame-ancestors 'none'",
