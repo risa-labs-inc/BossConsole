@@ -59,6 +59,7 @@ Body `{"refresh_token":"…"}`. Answers:
 | 400    | `{"error":"invalid_grant"}`                          | Grant dead or not bound to you; reconnect |
 | 400    | `{"error":"body"}`                                   | Signed, but not a refresh request         |
 | 401    | `{"error":"unauthorized"}`                           | Any auth failure, deliberately uniform    |
+| 413    | `{"error":"body"}`                                   | Body over 4096 bytes, refused before auth |
 | 502    | `{"error":"unavailable"}`                            | Any other Google refusal, or an outage    |
 | 503    | `{"error":"unconfigured"}`                           | Client id or secret not set here          |
 
@@ -76,6 +77,17 @@ install could redeem a stolen refresh token with our client secret. When Google 
 Grants made before the binding existed have no row, so their first refresh after the deploy is
 `invalid_grant` and the plugin asks the owner to reconnect once. That is the intended migration for
 them.
+
+The binding is to the user, not the install: revoking an install stops its `/refresh` calls, but a
+new install registered by the same user can still redeem that user's grants.
+
+### Plugin compatibility
+
+The per-install Ed25519 state and `POST /refresh` need Fluck plugin 1.0.120 or later
+(fluck-agent-imessage #169). An older plugin mints the retired three part HS256 state; its callback
+gets a page asking the user to update the plugin rather than the stale link page, and nothing is
+spent. There is no HS256 fallback: accepting it would bring back the shared `FLUCK_STATE_KEY` and a
+single `FLUCK_USER_ID`, which is what this design removes.
 
 ## Environment
 
@@ -139,10 +151,11 @@ use and short lived.
    # psql "$DATABASE_URL" -f supabase/migrations/20260924230000_fluck_oauth.sql
    ```
 
-   Also apply `20260929110000_fluck_oauth_grants.sql` (the grant bindings) BEFORE deploying the
-   function version that binds grants: that version calls `fluck_oauth_bind_grant` on every callback
-   and `fluck_oauth_grant_owner` on every refresh, and without the migration every callback fails
-   and every refresh is a 502.
+   Also apply `20260929110000_fluck_oauth_grants.sql` (the grant bindings; already recorded in
+   production's migration history, so it keeps that name) BEFORE deploying the function version that
+   binds grants: that version calls `fluck_oauth_bind_grant` on every callback and
+   `fluck_oauth_grant_owner` on every refresh, and without the migration every callback fails and
+   every refresh is a 502.
 
 2. Set the environment:
 

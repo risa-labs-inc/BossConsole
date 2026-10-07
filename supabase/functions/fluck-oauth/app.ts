@@ -144,6 +144,8 @@ const PAGE_UNCONFIGURED =
   "This sign in service is not set up yet. Whoever runs this BOSS has to finish setting it up."
 const PAGE_NOT_FOUND = "There is nothing at this address."
 const PAGE_NOT_A_BROWSER = "That link has to be opened in a browser."
+const PAGE_UPDATE_PLUGIN =
+  "That link came from an older version of Fluck. Update the Fluck plugin in BOSS, then ask Fluck for a fresh link."
 
 const FAILURE_PAGES: Record<ExchangeFailure, string> = {
   bad_code: PAGE_BAD_CODE,
@@ -177,12 +179,17 @@ export function routePath(pathname: string): string {
   return stripped === "" ? "/" : stripped.replace(/\/+$/, "") || "/"
 }
 
+/** The one definition of "configured", shared by /health, /client, /callback and /refresh. */
+function isSet(value: string | undefined): value is string {
+  return value !== undefined && value.trim().length > 0
+}
+
 function health(deps: Dependencies): Response {
   // Reports whether the function CAN work, not whether any particular secret is correct.
   // A boolean per variable, never a value, so this stays safe to curl from anywhere.
   const configured = {
-    clientId: Boolean(deps.env("GOOGLE_WEB_CLIENT_ID")),
-    clientSecret: Boolean(deps.env("GOOGLE_WEB_CLIENT_SECRET")),
+    clientId: isSet(deps.env("GOOGLE_WEB_CLIENT_ID")),
+    clientSecret: isSet(deps.env("GOOGLE_WEB_CLIENT_SECRET")),
   }
   const ok = configured.clientId && configured.clientSecret
   return new Response(JSON.stringify({ ok, configured }), {
@@ -199,7 +206,7 @@ async function client(request: Request, deps: Dependencies): Promise<Response> {
   }
   // Untrimmed: the exchange sends the env value as is, and the two must be the same string.
   const clientId = deps.env("GOOGLE_WEB_CLIENT_ID")
-  if (!clientId?.trim()) {
+  if (!isSet(clientId)) {
     deps.log("client unconfigured")
     return json(503, { error: "unconfigured" })
   }
@@ -226,9 +233,16 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
 
   const clientId = deps.env("GOOGLE_WEB_CLIENT_ID")
   const clientSecret = deps.env("GOOGLE_WEB_CLIENT_SECRET")
-  if (!clientId || !clientSecret) {
+  if (!isSet(clientId) || !isSet(clientSecret)) {
     deps.log("callback unconfigured: client")
     return page(503, "Sign in problem", PAGE_UNCONFIGURED)
+  }
+
+  // The pre-1.0.120 plugin minted a three part HS256 JWT. Its holder needs an update, not a
+  // fresh link from the same old plugin.
+  if (state && isLegacyState(state)) {
+    deps.log("callback refused: legacy state")
+    return page(400, "Sign in problem", PAGE_UPDATE_PLUGIN)
   }
 
   const nowSeconds = Math.floor(deps.now() / 1000)
@@ -298,6 +312,18 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
   return page(200, "Connected", PAGE_CONNECTED)
 }
 
+/** The shape of the retired HS256 state: `{"alg":"HS256",…}.<payload>.<mac>`. */
+function isLegacyState(state: string): boolean {
+  const parts = state.split(".")
+  if (parts.length !== 3) return false
+  try {
+    const header = JSON.parse(atob(parts[0].replaceAll("-", "+").replaceAll("_", "/")))
+    return header?.alg === "HS256"
+  } catch {
+    return false
+  }
+}
+
 /**
  * `POST /refresh`: `{"refresh_token":"…"}` in, `{"access_token","expires_in","scope"}` out.
  *
@@ -314,7 +340,11 @@ async function refresh(request: Request, deps: Dependencies): Promise<Response> 
     await request.body?.cancel().catch(() => {})
     return json(405, { error: "method" })
   }
-  const body = await request.text()
+  const body = await boundedText(request, MAX_REFRESH_BODY_BYTES)
+  if (body === null) {
+    deps.log("refresh refused: body size")
+    return json(413, { error: "body" })
+  }
   const instanceId = request.headers.get(INSTANCE_HEADER)
   const instance = instanceId && INSTANCE_ID_PATTERN.test(instanceId)
     ? await deps.instance(instanceId)
@@ -336,7 +366,6 @@ async function refresh(request: Request, deps: Dependencies): Promise<Response> 
 
   let refreshToken: unknown
   try {
-    if (body.length > MAX_REFRESH_BODY_BYTES) throw new Error()
     const parsed = JSON.parse(body)
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error()
     refreshToken = parsed.refresh_token
@@ -349,7 +378,7 @@ async function refresh(request: Request, deps: Dependencies): Promise<Response> 
 
   const clientId = deps.env("GOOGLE_WEB_CLIENT_ID")
   const clientSecret = deps.env("GOOGLE_WEB_CLIENT_SECRET")
-  if (!clientId || !clientSecret) {
+  if (!isSet(clientId) || !isSet(clientSecret)) {
     deps.log("refresh unconfigured: client")
     return json(503, { error: "unconfigured" })
   }
@@ -379,6 +408,39 @@ async function refresh(request: Request, deps: Dependencies): Promise<Response> 
     expires_in: result.expiresIn,
     scope: result.scope,
   })
+}
+
+/**
+ * The body as text, or null past [maxBytes]. Read before authentication (the signature covers
+ * it), so an unauthenticated caller must not be able to make this buffer more than the cap.
+ */
+async function boundedText(request: Request, maxBytes: number): Promise<string | null> {
+  const declared = Number(request.headers.get("content-length") ?? "0")
+  if (!Number.isFinite(declared) || declared > maxBytes) {
+    await request.body?.cancel().catch(() => {})
+    return null
+  }
+  if (!request.body) return ""
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.length
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {})
+      return null
+    }
+    chunks.push(value)
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.length
+  }
+  return new TextDecoder().decode(bytes)
 }
 
 function json(status: number, value: unknown): Response {
@@ -441,4 +503,5 @@ export const PAGES = {
   unconfigured: PAGE_UNCONFIGURED,
   notFound: PAGE_NOT_FOUND,
   notABrowser: PAGE_NOT_A_BROWSER,
+  updatePlugin: PAGE_UPDATE_PLUGIN,
 }
