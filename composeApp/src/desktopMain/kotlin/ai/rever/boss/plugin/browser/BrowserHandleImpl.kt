@@ -1803,7 +1803,10 @@ internal class BrowserHandleImpl(
         FluckEngine.setupKeyboardInterceptor(browser, ownerWindowId, zoomTarget = this)
 
         // Let a click in the page close any Swing popup menu open over it
-        FluckEngine.setupSwingPopupDismissOnPageClick(browser, ::focusPageAfterAddressEditing)
+        FluckEngine.setupSwingPopupDismissOnPageClick(browser) {
+            BrowserPagePressEvents.emit(currentWindowId)
+            focusPageAfterAddressEditing()
+        }
 
         // Setup screen capture handler
         FluckEngine.setupCaptureSessionHandler(browser)

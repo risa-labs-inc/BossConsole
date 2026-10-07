@@ -300,7 +300,7 @@ private fun OwnedCornerDialog(
  * effects below are the whole of it.
  */
 @Composable
-private fun trackedContentPaneBounds(parent: AwtWindow?): IntArray? {
+internal fun trackedContentPaneBounds(parent: AwtWindow?): IntArray? {
     var bounds by remember(parent) { mutableStateOf(contentPaneBounds(parent)) }
 
     // Track the parent. `rememberOverlayParentBounds` is keyed on the window INSTANCE, which never

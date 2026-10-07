@@ -1,5 +1,6 @@
 package ai.rever.boss.components.sidebar
 
+import ai.rever.boss.components.overlays.OverlayConfig
 import ai.rever.boss.components.window_panel.components.main_window_panels.TabBarLayout
 import ai.rever.boss.components.window_panel.components.main_window_panels.TabBarRevealState
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabBarRevealState
@@ -20,10 +21,10 @@ import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performMouseInput
-import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -46,6 +47,24 @@ class HiddenSidebarHoverEdgeTest {
         rule.runOnIdle { reveal.pointerInRevealArea = false }
         rule.mainClock.advanceTimeBy(400)
         rule.runOnIdle { assertFalse(reveal.drawerVisible) }
+    }
+
+    @Test
+    fun nativeCursorRevealNeedsNoInvisibleEdgeWindow() {
+        val previousRenderer = OverlayConfig.heavyweightCorner
+        var windows = 0
+        try {
+            OverlayConfig.heavyweightCorner = { _, _, _, _, _, _ -> windows++ }
+            render(focused = true, enabled = true, heavyweight = true)
+            reachEdge()
+            rule.runOnIdle {
+                assertTrue(reveal.drawerVisible)
+                assertEquals(0, windows)
+            }
+            rule.onNodeWithTag("content").assertWidthIsEqualTo(320.dp)
+        } finally {
+            OverlayConfig.heavyweightCorner = previousRenderer
+        }
     }
 
     @Test
@@ -111,11 +130,12 @@ class HiddenSidebarHoverEdgeTest {
         enabled: Boolean,
         integratedPanel: Boolean = false,
         fullscreen: Boolean = false,
+        heavyweight: Boolean = false,
     ) {
         rule.mainClock.autoAdvance = false
         rule.setContent {
             CompositionLocalProvider(
-                LocalHeavyweightOverlays provides false,
+                LocalHeavyweightOverlays provides heavyweight,
                 LocalWindowFullscreen provides fullscreen,
                 LocalWindowInfo provides
                     object : WindowInfo {
@@ -137,7 +157,7 @@ class HiddenSidebarHoverEdgeTest {
                             ),
                         )
                     }
-                    HiddenSidebarHoverEdge(reveal, IntRect(0, 0, 320, 200), enabled)
+                    HiddenSidebarHoverEdge(reveal, enabled)
                 }
             }
         }

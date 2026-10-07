@@ -106,6 +106,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -309,6 +310,7 @@ internal fun BossAppScaffold(
     // The drawer takes the host actions when the header replaces the rail. Its visibility is
     // reported by SplitViewPanel, which owns the measured layout and drawer state.
     var drawerVisible by remember { mutableStateOf(false) }
+    var sidebarRevealProgress by remember { mutableFloatStateOf(0f) }
 
     // Whether the bar in the layout is the RAIL, reported by SplitViewPanel once it has measured.
     //
@@ -561,6 +563,7 @@ internal fun BossAppScaffold(
                     trafficLights = trafficLights,
                     barRailed = barRailed,
                     drawerVisible = drawerVisible,
+                    sidebarRevealProgress = sidebarRevealProgress,
                     sidebarLeading = sidebarLeading,
                     sidebarBelowTopChrome = sidebarBelowTopChrome,
                     toggleRequests = sidebarToggleRequests,
@@ -805,6 +808,7 @@ internal fun BossAppScaffold(
                                 )
                             },
                             onDrawerVisibleChange = { visible -> drawerVisible = visible },
+                            onSidebarRevealProgressChange = { sidebarRevealProgress = it },
                             onBarRailedChange = { railed -> barRailed = railed },
                             sidebarToggleRequests = sidebarToggleRequests.takeIf { sidebarInHeader },
                             onSidebarLeadingChange = { sidebarLeading = it },
@@ -1111,6 +1115,7 @@ private fun SidebarTitleBar(
     trafficLights: TrafficLightInset,
     barRailed: Boolean,
     drawerVisible: Boolean,
+    sidebarRevealProgress: Float,
     toggleRequests: MutableSharedFlow<Unit>,
     state: BossAppState,
     spaceAction: NativeTitleBarAction,
@@ -1127,7 +1132,15 @@ private fun SidebarTitleBar(
         val toggleSidebar: () -> Unit = { toggleRequests.tryEmit(Unit) }
         val title = if (appearance.showTitleBar) spaceAction.label else ""
         val expanded = !barRailed || drawerVisible
-        val sidebarWidth = if (expanded) appearance.tabBarVerticalWidth + 8f else 0f
+        val sidebarWidth =
+            if (!barRailed) {
+                appearance.tabBarVerticalWidth + 8f
+            } else if (drawerVisible) {
+                (appearance.tabBarVerticalWidth + 8f) *
+                    sidebarRevealProgress
+            } else {
+                0f
+            }
         val actions =
             mergeNativeSharingActions(
                 sidebarTitleActions(state, toggleSidebar, sidebarWidth, sidebarLeading, sidebarBelowTopChrome) +

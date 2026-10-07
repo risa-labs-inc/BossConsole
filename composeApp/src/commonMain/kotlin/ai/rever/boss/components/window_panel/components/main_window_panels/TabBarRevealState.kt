@@ -125,6 +125,25 @@ class TabBarRevealState internal constructor(
         if (pointerInSidebar) suppressed = true
     }
 
+    /** An outside press dismisses the hover reveal even inside its retention margin. */
+    internal fun dismissMainPanelPress(
+        x: Int,
+        y: Int,
+        region: IntRect,
+        sidebarWidth: Dp,
+    ) {
+        val inMainPanel =
+            region.contains(
+                androidx.compose.ui.unit
+                    .IntOffset(x, y),
+            ) && x >= region.left + sidebarWidth.value
+        if (inMainPanel) dismissFromMainPanel()
+    }
+
+    internal fun dismissFromMainPanel() {
+        if (isTransientReveal && !busy) dismiss(pointerInSidebar = true)
+    }
+
     /** Open the drawer, for a panel too narrow for the in-flow bar to be anything but the rail. */
     fun openDrawer() {
         drawerOpen = true
