@@ -58,11 +58,21 @@ a reopened view defers installation again. Downloads use `.part` files until adm
 Failed promoted artifacts are quarantined; a `.rejected-update` marker fences startup
 selection if a live loader prevents removal. Host and Toolbox updates/installVersion
 share SHA-256 plugin-ID file locks under `.plugin-update-locks`; never delete lock files.
-Both participants claim a process gate before opening a lease descriptor. They share
-`boss.plugins.updateLease.processOwners` in `System.getProperties()`: a bootstrap-JDK
-ConcurrentHashMap from canonical lock paths to plain Object tokens. Closing a second
-same-process descriptor can release the holder's POSIX OS lock, so busy contenders
-must never open that descriptor. Remove only the owning token after channel closure.
+Both participants claim a process gate before opening a lease descriptor. Their
+JDK-only `RequiredModelMBean` named
+`boss.plugins:type=UpdateLeaseRegistry,protocol=2` holds an AtomicReference to a
+ConcurrentHashMap from canonical lock paths to plain Object tokens. Its only
+operation is AtomicReference.get; no host/plugin classes or map values enter its
+metadata. Register atomically and use the winning bean across classloaders. Refuse
+incompatible metadata or map types without replacing the bean. Never unregister it
+on plugin unload. System properties remain string-compatible. Keep this protocol
+identical to Toolbox's `PluginUpdateProcessRegistry` and `PluginUpdateLease`.
+Closing a second same-process descriptor can release the holder's POSIX OS lock,
+so busy contenders must never open it. Remove only the owning token after channel
+closure. Registry mutation by arbitrary in-process code is not a security boundary;
+plugins already share JVM/file access. Abnormal teardown or a still-open failed
+close requires restarting BOSS, never probing a busy owner's lock file. Both host
+and Toolbox releases must use protocol 2 for the shared guarantee.
 Ordinary idle plugins reload without restarting BOSS; native plugins, disabled plugins,
 plugins with loaded dependents, and multiwindow updates are staged for the next manual
 start. Disabled plugins remain disabled. Protected API/runtime ids use their existing

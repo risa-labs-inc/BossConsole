@@ -15,6 +15,14 @@ class PluginUpdateLeaseProbe {
             }
             try (lock) {
                 System.out.println("acquired");
+                if (args.length == 3) {
+                    java.nio.file.Files.writeString(Path.of(args[1]), "ready");
+                    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
+                    while (!java.nio.file.Files.exists(Path.of(args[2]))) {
+                        if (System.nanoTime() >= deadline) throw new IllegalStateException("Release timed out");
+                        Thread.sleep(10);
+                    }
+                }
             }
         }
     }

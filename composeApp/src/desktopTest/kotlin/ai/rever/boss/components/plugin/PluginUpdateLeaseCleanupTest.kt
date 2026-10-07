@@ -74,13 +74,14 @@ class PluginUpdateLeaseCleanupTest {
     @Test
     fun `fatal diagnostics propagate after channel close and unfencing`() {
         val fatal = NoClassDefFoundError("logger")
+        val original = IOException("release")
         val events = mutableListOf<String>()
         val actual =
             assertFails {
                 cleanupPluginUpdateLease(
                     release = {
                         events += "release"
-                        throw IOException("release")
+                        throw original
                     },
                     close = { events += "close" },
                     afterClose = { events += "unfence" },
@@ -88,6 +89,7 @@ class PluginUpdateLeaseCleanupTest {
                 )
             }
         assertSame(fatal, actual)
+        assertSame(original, actual.suppressed.single())
         assertEquals(listOf("release", "close", "unfence"), events)
     }
 }

@@ -22,19 +22,24 @@ internal class PluginUpdateLease private constructor(
     private val owners: ConcurrentHashMap<String, Any>,
     private val path: String,
     private val token: Any,
+    private val reportFailure: (String, String) -> Unit,
 ) : Closeable {
+    @Synchronized
     override fun close() {
-        cleanup(channel, lock, owners, path, token)
+        reportFailure.cleanup(channel, lock, owners, path, token)
     }
 
     companion object {
-        private const val PROCESS_OWNERS = "boss.plugins.updateLease.processOwners"
         private val logger = BossLogger.forComponent("PluginUpdateLease")
 
         @Suppress("TooGenericExceptionCaught")
         fun acquire(
             pluginDir: File,
             pluginId: String,
+            openChannel: (File) -> FileChannel = {
+                FileChannel.open(it.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE)
+            },
+            reportFailure: (String, String) -> Unit = ::reportCleanupFailure,
         ): Result<PluginUpdateLease> {
             var channel: FileChannel? = null
             var lock: FileLock? = null
@@ -51,11 +56,11 @@ internal class PluginUpdateLease private constructor(
                         .joinToString("") { "%02x".format(it) }
                 val file = File(directory, "$name.lock").canonicalFile
                 path = file.path
-                owners = processOwners()
+                owners = PluginUpdateProcessRegistry.owners()
                 // On POSIX, closing ANY descriptor for this inode can release the process's
                 // existing lock. Reject same-JVM contenders before opening another channel.
                 claimProcessOwner(owners, path, token, pluginId)
-                channel = FileChannel.open(file.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE)
+                channel = openChannel(file)
                 lock =
                     try {
                         channel.tryLock()
@@ -63,17 +68,28 @@ internal class PluginUpdateLease private constructor(
                         null
                     }
                 if (lock == null) throw PluginUpdateLeaseBusyException(pluginId)
-                Result.success(PluginUpdateLease(channel, lock, owners, path, token))
+                Result.success(PluginUpdateLease(channel, lock, owners, path, token, reportFailure))
             } catch (failure: Exception) {
-                cleanup(channel, lock, owners, path, token)
+                cleanupFailedAcquisition(failure) { reportFailure.cleanup(channel, lock, owners, path, token) }
                 Result.failure(failure)
             } catch (failure: Throwable) {
-                try {
-                    cleanup(channel, lock, owners, path, token)
-                } catch (cleanupFailure: Throwable) {
-                    if (cleanupFailure !== failure) failure.addSuppressed(cleanupFailure)
-                }
+                cleanupFailedAcquisition(failure) { reportFailure.cleanup(channel, lock, owners, path, token) }
                 throw failure
+            }
+        }
+
+        @Suppress("TooGenericExceptionCaught")
+        private fun cleanupFailedAcquisition(
+            failure: Throwable,
+            cleanup: () -> Unit,
+        ) {
+            try {
+                cleanup()
+            } catch (cleanupFailure: Throwable) {
+                val primary = if (failure is Exception) cleanupFailure else failure
+                val secondary = if (failure is Exception) failure else cleanupFailure
+                if (primary !== secondary) primary.addSuppressed(secondary)
+                throw primary
             }
         }
 
@@ -86,21 +102,18 @@ internal class PluginUpdateLease private constructor(
             if (owners.putIfAbsent(path, token) != null) throw PluginUpdateLeaseBusyException(pluginId)
         }
 
-        @Suppress("UNCHECKED_CAST")
-        private fun processOwners(): ConcurrentHashMap<String, Any> {
-            val properties = System.getProperties()
-            return synchronized(properties) {
-                val existing = properties[PROCESS_OWNERS]
-                if (existing == null) {
-                    ConcurrentHashMap<String, Any>().also { properties[PROCESS_OWNERS] = it }
-                } else {
-                    check(existing is ConcurrentHashMap<*, *>) { "Invalid plugin update process lease registry" }
-                    existing as ConcurrentHashMap<String, Any>
-                }
-            }
+        private fun reportCleanupFailure(
+            phase: String,
+            error: String,
+        ) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Plugin update lease cleanup failed",
+                mapOf("phase" to phase, "error" to error),
+            )
         }
 
-        private fun cleanup(
+        private fun ((String, String) -> Unit).cleanup(
             channel: FileChannel?,
             lock: FileLock?,
             owners: ConcurrentHashMap<String, Any>?,
@@ -108,19 +121,13 @@ internal class PluginUpdateLease private constructor(
             token: Any,
         ) {
             cleanupPluginUpdateLease(
-                release = { lock?.release() },
+                release = { if (lock?.isValid == true) lock.release() },
                 close = { channel?.close() },
                 afterClose = {
                     // A failed close that leaves a live descriptor retains the process fence.
                     if ((channel == null || !channel.isOpen) && path != null) owners?.remove(path, token)
                 },
-                reportFailure = { phase, error ->
-                    logger.warn(
-                        LogCategory.SYSTEM,
-                        "Plugin update lease cleanup failed",
-                        mapOf("phase" to phase, "error" to error),
-                    )
-                },
+                reportFailure = this,
             )
         }
     }
@@ -160,6 +167,7 @@ private fun cleanupPluginUpdateLeaseAction(
         } catch (_: Exception) {
             null // Ordinary diagnostics cannot invalidate a completed installation.
         } catch (fatal: Throwable) {
+            if (fatal !== failure) fatal.addSuppressed(failure)
             fatal
         }
     } catch (fatal: Throwable) {
