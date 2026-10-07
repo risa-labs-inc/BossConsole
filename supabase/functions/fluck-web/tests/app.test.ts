@@ -99,7 +99,7 @@ function backend(over: { list?: () => Response; mint?: () => Response } = {}) {
 
 // ---- page ----
 
-Deno.test("GET / renders the Fluck page with nonce'd script and style, strict CSP, no-store, no framing", withEnv(async () => {
+Deno.test("GET / renders the Fluck page with nonce'd script and style, strict CSP, no-store, not frameable", withEnv(async () => {
   const res = await app.request(`${BASE}/`)
   assertEquals(res.status, 200)
   const csp = res.headers.get("content-security-policy") ?? ""
@@ -107,7 +107,8 @@ Deno.test("GET / renders the Fluck page with nonce'd script and style, strict CS
   assert(nonce, "CSP must carry a script nonce")
   assertStringIncludes(csp, "default-src 'none'")
   assertStringIncludes(csp, "frame-ancestors 'none'")
-  assert(!csp.includes("frame-src"), "the page never frames a Fluck")
+  assertStringIncludes(csp, "frame-src https:")
+  assert(!/frame-src[^;]*(http:|\*|data:|blob:)/.test(csp), "frame-src is https only")
   const html = await res.text()
   assertStringIncludes(html, `<script nonce="${nonce}">`)
   assertStringIncludes(html, `<style nonce="${nonce}">`)
@@ -127,12 +128,15 @@ Deno.test("GET / renders the Fluck page with nonce'd script and style, strict CS
   assert(!html.includes("\u2014"), "no em-dash")
 }))
 
-Deno.test("the page script parses and navigates top-level only to an https /#/t/ URL", withEnv(async () => {
+Deno.test("the page script parses and frames only an https /#/t/ URL; top-level navigation is only the no-hello fallback", withEnv(async () => {
   const html = await (await app.request(`${BASE}/`)).text()
   const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(html)![1]
   new Function(script) // syntax check; throws on a parse error
-  assertStringIncludes(script, "location.assign(data.url)")
-  assert(!script.includes("iframe"))
+  assertEquals(script.match(/location\.assign\(/g)?.length, 1, "one top-level navigation")
+  assertStringIncludes(script, "function navigateTopLevel(url) {")
+  assert(!script.includes("location.href ="))
+  assertStringIncludes(script, "openFrame(data.url, title(i), i.instance_id)")
+  assertStringIncludes(html, '<iframe id="fluckframe" title="Fluck" allow="clipboard-read; clipboard-write; fullscreen" allowfullscreen src="about:blank"></iframe>')
   const re = /^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?\/#\/t\/[A-Za-z0-9_-]{43}$/
   assertStringIncludes(script, "var OPEN_URL_RE = " + re.toString())
 }))

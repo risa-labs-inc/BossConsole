@@ -779,9 +779,24 @@ A sign-in page for the owner's Fluck web chats. The Fluck plugin heartbeats
 `fluck_web_upsert_instance` (as the user, every 30 s) into `public.fluck_web_instances`; the
 `fluck-web` function signs the user in (Google, Apple, magic link with `create_user: false`),
 lists `fluck_web_list_instances()`, and on Open mints a 60 s single-use ticket with
-`fluck_web_mint_ticket` and navigates the top-level page to `<endpoint_url>/#/t/<ticket>`. The
-Fluck redeems it with `fluck_web_consume_ticket` as its own signed-in user, so a ticket minted by
-another account can never be redeemed. No message content is stored. Security follows
+`fluck_web_mint_ticket` and embeds `<endpoint_url>/#/t/<ticket>` in a full-viewport iframe
+(`#fluckframe`, as `live-sessions` embeds its viewer), so the address bar stays on
+fluck.risaboss.com. The Fluck redeems the ticket with `fluck_web_consume_ticket` as its own
+signed-in user, so a ticket minted by another account can never be redeemed; it keeps its session
+token in the frame's sessionStorage (no third-party cookie) and allows framing only by
+`https://fluck.risaboss.com`. Opening from the list pushes `?instance=<id>` (never the ticket):
+browser Back closes the frame, and a reload reopens that Fluck with a fresh ticket; switch and
+sign-out drop `?instance`. A load that may auto-open (`?instance`, or exactly one Fluck online,
+which opens at once with no countdown) starts in `body.launching`: a copy of the web chat's own boot screen (the name, centred, its
+`--bg`/`--text-3`, system font), so handing over to the frame changes no pixel; no portal chrome
+until the frame is up or the page has to ask. The frame posts `{type:"fluck-signed-out"}` (close, reload the
+list), `{type:"fluck-switch"}` (close, show the list) and `{type:"fluck-title", title}` (sets
+`document.title`, capped, text only); the page accepts them only from the frame's window and the
+endpoint's origin and ignores anything else. Backwards compatibility: a framing-capable Fluck first
+posts `{type:"fluck-hello"}` (before redeeming the ticket); with no hello within 8 s the page
+assumes an older Fluck that refuses framing, closes the frame and navigates top-level to the same
+URL (replacing its entry with `?list=1` first), so the portal can ship before every Fluck frames. CSP adds `frame-src https:`; the portal itself keeps
+`frame-ancestors 'none'`. No message content is stored. Security follows
 `live-sessions` (nonce CSP, no CORS, `__Secure-` cookies, cross-site refusal, token rotation), plus
 an exact-Origin and CSRF-nonce check on `POST /api/open`. Endpoints must be bare https origins (a
 table CHECK and a second check in the function). A Cloudflare Worker
