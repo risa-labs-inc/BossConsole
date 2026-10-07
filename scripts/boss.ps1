@@ -239,7 +239,11 @@ switch ($Command.ToLower()) {
                 [Console]::Error.WriteLine("Error: BOSS_EXE does not name an executable file.")
                 exit 1
             }
+            # The MSI installs per user, into %LOCALAPPDATA%\BOSS unless another directory is chosen.
             if (-not $bossExe -or -not (Test-Path $bossExe)) {
+                $bossExe = "$env:LOCALAPPDATA\BOSS\BOSS.exe"
+            }
+            if (-not (Test-Path $bossExe)) {
                 $bossExe = "$env:LOCALAPPDATA\Programs\BOSS\BOSS.exe"
             }
             if (-not (Test-Path $bossExe)) {
@@ -267,7 +271,11 @@ switch ($Command.ToLower()) {
             [Console]::Error.WriteLine("Error: BOSS_EXE does not name an executable file.")
             exit 1
         }
+        # The MSI installs per user, into %LOCALAPPDATA%\BOSS unless another directory is chosen.
         if (-not $bossExe -or -not (Test-Path $bossExe)) {
+            $bossExe = "$env:LOCALAPPDATA\BOSS\BOSS.exe"
+        }
+        if (-not (Test-Path $bossExe)) {
             $bossExe = "$env:LOCALAPPDATA\Programs\BOSS\BOSS.exe"
         }
         if (-not (Test-Path $bossExe)) {
