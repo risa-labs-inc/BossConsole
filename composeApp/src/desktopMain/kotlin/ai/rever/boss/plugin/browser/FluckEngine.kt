@@ -90,6 +90,9 @@ object FluckEngine {
 
     @Volatile
     private var preferredColorSchemeDark: Boolean = true
+
+    /** The `prefers-color-scheme` pages are rendered under; favicons are cached per scheme. */
+    val isColorSchemeDark: Boolean get() = preferredColorSchemeDark
     private val themeScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     init {

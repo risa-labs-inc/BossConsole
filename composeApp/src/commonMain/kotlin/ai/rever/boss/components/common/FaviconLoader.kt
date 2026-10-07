@@ -7,6 +7,8 @@ import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.tab.fluck.FluckTabType
+import ai.rever.boss.plugin.ui.BossThemeController
+import ai.rever.boss.plugin.ui.BossThemes
 import androidx.compose.runtime.*
 
 /**
@@ -36,9 +38,13 @@ fun rememberFaviconLoader(tabInfo: TabInfo): TabIcon.Image? {
         mutableStateOf<TabIcon.Image?>(null)
     }
 
+    // The cache keeps one icon per colour scheme, so a theme switch re-resolves. Not a key of the
+    // `remember` above: the old icon stays on screen until the new one is read, rather than blinking.
+    val lightTheme = BossThemes.byId(BossThemeController.currentId).isLight
+
     // The resolver performs IO off the UI thread and preserves cancellation. A sharper cached
     // icon is used only when its artwork matches the page's own favicon.
-    LaunchedEffect(origin, faviconCacheKey) {
+    LaunchedEffect(origin, faviconCacheKey, lightTheme) {
         if (host != null || faviconCacheKey != null) {
             loadedFavicon = loadCachedHighQualityFavicon(pageUrl, faviconCacheKey)
         }

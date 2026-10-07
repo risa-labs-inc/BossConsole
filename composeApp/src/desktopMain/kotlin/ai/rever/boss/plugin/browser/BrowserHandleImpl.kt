@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.browser
 
+import ai.rever.boss.cache.FaviconScheme
 import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.overlays.overlayCornerIsHeavyweight
 import ai.rever.boss.components.plugin.TabAudioSource
@@ -1070,6 +1071,7 @@ internal class BrowserHandleImpl(
                 lastCommittedMainFrameUrl.ifBlank { runCatching { browser.url() }.getOrDefault("") }
             },
             notifyListeners = ::notifyFaviconListeners,
+            schemeProvider = { FaviconScheme.of(FluckEngine.isColorSchemeDark) },
             warn = { message, data -> logger.warn(LogCategory.BROWSER, message, data) },
         )
 

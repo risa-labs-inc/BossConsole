@@ -1,5 +1,6 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
+import ai.rever.boss.components.common.rememberFaviconContrastFilter
 import ai.rever.boss.components.common.rememberFaviconLoader
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
@@ -348,9 +349,16 @@ internal fun TabGlyph(
     val dim = Modifier.alpha(if (isActive) 1f else INACTIVE_ICON_ALPHA).size(FAVICON_SIZE)
 
     when {
-        // A real favicon keeps its own colours; tinting it would turn every site's mark grey.
+        // A real favicon keeps its own colours; tinting it would turn every site's mark grey. The
+        // one exception is monochrome ink that would vanish on this tab's background.
         icon is TabIcon.Image && painter != null -> {
-            Image(painter = painter, contentDescription = tab.title, modifier = dim)
+            val chip = if (isActive) colors.signal.copy(alpha = ACTIVE_CHIP_ALPHA) else Color.Transparent
+            Image(
+                painter = painter,
+                contentDescription = tab.title,
+                modifier = dim,
+                colorFilter = rememberFaviconContrastFilter(painter, chip, colors.panel),
+            )
         }
 
         painter != null -> {
