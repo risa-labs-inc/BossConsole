@@ -14,7 +14,9 @@ import java.util.UUID
 
 internal class PluginUpdateLeaseBusyException(
     pluginId: String,
-) : IllegalStateException("Another installation is already updating $pluginId")
+) : IllegalStateException(
+        "Another installation may be updating $pluginId. Wait and retry; if this persists, restart BOSS.",
+    )
 
 /** Shared disk and bootstrap-JDK process protocol with Toolbox; never delete lock files. */
 internal class PluginUpdateLease private constructor(
@@ -40,7 +42,9 @@ internal class PluginUpdateLease private constructor(
             openChannel: (File) -> FileChannel = {
                 FileChannel.open(it.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE)
             },
-            reportFailure: (String, String) -> Unit = ::reportCleanupFailure,
+            reportFailure: (String, String) -> Unit = { phase, error ->
+                reportCleanupFailure(pluginId, phase, error)
+            },
         ): Result<PluginUpdateLease> {
             val channelClose = PluginUpdateLeaseChannelClose()
             var lock: FileLock? = null
@@ -105,13 +109,19 @@ internal class PluginUpdateLease private constructor(
         }
 
         private fun reportCleanupFailure(
+            pluginId: String,
             phase: String,
             error: String,
         ) {
             logger.warn(
                 LogCategory.SYSTEM,
                 "Plugin update lease cleanup failed",
-                mapOf("phase" to phase, "error" to error),
+                mapOf(
+                    "pluginId" to pluginId,
+                    "phase" to phase,
+                    "error" to error,
+                    "requiresRestart" to (phase == "close"),
+                ),
             )
         }
 
