@@ -476,6 +476,16 @@ verify_jwt = false
 import_map = "./functions/fluck-oauth/deno.json"
 entrypoint = "./functions/fluck-oauth/index.ts"
 
+[functions.fluck-vault]
+enabled = true
+# MUST be false: the caller is a phone browser opening a link that arrived by text, carrying no
+# Authorization header and no apikey. Its gate is the link itself, single use through
+# `public.fluck_vault_store` and bound to the device by a cookie the first GET sets. The function
+# holds no key that opens anything it stores: the page seals the value in the browser.
+verify_jwt = false
+import_map = "./functions/fluck-vault/deno.json"
+entrypoint = "./functions/fluck-vault/index.ts"
+
 [functions.relay-admission]
 enabled = true
 verify_jwt = false
