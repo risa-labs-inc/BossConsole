@@ -78,6 +78,12 @@ var kind=form.getAttribute("data-kind");
 if(kind==="password"){var p=field("f2");
 if(!p)return fail("Enter the password.");
 return{kind:"password",username:field("f1"),password:p}}
+if(kind==="secret"){var label=field("f1").trim();var v=field("f2");
+if(!label)return fail("Enter what this key is for.");
+if(!v)return fail("Paste the key.");
+var s={kind:"secret",label:label,value:v};
+if(enc.encode(JSON.stringify(s)).length>8000)return fail("That is too long to save here.");
+return s}
 if(kind==="card"){var pan=digits(field("f2"));
 if(!luhn(pan))return fail("That card number does not look right.");
 var ed=digits(field("f3"));if(ed.length!==4)return fail("Enter the expiry as MM/YY.");
@@ -232,7 +238,9 @@ export async function message(
 export interface FormPage {
   title: string
   intro: string
-  kind: "password" | "card" | "cvv"
+  kind: "password" | "card" | "cvv" | "secret"
+  /** A secret's fixed label, shown read only. Never a value from the stored item. */
+  label?: string
   jti: string
   sealKey: string
   action: string
@@ -241,7 +249,7 @@ export interface FormPage {
 }
 
 /**
- * The form pages. Three of them, one function, because they differ only in their fields.
+ * The form pages. Four of them, one function, because they differ only in their fields.
  *
  * Field names are `f1`..`f11` rather than `cardnumber` or `cvv`. A password manager, a browser
  * autofill heuristic or a crash reporter that recognises a field by name is one more thing
@@ -252,6 +260,15 @@ export async function form(page: FormPage): Promise<Response> {
   const fields = page.kind === "password"
     ? `<label>Username or email<input name="f1" type="text" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
 <label>Password<input name="f2" type="password" autocomplete="off" required></label>`
+    : page.kind === "secret"
+    ? `${
+      page.label
+        ? `<label>For<input name="f1" type="text" value="${
+          escapeHtml(page.label)
+        }" readonly autocomplete="off" spellcheck="false"></label>`
+        : `<label>What is it for<input name="f1" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" required></label>`
+    }
+<label>Key<input name="f2" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required></label>`
     : page.kind === "card"
     ? `<label>Name on the card<input name="f1" type="text" autocomplete="off" spellcheck="false" required></label>
 <label>Card number<input name="f2" type="text" inputmode="numeric" autocomplete="off" required></label>

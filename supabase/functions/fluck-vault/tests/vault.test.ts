@@ -141,7 +141,7 @@ function harness(options: {
       return Promise.resolve(options.result ?? { outcome: "stored", kind: "card" })
     },
     // The DGX routes have their own suite; here they only have to exist.
-    createRequest: () => Promise.resolve(true),
+    createRequest: () => Promise.resolve("created"),
     claimInbox: () => Promise.resolve([]),
     instance: () => Promise.resolve(null),
     registerInstance: () => Promise.resolve("unavailable"),

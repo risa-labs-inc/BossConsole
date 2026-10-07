@@ -98,7 +98,7 @@ function harness(
     store: () => Promise.resolve({ outcome: "stored", kind: "cvv" }),
     createRequest: (request) => {
       created.push(request)
-      return Promise.resolve(true)
+      return Promise.resolve("created")
     },
     claimInbox: (ws, instanceId) => {
       claimed.push([ws, instanceId])

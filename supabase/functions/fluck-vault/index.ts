@@ -19,9 +19,11 @@ import { createClient } from "@supabase/supabase-js"
 import {
   type ClaimedItem,
   createHandler,
+  type CreateOutcome,
   type CreateRequest,
   type Instance,
   instanceFromRow,
+  isConnector,
   type RegisterOutcome,
   type Registration,
   type RotateOutcome,
@@ -51,6 +53,8 @@ interface DescribeRow {
   instance_id: string | null
   instance_link_public_key: string | null
   instance_seal_public_key: string | null
+  /** Absent before the secret-kind migration. */
+  connector?: string | null
 }
 
 Deno.serve(createHandler({
@@ -76,7 +80,9 @@ Deno.serve(createHandler({
     if (row.instance_id && (!row.instance_link_public_key || !row.instance_seal_public_key)) {
       return null
     }
-    const kind = row.kind === "password" || row.kind === "card" ? row.kind : null
+    const kind = row.kind === "password" || row.kind === "card" || row.kind === "secret"
+      ? row.kind
+      : null
     return {
       jti,
       ws: row.ws,
@@ -89,6 +95,7 @@ Deno.serve(createHandler({
       last4: row.last4,
       totalCents: row.total_cents,
       currency: row.currency,
+      connector: isConnector(row.connector) ? row.connector : null,
       // Describe drops rows of a revoked install, so an id here always comes with its keys.
       instance: row.instance_id && row.instance_link_public_key && row.instance_seal_public_key
         ? {
@@ -120,7 +127,7 @@ Deno.serve(createHandler({
       p_cookie_hash: request.cookieHash,
     })
     if (error) return { outcome: "unavailable", kind: null }
-    if (data === "card" || data === "password" || data === "cvv") {
+    if (data === "card" || data === "password" || data === "cvv" || data === "secret") {
       return { outcome: "stored", kind: data }
     }
     return { outcome: "gone", kind: null }
@@ -133,7 +140,7 @@ Deno.serve(createHandler({
    * by a Supabase credential: the DGX deliberately holds no service role key, so this process
    * is the only thing in the system with one, and all it can do with it is move opaque blobs.
    */
-  async createRequest(request: CreateRequest): Promise<boolean> {
+  async createRequest(request: CreateRequest): Promise<CreateOutcome> {
     const { data, error } = await client.rpc("fluck_vault_create", {
       p_jti: request.jti,
       p_ws: request.ws,
@@ -148,9 +155,12 @@ Deno.serve(createHandler({
       p_currency: request.currency,
       p_expires_at: new Date(request.expiresAt * 1000).toISOString(),
       p_instance_id: request.instanceId,
+      // Sent only when set, so the other kinds still resolve against the pre-migration signature.
+      ...(request.connector !== null ? { p_connector: request.connector } : {}),
+      ...(request.env !== null ? { p_env: request.env } : {}),
     })
-    if (error) return false
-    return data === true
+    if (error) return SCHEMA_ERRORS.has(error.code ?? "") ? "schema" : "unavailable"
+    return data === true ? "created" : "taken"
   },
 
   /**
@@ -176,6 +186,8 @@ Deno.serve(createHandler({
       purchaseId: typeof row.purchase_id === "string" ? row.purchase_id : null,
       ciphertext: fromHex(String(row.ciphertext)),
       createdAt: String(row.created_at),
+      ...(typeof row.connector === "string" ? { connector: row.connector } : {}),
+      ...(typeof row.env === "string" ? { env: row.env } : {}),
     }))
   },
 
@@ -223,6 +235,12 @@ Deno.serve(createHandler({
     return data.user.id
   },
 }))
+
+/**
+ * No function with these named arguments (PostgREST), no such column or function, or a check
+ * the function's own validation passed: the database is behind this function.
+ */
+const SCHEMA_ERRORS = new Set(["PGRST202", "42703", "42883", "23514"])
 
 /** PostgREST `\x…` hex to base64. Transport only; this process cannot open the bytes. */
 function fromHex(value: string): string {
