@@ -201,18 +201,18 @@ async function client(request: Request, deps: Dependencies): Promise<Response> {
   }
   // Untrimmed: the exchange sends the env value as is, and the two must be the same string.
   const clientId = deps.env("GOOGLE_WEB_CLIENT_ID")
-  if (!clientId?.trim()) {
+  // Trimmed: nothing here sends it to GitHub. A server-side GitHub exchange must reuse this value.
+  const githubClientId = deps.env("GITHUB_OAUTH_CLIENT_ID")?.trim()
+  // Each id is optional and omitted, not null, when unset; 503 only when none is configured.
+  const ids = {
+    ...(clientId?.trim() ? { client_id: clientId } : {}),
+    ...(githubClientId ? { github_client_id: githubClientId } : {}),
+  }
+  if (Object.keys(ids).length === 0) {
     deps.log("client unconfigured")
     return json(503, { error: "unconfigured" })
   }
-  // The GitHub device flow id is public too and optional: omitted, not null, when unset.
-  const githubClientId = deps.env("GITHUB_OAUTH_CLIENT_ID")?.trim()
-  return json(
-    200,
-    githubClientId
-      ? { client_id: clientId, github_client_id: githubClientId }
-      : { client_id: clientId },
-  )
+  return json(200, ids)
 }
 
 async function callback(request: Request, deps: Dependencies): Promise<Response> {
