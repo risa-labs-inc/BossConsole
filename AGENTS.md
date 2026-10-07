@@ -772,8 +772,9 @@ token in the frame's sessionStorage (no third-party cookie) and allows framing o
 `https://fluck.risaboss.com`. Opening from the list pushes `?instance=<id>` (never the ticket):
 browser Back closes the frame, and a reload reopens that Fluck with a fresh ticket; switch and
 sign-out drop `?instance`. A load that may auto-open (`?instance`, or exactly one Fluck online,
-which opens at once with no countdown) starts in `body.launching`: a quiet "Opening your Fluck…"
-and no portal chrome until the frame is up or the page has to ask. The frame posts `{type:"fluck-signed-out"}` (close, reload the
+which opens at once with no countdown) starts in `body.launching`: a copy of the web chat's own boot screen (the name, centred, its
+`--bg`/`--text-3`, system font), so handing over to the frame changes no pixel; no portal chrome
+until the frame is up or the page has to ask. The frame posts `{type:"fluck-signed-out"}` (close, reload the
 list), `{type:"fluck-switch"}` (close, show the list) and `{type:"fluck-title", title}` (sets
 `document.title`, capped, text only); the page accepts them only from the frame's window and the
 endpoint's origin and ignores anything else. Backwards compatibility: a framing-capable Fluck first

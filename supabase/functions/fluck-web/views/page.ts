@@ -3,7 +3,7 @@
  *
  * States driven by the inline, nonce-stamped script: sign-in, "check your email", loading,
  * "opening" (shown only for a click in the list), and the list. A load that may auto-open (exactly
- * one Fluck online, or ?instance=<id>) starts in body.launching: only a quiet "Opening your Fluck…"
+ * one Fluck online, or ?instance=<id>) starts in body.launching: the web chat's own boot screen (its name, centred)
  * until the frame is up or the page has to ask (sign-in, several Flucks, offline, an error). No external
  * asset and no third-party script, so the CSP stays `default-src 'none'`.
  *
@@ -96,11 +96,19 @@ const STYLES = `
   /* Launching: until the page knows it must ask (sign-in, several Flucks, offline) it shows nothing
      but a quiet line, so opening a Fluck never flashes the portal. */
   body.launching header, body.launching #notice, body.launching .card, body.launching footer { display: none; }
+  /* The launch screen is the Fluck web chat's own boot screen (webchat .boot/.boot-mark: the name,
+     centred, on its --bg in --text-3), so handing over to the frame changes no pixel. Keep these
+     values in step with webchat/src/styles/tokens.css. */
+  :root { --boot-bg: #f5f5f3; --boot-text: #62676d; }
+  @media (prefers-color-scheme: dark) { :root { --boot-bg: #111112; --boot-text: #98989f; } }
+  body.launching, body.viewing { background-color: var(--boot-bg); }
   #launch { display: none; }
-  body.launching:not(.viewing) #launch { display: flex; min-height: 60vh; align-items: center; justify-content: center; color: var(--text-2); font-size: 13px; }
+  body.launching:not(.viewing) #launch { display: grid; place-items: center; position: fixed; inset: 0; background-color: var(--boot-bg);
+    color: var(--boot-text); font: 600 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    letter-spacing: -0.01em; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
   #viewer { display: none; flex: 1; flex-direction: column; min-height: 0; }
   body.viewing #viewer { display: flex; }
-  #fluckframe { flex: 1; width: 100%; border: 0; background-color: var(--ink); }
+  #fluckframe { flex: 1; width: 100%; border: 0; background-color: var(--boot-bg); }
   .providers { display: grid; gap: 10px; }
   a.btn.provider { display: flex; align-items: center; justify-content: center; gap: 10px;
     background-color: transparent; color: var(--text); border-color: var(--line-strong); }
@@ -498,7 +506,7 @@ export function fluckPage(model: PageModel, nonce: string): string {
     <div class="row"><button id="sent-back" class="secondary" type="button">Use a different email</button></div>
   </section>
 
-  <div id="launch" role="status">Opening your Fluck…</div>
+  <div id="launch" role="status" aria-label="Opening your Fluck"><span>Fluck</span></div>
 
   <section id="loading" class="card hidden"><div class="sub">Loading your Flucks…</div></section>
 
