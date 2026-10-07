@@ -41,6 +41,8 @@ object ProfileAuthRelay {
 
     private const val AUTH_HOST = "auth"
 
+    private val SIGN_IN_LINK_TYPES = setOf("magiclink", "email", "signup")
+
     /** Bounds the sequential offers between a link click and a sign-in or a refusal. */
     private const val OFFER_DEADLINE_MS = 15_000L
 
@@ -228,9 +230,10 @@ object ProfileAuthRelay {
             runCatching { URI(uri) }
                 .getOrNull()
                 ?.takeIf { it.scheme.equals("boss", ignoreCase = true) && it.host.equals(AUTH_HOST, ignoreCase = true) }
-        return when (parsed?.path?.lowercase()?.trimEnd('/')) {
-            "/verify" -> AuthFlowMarker.Kind.MAGIC_LINK
-            else -> null
-        }
+        val isVerify = parsed?.path?.lowercase()?.trimEnd('/') == "/verify"
+        // `/verify` also carries recovery and invite links; only the types a sign-in link can
+        // arrive as (signup: the confirmation an unconfirmed address gets instead) are routed.
+        val type = (AuthDeepLinks.parse(uri) as? AuthDeepLink.MagicLinkVerify)?.type?.lowercase()
+        return if (isVerify && type in SIGN_IN_LINK_TYPES) AuthFlowMarker.Kind.MAGIC_LINK else null
     }
 }

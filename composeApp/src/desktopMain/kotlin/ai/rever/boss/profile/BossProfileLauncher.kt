@@ -168,7 +168,8 @@ object BossProfileLauncher {
                     Outcome.Launched(profile, workspaceFile)
                 }
             }
-        // Bound only once the Space reached the profile, so a failed hand-off binds nothing.
+        // Bound only after the hand-off: a failed forward binds nothing. A launch is detached, so
+        // a profile that never boots is not detected here and still gets the binding.
         if (workspace != null) {
             withContext(Dispatchers.IO) {
                 BossProfileStore.bindWorkspace(profile.id, workspace.id).getOrThrow()

@@ -74,10 +74,15 @@ class ProfileAuthRelayTest {
     @Test
     fun `only magic links are ever routed`() {
         assertEquals(Kind.MAGIC_LINK, ProfileAuthRelay.kindOf("boss://auth/verify?token=x"))
-        assertEquals(Kind.MAGIC_LINK, ProfileAuthRelay.kindOf("boss://auth/verify/?token=x"))
+        assertEquals(Kind.MAGIC_LINK, ProfileAuthRelay.kindOf("boss://auth/verify?token=x&type=signup"))
         listOf(
             // No process records an OAuth flow yet, so its callback always stays in the main process.
             "boss://auth/callback?code=x",
+            // /verify also carries recovery and invite links, which are never routed.
+            "boss://auth/verify?token=x&type=recovery",
+            "boss://auth/verify?token=x&type=invite",
+            // An OS-mangled form no process can parse is not routed; nothing could claim it.
+            "boss://auth/verify/?token=x",
             "boss://passkey/authenticated?session=x",
             "boss://auth/recovery?token=x",
             "boss://auth",

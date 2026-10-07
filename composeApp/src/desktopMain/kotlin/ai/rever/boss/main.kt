@@ -389,9 +389,9 @@ fun main(args: Array<String>) {
     if (ai.rever.boss.plugin.pathutils.BossDirectories.profilesEnabled) {
         ai.rever.boss.profile.BossProfileMcpToolProvider
             .register()
+        // A sign-in callback the main process offers this profile is taken only for a flow of its own.
+        SingleInstanceManager.authClaimHandler = ai.rever.boss.profile.ProfileAuthRelay::claimHere
     }
-    // A sign-in callback the main process offers this profile is taken only for a flow of its own.
-    SingleInstanceManager.authClaimHandler = ai.rever.boss.profile.ProfileAuthRelay::claimHere
 
     startupScope.launch {
         AppUpdateRealtimeService.instance.apply {
