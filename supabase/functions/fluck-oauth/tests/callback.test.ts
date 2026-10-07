@@ -21,6 +21,7 @@ import {
   type StoreRequest,
 } from "../app.ts"
 import { emailFromIdToken, exchangeCode } from "../google.ts"
+import { exchangeSlackCode } from "../slack.ts"
 import { mintState } from "../state.ts"
 import { bodyDigest } from "../signed.ts"
 
@@ -73,6 +74,7 @@ function harness(options: {
   env?: Record<string, string>
   tokenResponse?: unknown
   tokenThrows?: boolean
+  tokenStatus?: number
   claim?: NonceClaim
   storeOk?: boolean
   bindOk?: boolean
@@ -108,7 +110,7 @@ function harness(options: {
               id_token: idToken("person@example.com"),
             },
           ),
-          { headers: { "Content-Type": "application/json" } },
+          { status: options.tokenStatus ?? 200, headers: { "Content-Type": "application/json" } },
         ),
       )
     }) as typeof fetch,
@@ -159,7 +161,13 @@ Deno.test("health reports readiness as booleans and never a value", async () => 
   const body = await response.json()
   assertEquals(body, {
     ok: true,
-    configured: { clientId: true, clientSecret: true, githubClientId: false },
+    configured: {
+      clientId: true,
+      clientSecret: true,
+      githubClientId: false,
+      slackClientId: false,
+      slackClientSecret: false,
+    },
   })
   assertEquals(JSON.stringify(body).includes("secret"), false)
 })
@@ -170,7 +178,13 @@ Deno.test("health reports the optional GitHub client id without gating on it", a
   assertEquals(response.status, 200)
   assertEquals(await response.json(), {
     ok: true,
-    configured: { clientId: true, clientSecret: true, githubClientId: true },
+    configured: {
+      clientId: true,
+      clientSecret: true,
+      githubClientId: true,
+      slackClientId: false,
+      slackClientSecret: false,
+    },
   })
 })
 
@@ -539,6 +553,277 @@ Deno.test("no user facing sentence contains a dash or an emoji", () => {
     assertEquals(sentence.includes("—"), false, sentence)
     assertEquals(/\p{Extended_Pictographic}/u.test(sentence), false, sentence)
   }
+})
+
+// ---------------------------------------------------------------------------------------------
+// Slack
+// ---------------------------------------------------------------------------------------------
+
+const SLACK_ENV = { SLACK_CLIENT_ID: "1234.5678", SLACK_CLIENT_SECRET: "not-a-slack-secret" }
+const XOXP = "xoxp-1111-2222-3333-abcdef"
+
+const SLACK_OK = {
+  ok: true,
+  app_id: "A0APP",
+  authed_user: { id: "U0MEMBER", scope: "search:read", access_token: XOXP, token_type: "user" },
+  team: { id: "T0TEAM", name: "Risa Labs" },
+}
+
+function slackHarness(options: Parameters<typeof harness>[0] = {}): Harness {
+  return harness({
+    tokenResponse: SLACK_OK,
+    ...options,
+    env: { ...SLACK_ENV, ...(options.env ?? {}) },
+  })
+}
+
+async function slackCallback(h: Harness, query: string): Promise<Response> {
+  return await h.handler(
+    new Request(`https://example.test/functions/v1/fluck-oauth/slack/callback?${query}`),
+  )
+}
+
+Deno.test("health reports the optional Slack pair without gating on it", async () => {
+  const h = harness({ env: { SLACK_CLIENT_ID: "1234.5678" } })
+  const response = await h.handler(new Request("https://example.test/fluck-oauth/health"))
+  assertEquals(response.status, 200)
+  const body = await response.json()
+  assertEquals(body.configured.slackClientId, true)
+  assertEquals(body.configured.slackClientSecret, false)
+  const both = await (await slackHarness().handler(
+    new Request("https://example.test/fluck-oauth/health"),
+  )).json()
+  assertEquals(both.configured.slackClientSecret, true)
+  assertEquals(JSON.stringify(both).includes("not-a-slack-secret"), false)
+})
+
+Deno.test("client adds the Slack client id only when it is set", async () => {
+  const h = slackHarness()
+  const response = await h.handler(new Request("https://example.test/fluck-oauth/client"))
+  assertEquals(await response.json(), {
+    client_id: "294223497390-test.apps.googleusercontent.com",
+    slack_client_id: "1234.5678",
+  })
+  for (const value of ["", "  "]) {
+    const blank = harness({ env: { SLACK_CLIENT_ID: value } })
+    const body = await (await blank.handler(
+      new Request("https://example.test/fluck-oauth/client"),
+    )).json()
+    assertEquals("slack_client_id" in body, false)
+  }
+})
+
+Deno.test("a good Slack callback stores the xoxp token under the slack connector", async () => {
+  const h = slackHarness()
+  const response = await slackCallback(h, `code=1234.5678.abc&state=${await state()}`)
+  assertEquals(response.status, 200)
+  const html = await response.text()
+  assertStringIncludes(html, PAGES.connected)
+
+  assertEquals(h.requests.length, 1)
+  assertEquals(h.requests[0].url, "https://slack.com/api/oauth.v2.access")
+  assertEquals(h.requests[0].body.get("client_id"), "1234.5678")
+  assertEquals(h.requests[0].body.get("client_secret"), "not-a-slack-secret")
+  assertEquals(h.requests[0].body.get("code"), "1234.5678.abc")
+  assertEquals(
+    h.requests[0].body.get("redirect_uri"),
+    `${DEFAULT_PUBLIC_BASE_URL}/slack/callback`,
+  )
+  assertEquals(h.claimed, [`${INSTANCE_ID}.nonce-one`])
+
+  assertEquals(h.stored, [{
+    userId: USER_ID,
+    website: `fluck/${WORKSPACE}/slack/SLACK_MCP_XOXP_TOKEN`,
+    username: "Risa Labs (U0MEMBER)",
+    refreshToken: XOXP,
+    notes: "Created by Fluck when a service was connected. Do not edit by hand.",
+  }])
+  // No /refresh for Slack, so nothing is bound.
+  assertEquals(h.bound, [])
+  assertEquals(html.includes(XOXP), false)
+  assertEquals(h.logs, ["slack callback connected [ws-abcde]"])
+})
+
+Deno.test("PUBLIC_BASE_URL moves the Slack redirect uri too", async () => {
+  const h = slackHarness({ env: { PUBLIC_BASE_URL: "https://oauth.example.test/fluck-oauth/" } })
+  await slackCallback(h, `code=abc&state=${await state()}`)
+  assertEquals(
+    h.requests[0].body.get("redirect_uri"),
+    "https://oauth.example.test/fluck-oauth/slack/callback",
+  )
+})
+
+Deno.test("a Slack refusal on HTTP 200 is a bad code, and the link is still spent", async () => {
+  for (const error of ["invalid_code", "code_already_used", "bad_redirect_uri"]) {
+    const h = slackHarness({ tokenResponse: { ok: false, error } })
+    const response = await slackCallback(h, `code=abc&state=${await state()}`)
+    assertEquals(response.status, 400)
+    const html = await response.text()
+    assertStringIncludes(html, PAGES.badCode)
+    assertEquals(html.includes(error), false)
+    assertEquals(h.claimed.length, 1)
+    assertEquals(h.stored, [])
+    assertEquals(h.logs, ["slack callback failed: bad_code [ws-abcde]"])
+  }
+})
+
+Deno.test("a grant without an xoxp user token stores nothing", async () => {
+  for (
+    const tokenResponse of [
+      { ok: true, access_token: "xoxb-bot-only", team: { id: "T0", name: "x" } },
+      { ...SLACK_OK, authed_user: { id: "U0MEMBER" } },
+      { ...SLACK_OK, authed_user: { id: "U0MEMBER", access_token: "xoxe.xoxp-1-rotating" } },
+      {
+        ...SLACK_OK,
+        authed_user: { id: "U0MEMBER", access_token: XOXP, refresh_token: "xoxe-1-r" },
+      },
+      { ...SLACK_OK, authed_user: { id: "U0MEMBER", access_token: XOXP, expires_in: 43200 } },
+    ]
+  ) {
+    const h = slackHarness({ tokenResponse })
+    const response = await slackCallback(h, `code=abc&state=${await state()}`)
+    assertEquals(response.status, 400)
+    assertStringIncludes(await response.text(), PAGES.slackNoToken)
+    assertEquals(h.stored, [])
+  }
+})
+
+Deno.test("an unreachable or failing Slack is not reported as a bad code", async () => {
+  const cases: Parameters<typeof harness>[0][] = [
+    { tokenThrows: true },
+    { tokenStatus: 503, tokenResponse: { ok: false, error: "service_unavailable" } },
+    { tokenStatus: 429, tokenResponse: { ok: false, error: "ratelimited" } },
+    { tokenResponse: { ok: false, error: "internal_error" } },
+  ]
+  for (const options of cases) {
+    const h = slackHarness(options)
+    const response = await slackCallback(h, `code=abc&state=${await state()}`)
+    assertEquals(response.status, 400)
+    assertStringIncludes(await response.text(), PAGES.slackUnreachable)
+    assertEquals(h.stored, [])
+  }
+})
+
+Deno.test("a declined Slack consent never echoes Slack's word for it", async () => {
+  const h = slackHarness()
+  const response = await slackCallback(h, "error=access_denied&state=whatever")
+  assertEquals(response.status, 400)
+  const html = await response.text()
+  assertStringIncludes(html, PAGES.declined)
+  assertEquals(html.includes("access_denied"), false)
+  assertEquals(h.claimed, [])
+  assertEquals(h.requests, [])
+})
+
+Deno.test("a bad, crossed or absent state on the Slack callback spends nothing", async () => {
+  const other = await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
+    "sign",
+    "verify",
+  ]) as CryptoKeyPair
+  for (
+    const query of [
+      "code=abc",
+      "code=abc&state=not.a.token",
+      `state=${await state()}`,
+      `code=abc&state=${await state({ uid: "another-user" })}`,
+      `code=abc&state=${await state({ signer: other.privateKey })}`,
+    ]
+  ) {
+    const h = slackHarness()
+    const response = await slackCallback(h, query)
+    assertEquals(response.status, 400)
+    assertStringIncludes(await response.text(), PAGES.stale)
+    assertEquals(h.claimed, [])
+    assertEquals(h.requests, [])
+    assertEquals(h.stored, [])
+  }
+})
+
+Deno.test("a replayed Slack link is refused before the exchange", async () => {
+  const h = slackHarness({ claim: "replay" })
+  const response = await slackCallback(h, `code=abc&state=${await state()}`)
+  assertEquals(response.status, 400)
+  assertStringIncludes(await response.text(), PAGES.replay)
+  assertEquals(h.requests, [])
+  assertEquals(h.stored, [])
+  assertEquals(h.logs, ["slack callback refused: replay [ws-abcde]"])
+})
+
+Deno.test("the Slack callback refuses when Slack is not configured", async () => {
+  const blanks: Record<string, string>[] = [
+    { SLACK_CLIENT_ID: "" },
+    { SLACK_CLIENT_SECRET: "" },
+    { SLACK_CLIENT_ID: "  " },
+    { SLACK_CLIENT_SECRET: "  " },
+  ]
+  for (const env of blanks) {
+    const h = slackHarness({ env })
+    const response = await slackCallback(h, `code=abc&state=${await state()}`)
+    assertEquals(response.status, 503)
+    assertStringIncludes(await response.text(), PAGES.unconfigured)
+    assertEquals(h.claimed, [])
+    assertEquals(h.logs, ["slack callback unconfigured: client"])
+  }
+})
+
+Deno.test("a failed Slack store is a 503 and says so", async () => {
+  const h = slackHarness({ storeOk: false })
+  const response = await slackCallback(h, `code=abc&state=${await state()}`)
+  assertEquals(response.status, 503)
+  assertStringIncludes(await response.text(), PAGES.storeFailed)
+  assertEquals(h.logs, ["slack callback failed: store [ws-abcde]"])
+})
+
+Deno.test("a POST to the Slack callback is refused", async () => {
+  const h = slackHarness()
+  const request = new Request("https://example.test/fluck-oauth/slack/callback", {
+    method: "POST",
+    body: "x",
+  })
+  const response = await h.handler(request)
+  assertEquals(response.status, 405)
+  assertStringIncludes(await response.text(), PAGES.notABrowser)
+  assertEquals(request.bodyUsed, true)
+})
+
+Deno.test("the Slack account label falls back without naming a person", async () => {
+  const h = slackHarness({
+    tokenResponse: { ok: true, authed_user: { access_token: XOXP } },
+  })
+  await slackCallback(h, `code=abc&state=${await state()}`)
+  assertEquals(h.stored[0].username, "slack account")
+  const teamOnly = slackHarness({
+    tokenResponse: { ...SLACK_OK, team: { id: "T0TEAM" }, authed_user: { access_token: XOXP } },
+  })
+  await slackCallback(teamOnly, `code=abc&state=${await state()}`)
+  assertEquals(teamOnly.stored[0].username, "T0TEAM")
+})
+
+Deno.test("an Enterprise Grid install is labelled with the org name", async () => {
+  const h = slackHarness({
+    tokenResponse: {
+      ...SLACK_OK,
+      is_enterprise_install: true,
+      team: null,
+      enterprise: { id: "E0ORG", name: "Risa Grid" },
+    },
+  })
+  await slackCallback(h, `code=abc&state=${await state()}`)
+  assertEquals(h.stored[0].username, "Risa Grid (U0MEMBER)")
+  const unnamed = slackHarness({
+    tokenResponse: { ...SLACK_OK, team: null, enterprise: { id: "E0ORG" } },
+  })
+  await slackCallback(unnamed, `code=abc&state=${await state()}`)
+  assertEquals(unnamed.stored[0].username, "E0ORG (U0MEMBER)")
+})
+
+Deno.test("exchangeSlackCode reports an unparseable body as unreachable", async () => {
+  const result = await exchangeSlackCode(
+    { clientId: "id", clientSecret: "secret", code: "c", redirectUri: "https://x.test/cb" },
+    (() => Promise.resolve(new Response("<html>gateway</html>"))) as unknown as typeof fetch,
+  )
+  assert(!result.ok)
+  assertEquals(result.reason, "unreachable")
 })
 
 Deno.test("a pre-1.0.120 HS256 state gets an update page, not a stale link page", async () => {
