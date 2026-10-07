@@ -79,14 +79,17 @@ export async function exchangeSlackCode(
   // An org-wide (Enterprise Grid) install sends `team: null` and names the org under `enterprise`.
   const enterprise = record(payload.enterprise)
   const userToken = stringField(user?.access_token)
-  if (!userToken || !userToken.startsWith(USER_TOKEN_PREFIX)) {
+  // A rotating grant also carries a refresh token and an expiry; refuse on those, not only on
+  // the prefix, so a renamed prefix cannot store a token that dies in twelve hours.
+  const rotating = user?.refresh_token !== undefined || user?.expires_in !== undefined
+  if (!userToken || !userToken.startsWith(USER_TOKEN_PREFIX) || rotating) {
     return { ok: false, reason: "no_refresh_token" }
   }
   return {
     ok: true,
     userToken,
     userId: stringField(user?.id) ?? "",
-    teamId: stringField(team?.id) ?? "",
+    teamId: stringField(team?.id) ?? stringField(enterprise?.id) ?? "",
     teamName: stringField(team?.name) ?? stringField(enterprise?.name) ?? "",
   }
 }

@@ -387,7 +387,8 @@ async function slackCallback(request: Request, deps: Dependencies): Promise<Resp
     request,
     deps,
     "slack callback",
-    Boolean(clientId && clientSecret),
+    // Trimmed like /client, so a blank id refuses here before the link is spent.
+    Boolean(clientId?.trim() && clientSecret?.trim()),
   )
   if (accepted instanceof Response) return accepted
   const { claims, code, workspace } = accepted

@@ -673,6 +673,11 @@ Deno.test("a grant without an xoxp user token stores nothing", async () => {
       { ok: true, access_token: "xoxb-bot-only", team: { id: "T0", name: "x" } },
       { ...SLACK_OK, authed_user: { id: "U0MEMBER" } },
       { ...SLACK_OK, authed_user: { id: "U0MEMBER", access_token: "xoxe.xoxp-1-rotating" } },
+      {
+        ...SLACK_OK,
+        authed_user: { id: "U0MEMBER", access_token: XOXP, refresh_token: "xoxe-1-r" },
+      },
+      { ...SLACK_OK, authed_user: { id: "U0MEMBER", access_token: XOXP, expires_in: 43200 } },
     ]
   ) {
     const h = slackHarness({ tokenResponse })
@@ -745,7 +750,12 @@ Deno.test("a replayed Slack link is refused before the exchange", async () => {
 })
 
 Deno.test("the Slack callback refuses when Slack is not configured", async () => {
-  const blanks: Record<string, string>[] = [{ SLACK_CLIENT_ID: "" }, { SLACK_CLIENT_SECRET: "" }]
+  const blanks: Record<string, string>[] = [
+    { SLACK_CLIENT_ID: "" },
+    { SLACK_CLIENT_SECRET: "" },
+    { SLACK_CLIENT_ID: "  " },
+    { SLACK_CLIENT_SECRET: "  " },
+  ]
   for (const env of blanks) {
     const h = slackHarness({ env })
     const response = await slackCallback(h, `code=abc&state=${await state()}`)
@@ -754,6 +764,14 @@ Deno.test("the Slack callback refuses when Slack is not configured", async () =>
     assertEquals(h.claimed, [])
     assertEquals(h.logs, ["slack callback unconfigured: client"])
   }
+})
+
+Deno.test("a failed Slack store is a 503 and says so", async () => {
+  const h = slackHarness({ storeOk: false })
+  const response = await slackCallback(h, `code=abc&state=${await state()}`)
+  assertEquals(response.status, 503)
+  assertStringIncludes(await response.text(), PAGES.storeFailed)
+  assertEquals(h.logs, ["slack callback failed: store [ws-abcde]"])
 })
 
 Deno.test("a POST to the Slack callback is refused", async () => {
@@ -792,6 +810,11 @@ Deno.test("an Enterprise Grid install is labelled with the org name", async () =
   })
   await slackCallback(h, `code=abc&state=${await state()}`)
   assertEquals(h.stored[0].username, "Risa Grid (U0MEMBER)")
+  const unnamed = slackHarness({
+    tokenResponse: { ...SLACK_OK, team: null, enterprise: { id: "E0ORG" } },
+  })
+  await slackCallback(unnamed, `code=abc&state=${await state()}`)
+  assertEquals(unnamed.stored[0].username, "E0ORG (U0MEMBER)")
 })
 
 Deno.test("exchangeSlackCode reports an unparseable body as unreachable", async () => {
