@@ -10,6 +10,8 @@ internal data class NativeTitleBarAction(
     val symbol: String? = null,
     val active: Boolean = false,
     val enabled: Boolean = true,
+    /** Capture consent and other local-only actions cannot be invoked by shared-window input. */
+    val localOnly: Boolean = false,
     val textInput: NativeTitleBarTextInput? = null,
     val icon: ImageVector? = null,
     val contextMenu: List<NativeTitleBarAction> = emptyList(),
@@ -19,6 +21,24 @@ internal data class NativeTitleBarAction(
     val sidebarWidth: Float = 0f,
     val onClick: () -> Unit,
 )
+
+/** Resolve submenu actions recursively while honoring every ancestor's enabled/access state. */
+internal fun findNativeTitleBarAction(
+    actions: List<NativeTitleBarAction>,
+    id: String,
+    allowLocalOnly: Boolean = true,
+): NativeTitleBarAction? =
+    actions.firstNotNullOfOrNull { action ->
+        if (action.enabled && (allowLocalOnly || !action.localOnly)) {
+            if (action.id == id) {
+                action
+            } else {
+                findNativeTitleBarAction(action.menu.orEmpty() + action.contextMenu, id, allowLocalOnly)
+            }
+        } else {
+            null
+        }
+    }
 
 /** The AppKit title-bar/sidebar integration is exclusive to macOS. */
 internal fun usesNativeSidebarTitleBar(

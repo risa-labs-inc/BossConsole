@@ -61,12 +61,17 @@ import ai.rever.boss.plugin.sandbox.notification.PluginToastHost
 import ai.rever.boss.plugin.sandbox.notification.PluginToastState
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
+import ai.rever.boss.sharing.AppSharingActive
+import ai.rever.boss.sharing.AppSharingNotifications
 import ai.rever.boss.updater.UpdateAvailableDialog
 import ai.rever.boss.updater.UpdateBanner
 import ai.rever.boss.updater.UpdateDialogGate
+import ai.rever.boss.updater.UpdateSettings
 import ai.rever.boss.updater.UpdateState
+import ai.rever.boss.updater.bannerState
 import ai.rever.boss.updater.drawsBanner
 import ai.rever.boss.updater.rememberUpdateDialogOwnership
+import ai.rever.boss.updater.shouldShowUpdatePrompt
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.window.LocalWindowGitState
 import ai.rever.boss.window.LocalWindowId
@@ -97,6 +102,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -419,10 +425,11 @@ internal fun BossAppScaffold(
     // whose answer does not change. UpdateBanner still collects the full state for itself, inside
     // the Column, where a progress tick recomposes the banner and nothing else.
     val updateHandle = state.updateHandle
-    val bannerVisible by remember(updateHandle) {
-        updateHandle.updateState.map { it.drawsBanner() }.distinctUntilChanged()
+    val automaticUpdates by UpdateSettings.automaticUpdates.collectAsState()
+    val updateToastState = rememberUpdateToastState()
+    val bannerVisible by remember(updateHandle, automaticUpdates) {
+        updateHandle.updateState.map { it.drawsBanner(automaticUpdates) }.distinctUntilChanged()
     }.collectAsState(initial = false)
-    // Both rows keep the sidebar bubble below the chrome and own its button's selected state.
     val sidebarBelowTopChrome = bannerVisible || (appearance.showTopBar && reveal.showTopBar)
 
     val trafficLights =
@@ -541,6 +548,7 @@ internal fun BossAppScaffold(
             Column(modifier = Modifier.fillMaxSize()) {
                 val workspaceSwitch = rememberWorkspaceSwitch(state, splitViewState)
                 val applyWorkspaceAndPreserve = workspaceSwitch.request
+                HandleMenuSpaceSwitch(state, workspaceSwitch)
                 WorkspaceSwitchPrompt(state, workspaceSwitch)
                 // Title bar - conditionally shown based on settings
                 // Default: hidden on Linux/Windows, shown on macOS
@@ -574,7 +582,7 @@ internal fun BossAppScaffold(
                 // closing the window mid-install used to cancel the install (leaving
                 // UpdateState on Installing) and could drop a persisted dismissal.
                 UpdateBanner(
-                    updateState = updateState,
+                    updateState = updateState.bannerState(automaticUpdates),
                     // Non-zero only when this banner is the chrome holding the lights, in which
                     // case the bars below it have already given up their own clearance.
                     startInset = trafficLights.bannerStartInset(),
@@ -607,7 +615,7 @@ internal fun BossAppScaffold(
                 val isUpdateDialogOwner = rememberUpdateDialogOwnership(state.windowId)
                 val updateStateForDialog = updateState
                 UpdateDialogGate(
-                    wantDialog = showUpdateDialog,
+                    wantDialog = shouldShowUpdatePrompt(showUpdateDialog, automaticUpdates),
                     isOwner = isUpdateDialogOwner,
                     updateAvailable = updateStateForDialog is UpdateState.UpdateAvailable,
                 ) {
@@ -987,8 +995,11 @@ internal fun BossAppScaffold(
             // Plugin notification toasts — the render surface for every plugin's
             // PluginContext.notificationProvider.showToast().
             state.currentDefaultPlugin?.pluginToastState?.let { toastState ->
+                AppSharingNotifications(state.windowId, toastState)
                 ToastOverlay(toastState = toastState)
             }
+
+            ToastOverlay(toastState = updateToastState)
 
             TerminalCallOverlay(state.windowId)
 
@@ -1118,9 +1129,12 @@ private fun SidebarTitleBar(
         val expanded = !barRailed || drawerVisible
         val sidebarWidth = if (expanded) appearance.tabBarVerticalWidth + 8f else 0f
         val actions =
-            sidebarTitleActions(state, toggleSidebar, sidebarWidth, sidebarLeading, sidebarBelowTopChrome) +
-                spaceAction + nativeTerminalTitleLabel(state.splitViewState) + nativeBrowserTitleActions(state)
-        val nativeReady = sidebarInHeader && NativeSidebarTitleBar(title, actions)
+            mergeNativeSharingActions(
+                sidebarTitleActions(state, toggleSidebar, sidebarWidth, sidebarLeading, sidebarBelowTopChrome) +
+                    spaceAction + nativeTerminalTitleLabel(state.splitViewState) + nativeBrowserTitleActions(state),
+            )
+        val sharing = AppSharingActive(state.windowId)
+        val nativeReady = sidebarInHeader && NativeSidebarTitleBar(title, actions, sharing)
         NativeBrowserHostAvailability(state.windowId, nativeReady)
         NativeTerminalHostAvailability(state.windowId, nativeReady)
         SideEffect { onNativeReadyChange(nativeReady) }
@@ -1143,8 +1157,9 @@ private fun sidebarTitleActions(
     sidebarWidth: Float,
     sidebarLeading: Float,
     sidebarBelowTopChrome: Boolean,
-): List<NativeTitleBarAction> =
-    buildList {
+): List<NativeTitleBarAction> {
+    val terminalActions = nativeTerminalTitleActions(state.windowId)
+    return buildList {
         add(
             NativeTitleBarAction(
                 "sidebar",
@@ -1157,7 +1172,7 @@ private fun sidebarTitleActions(
             ),
         )
         addAll(nativeSessionTitleActions(state))
-        addAll(nativeTerminalTitleActions(state.windowId))
+        addAll(terminalActions.filterNot { it.id == "terminal_call_setup" })
         add(NativeTitleBarAction("search", "Search", "magnifyingglass") { state.showGlobalSearchDialog = true })
         add(NativeTitleBarAction("tools", "Tools menu", "square.grid.2x2") { state.showToolLauncherDialog = true })
         state.draggablePanelComponent.toolboxSidebarItem()?.let { item ->
@@ -1167,5 +1182,6 @@ private fun sidebarTitleActions(
                 },
             )
         }
-        add(nativeMoreTitleAction(state))
+        add(nativeMoreTitleAction(state, terminalActions.filter { it.id == "terminal_call_setup" }))
     }
+}

@@ -17,6 +17,9 @@ internal class FakeSingleVersionRepository(
     override val id: String = "fake-remote",
     override val name: String = "Fake Remote",
 ) : PluginRepository {
+    var downloadedVersion: String? = null
+        private set
+
     override val isLocal = false
     override val isAvailable = true
 
@@ -36,7 +39,10 @@ internal class FakeSingleVersionRepository(
         version: String?,
         targetPath: String,
         onProgress: ((Float) -> Unit)?,
-    ): Result<String> = Result.success(targetPath)
+    ): Result<String> {
+        downloadedVersion = version
+        return Result.success(targetPath)
+    }
 
     override fun getDownloadProgress(pluginId: String): Flow<Float>? = null
 

@@ -147,6 +147,7 @@ class WorkspaceManager(
     val visibleWorkspaces: StateFlow<List<LayoutWorkspace>> =
         combine(workspaces, WorkspaceSettingsManager.currentSettings) { spaces, settings ->
             visibleSessionSpaces(spaces, settings.enableLastSessionSpace)
+                .filterNot { it.id in PredefinedWorkspaces.allIds || isRecoverySnapshot(it) }
         }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     /**
@@ -369,7 +370,10 @@ class WorkspaceManager(
             // Space was a built-in - which is the Save button not working. See
             // `mergeSavedWorkspaces`, which also says what becomes of a legacy file whose id IS a
             // built-in's.
-            _workspaces.value = mergeSavedWorkspaces(PredefinedWorkspaces.allWorkspaces, saved)
+            _workspaces.value =
+                mergeSavedWorkspaces(PredefinedWorkspaces.allWorkspaces, saved).let { spaces ->
+                    if (spaces.any { it.id == DefaultSpace.ID }) spaces else listOf(DefaultSpace.planetBerul) + spaces
+                }
         }
     }
 
@@ -389,6 +393,32 @@ class WorkspaceManager(
     fun loadWorkspace(workspace: LayoutWorkspace) {
         _currentWorkspace.value = workspace
         applySpaceTheme(workspace.id)
+        if (workspace.id !in PredefinedWorkspaces.allIds && !isRecoverySnapshot(workspace)) {
+            scope.launch {
+                val settings = WorkspaceSettingsManager.currentSettings.value
+                val recent = listOf(workspace.id) + settings.recentSpaceIds.filterNot { it == workspace.id }
+                WorkspaceSettingsManager.updateSettings(settings.copy(recentSpaceIds = recent))
+            }
+        }
+    }
+
+    /** Persist a new empty Space before offering it for switching. */
+    suspend fun createSpace(name: String): LayoutWorkspace? {
+        val space =
+            DefaultSpace.planetBerul.copy(
+                id = LayoutWorkspace.generateId(),
+                name = uniqueWorkspaceName(name.trim().ifBlank { "New Space" }, savedSpaceNames(_workspaces.value)),
+                timestamp = Clock.System.now().toEpochMilliseconds(),
+                layout =
+                    ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel(
+                        PanelConfig(id = "panel-${LayoutWorkspace.generateId()}", tabs = emptyList()),
+                    ),
+            )
+        val fileName = fileNameFor(space)
+        withContext(Dispatchers.IO) { fileManager.saveWorkspace(space, fileName) } ?: return null
+        loadedFileNames[space.id] = fileName
+        _workspaces.value = _workspaces.value + space
+        return space
     }
 
     /**

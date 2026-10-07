@@ -252,6 +252,21 @@ Deno.test("any card is accepted without a virtual-card attestation; a missing li
   })
   assertEquals(badCurrency.submitted(), 0)
   assertStringIncludes(badCurrency.error(), "three letters")
+
+  for (const code of ["ZZZ", "XAU", "XXX"]) {
+    const unknown = page("card", base64)
+    await unknown.submit({
+      f1: "A Person",
+      f2: "4242424242424242",
+      f3: "04/29",
+      f11: "123",
+      f6: "12345",
+      f9: "200",
+      f10: code,
+    })
+    assertEquals(unknown.submitted(), 0, code)
+    assertStringIncludes(unknown.error(), "not a currency code")
+  }
 })
 
 Deno.test("the card limit is sealed in the currency's ISO 4217 minor unit", async () => {

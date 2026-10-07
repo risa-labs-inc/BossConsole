@@ -51,13 +51,13 @@ kotlinx-serialization = "1.11.0"
 # with mixed ktor artifacts on one classpath. Check what the supabase Gradle
 # module metadata requires before moving either line.
 ktor = "3.5.2"
-logback = "1.6.3"
+logback = "1.6.5"
 precompose = "1.6.2"
-slf4j = "2.0.18"
+slf4j = "2.0.20"
 re2j = "1.8"
 supabase = "3.8.0"
 zxing = "3.5.4"
-jxbrowser = "9.5.0"
+jxbrowser = "9.5.2"
 jxbrowser-gradle-plugin = "2.1.0"
 maven-publish = "0.37.0"
 jna = "5.19.1"
@@ -68,9 +68,9 @@ sqlite-jdbc = "3.53.4.0"
 # gRPC + Protobuf for IPC
 grpc = "1.84.0"
 grpc-kotlin = "1.5.0"
-protobuf = "4.36.1"
+protobuf = "4.36.2"
 protobuf-gradle-plugin = "0.10.0"
-graalvm-native-plugin = "1.1.13"
+graalvm-native-plugin = "1.1.14"
 # IntelliJ PSI for code navigation
 intellij-platform = "243.21565.199"
 # The plugin API contract (risa-labs-inc/boss-plugin-api releases). This pin
@@ -181,7 +181,10 @@ intellij-platform = "243.21565.199"
 # merge cuts version + 1 - re-read it when #44 actually merges, because anything landing first
 # moves this and the topofmind pin again.
 # 1.0.94 adds the shared BrowserTitleBarBridge. Release the API before merging this pin.
-boss-plugin-api = "1.0.95"
+# 1.0.97 restores terminal-link destination requests. Release the API before merging this pin.
+# Organisation-secret access envelopes were published in 1.0.91; the host transports
+# their server management decisions and attribution through in-process and KERNEL paths.
+boss-plugin-api = "1.0.97"
 
 [libraries]
 bouncycastle-pkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bouncycastle" }

@@ -79,7 +79,7 @@ Start with a browser, terminal, and editor. Add Docker or Kubernetes for infrast
 
 **Tool Creator** scaffolds a plugin project. **Tool Evolver** helps inspect and improve an existing tool. Many plugins hot-reload while the host stays open; infrastructure updates can require a restart.
 
-**[Discover and manage plugins →](https://github.com/risa-labs-inc/BossConsole/wiki/Plugins)** · **[Build a plugin →](docs/PLUGIN_LAUNCHPAD.md)** · **[Browse the ecosystem →](https://github.com/risa-labs-inc/boss-plugins)**
+**[Discover and manage plugins →](https://github.com/risa-labs-inc/BossConsole/wiki/Plugins)** · **[Create and publish a plugin →](https://github.com/risa-labs-inc/BossConsole/wiki/Create-and-Publish-a-Plugin)** · **[Developer CLI →](docs/PLUGIN_LAUNCHPAD.md)** · **[Browse the ecosystem →](https://github.com/risa-labs-inc/boss-plugins)**
 
 ## Your workspace, on another device
 

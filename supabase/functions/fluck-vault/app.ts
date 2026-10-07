@@ -140,8 +140,26 @@ export interface Instance {
   /**
    * Whether an operator has approved this install to mint CVV and vault links. Registration
    * alone never grants it: a signed-in account is not enough to put a page on this domain.
+   * Null when the database predates the issuance migration: minting answers 503 `schema`.
    */
-  issuanceApproved: boolean
+  issuanceApproved: boolean | null
+}
+
+/**
+ * One `fluck_vault_instance` row. Approval fails closed: anything but an explicit true is not
+ * approved, and a row without the column at all (a database behind this function) is null.
+ */
+export function instanceFromRow(instanceId: string, row: Record<string, unknown>): Instance | null {
+  if (typeof row.link_public_key !== "string" || typeof row.seal_public_key !== "string") {
+    return null
+  }
+  return {
+    instanceId,
+    userId: String(row.user_id),
+    linkPublicKey: row.link_public_key,
+    sealPublicKey: row.seal_public_key,
+    issuanceApproved: "issuance_approved" in row ? row.issuance_approved === true : null,
+  }
 }
 
 /** A first registration, or a same-key re-registration. Never a key change. */
@@ -312,8 +330,16 @@ export const PAGES = COPY
  */
 const JTI_GET_LIMIT = 5
 const JTI_POST_LIMIT = 3
-const IP_LIMIT = 20
 const IP_WINDOW_MS = 10 * 60 * 1000
+// Separate buckets per route family, so a polling install cannot starve the page its owner is
+// about to open, and owners sharing one NAT exit do not starve each other's links.
+const PAGE_IP_LIMIT = 60
+// Before the signature is checked: only bounds the lookups an unsigned flood can cause.
+const SIGNED_IP_LIMIT = 1200
+// After it is checked, keyed by the install (or the env key), never by the unverified header.
+// An inbox poller runs at one call per five seconds while a link is fresh.
+const SIGNED_KEY_LIMIT = 600
+const INSTANCES_IP_LIMIT = 20
 
 interface Counter {
   count: number
@@ -841,7 +867,7 @@ async function get(
 
   if (
     !hit(`g:${row.jti}`, JTI_GET_LIMIT, 15 * 60 * 1000, nowMs) ||
-    !hit(`ip:${clientAddress(request)}`, IP_LIMIT, IP_WINDOW_MS, nowMs)
+    !hit(`ip:page:${clientAddress(request)}`, PAGE_IP_LIMIT, IP_WINDOW_MS, nowMs)
   ) {
     deps.log(`${purpose} limited: get [${workspacePrefix(row.ws)}] [${tag(row.jti)}]`)
     return await message(429, COPY.busyTitle, COPY.busy)
@@ -943,7 +969,7 @@ async function post(request: Request, deps: Dependencies, purpose: Purpose): Pro
   const ciphertext = body.get("c")
   const nowMs = deps.now()
 
-  if (!hit(`ip:${clientAddress(request)}`, IP_LIMIT, IP_WINDOW_MS, nowMs)) {
+  if (!hit(`ip:page:${clientAddress(request)}`, PAGE_IP_LIMIT, IP_WINDOW_MS, nowMs)) {
     deps.log(`${purpose} limited: ip`)
     return await message(429, COPY.busyTitle, COPY.busy)
   }
@@ -1062,7 +1088,7 @@ async function signedRoute(
   const body = await request.text()
   const nowSeconds = Math.floor(deps.now() / 1000)
 
-  if (!hit(`ip:${clientAddress(request)}`, IP_LIMIT, IP_WINDOW_MS, deps.now())) {
+  if (!hit(`ip:signed:${clientAddress(request)}`, SIGNED_IP_LIMIT, IP_WINDOW_MS, deps.now())) {
     deps.log(`signed limited: ip`)
     return json(429, { error: "busy" })
   }
@@ -1090,6 +1116,11 @@ async function signedRoute(
     deps.log(`signed refused: ${path}`)
     return json(401, { error: "unauthorized" })
   }
+  const signer = instance ? `i:${instance.instanceId}` : "env"
+  if (!hit(`signed:${signer}`, SIGNED_KEY_LIMIT, IP_WINDOW_MS, deps.now())) {
+    deps.log(`signed limited: ${instance ? `[${instance.instanceId.slice(0, 8)}]` : "env"}`)
+    return json(429, { error: "busy" })
+  }
 
   let parsed: unknown
   try {
@@ -1104,6 +1135,10 @@ async function signedRoute(
   // Minting is a privilege of the operator: the env key, or an install an operator approved.
   // Without this any signed-in account could register a key and put its own merchant, card and
   // amount on a first-party page that seals what is typed to that account.
+  if (path === "/requests" && instance && instance.issuanceApproved === null) {
+    deps.log(`requests refused: database is missing the issuance migration`)
+    return json(503, { error: "schema" })
+  }
   if (path === "/requests" && instance && !instance.issuanceApproved) {
     deps.log(`requests refused: issuance not approved [${instance.instanceId.slice(0, 8)}]`)
     return json(403, { error: "issuance" })
@@ -1275,11 +1310,14 @@ function standardBase64(bytes: Uint8Array): string {
  * exact body, so it names the new keys and is at most two minutes old. The write is then a
  * compare-and-swap on that current key, so a captured proof stops working the moment the keys
  * it was made for are replaced, and replaying it before then only repeats the same change.
- * A lost current key is not recoverable here: register a fresh instance id instead.
+ * A lost current key is not recoverable here: the owner revokes that install with
+ * `fluck_vault_revoke_my_instance`, which frees its slot, and registers a fresh instance id.
  */
 async function instancesRoute(request: Request, deps: Dependencies): Promise<Response> {
   const body = await request.text()
-  if (!hit(`ip:${clientAddress(request)}`, IP_LIMIT, IP_WINDOW_MS, deps.now())) {
+  if (
+    !hit(`ip:instances:${clientAddress(request)}`, INSTANCES_IP_LIMIT, IP_WINDOW_MS, deps.now())
+  ) {
     deps.log(`instances limited: ip`)
     return json(429, { error: "busy" })
   }

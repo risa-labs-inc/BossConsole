@@ -8,14 +8,14 @@ import kotlin.test.assertTrue
 
 class IpcVersionTest {
     @Test
-    fun `current IPC version is 1_4_0`() {
-        assertEquals("1.4.0", IpcVersion.CURRENT)
+    fun `current IPC version is 1_5_0`() {
+        assertEquals("1.5.0", IpcVersion.CURRENT)
     }
 
     @Test
     fun `newer runtime minimum refuses older host versions`() {
-        assertTrue(IpcVersion.isCompatible("1.4.0", "1.3.0") is IpcVersion.CompatResult.Incompatible)
-        assertEquals(IpcVersion.CompatResult.Compatible, IpcVersion.isCompatible("1.3.0", "1.4.0"))
+        assertTrue(IpcVersion.isCompatible("1.5.0", "1.4.0") is IpcVersion.CompatResult.Incompatible)
+        assertEquals(IpcVersion.CompatResult.Compatible, IpcVersion.isCompatible("1.4.0", "1.5.0"))
     }
 
     @Test

@@ -9,7 +9,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert"
 // Import the app module (not index.ts, which calls Deno.serve) so no listener starts under test.
-import { app, htmlAttr, jsStringLiteral } from "../app.ts"
+import { app, htmlAttr, jsStringLiteral, OPTIMIST_REDIRECTS } from "../app.ts"
 
 async function pageFor(path: string): Promise<string> {
   return await (await app.request(path)).text()
@@ -151,4 +151,48 @@ Deno.test("live-sessions arm accepts the vanity-host landing", async () => {
   const html = await pageFor(`/redirect?url=${encodeURIComponent("https://api.risaboss.com/auth/v1/verify?token=t1")}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
   assertStringIncludes(html, "redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
   assertStringIncludes(html, "<h1>BossTerm Live Sessions</h1>")
+})
+
+// (f) Optimist chat: same web arm, Optimist brand, exact match only.
+
+Deno.test("optimist redirect_to → bounce to the GoTrue verify URL with the Optimist brand", async () => {
+  const rt = "https://optimist.risalabs.ai/auth/callback"
+  const conf = "https://api.risaboss.com/auth/v1/verify?token=tok9"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent(conf)}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
+  assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=tok9&amp;type=magiclink&amp;redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
+  assertStringIncludes(html, "<h1>Optimist</h1>")
+  assert(!html.includes("boss://auth/verify"), "must not deep-link the web flow into the desktop app")
+})
+
+Deno.test("optimist: the local chat server callback gets the Optimist brand", async () => {
+  const conf = "http://127.0.0.1:54321/auth/v1/verify?token=tok9"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent(conf)}&type=magiclink&redirect_to=${encodeURIComponent("http://127.0.0.1:8796/auth/callback")}`)
+  assertStringIncludes(html, "<h1>Optimist</h1>")
+})
+
+Deno.test("optimist arm refuses a non-first-party confirmation host", async () => {
+  const rt = "https://optimist.risalabs.ai/auth/callback"
+  const res = await app.request(`/redirect?url=${encodeURIComponent("https://evil.example/auth/v1/verify?token=t")}&redirect_to=${encodeURIComponent(rt)}`)
+  assertEquals(res.status, 400)
+})
+
+Deno.test("optimist arm is an exact match: another path on the host falls back to BOSS", async () => {
+  const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent("https://optimist.risalabs.ai/other"))
+  assertStringIncludes(html, "boss://auth/verify?token=abc")
+})
+
+// (g) Lockstep: OPTIMIST_REDIRECTS, config.toml and both email templates' `$optimist` predicate.
+
+const supabaseDir = new URL("../../../", import.meta.url)
+const read = (p: string) => Deno.readTextFile(new URL(p, supabaseDir))
+const isLoopback = (u: string) => new URL(u).hostname === "127.0.0.1"
+const optimistPredicateUrls = (tpl: string) =>
+  [...(tpl.match(/\{\{ \$optimist := [^\n]*/)?.[0] ?? "").matchAll(/eq \.RedirectTo "([^"]+)"/g)].map((m) => m[1]).sort()
+
+Deno.test("optimist redirect allow-list is in lockstep with config.toml and both email templates", async () => {
+  const config = await read("config.toml")
+  for (const u of OPTIMIST_REDIRECTS) assertStringIncludes(config, `"${u}"`)
+  const all = [...OPTIMIST_REDIRECTS].sort()
+  assertEquals(optimistPredicateUrls(await read("templates/email/magic-link.html")), all.filter((u) => !isLoopback(u)))
+  assertEquals(optimistPredicateUrls(await read("templates/email/magic-link-local.html")), all)
 })

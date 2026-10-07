@@ -4,6 +4,8 @@ import ai.rever.boss.testsupport.kotlinSourcesUnder
 import ai.rever.boss.testsupport.repoRoot
 import java.io.File
 import kotlin.test.Test
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
@@ -24,8 +26,8 @@ import kotlin.test.fail
  * omission hides in a file that otherwise looks correct, that was the most likely hole in the guard.
  *
  * Still a text check, like [ai.rever.boss.components.overlays.NoRawDialogConventionTest] next door,
- * and it inherits that test's limits: a fully-qualified call or a window opened through some helper
- * of its own would slip past. It catches the shape every real call site in this repo takes.
+ * and it inherits that test's limits: a window opened through some helper of its own can slip past.
+ * Qualified native/Compose calls remain included; the sharing event named Window is not an opener.
  */
 class WindowIconConventionTest {
     /**
@@ -38,6 +40,16 @@ class WindowIconConventionTest {
      */
     private val windowOpener =
         Regex("""\bWindow\(|\bDialogWindow\(|\bsingleWindowApplication\(|\bJFrame\(""")
+
+    private val inputEventQualifier = Regex("""\bAppInputEvent\s*\.\s*$""")
+    private val declarationPrefix = Regex("""\b(?:class|interface|fun)\s+$""")
+
+    private fun opensWindow(line: String): Boolean =
+        windowOpener.findAll(line).any { match ->
+            val prefix = line.substring(0, match.range.first)
+            val event = match.value == "Window(" && inputEventQualifier.containsMatchIn(prefix)
+            !event && !declarationPrefix.containsMatchIn(prefix)
+        }
 
     /** Any shape of the shared icon: the Compose painter, the AWT image list, or the upgrade call. */
     private val branding = Regex("""\bBossWindowIcon\b|\bApplyBossWindowIcon\b""")
@@ -87,7 +99,7 @@ class WindowIconConventionTest {
     ): List<String> {
         val lines = file.readLines()
         return lines.indices
-            .filter { windowOpener.containsMatchIn(lines[it]) }
+            .filter { opensWindow(lines[it]) }
             .filterNot { i ->
                 val end = minOf(lines.size, i + lookaheadLines)
                 (i until end).any { branding.containsMatchIn(lines[it]) }
@@ -109,13 +121,32 @@ class WindowIconConventionTest {
         val sites =
             kotlinSourcesUnder(root, "composeApp/src")
                 .filter { it.name !in allowed }
-                .sumOf { file -> file.readLines().count { windowOpener.containsMatchIn(it) } }
+                .sumOf { file -> file.readLines().count(::opensWindow) }
 
         // Fifteen real sites at the time of writing: ten Compose windows and five raw frames. A
         // floor, not an equality - adding a window must fail the test above, never this one.
         if (sites < 12) {
             fail("expected the window-opening pattern to match many call sites, matched only $sites")
         }
+    }
+
+    @Test
+    fun `sharing control events and definitions are not native window openers`() {
+        assertFalse(opensWindow("val event = AppInputEvent.Window(\"close\")"))
+        assertFalse(opensWindow("ai.rever.boss.sharing.AppInputEvent . Window(\"restore\")"))
+        assertFalse(opensWindow("data class Window("))
+        assertFalse(opensWindow("fun Window("))
+    }
+
+    @Test
+    fun `qualified windows remain guarded even beside a sharing event`() {
+        assertTrue(opensWindow("Window("))
+        assertTrue(opensWindow("androidx.compose.ui.window.Window("))
+        assertTrue(opensWindow("javax.swing.JFrame("))
+        assertTrue(opensWindow("Other.Window("))
+        assertTrue(opensWindow("AppInputEvent.Window(\"close\"); Window("))
+        assertTrue(opensWindow("DialogWindow("))
+        assertTrue(opensWindow("singleWindowApplication("))
     }
 
     /**

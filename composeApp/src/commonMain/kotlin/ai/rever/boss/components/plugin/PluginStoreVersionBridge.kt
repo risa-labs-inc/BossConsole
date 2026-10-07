@@ -48,4 +48,13 @@ expect object PluginStoreVersionBridge {
         sourceUrl: String?,
         manager: DynamicPluginManager,
     ): Result<String>
+
+    /** Install only the bytes approved for this invocation, retaining the ordinary overload above. */
+    suspend fun installStoreVersion(
+        pluginId: String,
+        version: String,
+        sourceUrl: String?,
+        manager: DynamicPluginManager,
+        expectedSha256: String?,
+    ): Result<String>
 }

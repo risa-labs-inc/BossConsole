@@ -94,12 +94,12 @@ class ChromeMetricsTest {
 
     @Test
     fun `the title row plus the shipped defaults still spend less height than classic chrome`() {
-        // macOS retains its title row while the top and bottom bars default to hidden.
+        // macOS retains its title row; the top bar defaults to hidden and the status bar to shown.
         val shippedMac = WindowAppearanceSettings(showTitleBar = true)
         val shipped = ChromeMetrics.mainPanelBudget(shippedMac, focusOff, comfortable)
 
-        // 27 title (26+1) + 4 ring. No top/bottom bar, and no horizontal tab row.
-        assertEquals(31.dp, shipped.vertical)
+        // 27 title (26+1) + 31 status bar (30+1) + 4 ring. No top bar, and no horizontal tab row.
+        assertEquals(62.dp, shipped.vertical)
         // 4 ring + 200 bar + 1 divider. Neither strip is drawn.
         assertEquals(205.dp, shipped.horizontal)
 

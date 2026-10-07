@@ -87,13 +87,11 @@ internal object ProjectOpenRequests {
  * Two ways in: the default-Space setting's Ask, for a project a plugin already selected
  * ([placeOnPick] false), and "New Space" in the project-open dialog, where the project is placed
  * only once a Space is picked ([placeOnPick] true) - so dismissing the list opens nothing, rather
- * than quietly meaning "This Space". [showCodebase] carries File > Open Project's folder picker's
- * promise to show the CodeBase panel, kept until the project actually lands in this window.
+ * than quietly meaning "This Space". Project selection does not automatically open a tool panel.
  */
 internal data class SpacePrompt(
     val project: Project,
     val placeOnPick: Boolean,
-    val showCodebase: Boolean = false,
 )
 
 /**

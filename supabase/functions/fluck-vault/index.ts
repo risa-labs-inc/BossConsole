@@ -21,6 +21,7 @@ import {
   createHandler,
   type CreateRequest,
   type Instance,
+  instanceFromRow,
   isConnector,
   type RegisterOutcome,
   type Registration,
@@ -194,18 +195,7 @@ Deno.serve(createHandler({
       p_instance_id: instanceId,
     })
     if (error || !Array.isArray(data) || data.length === 0) return null
-    const row = data[0] as Record<string, unknown>
-    if (typeof row.link_public_key !== "string" || typeof row.seal_public_key !== "string") {
-      return null
-    }
-    return {
-      instanceId,
-      userId: String(row.user_id),
-      linkPublicKey: row.link_public_key,
-      sealPublicKey: row.seal_public_key,
-      // Fails closed: anything but an explicit true is not approved.
-      issuanceApproved: row.issuance_approved === true,
-    }
+    return instanceFromRow(instanceId, data[0] as Record<string, unknown>)
   },
 
   async registerInstance(registration: Registration): Promise<RegisterOutcome> {

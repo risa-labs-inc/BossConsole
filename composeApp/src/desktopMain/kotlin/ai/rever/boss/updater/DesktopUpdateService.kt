@@ -515,9 +515,16 @@ actual class UpdateService internal constructor(
         }
     }
 
-    actual suspend fun installUpdate(downloadPath: String): InstallOutcome {
+    actual suspend fun installUpdate(downloadPath: String): InstallOutcome = performInstall(downloadPath, true)
+
+    actual suspend fun scheduleUpdate(downloadPath: String): InstallOutcome = performInstall(downloadPath, false)
+
+    private suspend fun performInstall(
+        downloadPath: String,
+        restartAutomatically: Boolean,
+    ): InstallOutcome {
         // Delegate to UpdateInstaller
-        val result = UpdateInstaller.installUpdate(downloadPath)
+        val result = UpdateInstaller.installUpdate(downloadPath, restartAutomatically)
 
         return when (result) {
             is InstallResult.Success -> {
@@ -531,12 +538,14 @@ actual class UpdateService internal constructor(
                 // The helper script is now running and waiting for this process to exit
                 // We need to quit the app so the script can proceed with installation
                 @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-                GlobalScope.launch {
-                    // Give the UI a moment to show the "installing" message
-                    delay(1000)
+                if (restartAutomatically) {
+                    GlobalScope.launch {
+                        // Give the UI a moment to show the "installing" message
+                        delay(1000)
 
-                    // Quit the application cleanly
-                    ApplicationRestarter.quitForUpdate()
+                        // Quit the application cleanly
+                        ApplicationRestarter.quitForUpdate()
+                    }
                 }
 
                 InstallOutcome(succeeded = true)

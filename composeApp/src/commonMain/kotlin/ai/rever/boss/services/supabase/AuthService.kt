@@ -38,6 +38,31 @@ object AuthService {
      */
     suspend fun sendMagicLink(email: String): Result<Unit> = EmailAuthService.sendMagicLink(email)
 
+    /** Where a Google or Apple sign-in stands. */
+    val oauthState: StateFlow<OAuthSignInState> get() = OAuthSignInService.state
+
+    /** The provider whose Google or Apple sign-in is being prepared, or null. */
+    val oauthStarting: StateFlow<OAuthProviderKind?> get() = OAuthSignInService.starting
+
+    /** End a waiting Google or Apple sign-in that has run past its time limit. */
+    suspend fun expireStaleOAuth(): Boolean = OAuthSignInService.expireIfStale()
+
+    /** Open [provider]'s sign-in page in the system browser; completes via `boss://auth/callback`. */
+    suspend fun signInWithOAuth(provider: OAuthProviderKind): OAuthStart = OAuthSignInService.start(provider)
+
+    /** Finish the waiting Google or Apple sign-in with its deep-link callback. */
+    suspend fun completeOAuth(callback: ai.rever.boss.components.auth.AuthDeepLink.OAuthCallback): OAuthCompletion =
+        OAuthSignInService.complete(callback)
+
+    /** Reopen the waiting sign-in's page; false when none is waiting or no browser opened. */
+    suspend fun reopenOAuthBrowser(): Boolean = OAuthSignInService.reopenBrowser()
+
+    /** Abandon the waiting Google or Apple sign-in. */
+    suspend fun cancelOAuth() = OAuthSignInService.cancel()
+
+    /** Clear a Google or Apple sign-in error from the login screen. */
+    fun dismissOAuthError() = OAuthSignInService.dismissError()
+
     /**
      * Sign out the current user
      */

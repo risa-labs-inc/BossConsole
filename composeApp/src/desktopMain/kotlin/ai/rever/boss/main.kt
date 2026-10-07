@@ -38,6 +38,7 @@ import ai.rever.boss.startup.CliBootstrap
 import ai.rever.boss.startup.CliDispatchResult
 import ai.rever.boss.startup.OverlaySetup
 import ai.rever.boss.startup.PlatformSetup
+import ai.rever.boss.startup.RelaunchHandoff
 import ai.rever.boss.startup.ShutdownSequence
 import ai.rever.boss.theme.AppThemeSettingsManager
 import ai.rever.boss.updater.AppUpdateRealtimeService
@@ -228,12 +229,6 @@ fun main(args: Array<String>) {
         ai.rever.boss.components.plugin.DesktopPluginLoadRemedyResolver,
     )
 
-    // Warm settings singletons on IO thread
-    startupScope.launch(Dispatchers.IO) {
-        ai.rever.boss.components.workspaces.WorkspaceSettingsManager.currentSettings
-        ai.rever.boss.focusmode.FocusModeSettingsManager.currentSettings
-    }
-
     // Set WM_CLASS for Linux desktop integration (must be before any AWT init)
     PlatformSetup.setLinuxWMClass()
 
@@ -244,9 +239,6 @@ fun main(args: Array<String>) {
     ChromiumFlagsSettingsManager.applyToSystemProperties()
     ai.rever.boss.config.SwipeNavSettingsManager
         .publish()
-    // Start release detection before the browser plugin's home surface can receive gestures.
-    ai.rever.boss.plugin.browser.MacOSScrollGesturePhases
-        .ensureStarted()
     ai.rever.boss.config.AutoPipSettingsManager
         .publish()
 
@@ -336,8 +328,29 @@ fun main(args: Array<String>) {
     logger.info(LogCategory.SYSTEM, "Successfully acquired single-instance lock")
 
     // -------------------------------------------------------------------------
-    // Phase 6: Overlays, window nets & Chromium engine preparation
+    // Phase 6: Chromium engine preflight, background warm-ups, overlays, window nets & engine
+    // pre-warm
     // -------------------------------------------------------------------------
+    // The preflight preloads the browser engine's native toolkit, which swaps the process's malloc
+    // zones; a free() on any other thread during the swap is an uncatchable SIGTRAP. So it must run
+    // before DefaultWindowIcon.install() creates the AWT toolkit (after which Core Animation frees
+    // on the AppKit thread continuously) and before the background warm-ups below start. It must
+    // also run only while the single-instance lock is held, because pending-install promotion
+    // renames the engine directory another instance may be booting from.
+    val chromiumPreflight = ChromiumBootstrap.preflight()
+
+    // Warm settings singletons on IO thread. After the preflight: a thread busy freeing memory
+    // while the toolkit swaps malloc zones is exactly what traps.
+    startupScope.launch(Dispatchers.IO) {
+        ai.rever.boss.components.workspaces.WorkspaceSettingsManager.currentSettings
+        ai.rever.boss.focusmode.FocusModeSettingsManager.currentSettings
+    }
+
+    // Start release detection before the browser plugin's home surface can receive gestures.
+    // After the preflight, so its CoreGraphics event-tap thread is not running during the swap.
+    ai.rever.boss.plugin.browser.MacOSScrollGesturePhases
+        .ensureStarted()
+
     // After headless exits and rendering properties: installing the AWT listener creates the
     // toolkit, which reads those properties once. Before any application window can open.
     DefaultWindowIcon.install()
@@ -348,12 +361,20 @@ fun main(args: Array<String>) {
 
     OverlaySetup.configure()
 
-    val (chromiumNeedsDownload, engineLabel) = ChromiumBootstrap.prepare()
+    // Left by a process that relaunched itself after downloading the engine (see
+    // ChromiumBootstrap.onEngineDownloadComplete). Consumed under the single-instance lock.
+    val relaunchHandoff = RelaunchHandoff.consume()
+
+    val (chromiumNeedsDownload, engineLabel) =
+        ChromiumBootstrap.prepare(chromiumPreflight, forcePrewarm = relaunchHandoff?.forcePrewarm == true)
 
     // -------------------------------------------------------------------------
     // Phase 7: Post-lock CLI, keyboard interceptor, services & plugins
     // -------------------------------------------------------------------------
     CliBootstrap.dispatchPostLock(args)
+    relaunchHandoff?.requests?.mapNotNull(RelaunchHandoff::toCommand)?.forEach {
+        CLICommandHandler.getInstance().queueCommand(it)
+    }
 
     AWTKeyboardInterceptor.install()
     // macOS already read the theme before AWT; other platforms still need this initialization.
@@ -532,6 +553,34 @@ fun main(args: Array<String>) {
             var downloadProgress by remember {
                 mutableStateOf(ChromiumAutoDownloader.DownloadProgress(0, 0))
             }
+            var restartingAfterDownload by remember { mutableStateOf(false) }
+
+            // The engine is on disk. Packaged macOS relaunches instead of booting it here: loading
+            // it with AppKit running crashed fresh installs (see onEngineDownloadComplete).
+            val onEngineDownloaded = {
+                ChromiumBootstrap.onEngineDownloadComplete(
+                    onRelaunching = { restartingAfterDownload = true },
+                    bootInProcess = {
+                        restartingAfterDownload = false
+                        // Download complete - create window and proceed
+                        WindowManager.createNewWindow()
+                        // The pre-warm was skipped at startup because the engine
+                        // was missing; now that it is installed, warm it so the
+                        // first tab does not pay the full boot.
+                        //
+                        // force, because it was skipped for a SECOND reason this
+                        // comment did not know about: the unforced gate wants an
+                        // existing browser profile, and a machine that has just
+                        // downloaded its engine has never had one. So this call
+                        // silently did nothing, on the one launch it was written for.
+                        runCatching {
+                            ai.rever.boss.plugin.browser.FluckEngine
+                                .prewarmInBackground(force = true)
+                        }
+                        isDownloadingChromium = false
+                    },
+                )
+            }
 
             // Show Chromium download dialog if needed
             if (isDownloadingChromium) {
@@ -567,24 +616,7 @@ fun main(args: Array<String>) {
                     LaunchedEffect(Unit) {
                         ChromiumAutoDownloader.downloadChromium { progress ->
                             downloadProgress = progress
-                            if (progress.isComplete) {
-                                // Download complete - create window and proceed
-                                WindowManager.createNewWindow()
-                                // The pre-warm was skipped at startup because the engine
-                                // was missing; now that it is installed, warm it so the
-                                // first tab does not pay the full boot.
-                                //
-                                // force, because it was skipped for a SECOND reason this
-                                // comment did not know about: the unforced gate wants an
-                                // existing browser profile, and a machine that has just
-                                // downloaded its engine has never had one. So this call
-                                // silently did nothing, on the one launch it was written for.
-                                runCatching {
-                                    ai.rever.boss.plugin.browser.FluckEngine
-                                        .prewarmInBackground(force = true)
-                                }
-                                isDownloadingChromium = false
-                            }
+                            if (progress.isComplete) onEngineDownloaded()
                         }
                     }
 
@@ -596,7 +628,7 @@ fun main(args: Array<String>) {
                                     .background(BossThemeController.current.colors.panel),
                         ) {
                             ChromiumDownloadContent(
-                                progress = downloadProgress.progressFraction,
+                                progress = if (restartingAfterDownload) 1f else downloadProgress.progressFraction,
                                 downloadedMB = downloadProgress.downloadedMB,
                                 totalMB = downloadProgress.totalMB,
                                 // Name the version being fetched. This dialog blocks
@@ -609,6 +641,7 @@ fun main(args: Array<String>) {
                                         engineLabel = engineLabel,
                                         isExtracting = downloadProgress.isExtracting,
                                         totalBytes = downloadProgress.totalBytes,
+                                        isRestarting = restartingAfterDownload,
                                     ),
                                 error = downloadProgress.error,
                                 onCancel = { exitApplication() },
@@ -618,18 +651,7 @@ fun main(args: Array<String>) {
                                     CoroutineScope(Dispatchers.IO).launch {
                                         ChromiumAutoDownloader.downloadChromium { progress ->
                                             downloadProgress = progress
-                                            if (progress.isComplete) {
-                                                WindowManager.createNewWindow()
-                                                // Forced for the same reason as the first-attempt
-                                                // path above: a freshly downloaded engine has no
-                                                // browser profile yet, which the unforced gate reads
-                                                // as "this machine does not use the browser".
-                                                runCatching {
-                                                    ai.rever.boss.plugin.browser.FluckEngine
-                                                        .prewarmInBackground(force = true)
-                                                }
-                                                isDownloadingChromium = false
-                                            }
+                                            if (progress.isComplete) onEngineDownloaded()
                                         }
                                     }
                                 },

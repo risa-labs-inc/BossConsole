@@ -6,6 +6,7 @@ import ai.rever.boss.mcp.PreparedPackDisplayModel
 import ai.rever.boss.mcp.secrets.SecretDescriptor
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.theme.dialogPanelColor
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.VerticalScrollbar
@@ -39,7 +40,6 @@ import androidx.compose.material.OutlinedButton
 import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.RadioButton
 import androidx.compose.material.RadioButtonDefaults
-import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.material.TextFieldDefaults
@@ -53,6 +53,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -253,15 +254,15 @@ fun McpApprovalDialog(
                 dismissOnBackPress = false,
             ),
     ) {
-        Surface(
+        Box(
             modifier =
                 Modifier
                     .widthIn(max = maxWidth)
                     .width(APPROVAL_DIALOG_WIDTH)
                     .heightIn(max = maxHeight)
-                    .border(1.dp, colors.line, RoundedCornerShape(radii.dialog)),
-            shape = RoundedCornerShape(radii.dialog),
-            color = colors.panel,
+                    .border(1.dp, colors.line, RoundedCornerShape(radii.dialog))
+                    .clip(RoundedCornerShape(radii.dialog))
+                    .background(dialogPanelColor),
         ) {
             // Three bands: the header (with the one countdown) and the actions are pinned, and only
             // the body between them scrolls, so the answer is reachable at any window height.
