@@ -487,8 +487,11 @@ fun main(args: Array<String>) {
             if (!quitting) {
                 quitting = true
                 // Preserve the normal window-close preparation on native Quit too.
-                WindowManager.windows.toList().forEach { prepareWindowForClose(it.id) }
-                exitApplication()
+                quitLifecycle.closeApplication(
+                    windowIds = WindowManager.windows.map { it.id },
+                    prepareWindow = ::prepareWindowForClose,
+                    exitApplication = { exitApplication() },
+                )
             }
         }
         val updateCoordinator = remember { UpdateCoordinator.instance }

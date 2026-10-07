@@ -138,6 +138,7 @@ import com.arkivanov.decompose.ComponentContext
 import com.arkivanov.decompose.DefaultComponentContext
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
 import com.arkivanov.decompose.value.Value
+import com.arkivanov.essenty.lifecycle.Lifecycle
 import com.arkivanov.essenty.lifecycle.LifecycleRegistry
 import com.arkivanov.essenty.lifecycle.destroy
 import com.arkivanov.essenty.lifecycle.resume
@@ -2532,10 +2533,20 @@ class BossTabsComponent(
      * This prevents crashes caused by JxBrowser trying to access
      * disposed AWT window handles during rendering.
      */
+    @Suppress("TooGenericExceptionCaught")
     fun disposeAllTabsBlocking() {
-        tabComponents.values.toList().forEach { component ->
+        tabComponents.toMap().forEach { (tabId, component) ->
             if (component is ai.rever.boss.components.plugin.tab_types.fluck.FluckTabComponent) {
-                component.disposeBlocking()
+                try {
+                    component.disposeBlocking()
+                } catch (t: Throwable) {
+                    bossMainWindowPanelLogger.warn(
+                        LogCategory.UI,
+                        "Browser tab cleanup failed (continuing)",
+                        mapOf("tabId" to tabId),
+                        t,
+                    )
+                }
             }
         }
         tabComponents.clear()
@@ -2543,8 +2554,31 @@ class BossTabsComponent(
         // lifecycle.onDestroy release their resources on window close too — same
         // contract as removeTab. SplitViewState performs the window-scoped
         // BrowserService fallback after every panel lifecycle has been destroyed.
-        tabLifecycles.values.toList().forEach { it.destroy() }
+        tabLifecycles.toMap().forEach { (tabId, lifecycle) -> destroyTabLifecycle(tabId, lifecycle) }
         tabLifecycles.clear()
+    }
+
+    @Suppress("TooGenericExceptionCaught")
+    private fun destroyTabLifecycle(
+        tabId: String,
+        lifecycle: LifecycleRegistry,
+    ) {
+        // Essenty advances state before callbacks. Keep advancing after a failed
+        // pause/stop, but never redeliver destroy or retry without state progress.
+        while (lifecycle.state != Lifecycle.State.DESTROYED) {
+            val previousState = lifecycle.state
+            try {
+                lifecycle.destroy()
+            } catch (t: Throwable) {
+                bossMainWindowPanelLogger.warn(
+                    LogCategory.UI,
+                    "Tab lifecycle cleanup failed (continuing)",
+                    mapOf("tabId" to tabId),
+                    t,
+                )
+            }
+            if (lifecycle.state == previousState) return
+        }
     }
 }
 
