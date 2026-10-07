@@ -58,6 +58,11 @@ a reopened view defers installation again. Downloads use `.part` files until adm
 Failed promoted artifacts are quarantined; a `.rejected-update` marker fences startup
 selection if a live loader prevents removal. Host and Toolbox updates/installVersion
 share SHA-256 plugin-ID file locks under `.plugin-update-locks`; never delete lock files.
+Both participants claim a process gate before opening a lease descriptor. They share
+`boss.plugins.updateLease.processOwners` in `System.getProperties()`: a bootstrap-JDK
+ConcurrentHashMap from canonical lock paths to plain Object tokens. Closing a second
+same-process descriptor can release the holder's POSIX OS lock, so busy contenders
+must never open that descriptor. Remove only the owning token after channel closure.
 Ordinary idle plugins reload without restarting BOSS; native plugins, disabled plugins,
 plugins with loaded dependents, and multiwindow updates are staged for the next manual
 start. Disabled plugins remain disabled. Protected API/runtime ids use their existing
