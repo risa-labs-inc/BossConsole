@@ -710,6 +710,63 @@ the JxBrowser license and Supabase settings baked in by the
 `generateEmbeddedConfig` Gradle task, which reads env vars (CI secrets) or
 local.properties at build time and emits a git-ignored classpath resource.
 
+### `BOSS_SESSION_IMPORT`: handing a session to a headless BOSS
+
+A headless BOSS (one container per Optimist user, a Hunt agent seat) has nobody to sign in at
+its window. The host signs the user in elsewhere and drops that sign-in's refresh token in a
+file; BOSS adopts it as its own session (`refreshSession` then `importSession`). Code:
+`SessionFileImporter` and `DesktopSessionFileImport` in `desktopMain/.../services/auth`.
+
+- **The variable** names an absolute path. Unset, blank or relative means the hook is off and
+  nothing changes. It is read with `System.getenv` only, deliberately **not** through
+  `ConfigLoader`, so `local.properties`, system properties and `env_vars` cannot turn it on. Keep
+  it that way: whoever controls this path controls which account BOSS is signed in as.
+- **When it acts**: only while there is no live session, i.e. `NotAuthenticated`, or
+  `RefreshFailure` with an expired session (a container restarted after its session lapsed). It
+  polls every 500 ms, slowing to every 2 s after a minute with no file, and stops on sign-in.
+- **Format**: exactly `{"refresh_token":"<non-blank string>"}`, UTF-8, at most 16 KiB. Any other
+  key (even a harmless one such as `expires_at`) makes the file malformed.
+- **Checks**: a regular file, not a symlink (read with `NOFOLLOW_LINKS`); owned by the
+  process's numeric UID (`unix:uid`, compared with `/proc/self`; on macOS, where there is no
+  `/proc`, by owner name); mode exactly `0600`; the parent directory owned by the same UID and not
+  group or world writable. Only the immediate parent is checked, so pick a directory whose whole
+  path is private.
+- **Stability**: the file is read only when its inode, size and mtime are unchanged across two
+  consecutive polls and its mtime is at least one poll interval old, so a write still in progress
+  is never read. A writer stalled mid-write for longer than that can still lose the token, which
+  is why the contract below renames into place.
+- **Single use**: a file that passes is deleted before any network call, and a token that cannot
+  be deleted is never presented. It is consumed even if the import then fails (invalid JSON, auth
+  error); the host must write a new one to retry. Nothing read from the file is ever logged.
+- **A refused file is left in place** and the reason logged once (`Session import file refused
+  and left in place`, with e.g. `mode is not 0600` or `is owned by uid 65534, not the process uid
+  1000`). Fixing the file (or replacing it) is picked up on a later poll. A refusal that repeats
+  slows the poll like an absent file.
+- **Session recovery**: `CoreAuthService` does not clear a session that replaced the one it was
+  recovering (`SessionRecoveryPolicy.replacedSince`), so a handoff that lands while recovery's
+  refresh of the old token is in flight survives that refresh's rejection. The guard is one-directional:
+  a rejection that lands before the handoff's `importSession` still clears the old session, and
+  the import then lands on top of it.
+
+**Writer contract.** Create the file owner-only and rename it into place, in the same directory:
+
+```sh
+umask 077
+printf '{"refresh_token":"%s"}' "$rt" > "$BOSS_SESSION_IMPORT.tmp"
+mv -f "$BOSS_SESSION_IMPORT.tmp" "$BOSS_SESSION_IMPORT"   # rename(2), atomic
+```
+
+The importer only looks at the exact path, so the `.tmp` sibling is never picked up. A writer
+that cannot rename still works if it creates the file `0600` from the start and finishes within
+one poll; `printf > f && chmod 600 f` is refused until the `chmod` lands, then imported.
+
+**Where to put it**: a private tmpfs, so the token never reaches persistent disk or an image
+layer. `$XDG_RUNTIME_DIR` (`/run/user/$UID`, 0700) on a systemd host; in a container, a dedicated
+mount such as `--tmpfs /run/boss:mode=0700,uid=<uid>` with
+`BOSS_SESSION_IMPORT=/run/boss/session.json`. `/tmp` itself (1777) is refused. A bind mount under
+rootless Docker or a user namespace can show the file as `nobody`/65534; that is refused with the
+UID mismatch in the log.
+
 ### Supabase Deployment
 ```bash
 supabase functions deploy <function-name> --project-ref pcnwqamqdnsadranufjv --no-verify-jwt
