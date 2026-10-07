@@ -133,7 +133,9 @@ additional_redirect_urls = ["boss://auth/verify", "boss://auth/callback", "bosst
   # live-sessions web page (functions/live-sessions): magic link lands the browser here with tokens in the fragment
   "https://api.risaboss.com/functions/v1/live-sessions/auth", "https://cli.risaboss.com/auth", "http://127.0.0.1:54321/functions/v1/live-sessions/auth",
   # Optimist chat web callback (redirect/app.ts OPTIMIST_REDIRECTS)
-  "https://askoptimist.com/auth/callback", "https://optimist.risalabs.ai/auth/callback", "http://127.0.0.1:8796/auth/callback"]
+  "https://askoptimist.com/auth/callback", "https://optimist.risalabs.ai/auth/callback", "http://127.0.0.1:8796/auth/callback",
+  # fluck-web page (functions/fluck-web, fluck.risaboss.com): same landing shape as live-sessions
+  "https://fluck.risaboss.com/auth", "https://api.risaboss.com/functions/v1/fluck-web/auth", "http://127.0.0.1:54321/functions/v1/fluck-web/auth"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # Path to JWT signing key. DO NOT commit your signing keys file to git.
@@ -435,6 +437,14 @@ entrypoint = "./functions/organisation/index.ts"
 verify_jwt = false
 import_map = "./functions/live-sessions/deno.json"
 entrypoint = "./functions/live-sessions/index.ts"
+
+[functions.fluck-web]
+# MUST be false, for the same reasons as live-sessions: `/` and `/auth` are header-less page loads
+# and /api/otp is pre-authentication. Data routes forward the caller's own JWT (from the HttpOnly
+# cookie) to the fluck_web_* RPCs, where RLS and auth.uid() are the access model.
+verify_jwt = false
+import_map = "./functions/fluck-web/deno.json"
+entrypoint = "./functions/fluck-web/index.ts"
 
 [functions.user-settings]
 # Browser navigations carry a one-use handoff or signed HttpOnly cookie, not a JWT header.
