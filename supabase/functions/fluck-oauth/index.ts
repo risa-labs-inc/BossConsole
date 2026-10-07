@@ -11,7 +11,13 @@
  * the server never binds, so the function deploys and then 503s.
  */
 import { createClient } from "@supabase/supabase-js"
-import { createHandler, type NonceClaim, type StoreRequest } from "./app.ts"
+import {
+  createHandler,
+  type GrantOwner,
+  type Instance,
+  type NonceClaim,
+  type StoreRequest,
+} from "./app.ts"
 
 const client = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -44,6 +50,20 @@ Deno.serve(createHandler({
   },
 
   /**
+   * The same RPC fluck-vault uses, so "live install" has one definition: it returns no row for
+   * an unknown or revoked install.
+   */
+  async instance(instanceId: string): Promise<Instance | null> {
+    const { data, error } = await client.rpc("fluck_vault_instance", {
+      p_instance_id: instanceId,
+    })
+    if (error || !Array.isArray(data) || data.length === 0) return null
+    const row = data[0] as Record<string, unknown>
+    if (typeof row.user_id !== "string" || typeof row.link_public_key !== "string") return null
+    return { userId: row.user_id, linkPublicKey: row.link_public_key }
+  },
+
+  /**
    * Write the refresh token as the BOSS user named in the state.
    *
    * Through an RPC rather than a client side insert, for two reasons that both have to hold at
@@ -61,5 +81,26 @@ Deno.serve(createHandler({
       p_notes: request.notes,
     })
     return !error && typeof data === "string" && data.length > 0
+  },
+
+  async bindGrant(tokenSha256: string, userId: string): Promise<boolean> {
+    const { data, error } = await client.rpc("fluck_oauth_bind_grant", {
+      p_token_sha256: tokenSha256,
+      p_user_id: userId,
+    })
+    return !error && data === true
+  },
+
+  // A read error is "unavailable", never "unbound": the plugin drops a grant on invalid_grant.
+  async grantOwner(tokenSha256: string): Promise<GrantOwner> {
+    const { data, error } = await client.rpc("fluck_oauth_grant_owner", {
+      p_token_sha256: tokenSha256,
+    })
+    if (error) return { status: "unavailable" }
+    return typeof data === "string" ? { status: "bound", userId: data } : { status: "unbound" }
+  },
+
+  async forgetGrant(tokenSha256: string): Promise<void> {
+    await client.rpc("fluck_oauth_forget_grant", { p_token_sha256: tokenSha256 })
   },
 }))
