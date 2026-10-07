@@ -686,6 +686,10 @@ private fun SettingsContentArea(
                     SecuritySettings()
                 }
 
+                SettingsSection.SHARING -> {
+                    AppSharingSettings()
+                }
+
                 SettingsSection.LANGUAGE_SERVERS -> {
                     LspSettings()
                 }

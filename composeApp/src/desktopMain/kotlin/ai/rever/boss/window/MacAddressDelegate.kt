@@ -45,6 +45,7 @@ internal object MacAddressDelegate {
         return toolbar?.addressField
     }
 
+    private val began = Notification { self, _, _ -> owner(self)?.notification("begin") }
     private val changed = Notification { self, _, _ -> owner(self)?.notification("change") }
     private val ended = Notification { self, _, _ -> owner(self)?.notification("end") }
     private val command =
@@ -69,6 +70,7 @@ internal object MacAddressDelegate {
         add(cls, "mouseEntered:", entered, "v@:@")
         add(cls, "mouseExited:", exited, "v@:@")
         add(cls, "copyAddress:", copy, "v@:@")
+        add(cls, "controlTextDidBeginEditing:", began, "v@:@")
         add(cls, "controlTextDidChange:", changed, "v@:@")
         add(cls, "controlTextDidEndEditing:", ended, "v@:@")
         add(cls, "control:textView:doCommandBySelector:", command, "c@:@@:")

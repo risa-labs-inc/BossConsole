@@ -322,6 +322,7 @@ class StoreMissingDependencyInstaller(
                     DownloadCenter.progress(pluginId, it)
                 }.fold(
                     onSuccess = { downloaded ->
+                        rejectUnapprovedDownload(downloaded, part.absolutePath, expectedSha256)?.let { return@fold it }
                         DownloadCenter.phase(pluginId, TransferPhase.INSTALLING)
                         // NonCancellable, like the two swap paths: a Cancel pressed
                         // between the last progress tick and here surfaces at the next
@@ -353,6 +354,17 @@ class StoreMissingDependencyInstaller(
         } finally {
             if (ownsTransfer) DownloadCenter.end(pluginId)
         }
+    }
+
+    private fun rejectUnapprovedDownload(
+        downloaded: String,
+        partPath: String,
+        expectedSha256: String?,
+    ): Result<Unit>? {
+        val error = verifyApprovedDownload(downloaded, expectedSha256) ?: return null
+        discard(downloaded)
+        discard(partPath)
+        return Result.failure(error)
     }
 
     /**

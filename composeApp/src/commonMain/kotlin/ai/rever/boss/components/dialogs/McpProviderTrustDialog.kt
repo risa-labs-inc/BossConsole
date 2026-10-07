@@ -3,7 +3,10 @@ package ai.rever.boss.components.dialogs
 import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.theme.dialogPanelColor
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,7 +21,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Button
 import androidx.compose.material.ButtonDefaults
-import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
@@ -29,6 +31,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -66,10 +69,13 @@ fun McpProviderTrustDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(),
     ) {
-        Surface(
-            modifier = Modifier.width(440.dp).wrapContentHeight(),
-            shape = RoundedCornerShape(radii.dialog),
-            color = colors.panel,
+        Box(
+            modifier =
+                Modifier
+                    .width(440.dp)
+                    .wrapContentHeight()
+                    .clip(RoundedCornerShape(radii.dialog))
+                    .background(dialogPanelColor),
         ) {
             Column(modifier = Modifier.padding(24.dp)) {
                 Text(

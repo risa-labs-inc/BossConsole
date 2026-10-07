@@ -32,16 +32,20 @@ internal fun nativeSessionTitleActions(state: BossAppState): List<NativeTitleBar
         }
     }
 
-internal fun nativeMoreTitleAction(state: BossAppState): NativeTitleBarAction =
+internal fun nativeMoreTitleAction(
+    state: BossAppState,
+    terminalSetupActions: List<NativeTitleBarAction> = emptyList(),
+): NativeTitleBarAction =
     NativeTitleBarAction(
         "more",
         "More actions",
         "ellipsis",
         menu =
-            listOf(
-                NativeTitleBarAction("settings", "Settings…") { state.settingsWindow.open() },
-                NativeTitleBarAction("logout", "Sign out…") { state.showLogoutDialog = true },
-            ),
+            terminalSetupActions +
+                listOf(
+                    NativeTitleBarAction("settings", "Settings…") { state.settingsWindow.open() },
+                    NativeTitleBarAction("logout", "Sign out…") { state.showLogoutDialog = true },
+                ),
         onClick = {},
     )
 

@@ -37,8 +37,8 @@ data class WindowAppearanceSettings(
      * The scaffold requires both to agree, so a bar shows when this is true and focus mode is not
      * currently clearing it.
      *
-     * **The top bar, bottom status bar and both icon strips are off by default on desktop.**
-     * A window opens as its content and vertical tab bar; the View menu can restore any bar.
+     * **The top bar and both icon strips are off by default on desktop; the bottom status bar is on.**
+     * The View menu can change any bar's visibility.
      *
      * The top bar and icon strips can be hidden because their actions remain available:
      * the tab bar's foot holds Sign Out, Settings, Tools and Search (see
@@ -60,7 +60,7 @@ data class WindowAppearanceSettings(
     /** Optional duplicate of the browser address-bar zoom controls. */
     val showBrowserZoomBadge: Boolean = false,
     /** Whether the status bar at the bottom of the window is on screen. See [showTopBar]. */
-    val showBottomBar: Boolean = false,
+    val showBottomBar: Boolean = true,
     /** Whether the left icon strip is on screen. See [showTopBar]. */
     val showLeftStrip: Boolean = false,
     /** Whether the right icon strip is on screen. See [showTopBar]. */

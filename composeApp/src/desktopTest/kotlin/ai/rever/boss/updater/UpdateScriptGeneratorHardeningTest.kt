@@ -198,10 +198,17 @@ class UpdateScriptGeneratorHardeningTest {
     @Test
     fun `generated Linux scripts create temp files with mktemp inside the updater directory`() {
         val updaterDir = resolveUpdaterTempDir().absolutePath
-        listOf(
-            UpdateScriptGenerator.generateLinuxDebUpdateScript("/tmp/BOSS-9.9.9-amd64.deb", 12345),
-            UpdateScriptGenerator.generateLinuxRpmUpdateScript("/tmp/BOSS-9.9.9-amd64.rpm", 12345),
-        ).forEach { scriptFile ->
+        val scripts =
+            listOf(
+                UpdateScriptGenerator.generateLinuxDebUpdateScript("/tmp/BOSS-9.9.9-amd64.deb", 12345),
+                UpdateScriptGenerator.generateLinuxRpmUpdateScript("/tmp/BOSS-9.9.9-amd64.rpm", 12345),
+            )
+        assertEquals(
+            scripts.size,
+            scripts.map { it.absolutePath }.distinct().size,
+            "Each helper must have its own file",
+        )
+        scripts.forEach { scriptFile ->
             try {
                 val script = scriptFile.readText()
                 assertFalse(

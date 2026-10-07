@@ -7,4 +7,5 @@ import androidx.compose.runtime.Composable
 internal expect fun NativeSidebarTitleBar(
     title: String,
     actions: List<NativeTitleBarAction>,
+    sharing: Boolean = false,
 ): Boolean

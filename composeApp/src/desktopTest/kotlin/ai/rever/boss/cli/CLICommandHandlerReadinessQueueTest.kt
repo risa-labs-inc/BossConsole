@@ -150,4 +150,17 @@ class CLICommandHandlerReadinessQueueTest {
             assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
         }
     }
+
+    @Test
+    fun `draining for a relaunch takes the queue without making it ready`() {
+        val queue = ReadinessQueue<String>()
+        assertFalse(queue.enqueueOrClaimForCaller("boss://one"))
+        assertFalse(queue.enqueueOrClaimForCaller("boss://two"))
+
+        assertEquals(listOf("boss://one", "boss://two"), queue.drainQueued())
+        assertTrue(queue.drainQueued().isEmpty())
+        // Still not ready: a later arrival waits, as before the drain.
+        assertFalse(queue.enqueueOrClaimForCaller("boss://three"))
+        assertEquals(listOf("boss://three"), queue.markReadyAndClaimQueued())
+    }
 }

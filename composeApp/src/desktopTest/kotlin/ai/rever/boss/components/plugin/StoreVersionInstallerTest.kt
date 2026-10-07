@@ -113,6 +113,7 @@ class StoreVersionInstallerTest {
         loadSucceeds: Boolean = true,
         hasLiveInstance: Boolean = true,
         firstInstall: Boolean = false,
+        expectedSha256: String? = null,
     ) = install(
         store = repository,
         request =
@@ -123,6 +124,7 @@ class StoreVersionInstallerTest {
                 runningJarPath = runningJarPath,
                 hasLiveInstance = hasLiveInstance,
                 firstInstall = firstInstall,
+                expectedSha256 = expectedSha256,
             ),
         unload = { id ->
             unloaded += id
@@ -134,6 +136,42 @@ class StoreVersionInstallerTest {
             if (!loadSucceeds && path != runningJarPath) Result.success(false) else Result.success(true)
         },
     )
+
+    @Test
+    fun `changed approved bytes never unload or promote a running plugin`() =
+        runTest {
+            val result = installer().run(expectedSha256 = "0".repeat(64))
+            assertTrue(result.isFailure)
+            assertTrue(unloaded.isEmpty())
+            assertTrue(loaded.isEmpty())
+            assertTrue(persisted.isEmpty())
+            assertFalse(File(dir, EXPECTED_NAME).exists())
+            assertFalse(File(dir, "$EXPECTED_NAME.part").exists())
+        }
+
+    @Test
+    fun `first install rejects changed approved bytes`() =
+        runTest {
+            val result = installer().run(firstInstall = true, expectedSha256 = "0".repeat(64))
+            assertTrue(result.isFailure)
+            assertTrue(loaded.isEmpty())
+            assertFalse(File(dir, EXPECTED_NAME).exists())
+        }
+
+    @Test
+    fun `matching approved bytes can replace a running plugin`() =
+        runTest {
+            val bytes = File(dir, "approved.jar").apply { writeText("store bytes") }
+            val result =
+                installer().run(
+                    expectedSha256 =
+                        ai.rever.boss.utils
+                            .sha256Of(bytes),
+                )
+            assertTrue(result.isSuccess)
+            assertEquals(listOf(PLUGIN), unloaded)
+            assertEquals(1, loaded.size)
+        }
 
     @Test
     fun `a clean swap downloads, unloads, loads and records the store source`() =

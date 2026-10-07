@@ -26,7 +26,7 @@ import {
 } from "../app.ts"
 import { SCRIPT, sha256Base64, STYLE } from "../page.ts"
 import { SEAL_VERSION } from "../seal.ts"
-import { minorUnitExponent } from "../currency.ts"
+import { isKnownCurrency, minorUnitExponent } from "../currency.ts"
 import { type LinkClaims, mintLink } from "../token.ts"
 
 const AUD = new URL(DEFAULT_PUBLIC_BASE_URL).host
@@ -329,6 +329,28 @@ Deno.test("amounts are ISO 4217 minor units: the shared wire vectors (USD, JPY, 
     assertEquals(fraction.length, v.exponent, v.currency)
     assertEquals(Number(whole + fraction), v.minor, v.currency)
     assertEquals(money(v.minor, v.currency)!.replace(/\u00a0/g, " "), v.display, v.currency)
+  }
+})
+
+Deno.test("known currencies do not depend on Intl, and codes with no minor unit are unknown", async () => {
+  const intl = Intl as unknown as { supportedValuesOf?: unknown }
+  const original = intl.supportedValuesOf
+  intl.supportedValuesOf = () => {
+    throw new RangeError("not supported")
+  }
+  try {
+    // A fresh module instance, evaluated while Intl.supportedValuesOf is unavailable.
+    const fresh = await import(`../currency.ts?no-intl=${crypto.randomUUID()}`)
+    for (const code of ["USD", "EUR", "GBP", "INR", "CAD"]) {
+      assert(fresh.isKnownCurrency(code), code)
+      assertEquals(fresh.minorUnitExponent(code), 2, code)
+    }
+  } finally {
+    intl.supportedValuesOf = original
+  }
+  for (const code of ["XAU", "XAG", "XDR", "XXX", "XTS", "ZZZ"]) {
+    assertEquals(isKnownCurrency(code), false, code)
+    assertEquals(money(100, code), null, code)
   }
 })
 

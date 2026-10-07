@@ -126,9 +126,14 @@ site_url = "boss://auth/verify"
 # allow-list entry GoTrue silently drops its redirect_to, and the email template /
 # redirect function can't tell the apps apart. PRODUCTION: add the same URL under
 # Dashboard -> Auth -> URL Configuration -> Redirect URLs.
-additional_redirect_urls = ["boss://auth/verify", "bossterm://auth/verify", "http://127.0.0.1:3000", "https://127.0.0.1:3000",
+# boss://auth/callback: the Google / Apple sign-in return (PKCE code in the query), see
+# OAuthSignInService.kt; bossterm://auth/callback is BossTerm's (OAuthSignIn.kt). PRODUCTION: add both
+# under Redirect URLs too.
+additional_redirect_urls = ["boss://auth/verify", "boss://auth/callback", "bossterm://auth/verify", "bossterm://auth/callback", "http://127.0.0.1:3000", "https://127.0.0.1:3000",
   # live-sessions web page (functions/live-sessions): magic link lands the browser here with tokens in the fragment
-  "https://api.risaboss.com/functions/v1/live-sessions/auth", "https://cli.risaboss.com/auth", "http://127.0.0.1:54321/functions/v1/live-sessions/auth"]
+  "https://api.risaboss.com/functions/v1/live-sessions/auth", "https://cli.risaboss.com/auth", "http://127.0.0.1:54321/functions/v1/live-sessions/auth",
+  # Optimist chat web callback (redirect/app.ts OPTIMIST_REDIRECTS)
+  "https://optimist.risalabs.ai/auth/callback", "http://127.0.0.1:8796/auth/callback"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # Path to JWT signing key. DO NOT commit your signing keys file to git.
@@ -273,9 +278,24 @@ max_frequency = "5s"
 # Use an external OAuth provider. The full list of providers are: `apple`, `azure`, `bitbucket`,
 # `discord`, `facebook`, `github`, `gitlab`, `google`, `keycloak`, `linkedin_oidc`, `notion`, `twitch`,
 # `twitter`, `slack`, `spotify`, `workos`, `zoom`.
+#
+# Google and Apple back "Continue with Google / Apple" on the BOSS login screen. They stay
+# disabled here so `supabase start` works without credentials; to test locally, export the env
+# vars below and flip `enabled`. PRODUCTION is configured in the Dashboard (Auth -> Providers),
+# with both providers' redirect URI set to https://api.risaboss.com/auth/v1/callback.
+# Setup and the Apple secret rotation are in docs/OAUTH_SIGN_IN_SETUP.md.
+[auth.external.google]
+enabled = false
+client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"
+redirect_uri = ""
+url = ""
+skip_nonce_check = false
+
 [auth.external.apple]
 enabled = false
-client_id = ""
+# The Services ID (not the App ID).
+client_id = "env(SUPABASE_AUTH_EXTERNAL_APPLE_CLIENT_ID)"
 # DO NOT commit your OAuth provider secret to git. Use environment variable substitution instead:
 secret = "env(SUPABASE_AUTH_EXTERNAL_APPLE_SECRET)"
 # Overrides the default auth redirectUrl.
@@ -462,3 +482,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/relay-admission/deno.json"
 entrypoint = "./functions/relay-admission/index.ts"
+
+[functions.app-sharing]
+verify_jwt = false
+
+[functions.app-sharing-maintenance]
+verify_jwt = false

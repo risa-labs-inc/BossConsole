@@ -15,6 +15,10 @@
  *   GET  /api/sessions  cookie (or Bearer) -> live rows for that user; rotates the access
  *                     cookie via the refresh cookie when it has expired
  *   POST /api/logout  clears the cookies
+ *   GET  /api/oauth/{google|apple}  starts a Google / Apple sign-in: sets a short-lived PKCE
+ *                     verifier cookie and 302s to GoTrue's /authorize with redirect_to=<base>/auth
+ *   GET  /auth?code=  the provider's return: exchanges the code with the verifier cookie, sets
+ *                     the session cookies and 302s to the page without the code
  *   GET  /health
  *
  * Trust model. This function never holds a service-role key. `/api/sessions`
@@ -35,15 +39,19 @@
  * origin. HTML only renders on the custom domain (see organisation/app.ts).
  */
 
+import { appSharingBrowser } from "./app-sharing-browser.ts"
 import { OpenAPIHono } from "@hono/zod-openapi"
-import { LIVE_WINDOW_SECONDS, publicBasePath, publicBaseUrl, readConfig } from "./utils/config.ts"
+import { authPublicUrl, LIVE_WINDOW_SECONDS, publicBasePath, publicBaseUrl, readConfig } from "./utils/config.ts"
 import { htmlResponse, jsonResponse, redirectResponse } from "./utils/responses.ts"
 import { clientKey, rateLimit } from "./utils/rate-limit.ts"
 import {
   accessCookieName,
   clearCookieHeaders,
+  clearPkceCookieHeader,
   cookieToken,
   isSecureRequest,
+  pkceCookieHeader,
+  pkceCookieName,
   refreshCookieName,
   sessionCookieHeaders,
 } from "./utils/cookies.ts"
@@ -67,6 +75,20 @@ const REFRESH_TOKEN_RE = /^[A-Za-z0-9._~+/=-]{8,4096}$/
 const SESSIONS_WINDOW_SECONDS = 60
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 const BEARER_RE = /^Bearer\s+([A-Za-z0-9._~+/=-]{20,4096})$/
+const OAUTH_PROVIDERS = new Set(["google", "apple"])
+const OAUTH_LIMIT = 20
+const OAUTH_WINDOW_SECONDS = 300
+/** GoTrue's PKCE auth codes: a UUID today; bounded and URL-safe so a format change still parses. */
+const AUTH_CODE_RE = /^[A-Za-z0-9._~-]{1,512}$/
+/** An OAuth `error` code as GoTrue and the providers write it; anything else is not logged. */
+const OAUTH_ERROR_RE = /^[a-z_]{1,64}$/
+/**
+ * Provider returns get their own budget rather than the `session:` one: a burst of returns
+ * (retries, a user bouncing between providers) must not lock the page out of establishing a
+ * session from a magic link, and vice versa.
+ */
+const OAUTH_RETURN_LIMIT = 20
+const OAUTH_RETURN_WINDOW_SECONDS = 300
 
 /** Columns the page needs. `id` is omitted: the page keys nothing on it. */
 const SESSION_COLUMNS =
@@ -119,7 +141,46 @@ function aliasRedirect(ctx: { req: { url: string; header: (n: string) => string 
 // the browser was given a trailing slash, and Hono matches them as different routes.
 app.get("/", (ctx) => aliasRedirect(ctx, "") ?? page())
 app.get("", (ctx) => aliasRedirect(ctx, "") ?? page())
-app.get("/auth", (ctx) => aliasRedirect(ctx, "/auth") ?? page())
+app.get("/auth", async (ctx) => aliasRedirect(ctx, "/auth") ?? (await oauthReturn(ctx)) ?? page())
+
+/**
+ * Start a Google or Apple sign-in.
+ *
+ * PKCE, with the verifier in an HttpOnly cookie: the page keeps its no-third-party-script CSP
+ * (no supabase-js in the browser), and the verifier never reaches page script or storage. The
+ * start is a top-level navigation from the page's own link, so a cross-site request here is
+ * refused like every other route that sets cookies.
+ *
+ * New accounts are allowed: unlike the magic link (create_user: false), a first Google or Apple
+ * sign-in creates the BOSS account, the same as the desktop apps.
+ */
+app.get("/api/oauth/:provider", async (ctx) => {
+  if (ctx.req.header("sec-fetch-site") === "cross-site") return jsonResponse({ error: "forbidden" }, 403)
+  const provider = ctx.req.param("provider")
+  if (!OAUTH_PROVIDERS.has(provider)) return jsonResponse({ error: "not_found" }, 404)
+  // The verifier cookie is set on the host that serves this request and the provider returns to
+  // publicBaseUrl(), so a start on any other host would plant the cookie where the return never
+  // looks. Send it to the canonical host first, as the page routes do.
+  const alias = aliasRedirect(ctx, `/api/oauth/${provider}`)
+  if (alias) return alias
+  const limit = rateLimit(`oauth:${clientKey(ctx.req.raw.headers)}`, OAUTH_LIMIT, OAUTH_WINDOW_SECONDS)
+  if (!limit.allowed) return oauthErrorRedirect("rate_limited")
+
+  const base = publicBaseUrl()
+  const authUrl = authPublicUrl()
+  if (!base || !authUrl) {
+    console.error("LIVE_SESSIONS_PUBLIC_BASE_URL or the auth URL is not set; refusing to start OAuth")
+    return jsonResponse({ error: "not_configured" }, 503)
+  }
+
+  const verifier = randomVerifier()
+  const secure = isSecureRequest(ctx.req.url, ctx.req.header("x-forwarded-proto") ?? null)
+  const challenge = await codeChallenge(verifier)
+  const authorize = `${authUrl}/auth/v1/authorize?provider=${provider}` +
+    `&redirect_to=${encodeURIComponent(`${base}/auth`)}` +
+    `&code_challenge=${challenge}&code_challenge_method=s256`
+  return redirectResponse(authorize, { status: 302, setCookies: [pkceCookieHeader(verifier, secure, publicBasePath())] })
+})
 
 app.get("/health", () => jsonResponse({ status: "healthy" }))
 
@@ -256,11 +317,27 @@ app.get("/api/sessions", async (ctx) => {
   }
   if (rows.status !== 200 || !rows.rows) return jsonResponse({ error: "upstream" }, 502)
   const preferences = ctx.req.query("terminal_preferences") === "1" ? await fetchTerminalPreferences(cfg, token!) : null
+  let applicationSessions: unknown[] | null = null
+  if (ctx.req.query("app_sessions") === "1") {
+    try {
+      const result = await deps.fetch(`${cfg.supabaseUrl}/rest/v1/rpc/app_sharing_command`, {
+        method: "POST", headers: {apikey:cfg.anonKey, Authorization:`Bearer ${token}`, "Content-Type":"application/json"},
+        body:JSON.stringify({p_action:"list",p_body:{}}), signal:AbortSignal.timeout(4000),
+      })
+      if (result.ok) { const value=await result.json(); if(Array.isArray(value?.sessions)) applicationSessions=value.sessions }
+    } catch { /* Additive capability: older backends keep terminal discovery intact. */ }
+  }
   return jsonResponse({ sessions: rows.rows, email: emailFromJwt(token!),
+    ...(applicationSessions ? {app_sessions:applicationSessions} : {}),
     ...(ctx.req.query("terminal_preferences") === "1" ? { terminal_preferences_owner: jwtDisplayClaim(token!, "sub") } : {}),
     ...(preferences ? { terminal_preferences: preferences } : {}),
   }, 200, setCookies)
 })
+
+app.all("/api/app-sharing", (ctx) => appSharingBrowser(ctx.req.raw, deps.fetch))
+app.all("/api/app-sharing-bootstrap", (ctx) => appSharingBrowser(ctx.req.raw, deps.fetch))
+app.get("/app-viewer/*", (ctx) => appSharingBrowser(ctx.req.raw, deps.fetch))
+app.get("/app-viewer", (ctx) => redirectResponse(`${publicBasePath()}/app-viewer/${new URL(ctx.req.url).search}`, { status: 302 }))
 
 app.notFound(() => jsonResponse({ error: "not_found" }, 404))
 
@@ -270,6 +347,122 @@ app.onError((err, _ctx) => {
 })
 
 // ---- helpers ----
+
+type RouteCtx = {
+  req: {
+    url: string
+    header: (n: string) => string | undefined
+    query: (n: string) => string | undefined
+    raw: Request
+  }
+}
+
+/**
+ * The provider's return to /auth, or null for an ordinary page load.
+ *
+ * No Sec-Fetch-Site check here, deliberately: the return legitimately arrives as a navigation that
+ * started on accounts.google.com or appleid.apple.com. What protects it is the verifier cookie -
+ * a code planted by someone else was issued against THEIR verifier, so it cannot be exchanged
+ * with this browser's, and a browser with no sign-in in flight has no verifier at all. That holds
+ * against other sites, not against a sibling subdomain: a `__Secure-` cookie (it cannot be
+ * `__Host-`, which requires `Path=/`) can still be set for the parent domain by any HTTPS host
+ * under it, the same exposure the session cookies already have.
+ *
+ * A return carrying both a code and an error is ambiguous and is treated as a failure, as the
+ * desktop parser refuses the same shape.
+ */
+async function oauthReturn(ctx: RouteCtx): Promise<Response | null> {
+  const code = ctx.req.query("code")
+  const providerError = ctx.req.query("error")
+  if (!code && !providerError) return null
+
+  const secure = isSecureRequest(ctx.req.url, ctx.req.header("x-forwarded-proto") ?? null)
+  const clearVerifier = clearPkceCookieHeader(secure, publicBasePath())
+  if (code && providerError) return oauthErrorRedirect("failed", [clearVerifier])
+  const verifier = cookieToken(ctx.req.header("cookie") ?? null, pkceCookieName(secure))
+  if (providerError) {
+    // /auth is also the magic link's landing, and GoTrue reports a spent or expired link the same
+    // way (?error=access_denied&error_code=otp_expired, repeated in the fragment). Without a
+    // verifier cookie no Google or Apple sign-in is in flight, so the error is the page's: it
+    // shows GoTrue's own description from the fragment, as it did before this route existed.
+    if (!verifier) return null
+    // Untrusted text: logged only in the shape a real error code has, so it cannot forge log lines.
+    console.warn("oauth provider error", OAUTH_ERROR_RE.test(providerError) ? providerError : "<malformed>")
+    return oauthErrorRedirect(oauthErrorReason(providerError, ctx.req.query("error_code")), [clearVerifier])
+  }
+  // `code` is always set by now (no error, and the first check returned when both were absent);
+  // `!code` is what narrows it to a string for the regex.
+  if (!code || !AUTH_CODE_RE.test(code) || !verifier) return oauthErrorRedirect("expired", [clearVerifier])
+
+  const limit = rateLimit(
+    `oauth-return:${clientKey(ctx.req.raw.headers)}`,
+    OAUTH_RETURN_LIMIT,
+    OAUTH_RETURN_WINDOW_SECONDS,
+  )
+  if (!limit.allowed) return oauthErrorRedirect("rate_limited", [clearVerifier])
+
+  const cfg = readConfig()
+  // Every exit clears the verifier cookie: it belongs to this one attempt.
+  if (!cfg.supabaseUrl || !cfg.anonKey) return jsonResponse({ error: "not_configured" }, 503, [clearVerifier])
+  const session = await gotruePkceExchange(cfg, code, verifier)
+  if (!session) return oauthErrorRedirect("failed", [clearVerifier])
+
+  return redirectResponse(`${publicBasePath()}/`, {
+    status: 302,
+    setCookies: [...sessionCookieHeaders(session.accessToken, session.refreshToken, secure, publicBasePath()), clearVerifier],
+  })
+}
+
+/** The page's notice for a provider-reported error; GoTrue's `error_code` is the more specific of the two. */
+function oauthErrorReason(error: string, errorCode: string | undefined): string {
+  if (errorCode === "otp_expired" || errorCode === "flow_state_expired" || errorCode === "flow_state_not_found") {
+    return "expired"
+  }
+  return error === "access_denied" ? "cancelled" : "failed"
+}
+
+/** Back to the page with a reason the page script turns into a notice. Codes, never free text. */
+function oauthErrorRedirect(reason: string, setCookies: string[] = []): Response {
+  return redirectResponse(`${publicBasePath()}/auth?oauth_error=${reason}`, { status: 302, setCookies })
+}
+
+async function gotruePkceExchange(
+  cfg: { supabaseUrl: string; anonKey: string },
+  code: string,
+  verifier: string,
+): Promise<{ accessToken: string; refreshToken: string | null } | null> {
+  try {
+    const resp = await deps.fetch(`${cfg.supabaseUrl}/auth/v1/token?grant_type=pkce`, {
+      method: "POST",
+      headers: { apikey: cfg.anonKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ auth_code: code, code_verifier: verifier }),
+    })
+    if (!resp.ok) {
+      console.warn("pkce exchange refused", resp.status)
+      return null
+    }
+    const json = await resp.json() as Record<string, unknown>
+    if (typeof json.access_token !== "string" || !ACCESS_TOKEN_RE.test(json.access_token)) return null
+    const refresh = typeof json.refresh_token === "string" && REFRESH_TOKEN_RE.test(json.refresh_token) ? json.refresh_token : null
+    return { accessToken: json.access_token, refreshToken: refresh }
+  } catch (err) {
+    console.error("pkce exchange failed", err)
+    return null
+  }
+}
+
+/** RFC 7636 verifier: 43 unpadded base64url characters from 32 random bytes. */
+function randomVerifier(): string {
+  return base64Url(crypto.getRandomValues(new Uint8Array(32)))
+}
+
+export async function codeChallenge(verifier: string): Promise<string> {
+  return base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))))
+}
+
+function base64Url(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+}
 
 async function fetchRows(cfg: { supabaseUrl: string; anonKey: string }, token: string): Promise<{ status: number; rows: unknown[] | null }> {
   const since = new Date(Date.now() - LIVE_WINDOW_SECONDS * 1000).toISOString()

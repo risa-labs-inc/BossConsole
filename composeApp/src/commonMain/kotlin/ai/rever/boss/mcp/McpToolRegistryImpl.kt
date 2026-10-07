@@ -51,7 +51,6 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
 import java.io.File
 import java.io.IOException
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Process-wide registry aggregating MCP tools contributed by active plugins.
@@ -707,7 +706,9 @@ internal class McpToolRegistryCore(
     /** Enabled tools = registered minus user-disabled minus permission-denied. This is what the bridge mirrors. */
     private val _tools = MutableStateFlow<List<RegisteredMcpTool>>(emptyList())
     val tools: StateFlow<List<RegisteredMcpTool>> = _tools.asStateFlow()
-    private val _preparers = ConcurrentHashMap<String, McpToolPreparer>()
+
+    // Guarded by mutationLock and captured together with the selected tool.
+    private val _preparers = mutableMapOf<String, McpToolPreparer>()
 
     /** Host-owned marker that prevents prepared registration metadata being copied again on replay. */
     private interface ProviderSnapshot :
@@ -758,10 +759,8 @@ internal class McpToolRegistryCore(
         val defs = prepared.tools()
         val aliases = (prepared as? McpToolAliasProvider)?.toolAliases.orEmpty()
         val preparer = (prepared as? McpToolPreparer) ?: (provider as? McpToolPreparer)
-        if (preparer != null) {
-            _preparers[providerId] = preparer
-        }
         synchronized(mutationLock) {
+            if (preparer != null) _preparers[providerId] = preparer else _preparers.remove(providerId)
             if (_providers.value.containsKey(providerId)) {
                 // Same-id re-registration replaces the previous provider. Legitimate on
                 // plugin reload, but worth a trace: two plugins sharing an id would
@@ -784,8 +783,8 @@ internal class McpToolRegistryCore(
     }
 
     fun unregisterProvider(providerId: String) {
-        _preparers.remove(providerId)
         synchronized(mutationLock) {
+            _preparers.remove(providerId)
             if (!_providers.value.containsKey(providerId)) return@synchronized
             _providers.update { it - providerId }
             _providerAliases.update { it - providerId }
@@ -1023,8 +1022,13 @@ internal class McpToolRegistryCore(
         toolName: String,
         arguments: String,
     ): McpToolResult {
+        // Capture both parts under the registration lock, then run plugin code outside it.
+        val invocation =
+            synchronized(mutationLock) {
+                findInvocableTool(toolName)?.let { it to _preparers[it.providerId] }
+            }
         val tool =
-            findInvocableTool(toolName)
+            invocation?.first
                 ?: return McpToolResult(
                     unavailableToolMessage(resolveAlias(toolName)?.second ?: toolName),
                     isError = true,
@@ -1076,7 +1080,7 @@ internal class McpToolRegistryCore(
                 return result
             }
 
-            val preparer = _preparers[tool.providerId]
+            val preparer = invocation.second
             val prepared = preparer?.prepareInvocation(toolName, args)
             val displayModel: Any?
             val allowStandingTrust: Boolean

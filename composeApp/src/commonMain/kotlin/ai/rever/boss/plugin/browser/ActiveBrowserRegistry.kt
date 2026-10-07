@@ -215,6 +215,12 @@ object ActiveBrowserRegistry {
      * Callers that care about liveness still filter on [BrowserHandle.isValid].
      */
     fun handleById(handleId: String): BrowserHandle? = handles[handleId]
+
+    /** Visible registrations only; callers must independently verify the exact surface/window. */
+    internal fun composedHandles(): List<BrowserHandle> =
+        entries.keys.mapNotNull { id ->
+            handles[id]?.takeIf { handle -> handle.isValid }
+        }
 }
 
 /**

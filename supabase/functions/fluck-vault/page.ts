@@ -23,7 +23,7 @@
  * did. Someone reads these at a petrol station at eleven at night.
  */
 import { SEAL_INFO_PREFIX } from "./seal.ts"
-import { MAX_MINOR_AMOUNT, NON_TWO_DIGIT_EXPONENTS } from "./currency.ts"
+import { MAX_MINOR_AMOUNT, MINOR_UNIT_EXPONENTS } from "./currency.ts"
 
 /** Shared by every page. Hashed into the CSP, so it is a constant like the script. */
 export const STYLE = `*{box-sizing:border-box}
@@ -70,7 +70,7 @@ function luhn(n){if(n.length<13||n.length>19)return false;var sum=0,alt=false;
 for(var i=n.length-1;i>=0;i--){var d=n.charCodeAt(i)-48;
 if(alt){d*=2;if(d>9)d-=9}sum+=d;alt=!alt}return sum%10===0}
 function fail(m){err.textContent=m;return null}
-var EXP=${JSON.stringify(NON_TWO_DIGIT_EXPONENTS)};
+var EXP=${JSON.stringify(MINOR_UNIT_EXPONENTS)};
 var ex=form.elements["f3"];if(ex)ex.addEventListener("input",function(){var d=digits(ex.value).slice(0,4);
 ex.value=d.length>2?d.slice(0,2)+"/"+d.slice(2):d});
 function payload(){
@@ -91,7 +91,8 @@ var postal=field("f6").trim();
 if(!postal)return fail("Enter the billing postcode.");
 var cur=field("f10").trim().toUpperCase();
 if(!/^[A-Z]{3}$/.test(cur))return fail("Enter the limit currency as three letters, like USD.");
-var xp=Object.prototype.hasOwnProperty.call(EXP,cur)?EXP[cur]:2;
+if(!Object.prototype.hasOwnProperty.call(EXP,cur))return fail("That is not a currency code. Try USD, EUR or GBP.");
+var xp=EXP[cur];
 var lim=field("f9").trim();var lm=/^([0-9]+)(?:\\.([0-9]+))?$/.exec(lim);
 if(!lm||(lm[2]||"").length>xp)return fail(xp===0?"Enter the spending limit as a whole number, like 200.":"Enter the spending limit, like 200 or 200."+"0000".slice(0,xp)+".");
 var minor=parseInt(lm[1]+((lm[2]||"")+"0000").slice(0,xp),10);
