@@ -3,6 +3,7 @@ package ai.rever.boss.updater
 import ai.rever.boss.components.dialogs.DownloadCenterDialog
 import ai.rever.boss.layout.TRAFFIC_LIGHT_HEIGHT
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.Version
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -406,6 +407,7 @@ fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinat
     val updateState by updateCoordinator.updateState.collectAsState()
     val lastCheckTime by updateCoordinator.lastCheckTime.collectAsState()
     val currentVersion = updateCoordinator.currentVersion()
+    val automaticUpdates by UpdateSettings.automaticUpdates.collectAsState()
     val coroutineScope = rememberCoroutineScope()
 
     // Version selection state
@@ -481,7 +483,6 @@ fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinat
                 )
                 Spacer(modifier = Modifier.height(12.dp))
 
-                val automaticUpdates by UpdateSettings.automaticUpdates.collectAsState()
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -490,7 +491,12 @@ fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinat
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Automatic Updates", fontSize = 14.sp, color = BossTheme.colors.textPrimary)
                         Text(
-                            "Download in the background and install after you quit. Open BOSS again manually.",
+                            if (SystemUtils.isMacOS) {
+                                "Download in the background and install after Quit or closing all windows. " +
+                                    "Closing windows relaunches in the Dock; Quit leaves BOSS closed."
+                            } else {
+                                "Download in the background and install after you quit. Open BOSS again manually."
+                            },
                             fontSize = 12.sp,
                             color = BossTheme.colors.textSecondary,
                         )
@@ -801,7 +807,12 @@ fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinat
 
                     is UpdateState.InstallOnNextRestart -> {
                         Text(
-                            "Update ready. It will install after you quit BOSS. Open BOSS again manually.",
+                            if (SystemUtils.isMacOS && automaticUpdates) {
+                                "Update ready. It will install after Quit or closing all windows. " +
+                                    "Closing windows relaunches in the Dock."
+                            } else {
+                                "Update ready. It will install after you quit BOSS. Open BOSS again manually."
+                            },
                             color = BossTheme.colors.ok,
                             fontSize = 14.sp,
                         )

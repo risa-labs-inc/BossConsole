@@ -44,14 +44,19 @@ import ai.rever.boss.theme.AppThemeSettingsManager
 import ai.rever.boss.updater.AppUpdateRealtimeService
 import ai.rever.boss.updater.UpdateCoordinator
 import ai.rever.boss.utils.SingleInstanceManager
+import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.AWTKeyboardInterceptor
+import ai.rever.boss.window.ApplicationQuitLifecycle
+import ai.rever.boss.window.ApplicationWindowLifecycle
 import ai.rever.boss.window.ApplyBossWindowIcon
 import ai.rever.boss.window.BossWindow
 import ai.rever.boss.window.BossWindowIcon
 import ai.rever.boss.window.DefaultWindowIcon
+import ai.rever.boss.window.MacOSApplicationLifecycle
 import ai.rever.boss.window.WindowManager
+import ai.rever.boss.window.prepareWindowForClose
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -62,6 +67,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -371,7 +377,8 @@ fun main(args: Array<String>) {
     // -------------------------------------------------------------------------
     // Phase 7: Post-lock CLI, keyboard interceptor, services & plugins
     // -------------------------------------------------------------------------
-    CliBootstrap.dispatchPostLock(args)
+    // --no-window is a GUI lifecycle flag, not a CLI command or an OS open request.
+    CliBootstrap.dispatchPostLock(args.filterNot { it == "--no-window" }.toTypedArray())
     relaunchHandoff?.requests?.mapNotNull(RelaunchHandoff::toCommand)?.forEach {
         CLICommandHandler.getInstance().queueCommand(it)
     }
@@ -453,9 +460,12 @@ fun main(args: Array<String>) {
         )
     }
 
-    // Create initial window BEFORE application{} to prevent auto-recreation
+    val windowLifecycle = ApplicationWindowLifecycle()
+    val quitLifecycle = ApplicationQuitLifecycle()
+    val startWithoutWindow = SystemUtils.isMacOS && "--no-window" in args
+    // Create the initial window once, except after a windowless macOS update.
     if (!chromiumNeedsDownload) {
-        WindowManager.createNewWindow()
+        windowLifecycle.openInitialWindow(startWithoutWindow = startWithoutWindow)
     }
 
     logger.info(
@@ -471,7 +481,18 @@ fun main(args: Array<String>) {
     // the entire disk. Project indexing belongs to the editor plugin's project lifecycle.
     // Phase 8: Compose Application Entry & Window Loop
     // -------------------------------------------------------------------------
-    application {
+    application(exitProcessOnExit = false) {
+        var quitting by remember { mutableStateOf(false) }
+        val quitApplication: () -> Unit = {
+            if (!quitting) {
+                quitting = true
+                // Preserve the normal window-close preparation on native Quit too.
+                WindowManager.windows.toList().forEach { prepareWindowForClose(it.id) }
+                exitApplication()
+            }
+        }
+        val updateCoordinator = remember { UpdateCoordinator.instance }
+        LaunchedEffect(Unit) { updateCoordinator.ensureStarted() }
         // Provide a custom WindowExceptionHandlerFactory that intercepts plugin crashes
         // during composition. Compose's default factory shows an error dialog and disposes
         // the window, which bypasses our UncaughtExceptionHandler-based interceptor.
@@ -550,10 +571,42 @@ fun main(args: Array<String>) {
         ) {
             // State for Chromium download
             var isDownloadingChromium by remember { mutableStateOf(chromiumNeedsDownload) }
+            // A windowless relaunch also defers first-time engine setup until a Dock request.
+            var windowRequested by remember { mutableStateOf(!startWithoutWindow) }
             var downloadProgress by remember {
                 mutableStateOf(ChromiumAutoDownloader.DownloadProgress(0, 0))
             }
             var restartingAfterDownload by remember { mutableStateOf(false) }
+
+            if (SystemUtils.isMacOS) {
+                MacOSApplicationLifecycle(
+                    onReopen = {
+                        if (!quitting) {
+                            windowRequested = true
+                            if (!isDownloadingChromium) windowLifecycle.reopen()
+                        }
+                    },
+                    onNewWindow = {
+                        if (!quitting) {
+                            windowRequested = true
+                            if (!isDownloadingChromium) WindowManager.createNewWindow()
+                        }
+                    },
+                    onQuit = { response -> quitLifecycle.requestQuit(response, quitApplication) },
+                )
+                LaunchedEffect(Unit) {
+                    updateCoordinator.installAutomaticUpdatesWhenWindowless(
+                        windowsOpen =
+                            snapshotFlow {
+                                WindowManager.windowCount > 0 || (isDownloadingChromium && windowRequested)
+                            },
+                        canRestart = {
+                            !quitting && !(isDownloadingChromium && windowRequested) && WindowManager.windowCount == 0
+                        },
+                        quitForUpdate = quitApplication,
+                    )
+                }
+            }
 
             // The engine is on disk. Packaged macOS relaunches instead of booting it here: loading
             // it with AppKit running crashed fresh installs (see onEngineDownloadComplete).
@@ -583,7 +636,7 @@ fun main(args: Array<String>) {
             }
 
             // Show Chromium download dialog if needed
-            if (isDownloadingChromium) {
+            if (isDownloadingChromium && windowRequested) {
                 val downloadWindowState =
                     rememberWindowState(
                         position = WindowPosition.Aligned(Alignment.Center),
@@ -602,7 +655,7 @@ fun main(args: Array<String>) {
                 }
 
                 Window(
-                    onCloseRequest = { exitApplication() },
+                    onCloseRequest = quitApplication,
                     state = downloadWindowState,
                     title = "BOSS - Setup",
                     resizable = false,
@@ -644,7 +697,7 @@ fun main(args: Array<String>) {
                                         isRestarting = restartingAfterDownload,
                                     ),
                                 error = downloadProgress.error,
-                                onCancel = { exitApplication() },
+                                onCancel = quitApplication,
                                 onRetry = {
                                     // Reset progress and retry
                                     downloadProgress = ChromiumAutoDownloader.DownloadProgress(0, 0)
@@ -684,97 +737,9 @@ fun main(args: Array<String>) {
                     key(windowState.id) {
                         BossWindow(
                             windowState = windowState,
+                            onQuitRequest = quitApplication,
                             onCloseRequest = {
-                                // Exit fullscreen/maximized BEFORE disposing browsers to prevent
-                                // SIGABRT crash in JxBrowser's getWindowHandle during macOS
-                                // fullscreen exit transition. requestToggleFullScreen() is async
-                                // (macOS Spaces animation takes ~300-500ms), so we add a brief
-                                // delay to let the transition start before disposing browsers.
-                                //
-                                // Blocking the UI thread here is acceptable: the app is closing
-                                // and the window is about to be destroyed anyway.
-                                val awtWindow =
-                                    ai.rever.boss.utils.WindowFocusManager
-                                        .getWindow(windowState.id)
-                                var needsTransitionWait = false
-                                if (awtWindow is java.awt.Frame) {
-                                    if (awtWindow.extendedState != java.awt.Frame.NORMAL) {
-                                        logger.debug(
-                                            LogCategory.UI,
-                                            "Exiting maximized state before window close",
-                                            mapOf(
-                                                "windowId" to windowState.id,
-                                                "extendedState" to awtWindow.extendedState.toString(),
-                                            ),
-                                        )
-                                        awtWindow.extendedState = java.awt.Frame.NORMAL
-                                        needsTransitionWait = true
-                                    }
-                                    // macOS native fullscreen uses Spaces, not AWT exclusive mode.
-                                    // requestToggleFullScreen is a TOGGLE — calling it when not
-                                    // fullscreen will ENTER fullscreen. We must detect whether the
-                                    // window is actually in native fullscreen before calling it.
-                                    // Detection: in native fullscreen, the window bounds match the
-                                    // full screen size (not the visible/usable area).
-                                    val isMacOS = System.getProperty("os.name").lowercase().contains("mac")
-                                    if (isMacOS) {
-                                        val screenBounds =
-                                            awtWindow.graphicsConfiguration
-                                                ?.device
-                                                ?.defaultConfiguration
-                                                ?.bounds
-                                        val windowBounds = awtWindow.bounds
-                                        val isNativeFullscreen =
-                                            screenBounds != null &&
-                                                windowBounds.width >= screenBounds.width &&
-                                                windowBounds.height >= screenBounds.height
-                                        if (isNativeFullscreen) {
-                                            try {
-                                                logger.debug(
-                                                    LogCategory.UI,
-                                                    "Requesting macOS fullscreen exit before window close",
-                                                    mapOf(
-                                                        "windowId" to windowState.id,
-                                                    ),
-                                                )
-                                                val appClass = Class.forName("com.apple.eawt.Application")
-                                                val app = appClass.getMethod("getApplication").invoke(null)
-                                                appClass
-                                                    .getMethod("requestToggleFullScreen", java.awt.Window::class.java)
-                                                    .invoke(app, awtWindow)
-                                                needsTransitionWait = true
-                                            } catch (e: Exception) {
-                                                logger.debug(
-                                                    LogCategory.UI,
-                                                    "macOS fullscreen exit not available",
-                                                    mapOf(
-                                                        "errorType" to e.javaClass.simpleName,
-                                                        "reason" to (e.message ?: "unknown"),
-                                                    ),
-                                                )
-                                            }
-                                        }
-                                    }
-                                    // Wait for fullscreen/maximize transition to start before
-                                    // disposing browsers. Both state changes are async on macOS.
-                                    // Using runBlocking{delay()} per THREADING.md guidelines;
-                                    // blocking is acceptable here since the window is closing.
-                                    if (needsTransitionWait) {
-                                        kotlinx.coroutines.runBlocking {
-                                            kotlinx.coroutines.delay(150)
-                                        }
-                                    }
-                                }
-
-                                // CRITICAL: Dispose all browsers BEFORE window close begins
-                                // This prevents JxBrowser OffScreenWidget crash when it tries to
-                                // access the window handle during Compose disposal
-                                // Must happen HERE, not in BossApp.onDispose, because:
-                                // - onCloseRequest runs BEFORE Compose disposal
-                                // - BossApp.onDispose runs DURING Compose disposal (too late!)
-                                ai.rever.boss.components.window_panel.SplitViewStateRegistry
-                                    .getState(windowState.id)
-                                    ?.disposeAllBrowsersBlocking()
+                                prepareWindowForClose(windowState.id)
 
                                 // Clean up runner terminal state to prevent memory leaks (Issue #498)
                                 ai.rever.boss.run.RunnerTerminalService
@@ -795,4 +760,7 @@ fun main(args: Array<String>) {
             }
         } // CompositionLocalProvider
     }
+    // Complete a native quit only after Compose cleanup, without vetoing OS shutdown.
+    quitLifecycle.completeQuit()
+    exitProcess(0)
 }

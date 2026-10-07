@@ -291,14 +291,28 @@ object UpdateScriptGenerator {
         targetAppPath: String,
         appPid: Long,
         restartAutomatically: Boolean = true,
+        windowlessRelaunchRequestPath: String? = null,
     ): File {
         // Validate inputs for security
         validatePath(dmgPath, "DMG path")
         validatePath(targetAppPath, "Target app path")
+        windowlessRelaunchRequestPath?.let { validatePath(it, "Windowless relaunch request path") }
 
         // Escape paths for safe shell interpolation
         val escapedDmgPath = escapeShellArg(dmgPath)
         val escapedTargetAppPath = escapeShellArg(targetAppPath)
+        val escapedRelaunchRequest = windowlessRelaunchRequestPath?.let(::escapeShellArg)
+        val cleanupRequest =
+            if (escapedRelaunchRequest != null) {
+                """
+            cleanup_windowless_request() {
+                rm -f $escapedRelaunchRequest
+            }
+            trap cleanup_windowless_request EXIT
+        """
+            } else {
+                ""
+            }
 
         logger.debug(LogCategory.SYSTEM, "Security: Validated and escaped macOS update script parameters")
 
@@ -312,6 +326,8 @@ object UpdateScriptGenerator {
 
             # BOSS Update Helper Script
             # This script runs after BOSS quits to install the update
+
+$cleanupRequest
 
             echo "BOSS Update Helper started"
             echo "Waiting for BOSS to quit (PID: $appPid)..."
@@ -486,6 +502,19 @@ object UpdateScriptGenerator {
 
 
             """
+            } else if (escapedRelaunchRequest != null) {
+                """
+            if [ -f $escapedRelaunchRequest ]; then
+                echo "Relaunching BOSS in the Dock without a window..."
+                open -n $escapedTargetAppPath --args --no-window
+                if [ ${'$'}? -ne 0 ]; then
+                    sleep 2
+                    open -n $escapedTargetAppPath --args --no-window || echo "Relaunch failed - please start BOSS manually"
+                fi
+            else
+                echo "Open BOSS again manually."
+            fi
+                """
             } else {
                 """echo "Open BOSS again manually." """
             }}
@@ -1000,6 +1029,11 @@ ASKPASS_EOF
      * @param scriptFile The script file to execute
      */
     fun launchScript(scriptFile: File) {
+        launchScriptProcess(scriptFile)
+    }
+
+    /** The macOS idle-update path must know that the deferred helper is alive. */
+    internal fun launchScriptProcess(scriptFile: File): Process {
         try {
             // Platform temp directory: "/tmp" is not a real path on Windows, so
             // hardcoding it sent installer logs to a directory that never exists
@@ -1053,6 +1087,7 @@ ASKPASS_EOF
                     ),
                 )
             }
+            return process
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Failed to launch update script", error = e)
             throw e

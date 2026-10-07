@@ -246,6 +246,31 @@ sealed class InstallResult {
 // targeted update-outcome fix.
 @Suppress("LargeClass")
 object UpdateInstaller {
+    private data class PendingMacOSUpdate(
+        val downloadPath: String,
+        val relaunchRequest: File,
+        val helper: Process,
+    )
+
+    @Volatile
+    private var pendingMacOSUpdate: PendingMacOSUpdate? = null
+
+    /** Reuse the deferred installer, quitting only while that helper is still alive. */
+    internal fun prepareWindowlessRelaunch(downloadPath: String): Boolean {
+        val pending = pendingMacOSUpdate ?: return false
+        return if (pending.downloadPath != downloadPath || !pending.helper.isAlive) {
+            false
+        } else {
+            try {
+                pending.relaunchRequest.writeText("--no-window\n")
+                true
+            } catch (e: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Could not prepare windowless update relaunch", error = e)
+                false
+            }
+        }
+    }
+
     private val logger = BossLogger.forComponent("UpdateInstaller")
 
     /**
@@ -689,17 +714,26 @@ object UpdateInstaller {
                 val currentPid = ProcessHandle.current().pid()
                 logger.debug(LogCategory.SYSTEM, "Generating update script", mapOf("pid" to currentPid))
 
+                val relaunchRequest =
+                    if (!restartAutomatically) {
+                        File(updaterTempDir(), "windowless-${java.util.UUID.randomUUID()}.request")
+                    } else {
+                        null
+                    }
                 val scriptFile =
                     UpdateScriptGenerator.generateMacOSUpdateScript(
                         dmgPath = downloadFile.absolutePath,
                         targetAppPath = currentAppPath,
                         restartAutomatically = restartAutomatically,
                         appPid = currentPid,
+                        windowlessRelaunchRequestPath = relaunchRequest?.absolutePath,
                     )
 
                 // Launch the script in the background
                 logger.info(LogCategory.SYSTEM, "Launching update script")
-                UpdateScriptGenerator.launchScript(scriptFile)
+                val helper = UpdateScriptGenerator.launchScriptProcess(scriptFile)
+                check(helper.isAlive) { "Update helper exited before the app could quit" }
+                pendingMacOSUpdate = relaunchRequest?.let { PendingMacOSUpdate(downloadFile.absolutePath, it, helper) }
 
                 // Return RequiresRestart - the UpdateManager will handle quitting
                 InstallResult.RequiresRestart(

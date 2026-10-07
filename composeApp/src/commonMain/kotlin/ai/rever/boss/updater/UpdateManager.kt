@@ -5,10 +5,13 @@ import ai.rever.boss.utils.Version
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
@@ -27,6 +30,7 @@ class UpdateManager private constructor(
     private val checkOperation: (suspend () -> UpdateInfo)?,
     private val downloadOperation: (suspend (UpdateInfo, (Float) -> Unit) -> String?)? = null,
     private val scheduleOperation: (suspend (String) -> InstallOutcome)? = null,
+    private val prepareWindowlessOperation: ((String) -> Boolean)? = null,
 ) {
     constructor() : this(null, null)
 
@@ -37,7 +41,14 @@ class UpdateManager private constructor(
         checkOperation: suspend () -> UpdateInfo,
         downloadOperation: (suspend (UpdateInfo, (Float) -> Unit) -> String?)? = null,
         scheduleOperation: UpdateInstallOperation? = null,
-    ) : this(installOperation::install, checkOperation, downloadOperation, scheduleOperation?.let { it::install })
+        prepareWindowlessOperation: ((String) -> Boolean)? = null,
+    ) : this(
+        installOperation::install,
+        checkOperation,
+        downloadOperation,
+        scheduleOperation?.let { it::install },
+        prepareWindowlessOperation,
+    )
 
     private val logger = BossLogger.forComponent("UpdateManager")
 
@@ -104,6 +115,35 @@ class UpdateManager private constructor(
     private val automaticStartMutex = Mutex()
     private var automaticSettingsJob: Job? = null
     private var automaticDownloadJob: Job? = null
+    private var scheduledDownloadPath: String? = null
+
+    /** Called by the desktop app root, so this observer survives closing every window. */
+    internal suspend fun installAutomaticUpdatesWhenWindowless(
+        windowsOpen: Flow<Boolean>,
+        canRestart: () -> Boolean,
+        quitForUpdate: () -> Unit,
+    ) {
+        combine(windowsOpen, updateState, UpdateSettings.automaticUpdates) { open, state, enabled ->
+            !open && enabled && state == UpdateState.InstallOnNextRestart
+        }.distinctUntilChanged().collect { eligible ->
+            if (eligible && prepareAutomaticWindowlessRestart(canRestart)) quitForUpdate()
+        }
+    }
+
+    internal suspend fun prepareAutomaticWindowlessRestart(canRestart: () -> Boolean): Boolean =
+        artifactMutex.withLock {
+            // The mutex may have suspended while staging. Recheck the UI and preference
+            // on the caller's dispatcher before requesting process shutdown.
+            val stillStaged = _updateState.value == UpdateState.InstallOnNextRestart
+            if (!UpdateSettings.autoUpdateEnabled || !canRestart() || !stillStaged) {
+                return@withLock false
+            }
+            val path = scheduledDownloadPath ?: return@withLock false
+            val prepare = prepareWindowlessOperation ?: updateService::armIdleRelaunch
+            if (!prepare(path)) return@withLock false
+            _updateState.value = UpdateState.RestartRequired
+            true
+        }
 
     internal suspend fun startAutomaticUpdates() =
         automaticStartMutex.withLock {
@@ -554,6 +594,7 @@ class UpdateManager private constructor(
                     updateService.installUpdate(claimed.downloadPath)
                 }
             if (outcome.succeeded) {
+                if (!restartAutomatically) scheduledDownloadPath = claimed.downloadPath
                 if (!_updateState.compareAndSet(
                         UpdateState.Installing,
                         if (restartAutomatically) UpdateState.RestartRequired else UpdateState.InstallOnNextRestart,

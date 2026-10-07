@@ -28,7 +28,10 @@ BOSS (Business Operating System Service) is a desktop application built with Kot
 ### Testing automatic app updates
 
 Automatic Updates in Settings downloads new releases and prepares installation after
-manual quit. It never quits or relaunches BOSS. Release distributions default this on;
+manual quit. On macOS it also installs when no main windows remain, including when
+the download finishes after the last window closes. That idle update relaunches
+with `--no-window`, keeping BOSS in the Dock until a Dock click or New Window request.
+Explicit Quit installs the staged update and leaves BOSS closed. Release distributions default this on;
 Gradle development runs default it off. Explicit preferences are saved. Update
 banners and prompts stay hidden in automatic mode; progress and errors remain in
 Settings. The next start of a newer version shows a one-time success toast.
@@ -43,7 +46,11 @@ This uses v1.0.0, enables automatic updates by default, stores updater preferenc
 `composeApp/build/auto-update-test-settings`, and writes the distribution under
 `composeApp/build/compose-auto-update-test/binaries/main/app/`. On macOS, manually
 launch `BOSS.app` from that directory. Quit manually to let the helper install, then
-open it again after installation finishes. Do not use `run` for installation testing:
+open it again after installation finishes. Closing all main windows instead tests
+the idle install and windowless relaunch. The incoming release must support
+`--no-window` to remain windowless after installation. Native Quit requests remain
+pending through Compose cleanup and then complete, so BOSS does not cancel macOS logout,
+restart, or shutdown. Do not use `run` for installation testing:
 the updater refuses automatic installation from a Gradle development process.
 
 ### Automatic plugin updates

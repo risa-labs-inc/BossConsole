@@ -131,6 +131,7 @@ internal fun computeFitSize(
 fun ApplicationScope.BossWindow(
     windowState: BossWindowState,
     onCloseRequest: () -> Unit,
+    onQuitRequest: () -> Unit = { exitApplication() },
 ) {
     // Calculate adaptive window size based on window type and screen dimensions
     val windowSize =
@@ -650,7 +651,7 @@ fun ApplicationScope.BossWindow(
                 )
                 Item(
                     "Quit BOSS",
-                    onClick = { exitApplication() },
+                    onClick = onQuitRequest,
                 )
             }
 
