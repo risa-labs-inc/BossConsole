@@ -46,10 +46,16 @@ SELECT ok(NOT has_function_privilege('authenticated', 'public.fluck_oauth_bind_g
 SELECT ok(NOT has_function_privilege('anon', 'public.fluck_oauth_grant_owner(text)', 'EXECUTE'), 'anonymous callers cannot look up grant owners');
 SELECT ok(NOT has_function_privilege('authenticated', 'public.fluck_oauth_forget_grant(text)', 'EXECUTE'), 'signed-in clients cannot drop bindings');
 SELECT ok(has_function_privilege('service_role', 'public.fluck_oauth_bind_grant(text,uuid)', 'EXECUTE'), 'the service role can bind grants');
+SELECT ok((SELECT relrowsecurity FROM pg_class WHERE oid = 'public.fluck_oauth_grants'::regclass), 'grant bindings have RLS enabled');
+SELECT is((SELECT count(*)::int FROM pg_policies WHERE schemaname = 'public' AND tablename = 'fluck_oauth_grants'), 0, 'grant bindings have no client policy');
+SELECT ok(public.fluck_oauth_claim_nonce('oauth-test-edge-cap', now() + interval '900 seconds'), 'the edge''s 900 second state cap is inside the claim bound, so a fresh link is never a replay');
 SELECT ok(public.fluck_oauth_bind_grant(repeat('a', 64), 'd1520000-0000-4000-8000-000000000001'), 'a grant is bound');
 SELECT is(public.fluck_oauth_grant_owner(repeat('a', 64)), 'd1520000-0000-4000-8000-000000000001'::uuid, 'the binding names its owner');
 SELECT ok(public.fluck_oauth_bind_grant(repeat('a', 64), 'd1520000-0000-4000-8000-000000000001'), 'a retried bind is idempotent');
 SELECT is(public.fluck_oauth_grant_owner(repeat('b', 64)), NULL::uuid, 'an unknown token has no owner');
+SELECT ok(NOT public.fluck_oauth_bind_grant(repeat('a', 64), 'd1520000-0000-4000-8000-000000000002'), 'a token bound to one user cannot be re-bound to another');
+SELECT is(public.fluck_oauth_grant_owner(repeat('a', 64)), 'd1520000-0000-4000-8000-000000000001'::uuid, 'a refused re-bind leaves the original owner');
+SELECT ok(public.fluck_oauth_bind_grant(repeat('a', 64), 'd1520000-0000-4000-8000-000000000001'), 'the same user can still re-bind after a refused cross-user bind');
 SELECT ok(NOT public.fluck_oauth_bind_grant('not-a-hash', 'd1520000-0000-4000-8000-000000000001'), 'a malformed hash is refused');
 SELECT throws_ok($$INSERT INTO public.fluck_oauth_grants (token_sha256, user_id) VALUES (repeat('A', 64), 'd1520000-0000-4000-8000-000000000001')$$, '23514', NULL, 'only lowercase hex is stored');
 SELECT public.fluck_oauth_forget_grant(repeat('a', 64));

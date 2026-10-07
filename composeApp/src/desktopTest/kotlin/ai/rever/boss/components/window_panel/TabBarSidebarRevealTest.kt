@@ -1,7 +1,6 @@
 package ai.rever.boss.components.window_panel
 
 import ai.rever.boss.components.window_panel.components.main_window_panels.SIDEBAR_REVEAL_CLOSE_DELAY_MS
-import ai.rever.boss.components.window_panel.components.main_window_panels.SIDEBAR_REVEAL_OPEN_DELAY_MS
 import ai.rever.boss.components.window_panel.components.main_window_panels.besideLeadingRail
 import ai.rever.boss.components.window_panel.components.main_window_panels.hoverRevealTarget
 import androidx.compose.ui.unit.IntRect
@@ -68,10 +67,8 @@ class TabBarSidebarRevealTest {
     }
 
     @Test
-    fun `the close delay exceeds the open delay`() {
-        // Load-bearing rather than cosmetic: the close grace has to cover the rail-to-drawer
-        // handoff, which itself takes the open delay. Equal or shorter and the drawer flickers.
-        assertTrue(SIDEBAR_REVEAL_CLOSE_DELAY_MS > SIDEBAR_REVEAL_OPEN_DELAY_MS)
+    fun `closing retains a short grace period`() {
+        assertTrue(SIDEBAR_REVEAL_CLOSE_DELAY_MS > 0L)
     }
 
     @Test

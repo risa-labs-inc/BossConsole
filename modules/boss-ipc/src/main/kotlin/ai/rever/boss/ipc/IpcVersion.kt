@@ -35,6 +35,10 @@ object IpcVersion {
      * Current IPC contract version of this host build.
      *
      * History:
+     * - 1.5.0 - additive SecretService organisation ownership, management permission,
+     *   share-target and organisation-share attribution fields. Older runtimes ignore
+     *   these fields; refreshed runtimes must use the 1.5.0 upstream boss-ipc artifact
+     *   and the matching release's plugin-api-ipc artifact to consume the access envelopes.
      * - 1.4.0 - additive `TerminalService.CloseInput` RPC delivers stdin EOF to a session
      *   without terminating it, so a caller can let a stdin-consuming one-shot command (sort,
      *   grep, cat with no args, ...) exit on its own. A runtime that keeps its `minIpcVersion` at
@@ -60,7 +64,7 @@ object IpcVersion {
      *   issue #743 for the rollback rationale (terminal-tab pivoted to
      *   in-process in PR #742).
      */
-    const val CURRENT: String = "1.4.0"
+    const val CURRENT: String = "1.5.0"
 
     /**
      * Parse a semver string into (major, minor, patch). Trailing

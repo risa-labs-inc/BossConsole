@@ -39,6 +39,10 @@ Target is the Boss production project `pcnwqamqdnsadranufjv`.
 Apply database migrations before changing the functions. Do not deploy seeds,
 roles, unrelated functions, or configuration wholesale.
 
+Superseded: `fluck-oauth` with per-install signed state no longer reads
+`FLUCK_STATE_KEY` or `FLUCK_USER_ID`; unset both (see `supabase/functions/fluck-oauth/README.md`).
+The rest of this section is the record of the 2026-09-25 rollout.
+
 Production lacks `FLUCK_USER_ID`, required by the hardened callback. An operator
 must identify the BOSS account bound to the existing `FLUCK_STATE_KEY` before
 deploying `fluck-oauth`; guessing this binding could authorize the wrong user or

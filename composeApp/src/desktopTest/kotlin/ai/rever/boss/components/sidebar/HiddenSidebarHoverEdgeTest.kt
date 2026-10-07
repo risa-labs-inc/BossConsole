@@ -31,42 +31,48 @@ class HiddenSidebarHoverEdgeTest {
     @get:Rule val rule = createComposeRule()
     private lateinit var reveal: TabBarRevealState
 
+    // Since #1828 the reveal is driven by the native cursor tracker (TrackTabBarRevealPointer,
+    // whose geometry TabBarRevealPointerTest pins): reaching the window's left edge sets
+    // pointerAtEdge for a frame, and the 100dp retention margin keeps pointerInRevealArea true.
+    // These tests feed those two signals directly, since the tracker polls AWT's real cursor.
+
     @Test
-    fun hoveringEdgeRevealsWithoutTakingContentWidth() {
+    fun edgeRevealOverlaysWithoutTakingContentWidth() {
         render(focused = true, enabled = true)
         rule.onNodeWithTag("content").assertWidthIsEqualTo(320.dp)
-        enterEdge()
+        reachEdge()
         rule.runOnIdle { assertTrue(reveal.drawerVisible) }
-        rule.onNodeWithTag("window").performMouseInput { moveTo(Offset(160f, 100f)) }
+        rule.onNodeWithTag("content").assertWidthIsEqualTo(320.dp)
+        rule.runOnIdle { reveal.pointerInRevealArea = false }
         rule.mainClock.advanceTimeBy(400)
         rule.runOnIdle { assertFalse(reveal.drawerVisible) }
     }
 
     @Test
-    fun stationaryPointerInOuterGapKeepsIntegratedSidebarOpen() {
+    fun stationaryPointerInRetentionMarginKeepsIntegratedSidebarOpen() {
         render(focused = true, enabled = true, integratedPanel = true)
-        rule.onNodeWithTag("window").performMouseInput { enter(Offset(2f, 100f)) }
-        rule.mainClock.advanceTimeBy(200)
+        reachEdge()
         rule.runOnIdle { assertTrue(reveal.drawerVisible) }
-        // Remain still for several open/close periods: the removed edge target must hand off
-        // to the full panel's margin, not continually disappear and reappear under the pointer.
+        // Remain still for several close periods: the one-frame edge signal is gone, and the
+        // retention margin alone must hold the drawer rather than let it flicker away.
         repeat(12) {
             rule.mainClock.advanceTimeBy(100)
             rule.runOnIdle { assertTrue(reveal.drawerVisible) }
         }
-        rule.onNodeWithTag("window").performMouseInput { moveTo(Offset(280f, 100f)) }
+        rule.runOnIdle { reveal.pointerInRevealArea = false }
         rule.mainClock.advanceTimeBy(400)
         rule.runOnIdle { assertFalse(reveal.drawerVisible) }
     }
 
     @Test
-    fun hoveringFortyDpFromEdgeRevealsLikeBossTerm() {
+    fun hoveringFortyDpFromEdgeNoLongerReveals() {
+        // BossTerm's 44dp hover strip used to reveal here; activation is now the window edge only.
         render(focused = true, enabled = true, integratedPanel = true)
         rule.onNodeWithTag("window").performMouseInput {
             enter(Offset(with(rule.density) { 40.dp.toPx() }, 100f))
         }
-        rule.mainClock.advanceTimeBy(200)
-        rule.runOnIdle { assertTrue(reveal.drawerVisible) }
+        rule.mainClock.advanceTimeBy(500)
+        rule.runOnIdle { assertFalse(reveal.drawerVisible) }
     }
 
     @Test
@@ -135,6 +141,17 @@ class HiddenSidebarHoverEdgeTest {
                 }
             }
         }
+    }
+
+    /** The tracker's view of a pointer reaching the edge: one frame at it, then inside the margin. */
+    private fun reachEdge() {
+        rule.runOnIdle {
+            reveal.pointerAtEdge = true
+            reveal.pointerInRevealArea = true
+        }
+        rule.mainClock.advanceTimeBy(16)
+        rule.runOnIdle { reveal.pointerAtEdge = false }
+        rule.mainClock.advanceTimeBy(16)
     }
 
     private fun enterEdge() {

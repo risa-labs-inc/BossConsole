@@ -6,7 +6,7 @@
  */
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert"
-import { app, bearerToken, deps, emailFromJwt, isSessionRow } from "../app.ts"
+import { app, bearerToken, codeChallenge, deps, emailFromJwt, isSessionRow } from "../app.ts"
 import { resetRateLimits } from "../utils/rate-limit.ts"
 
 const BASE = "/live-sessions"
@@ -75,6 +75,8 @@ Deno.test("GET / renders the page with a nonce'd script and CSP, no-store", with
   assertStringIncludes(html, `<style nonce="${nonce}">`)
   assertStringIncludes(html, 'id="signin-form"')
   assertStringIncludes(html, 'id="opening"') // single-session auto-open state exists
+  assertStringIncludes(html, 'rel="icon" type="image/svg+xml" href="/functions/v1/live-sessions/app-viewer/boss-logo.svg"')
+  assertStringIncludes(html, 'allow="clipboard-write; fullscreen" allowfullscreen')
   assertStringIncludes(html, '"basePath":"/functions/v1/live-sessions"')
   assertEquals(res.headers.get("cache-control"), "no-store, max-age=0")
   assertEquals(res.headers.get("x-frame-options"), "DENY")
@@ -529,4 +531,243 @@ Deno.test("optional terminal preferences use the caller JWT and old backend abse
     assertEquals(await legacy.json(), {sessions: [ROW], email: "owner@example.com"})
     assertEquals(stub.calls.length - beforeLegacy, 1) // Existing consumers incur no extra RPC.
   } finally { stub.restore() }
+}))
+
+// ---- Google / Apple sign-in (server-side PKCE) ----
+
+const HTTPS = { "x-forwarded-proto": "https" }
+
+function setCookies(res: Response): string[] {
+  return res.headers.getSetCookie()
+}
+
+Deno.test("GET /api/oauth/google sets an HttpOnly verifier cookie and redirects to GoTrue with its S256 challenge", withEnv(async () => {
+  const res = await app.request(`${BASE}/api/oauth/google`, { headers: HTTPS })
+  assertEquals(res.status, 302)
+  const location = new URL(res.headers.get("location")!)
+  assertEquals(location.origin + location.pathname, "https://stack.example/auth/v1/authorize")
+  assertEquals(location.searchParams.get("provider"), "google")
+  assertEquals(location.searchParams.get("redirect_to"), "https://api.risaboss.com/functions/v1/live-sessions/auth")
+  assertEquals(location.searchParams.get("code_challenge_method"), "s256")
+
+  const cookie = setCookies(res).find((c) => c.startsWith("__Secure-boss_live_pkce="))!
+  assertStringIncludes(cookie, "HttpOnly")
+  assertStringIncludes(cookie, "SameSite=Lax")
+  assertStringIncludes(cookie, "Max-Age=600")
+  const verifier = cookie.split(";")[0].split("=")[1]
+  assert(/^[A-Za-z0-9_-]{43}$/.test(verifier), "RFC 7636 verifier")
+  assertEquals(location.searchParams.get("code_challenge"), await codeChallenge(verifier))
+}))
+
+Deno.test("LIVE_SESSIONS_AUTH_PUBLIC_URL overrides the authorize host", withEnv(async () => {
+  Deno.env.set("LIVE_SESSIONS_AUTH_PUBLIC_URL", "https://api.risaboss.com/")
+  try {
+    const res = await app.request(`${BASE}/api/oauth/apple`, { headers: HTTPS })
+    assert(res.headers.get("location")!.startsWith("https://api.risaboss.com/auth/v1/authorize?provider=apple&"))
+  } finally {
+    Deno.env.delete("LIVE_SESSIONS_AUTH_PUBLIC_URL")
+  }
+}))
+
+Deno.test("GET /api/oauth refuses unknown providers and cross-site starts", withEnv(async () => {
+  assertEquals((await app.request(`${BASE}/api/oauth/github`)).status, 404)
+  assertEquals((await app.request(`${BASE}/api/oauth/google`, { headers: { "sec-fetch-site": "cross-site" } })).status, 403)
+}))
+
+Deno.test("GET /api/oauth is 503 without a public base URL", withEnv(async () => {
+  Deno.env.delete("LIVE_SESSIONS_PUBLIC_BASE_URL")
+  assertEquals((await app.request(`${BASE}/api/oauth/google`)).status, 503)
+}))
+
+Deno.test("GET /auth?code= exchanges the code with the verifier cookie, sets the session and drops the code", withEnv(async () => {
+  const access = fakeJwt("new@gmail.com")
+  const stub = stubFetch((call) =>
+    call.url.endsWith("/auth/v1/token?grant_type=pkce") ? json({ access_token: access, refresh_token: "refresh-123" }) : json({}, 500)
+  )
+  try {
+    const verifier = "v".repeat(43)
+    const res = await app.request(`${BASE}/auth?code=7f1c2a9e-4b1d-4a57-9d2e-3b8f0c6a1e22`, {
+      headers: { ...HTTPS, cookie: `__Secure-boss_live_pkce=${verifier}` },
+    })
+    assertEquals(res.status, 302)
+    assertEquals(res.headers.get("location"), "/functions/v1/live-sessions/")
+    assertEquals(stub.calls.length, 1)
+    assertEquals(JSON.parse(String(stub.calls[0].init?.body)), {
+      auth_code: "7f1c2a9e-4b1d-4a57-9d2e-3b8f0c6a1e22",
+      code_verifier: verifier,
+    })
+    const cookies = setCookies(res)
+    assert(cookies.some((c) => c.startsWith(`__Secure-boss_live_at=${access};`)))
+    assert(cookies.some((c) => c.startsWith("__Secure-boss_live_rt=refresh-123;")))
+    assert(cookies.some((c) => c.startsWith("__Secure-boss_live_pkce=;") && c.includes("Max-Age=0")))
+  } finally {
+    stub.restore()
+  }
+}))
+
+Deno.test("GET /auth?code= without a verifier cookie never exchanges and reports expired", withEnv(async () => {
+  const stub = stubFetch(() => json({}, 500))
+  try {
+    const res = await app.request(`${BASE}/auth?code=abc123`, { headers: HTTPS })
+    assertEquals(res.status, 302)
+    assertEquals(res.headers.get("location"), "/functions/v1/live-sessions/auth?oauth_error=expired")
+    assertEquals(stub.calls.length, 0)
+  } finally {
+    stub.restore()
+  }
+}))
+
+Deno.test("GET /auth?error=access_denied reports cancelled and clears the verifier", withEnv(async () => {
+  const res = await app.request(`${BASE}/auth?error=access_denied&error_description=User+cancelled`, {
+    headers: { ...HTTPS, cookie: "__Secure-boss_live_pkce=" + "v".repeat(43) },
+  })
+  assertEquals(res.headers.get("location"), "/functions/v1/live-sessions/auth?oauth_error=cancelled")
+  assert(setCookies(res).some((c) => c.startsWith("__Secure-boss_live_pkce=;")))
+}))
+
+Deno.test("a refused PKCE exchange reports failed and sets no session", withEnv(async () => {
+  const stub = stubFetch(() => json({ error: "invalid_grant" }, 400))
+  try {
+    const res = await app.request(`${BASE}/auth?code=abc123`, {
+      headers: { ...HTTPS, cookie: "__Secure-boss_live_pkce=" + "v".repeat(43) },
+    })
+    assertEquals(res.headers.get("location"), "/functions/v1/live-sessions/auth?oauth_error=failed")
+    assert(!setCookies(res).some((c) => c.startsWith("__Secure-boss_live_at=")))
+  } finally {
+    stub.restore()
+  }
+}))
+
+Deno.test("an OAuth return without Supabase config is 503 and still clears the verifier", withEnv(async () => {
+  Deno.env.delete("SUPABASE_ANON_KEY")
+  const stub = stubFetch(() => json({}, 500))
+  try {
+    const res = await app.request(`${BASE}/auth?code=abc123`, {
+      headers: { ...HTTPS, cookie: "__Secure-boss_live_pkce=" + "v".repeat(43) },
+    })
+    assertEquals(res.status, 503)
+    assert(setCookies(res).some((c) => c.startsWith("__Secure-boss_live_pkce=;") && c.includes("Max-Age=0")))
+    assertEquals(stub.calls.length, 0)
+  } finally {
+    stub.restore()
+    Deno.env.set("SUPABASE_ANON_KEY", "anon-key")
+  }
+}))
+
+Deno.test("a malformed code is refused before any exchange", withEnv(async () => {
+  const stub = stubFetch(() => json({}, 500))
+  try {
+    const res = await app.request(`${BASE}/auth?code=${encodeURIComponent("a b<c>")}`, {
+      headers: { ...HTTPS, cookie: "__Secure-boss_live_pkce=" + "v".repeat(43) },
+    })
+    assertEquals(res.headers.get("location"), "/functions/v1/live-sessions/auth?oauth_error=expired")
+    assertEquals(stub.calls.length, 0)
+  } finally {
+    stub.restore()
+  }
+}))
+
+Deno.test("a start on another host goes to the canonical host first, before any verifier is set", withEnv(async () => {
+  const res = await app.request(`${BASE}/api/oauth/google`, {
+    headers: { ...HTTPS, host: "pcnwqamqdnsadranufjv.supabase.co" },
+  })
+  assertEquals(res.status, 302)
+  assertEquals(res.headers.get("location"), "https://api.risaboss.com/functions/v1/live-sessions/api/oauth/google?_alias=1")
+  assert(!setCookies(res).some((c) => c.includes("boss_live_pkce")))
+}))
+
+Deno.test("GET /api/oauth starts for a same-origin navigation and one with no Sec-Fetch-Site", withEnv(async () => {
+  for (const headers of [{ ...HTTPS, "sec-fetch-site": "same-origin" }, HTTPS]) {
+    const res = await app.request(`${BASE}/api/oauth/apple`, { headers })
+    assertEquals(res.status, 302)
+    assert(res.headers.get("location")!.startsWith("https://stack.example/auth/v1/authorize?provider=apple&"))
+  }
+}))
+
+Deno.test("the authorize host falls back to SUPABASE_URL", withEnv(async () => {
+  Deno.env.delete("LIVE_SESSIONS_AUTH_PUBLIC_URL")
+  const res = await app.request(`${BASE}/api/oauth/google`, { headers: HTTPS })
+  assert(res.headers.get("location")!.startsWith("https://stack.example/auth/v1/authorize?"))
+}))
+
+Deno.test("a return with both a code and an error is ambiguous: failed, and never exchanged", withEnv(async () => {
+  const stub = stubFetch(() => json({}, 500))
+  try {
+    const res = await app.request(`${BASE}/auth?code=abc123&error=access_denied`, {
+      headers: { ...HTTPS, cookie: "__Secure-boss_live_pkce=" + "v".repeat(43) },
+    })
+    assertEquals(res.headers.get("location"), "/functions/v1/live-sessions/auth?oauth_error=failed")
+    assertEquals(stub.calls.length, 0)
+    assert(setCookies(res).some((c) => c.startsWith("__Secure-boss_live_pkce=;")))
+  } finally {
+    stub.restore()
+  }
+}))
+
+Deno.test("a provider error is logged only in an error code's shape", withEnv(async () => {
+  const warned: unknown[][] = []
+  const original = console.warn
+  console.warn = (...args: unknown[]) => void warned.push(args)
+  try {
+    const withVerifier = { ...HTTPS, cookie: "__Secure-boss_live_pkce=" + "v".repeat(43) }
+    await app.request(`${BASE}/auth?error=${encodeURIComponent("x\nFAKE log line")}`, { headers: withVerifier })
+    await app.request(`${BASE}/auth?error=server_error`, { headers: withVerifier })
+  } finally {
+    console.warn = original
+  }
+  assertEquals(warned, [["oauth provider error", "<malformed>"], ["oauth provider error", "server_error"]])
+}))
+
+Deno.test("provider returns have their own rate limit, apart from session establishment", withEnv(async () => {
+  const stub = stubFetch(() => json({ error: "invalid_grant" }, 400))
+  try {
+    const attempt = () =>
+      app.request(`${BASE}/auth?code=abc123`, { headers: { ...HTTPS, cookie: "__Secure-boss_live_pkce=" + "v".repeat(43) } })
+    for (let i = 0; i < 20; i++) {
+      assertEquals((await attempt()).headers.get("location"), "/functions/v1/live-sessions/auth?oauth_error=failed")
+    }
+    assertEquals((await attempt()).headers.get("location"), "/functions/v1/live-sessions/auth?oauth_error=rate_limited")
+    assertEquals(stub.calls.length, 20)
+  } finally {
+    stub.restore()
+  }
+  // The session bucket is untouched: its whole budget is still there for magic-link landings.
+  for (let i = 0; i < 30; i++) {
+    const session = await app.request(`${BASE}/api/session`, {
+      method: "POST",
+      headers: { ...HTTPS, "content-type": "application/json" },
+      body: JSON.stringify({ access_token: "x", refresh_token: "" }),
+    })
+    assert(session.status !== 429, `session route rate limited after ${i} calls`)
+  }
+}))
+
+Deno.test("an expired magic link landing on /auth is the page's to explain, not an OAuth cancellation", withEnv(async () => {
+  // GoTrue's redirectErrors puts the same error in the query and the fragment for a magic link
+  // too. With no PKCE cookie there is no Google or Apple sign-in in flight, so this is not ours.
+  const res = await app.request(
+    `${BASE}/auth?error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired`,
+    { headers: HTTPS },
+  )
+  assertEquals(res.status, 200)
+  assertEquals(res.headers.get("location"), null)
+  assert(!setCookies(res).some((c) => c.includes("boss_live_pkce")), "an unrelated landing must not touch the verifier")
+  assertStringIncludes(await res.text(), "Continue with Google")
+}))
+
+Deno.test("a Google or Apple error return still maps to a notice when a sign-in was in flight", withEnv(async () => {
+  const cookie = { ...HTTPS, cookie: "__Secure-boss_live_pkce=" + "v".repeat(43) }
+  const cancelled = await app.request(`${BASE}/auth?error=access_denied`, { headers: cookie })
+  assertEquals(cancelled.headers.get("location"), "/functions/v1/live-sessions/auth?oauth_error=cancelled")
+  const expired = await app.request(`${BASE}/auth?error=access_denied&error_code=otp_expired`, { headers: cookie })
+  assertEquals(expired.headers.get("location"), "/functions/v1/live-sessions/auth?oauth_error=expired")
+}))
+
+Deno.test("the page offers Google and Apple as plain links to the start routes", withEnv(async () => {
+  const html = await (await app.request(`${BASE}/`)).text()
+  assertStringIncludes(html, 'href="/functions/v1/live-sessions/api/oauth/google"')
+  assertStringIncludes(html, 'href="/functions/v1/live-sessions/api/oauth/apple"')
+  assertStringIncludes(html, "Continue with Google")
+  assertStringIncludes(html, "Continue with Apple")
+  assertStringIncludes(html, "oauth_error")
 }))

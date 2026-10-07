@@ -11,6 +11,7 @@ import { assert, assertEquals } from "@std/assert"
 import {
   type ClaimedItem,
   createHandler,
+  type CreateOutcome,
   type CreateRequest,
   DEFAULT_PUBLIC_BASE_URL,
   type Dependencies,
@@ -54,7 +55,7 @@ interface Harness {
   logs: string[]
 }
 
-function harness(options: { create?: boolean; items?: ClaimedItem[] } = {}): Harness {
+function harness(options: { create?: CreateOutcome; items?: ClaimedItem[] } = {}): Harness {
   resetRateLimits()
   const created: CreateRequest[] = []
   const claimed: string[] = []
@@ -72,7 +73,7 @@ function harness(options: { create?: boolean; items?: ClaimedItem[] } = {}): Har
     store: () => Promise.resolve({ outcome: "gone", kind: null }),
     createRequest: (request) => {
       created.push(request)
-      return Promise.resolve(options.create ?? true)
+      return Promise.resolve(options.create ?? "created")
     },
     claimInbox: (ws, instanceId) => {
       assertEquals(instanceId, null)
@@ -248,7 +249,7 @@ Deno.test("a cvv request needs a purchase and no kind", async () => {
 })
 
 Deno.test("a duplicate id is a conflict rather than a second link", async () => {
-  const h = harness({ create: false })
+  const h = harness({ create: "taken" })
   const response = await h.handler(await signed("/requests", request()))
   assertEquals(response.status, 409)
 })
@@ -317,7 +318,7 @@ Deno.test("the audience is not taken from the project-wide base url", async () =
     log: () => {},
     describeRequest: () => Promise.resolve(null),
     store: () => Promise.resolve({ outcome: "gone", kind: null }),
-    createRequest: () => Promise.resolve(true),
+    createRequest: () => Promise.resolve("created"),
     claimInbox: () => Promise.resolve([]),
     instance: () => Promise.resolve(null),
     registerInstance: () => Promise.resolve("unavailable"),

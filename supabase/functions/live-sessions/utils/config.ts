@@ -39,6 +39,18 @@ export function publicBaseUrl(): string | null {
   return configured.replace(/\/+$/, "") + publicBasePath()
 }
 
+/**
+ * Browser-facing Supabase URL for the Google / Apple `/auth/v1/authorize` hop. The browser, not
+ * this function, visits it, so it cannot be an internal address. LIVE_SESSIONS_AUTH_PUBLIC_URL
+ * wins (set it to https://api.risaboss.com in production, or http://127.0.0.1:54321 locally);
+ * otherwise SUPABASE_URL, which on the hosted platform is the public project URL.
+ */
+export function authPublicUrl(): string {
+  const configured = Deno.env.get("LIVE_SESSIONS_AUTH_PUBLIC_URL")?.trim()
+  const raw = configured && configured.length > 0 ? configured : (Deno.env.get("SUPABASE_URL") ?? "")
+  return raw.replace(/\/+$/, "")
+}
+
 export interface LiveSessionsConfig {
   supabaseUrl: string
   anonKey: string

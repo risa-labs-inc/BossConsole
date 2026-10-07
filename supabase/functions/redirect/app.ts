@@ -59,7 +59,16 @@ interface Brand {
   copyright: string
 }
 
-const BRANDS: Record<"boss" | "bossterm" | "web", Brand> = {
+const BRANDS: Record<"boss" | "bossterm" | "web" | "optimist" | "fluck", Brand> = {
+  fluck: {
+    scheme: "https",
+    tokenParam: "token",
+    name: "Fluck",
+    tagline: "Your Fluck, from any browser",
+    appLabel: "Fluck",
+    footerLine: "Fluck - by Risa Labs",
+    copyright: "© 2026 Risa Labs. All rights reserved.",
+  },
   web: {
     scheme: "https",
     tokenParam: "token",
@@ -67,6 +76,15 @@ const BRANDS: Record<"boss" | "bossterm" | "web", Brand> = {
     tagline: "Your shared terminals, in the browser",
     appLabel: "Live Sessions",
     footerLine: "BossTerm - by Risa Labs",
+    copyright: "© 2025 Risa Labs. All rights reserved.",
+  },
+  optimist: {
+    scheme: "https",
+    tokenParam: "token",
+    name: "Optimist",
+    tagline: "Secure chat by Risa Labs",
+    appLabel: "Optimist",
+    footerLine: "Optimist - by Risa Labs",
     copyright: "© 2025 Risa Labs. All rights reserved.",
   },
   boss: {
@@ -111,8 +129,33 @@ export const LIVE_SESSIONS_REDIRECTS: ReadonlySet<string> = new Set([
   "http://127.0.0.1:54321/functions/v1/live-sessions/auth", // local `supabase start` stack
 ])
 
+// Optimist chat (risa-labs-inc/optimist-chat) uses the same web arm with its own brand.
+// Lockstep: config.toml additional_redirect_urls, the prod Auth allow-list, and both email
+// templates' `$optimist` predicate.
+export const OPTIMIST_REDIRECTS: ReadonlySet<string> = new Set([
+  "https://optimist.risalabs.ai/auth/callback",
+  "http://127.0.0.1:8796/auth/callback", // local optimist chat server (OPTIMIST_PORT default)
+])
+
 export function isLiveSessionsRedirect(redirectTo: string | undefined): boolean {
   return !!redirectTo && LIVE_SESSIONS_REDIRECTS.has(redirectTo)
+}
+
+// The fluck-web page (functions/fluck-web, fluck.risaboss.com) is the same web arm under its own
+// brand. Same EXACT-match rule and lockstep set: config.toml additional_redirect_urls,
+// fluck-web/utils/config.ts (+ FLUCK_WEB_PUBLIC_BASE_URL), and both email templates' `$fluck`.
+export const FLUCK_WEB_REDIRECTS: ReadonlySet<string> = new Set([
+  "https://fluck.risaboss.com/auth", // vanity host: a Cloudflare Worker proxies it onto the function
+  "https://api.risaboss.com/functions/v1/fluck-web/auth",
+  "http://127.0.0.1:54321/functions/v1/fluck-web/auth", // local `supabase start` stack
+])
+
+export function isFluckWebRedirect(redirectTo: string | undefined): boolean {
+  return !!redirectTo && FLUCK_WEB_REDIRECTS.has(redirectTo)
+}
+
+export function isOptimistRedirect(redirectTo: string | undefined): boolean {
+  return !!redirectTo && OPTIMIST_REDIRECTS.has(redirectTo)
 }
 
 /**
@@ -364,13 +407,17 @@ app.get("/", (c) => {
   // unencoded, so its &type=&redirect_to= landed as top-level params here; rebuild the URL from
   // them rather than trusting the truncated `url=` value. Only a first-party GoTrue host is ever
   // emitted: the origin comes from `url=` after an allow-list check, never from the caller freely.
-  if (isLiveSessionsRedirect(redirectTo)) {
+  const webBrand = isLiveSessionsRedirect(redirectTo)
+    ? BRANDS.web
+    : isOptimistRedirect(redirectTo) ? BRANDS.optimist
+    : isFluckWebRedirect(redirectTo) ? BRANDS.fluck : null
+  if (webBrand) {
     const origin = firstPartyGoTrueOrigin(confirmationUrl)
     if (!origin) return c.json({ error: "Unsupported confirmation URL host" }, 400)
     const tokenParam = tokenParamFromUrl ?? (c.req.query("token") ? "token" : c.req.query("token_hash") ? "token_hash" : "token")
     const target = `${origin}/auth/v1/verify?${tokenParam}=${encodeURIComponent(token)}&type=${encodeURIComponent(type)}` +
       `&redirect_to=${encodeURIComponent(redirectTo!)}`
-    return c.html(generateRedirectPage(target, BRANDS.web))
+    return c.html(generateRedirectPage(target, webBrand))
   }
 
   const appKey = c.req.query("app") === "bossterm" || redirectTo === BOSSTERM_REDIRECT

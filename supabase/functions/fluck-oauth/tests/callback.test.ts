@@ -540,3 +540,41 @@ Deno.test("no user facing sentence contains a dash or an emoji", () => {
     assertEquals(/\p{Extended_Pictographic}/u.test(sentence), false, sentence)
   }
 })
+
+Deno.test("a pre-1.0.120 HS256 state gets an update page, not a stale link page", async () => {
+  const b64 = (value: string) =>
+    btoa(value).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")
+  const legacy = b64('{"alg":"HS256","typ":"JWT"}') + "." +
+    b64(JSON.stringify({ uid: USER_ID, ws: WORKSPACE, exp: NOW_SECONDS + 600 })) + ".mac"
+  const h = harness()
+  const response = await callback(h, `code=abc&state=${legacy}`)
+  assertEquals(response.status, 400)
+  assertStringIncludes(await response.text(), PAGES.updatePlugin)
+  assertEquals(h.claimed.length, 0)
+  assertEquals(h.requests.length, 0)
+  assertEquals(h.stored.length, 0)
+  assertEquals(h.logs, ["callback refused: legacy state"])
+})
+
+Deno.test("a three part state that is not HS256 is just stale", async () => {
+  const h = harness()
+  const response = await callback(h, "code=abc&state=a.b.c")
+  assertEquals(response.status, 400)
+  assertStringIncludes(await response.text(), PAGES.stale)
+})
+
+Deno.test("a blank client id or secret is unconfigured on every route alike", async () => {
+  const blanks: Record<string, string>[] = [
+    { GOOGLE_WEB_CLIENT_ID: "  " },
+    { GOOGLE_WEB_CLIENT_SECRET: " " },
+  ]
+  for (const env of blanks) {
+    const h = harness({ env })
+    const health = await h.handler(new Request("https://example.test/fluck-oauth/health"))
+    assertEquals(health.status, 503)
+    const response = await callback(h, `code=abc&state=${await state()}`)
+    assertEquals(response.status, 503)
+    assertStringIncludes(await response.text(), PAGES.unconfigured)
+    assertEquals(h.requests.length, 0)
+  }
+})

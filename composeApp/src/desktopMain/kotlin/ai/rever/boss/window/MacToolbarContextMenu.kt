@@ -28,13 +28,19 @@ internal object MacToolbarContextMenu {
             ): Pointer? = pointer(pointer(self, "cell"), "representedObject")
         }
 
-    val popupClass: Pointer by lazy {
+    val popupClass: Pointer by lazy { contextClass("NSPopUpButton", "BossConsoleSpacePopUpButton") }
+    val buttonClass: Pointer by lazy { contextClass("NSButton", "BossConsoleSpaceButton") }
+
+    private fun contextClass(
+        superclass: String,
+        name: String,
+    ): Pointer {
         val objc = MacToolbarRuntime.objc
         val cls =
             checkNotNull(
                 objc
                     .getFunction("objc_allocateClassPair")
-                    .invokePointer(arrayOf(clazz("NSPopUpButton"), "BossConsoleSpacePopUpButton", 0L)),
+                    .invokePointer(arrayOf(clazz(superclass), name, 0L)),
             )
         check(
             objc.getFunction("class_addMethod").invokeInt(
@@ -47,7 +53,7 @@ internal object MacToolbarContextMenu {
             ) != 0,
         )
         objc.getFunction("objc_registerClassPair").invokeVoid(arrayOf(cls))
-        cls
+        return cls
     }
 
     fun update(
@@ -58,20 +64,7 @@ internal object MacToolbarContextMenu {
         val menu = pointer(pointer(clazz("NSMenu"), "alloc"), "initWithTitle:", string("Space"))
         try {
             send(menu, "setAutoenablesItems:", 0.toByte())
-            entries.forEach { entry ->
-                val row =
-                    pointer(
-                        pointer(clazz("NSMenuItem"), "alloc"),
-                        "initWithTitle:action:keyEquivalent:",
-                        string(entry.label),
-                        selector("activate:"),
-                        string(""),
-                    )
-                send(row, "setTarget:", target)
-                send(row, "setRepresentedObject:", string(entry.id))
-                send(menu, "addItem:", row)
-                send(row, "release")
-            }
+            MacToolbarActionMenu.appendEntries(checkNotNull(menu), entries, target)
             // NSCell retains this object; it dies with the native control, without an owner map.
             send(pointer(popup, "cell"), "setRepresentedObject:", if (entries.isEmpty()) null else menu)
         } finally {

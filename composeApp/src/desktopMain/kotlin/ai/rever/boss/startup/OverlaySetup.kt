@@ -67,7 +67,7 @@ object OverlaySetup {
         }
 
         OverlayConfig.heavyweightCorner = { alignment, initialSize, inset, focusable, regionInWindow, cornerContent ->
-            HeavyweightCorner(alignment, initialSize, inset, focusable, regionInWindow, cornerContent)
+            HeavyweightCorner(alignment, initialSize, inset, focusable, regionInWindow, content = cornerContent)
         }
 
         OverlayConfig.useHeavyweightPopups =

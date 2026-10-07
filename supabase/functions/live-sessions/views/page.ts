@@ -11,6 +11,10 @@
  * api.risaboss.com sits behind Cloudflare whose Email Obfuscation would inject
  * a script the CSP blocks.
  *
+ * Google / Apple sign-in never touches page script: the two buttons are plain links to
+ * /api/oauth/{google|apple}, and the server does the whole PKCE exchange (app.ts), landing back
+ * here signed in or with `?oauth_error=<code>`, which the script turns into a notice.
+ *
  * Token handling, in order, and why:
  *   1. GoTrue's implicit-flow redirect lands on `/auth#access_token=…`. The
  *      fragment never reaches this server, so the page reads it itself.
@@ -50,6 +54,9 @@ const STYLES = `
   main { max-width: 640px; margin: 0 auto; padding: 32px 16px 48px; }
   header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
   h1 { font-size: 20px; margin: 0; letter-spacing: -0.2px; }
+  h2 { font-size: 16px; margin: 0 0 4px; }
+  .session-group + .session-group { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .session-group > .sub { margin-bottom: 16px; }
   .sub { color: var(--text-2); font-size: 13px; }
   .card { background-color: var(--raised); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
   .card + .card { margin-top: 12px; }
@@ -88,6 +95,13 @@ const STYLES = `
   #viewerbar .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #viewerbar button, #viewerbar a.btn { padding: 5px 10px; font-size: 12px; }
   #viewerframe { flex: 1; width: 100%; border: 0; background-color: #000; }
+  .providers { display: grid; gap: 10px; }
+  a.btn.provider { display: flex; align-items: center; justify-content: center; gap: 10px;
+    background-color: transparent; color: var(--text); border-color: var(--line-strong); }
+  a.btn.provider.apple { background-color: var(--text); color: var(--ink); border-color: var(--text); }
+  a.btn.provider svg { width: 18px; height: 18px; flex: none; }
+  .or { display: flex; align-items: center; gap: 10px; color: var(--text-2); font-size: 13px; margin: 16px 0; }
+  .or::before, .or::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
 `
 
 /**
@@ -113,6 +127,25 @@ const SCRIPT = `
     n.textContent = text || "";
     n.className = "notice" + (kind ? " " + kind : "");
     n.classList.toggle("hidden", !text);
+  }
+  // 0. A Google / Apple sign-in that did not complete comes back with ?oauth_error=<code>. Only
+  //    known codes are shown, as fixed text; the parameter then leaves the address bar. So does
+  //    the fragment: GoTrue repeats its error there, a browser carries a fragment across the
+  //    server's redirect, and step 1 would otherwise replace this notice with the provider's text.
+  var OAUTH_ERRORS = {
+    cancelled: "Sign-in was cancelled.",
+    expired: "That sign-in took too long or was opened in another browser. Please try again.",
+    failed: "Sign-in failed. Please try again.",
+    rate_limited: "Too many attempts. Try again in a few minutes."
+  };
+  function oauthErrorNotice() {
+    var params = new URLSearchParams(location.search);
+    var code = params.get("oauth_error");
+    if (!code) return;
+    params.delete("oauth_error");
+    var rest = params.toString();
+    history.replaceState(null, "", location.pathname + (rest ? "?" + rest : ""));
+    notice(Object.prototype.hasOwnProperty.call(OAUTH_ERRORS, code) ? OAUTH_ERRORS[code] : OAUTH_ERRORS.failed, "error");
   }
   // 1. Harvest GoTrue's implicit-flow fragment: hand the tokens to the server (which turns
   //    them into HttpOnly cookies), then strip the fragment from the URL. Resolves to true when
@@ -182,7 +215,7 @@ const SCRIPT = `
   async function loadSessions(isPoll) {
     var requestGeneration = ++sessionRequestGeneration;
     if (!isPoll) show("loading");
-    var r = await api("/api/sessions?terminal_preferences=1");
+    var r = await api("/api/sessions?terminal_preferences=1&app_sessions=1");
     if (requestGeneration !== sessionRequestGeneration) return;
     if (r.status === 401) {
       terminalPreferences = null; preferencesOwner = null;
@@ -195,7 +228,7 @@ const SCRIPT = `
     var data = await r.json();
     if (requestGeneration !== sessionRequestGeneration) return;
     acceptTerminalPreferences(data);
-    render(data.sessions || [], data.email || "");
+    render(data.sessions || [], data.email || "", data.app_sessions || []);
   }
 
   // The viewer is embedded in an iframe rather than navigated to, so the address bar stays on
@@ -296,12 +329,15 @@ const SCRIPT = `
   window.addEventListener("message", onFrameMessage);
   window.addEventListener("popstate", function () { if (viewing) closeSession(""); });
 
-  function render(sessions, email) {
+  function render(sessions, email, appSessions) {
+    appSessions = appSessions || [];
     $("who").textContent = email || "";
     if (viewing) return; // the frame is up; leave the list alone until it closes (closeSession reloads)
     var ul = $("sessions");
+    var appUl = $("app-sessions");
     ul.innerHTML = "";
-    if (sessions.length === 1 && !cancelledAutoOpen && !openTimer) {
+    appUl.innerHTML = "";
+    if (sessions.length === 1 && appSessions.length === 0 && !cancelledAutoOpen && !openTimer) {
       var s = sessions[0], url = safeHttpUrl(s.control_url);
       if (url) {
         var label = s.device_name + (s.session_name && s.session_name !== s.device_name ? " · " + s.session_name : "");
@@ -313,7 +349,10 @@ const SCRIPT = `
       }
     }
     if (sessions.length === 0) {
-      ul.innerHTML = '<li><div><div class="name">No live sessions</div><div class="meta">Share a tab from a signed-in BossTerm and it will appear here.</div></div></li>';
+      ul.innerHTML = '<li><div><div class="name">No live terminal sessions</div><div class="meta">Share a terminal from BossTerm or BossConsole to see it here.</div></div></li>';
+    }
+    if (appSessions.length === 0) {
+      appUl.innerHTML = '<li><div><div class="name">No live BossConsole sessions</div><div class="meta">Open BossConsole and sign in with this account to see it here.</div></div></li>';
     }
     sessions.forEach(function (s) {
       var url = safeHttpUrl(s.control_url); if (!url) return;
@@ -333,6 +372,13 @@ const SCRIPT = `
         openSession(url, s.device_name + (s.session_name && s.session_name !== s.device_name ? " · " + s.session_name : ""));
       });
       ul.appendChild(li);
+    });
+    appSessions.forEach(function (s) {
+      if (!s || typeof s.name !== "string" || !/^[0-9a-f-]{36}$/i.test(s.session_id)) return;
+      var li = document.createElement("li");
+      li.innerHTML = '<div><div class="name">' + esc(s.name) + '<span class="pill ok" title="Media encrypted between host and viewer; the BOSS account service distributes the session key">E2E</span></div><div class="meta">Shared application windows · encrypted media</div></div><a class="btn" rel="noopener noreferrer" target="_blank">Open</a>';
+      li.querySelector("a").setAttribute("href", base + "/app-viewer/?session=" + encodeURIComponent(s.session_id));
+      appUl.appendChild(li);
     });
     show("list");
     startPolling();
@@ -385,11 +431,25 @@ const SCRIPT = `
 
   // Boot: establish the cookie session from a fragment if there is one, then ask the server.
   // A 401 there is the ordinary "not signed in" answer and shows the form.
+  oauthErrorNotice();
   harvestFragment().then(function () {
     return loadSessions(false);
   }).catch(function () { notice("Network error.", "error"); show("signin"); });
 })();
 `
+
+/** Google's "G" in its brand colours; inline SVG so no image source is needed. */
+const GOOGLE_MARK =
+  `<svg viewBox="0 0 18 18" aria-hidden="true">` +
+  `<path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.87 2.68-6.62z"/>` +
+  `<path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.83.86-3.04.86-2.34 0-4.33-1.58-5.04-3.71H.96v2.33A9 9 0 0 0 9 18z"/>` +
+  `<path fill="#FBBC05" d="M3.96 10.71A5.41 5.41 0 0 1 3.68 9c0-.59.1-1.17.28-1.71V4.96H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.04l3-2.33z"/>` +
+  `<path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.59A9 9 0 0 0 .96 4.96l3 2.33C4.67 5.16 6.66 3.58 9 3.58z"/>` +
+  `</svg>`
+
+/** The Apple logo, drawn in the button's text colour. */
+const APPLE_MARK =
+  `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16.37 1.43c0 1.14-.49 2.27-1.18 3.08-.74.9-1.99 1.57-2.99 1.57-.12 0-.23-.02-.3-.03-.01-.06-.04-.22-.04-.39 0-1.15.57-2.27 1.21-2.98.8-.94 2.14-1.64 3.25-1.68.03.13.05.28.05.43zm4.34 15.59c-.03.07-.46 1.58-1.52 3.12-.95 1.34-1.94 2.71-3.43 2.71-1.52 0-1.9-.88-3.63-.88-1.7 0-2.3.91-3.67.91-1.38 0-2.33-1.26-3.43-2.8C3.74 18.26 2.7 15.45 2.7 12.8c0-4.28 2.8-6.55 5.55-6.55 1.45 0 2.68.95 3.6.95.87 0 2.22-1.01 3.9-1.01.61 0 2.89.06 4.37 2.19-.13.09-2.38 1.37-2.38 4.19 0 3.26 2.85 4.32 2.95 4.38z"/></svg>`
 
 export function livePage(model: PageModel, nonce: string): string {
   const cfg = { basePath: model.basePath, liveWindowSeconds: model.liveWindowSeconds }
@@ -401,25 +461,31 @@ export function livePage(model: PageModel, nonce: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
-<title>BossTerm Live Sessions</title>
+<title>BOSS Live Sessions</title>
+<link rel="icon" type="image/svg+xml" href="${esc(model.basePath)}/app-viewer/boss-logo.svg">
 <style nonce="${esc(nonce)}">${STYLES}</style>
 </head>
 <body>
 <!--email_off-->
 <main>
   <header>
-    <div><h1>BossTerm live sessions</h1><div class="sub">Terminal sessions shared from BossTerm, signed in with your BOSS account</div></div>
+    <div><h1>BOSS live sessions</h1><div class="sub">Your BossTerm terminals and BossConsole windows, using the same BOSS account</div></div>
     <div class="sub" id="who"></div>
   </header>
   ${notice}
 
   <section id="signin" class="card hidden">
+    <div class="providers">
+      <a id="oauth-google" class="btn provider" href="${esc(model.basePath)}/api/oauth/google">${GOOGLE_MARK}Continue with Google</a>
+      <a id="oauth-apple" class="btn provider apple" href="${esc(model.basePath)}/api/oauth/apple">${APPLE_MARK}Continue with Apple</a>
+    </div>
+    <div class="or">or</div>
     <form id="signin-form" autocomplete="on">
       <label for="email">Email</label>
       <input id="email" name="email" type="email" required autocomplete="email" inputmode="email" placeholder="you@company.com">
       <div class="row">
         <button id="send" type="submit">Email me a sign-in link</button>
-        <span class="sub">Uses the same account you signed into BossTerm with.</span>
+        <span class="sub">Use the same account as BossTerm and BossConsole.</span>
       </div>
     </form>
   </section>
@@ -442,11 +508,20 @@ export function livePage(model: PageModel, nonce: string): string {
   </section>
 
   <section id="list" class="card hidden">
-    <ul id="sessions" class="sessions"></ul>
+    <section class="session-group" aria-labelledby="bossterm-heading">
+      <h2 id="bossterm-heading">BossTerm live sessions</h2>
+      <div class="sub">Terminals shared from BossTerm or inside BossConsole</div>
+      <ul id="sessions" class="sessions"></ul>
+    </section>
+    <section class="session-group" aria-labelledby="bossconsole-heading">
+      <h2 id="bossconsole-heading">BossConsole live sessions</h2>
+      <div class="sub">Shared BossConsole application windows</div>
+      <ul id="app-sessions" class="sessions"></ul>
+    </section>
     <div class="row">
       <button id="refresh" class="secondary" type="button">Refresh</button>
       <button id="signout" class="secondary" type="button">Sign out</button>
-      <span class="sub">Sessions disappear about ${esc(String(model.liveWindowSeconds))} seconds after BossTerm stops sharing or closes.</span>
+      <span class="sub">Terminal sessions disappear about ${esc(String(model.liveWindowSeconds))} seconds after sharing stops or the app closes.</span>
     </div>
   </section>
 
@@ -456,7 +531,7 @@ export function livePage(model: PageModel, nonce: string): string {
       <span class="name" id="viewer-name"></span>
       <a id="viewer-newtab" class="btn secondary" target="_blank" rel="noopener noreferrer" href="#">Open in new tab</a>
     </div>
-    <iframe id="viewerframe" title="Shared terminal" allow="clipboard-write" src="about:blank"></iframe>
+    <iframe id="viewerframe" title="Shared terminal" allow="clipboard-write; fullscreen" allowfullscreen src="about:blank"></iframe>
   </div>
 
   <footer>Only you can see this list. Links open the live share-viewer end to end encrypted when the badge shows <code>E2E</code>.</footer>

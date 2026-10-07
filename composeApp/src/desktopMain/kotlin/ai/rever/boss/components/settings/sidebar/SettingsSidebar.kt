@@ -73,6 +73,11 @@ enum class SettingsSection(
         description = "Shell configuration, colors, and startup behavior",
         icon = Icons.Outlined.Terminal,
     ),
+    SHARING(
+        displayName = "Sharing",
+        description = "Share a BossConsole window and connect to your other devices",
+        icon = Icons.Outlined.ScreenShare,
+    ),
     RUNNER(
         displayName = "Runner",
         description = "Run/stop behavior and terminal target options",

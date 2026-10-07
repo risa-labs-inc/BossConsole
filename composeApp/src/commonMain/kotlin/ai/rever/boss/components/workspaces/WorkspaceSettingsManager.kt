@@ -21,6 +21,8 @@ data class WorkspaceSettings(
     val onWorkspaceSwitch: String = SWITCH_ASK,
     /** Expose the automatic recovery slot as a selectable Space. */
     val enableLastSessionSpace: Boolean = false,
+    /** Most recently entered Spaces first; saved independently of their layout timestamps. */
+    val recentSpaceIds: List<String> = emptyList(),
     /**
      * Schema version of this file, used to apply one-time migrations to installs
      * that already have a settings file written by an older build.

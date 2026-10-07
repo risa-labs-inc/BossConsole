@@ -6,6 +6,11 @@ package ai.rever.boss.components.plugin
  * [PluginUpdateRegistry] and performs downloads/installs.
  */
 expect object PluginUpdateBridge {
+    /** Start the process-wide automatic updater after workspace restoration. */
+    fun startAutomaticUpdates()
+
+    val automaticUpdateStatus: kotlinx.coroutines.flow.StateFlow<String>
+
     /** Check all [installed] plugins and publish compatible updates to [PluginUpdateRegistry]. */
     suspend fun refreshAll(installed: List<InstalledPluginRef>)
 
