@@ -665,7 +665,7 @@ Deno.test("POST /api/open maps the RPC's instance_unavailable (went offline betw
 }))
 
 Deno.test("POST /api/open maps the RPC's too_many_tickets cap to 429 with Retry-After", withEnv(async () => {
-  const stub = backend({ mint: () => json({ code: "54000", message: "too_many_tickets" }, 500) })
+  const stub = backend({ mint: () => json({ code: "P0001", message: "too_many_tickets" }, 400) })
   try {
     const res = await openRequest({ instance_id: "inst-a" })
     assertEquals(res.status, 429)
@@ -750,7 +750,8 @@ Deno.test("httpsOrigin accepts only bare https origins", () => {
   assertEquals(httpsOrigin("https://mac.tail.ts.net:8443/"), "https://mac.tail.ts.net:8443")
   assertEquals(httpsOrigin("https://Mac.Tail.ts.net"), "https://mac.tail.ts.net")
   assertEquals(httpsOrigin("https://a.example:443"), "https://a.example")
-  for (const bad of ["http://a.example", "https://a.example/x", "https://a.example/#x", "https://a.example?y", "https://u@a.example", "ftp://a", "https://a.example//", "https://a.example:99999", "https://%61.example", "", 42, null]) {
+  assertEquals(httpsOrigin("https://a.example:65535"), "https://a.example:65535")
+  for (const bad of ["http://a.example", "https://a.example/x", "https://a.example/#x", "https://a.example?y", "https://u@a.example", "ftp://a", "https://a.example//", "https://a.example:99999", "https://a.example:65536", "https://a.example:0", "https://a.example:08443", "https://%61.example", "", 42, null]) {
     assertEquals(httpsOrigin(bad), null, String(bad))
   }
 })

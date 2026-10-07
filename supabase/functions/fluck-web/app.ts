@@ -419,8 +419,8 @@ function publicInstance(r: InstanceRow) {
   }
 }
 
-/** The fluck_web_instances.endpoint_url CHECK, so every row the table accepts is openable. */
-const ENDPOINT_RE = /^https:\/\/[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$/
+/** The fluck_web_instances.endpoint_url CHECK (20261007090000), so every row the table accepts is openable. */
+const ENDPOINT_RE = /^https:\/\/[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$/
 
 /**
  * `value` as a normalised bare https origin (host lowercased, default :443 dropped), or null.
