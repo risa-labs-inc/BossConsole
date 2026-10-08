@@ -113,7 +113,8 @@ Deno.test("GET / renders the Fluck page with nonce'd script and style, strict CS
   assertStringIncludes(html, `<script nonce="${nonce}">`)
   assertStringIncludes(html, `<style nonce="${nonce}">`)
   assertStringIncludes(html, "<title>Fluck</title>")
-  assertStringIncludes(html, FLUCK_MARK)
+  // The Fluck tile heads every screen, as on the splash.
+  assertStringIncludes(html, `<img class="brand-logo" src="data:image/svg+xml,${encodeURIComponent(FLUCK_MARK)}" width="56" height="56" alt="">`)
   // Launch splash: the web chat's boot markup, its logo a data: URI the CSP admits.
   assertStringIncludes(csp, "img-src data:")
   assertStringIncludes(html, '<div id="launch" class="splash boot"')

@@ -325,3 +325,24 @@ Deno.test("closing the frame or Back before the hello timeout cancels the fallba
     assertEquals(h.assigned, [], close)
   }
 })
+
+Deno.test("the list: each Fluck is one row button (name, status, machine); the account row shows; a tap opens it", async () => {
+  const h = harness("?list=1")
+  await h.settle()
+  assert(!h.get("list").classList.contains("hidden"), "?list=1 shows the list")
+  const li = h.get("instances").children[0]!
+  const row = li.children[0]!
+  assertEquals(row.className, "inst on")
+  assertEquals(row.disabled, false)
+  assertEquals(row.getAttribute("aria-label"), "Fluck on Mac, online")
+  const [icon, text] = row.children
+  assertEquals(icon!.className, "inst-icon fluck")
+  assertEquals(text!.children[0]!.textContent, "Fluck")
+  assertEquals(text!.children[1]!.children[1]!.textContent, "Online · Mac")
+  assertEquals(h.get("who").textContent, "owner@example.com")
+  assert(!h.get("account").classList.contains("hidden"), "signed-in account row at the bottom")
+  for (const fn of row.listeners.click ?? []) fn({})
+  await h.settle()
+  assertEquals(h.get("fluckframe").getAttribute("src"), OPEN_URL)
+  assert(h.get("account").classList.contains("hidden") || h.body.classList.contains("viewing"))
+})
