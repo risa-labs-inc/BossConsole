@@ -66,6 +66,7 @@ import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.LocalWindowFullscreen
+import ai.rever.boss.window.WindowAppearanceSettings
 import ai.rever.boss.window.WindowAppearanceSettingsManager
 import ai.rever.boss.window.WindowProjectStateRegistry
 import androidx.compose.foundation.background
@@ -2854,6 +2855,8 @@ private fun WindowBarRow(
     splitTree: @Composable (Modifier) -> Unit,
 ) {
     val listState = rememberLazyListState()
+    // A collapse removes the resize handle before its settings write may finish.
+    val barWidthScope = rememberCoroutineScope()
     val expansion = rememberTabGroupExpansion()
     val groups =
         rememberWindowTabGroups(
@@ -2912,6 +2915,9 @@ private fun WindowBarRow(
                     currentWidth = barWidth,
                     reveal = reveal,
                     onPreview = { draggedWidth = it },
+                    onSave = { settings ->
+                        barWidthScope.launch { WindowAppearanceSettingsManager.updateSettings(settings) }
+                    },
                 )
             }
             if (!hideCollapsedRail) VDivider()
@@ -2931,8 +2937,8 @@ private fun BoxScope.SidebarResizeHandle(
     currentWidth: Dp,
     reveal: TabBarRevealState,
     onPreview: (Float?) -> Unit,
+    onSave: (WindowAppearanceSettings) -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
     VerticalTabBarResizeHandle(
         enabled = enabled,
         currentWidth = currentWidth.value,
@@ -2942,7 +2948,7 @@ private fun BoxScope.SidebarResizeHandle(
             val resized = sidebarResizeResult(WindowAppearanceSettingsManager.currentSettings.value, width)
             if (resized.tabBarCollapsed) reveal.dismiss(pointerInSidebar = true)
             onPreview(null)
-            scope.launch { WindowAppearanceSettingsManager.updateSettings(resized) }
+            onSave(resized)
         },
     )
 }

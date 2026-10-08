@@ -182,7 +182,7 @@ internal fun sidebarOverlayLayout(
                 sidebar.place(left, 0)
             }
         }.drawWithContent {
-            if (overlay) {
+            if (revealProgress < 1f) {
                 val width = size.width * revealProgress.coerceIn(0f, 1f)
                 clipRect(
                     // Leave room for the native header while keeping Skia clip bounds finite.
@@ -265,14 +265,14 @@ internal fun integratedSidebarLayout(
     overlay: Boolean,
     progress: Float,
 ): Modifier =
-    sidebarOverlayLayout(overlay, progress).then(
+    sidebarOverlayLayout(overlay, if (integrated) progress else 1f).then(
         windowSidebarModifier(
             bar,
             reveal,
             topInset,
             integrated,
             extendsIntoTitleBar,
-            revealProgress = if (overlay) progress else 1f,
+            revealProgress = if (integrated) progress else 1f,
             headerOnly = overlay && overlayCornerIsHeavyweight(),
         ),
     )

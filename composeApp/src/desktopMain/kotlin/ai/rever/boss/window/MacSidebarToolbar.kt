@@ -65,6 +65,8 @@ internal class MacSidebarToolbar(
             if (toolbar != null && geometryOnly) {
                 baseActions = newActions
                 actions = newActions.associateBy { it.id }
+                // Rebuild the combined action map even when sharing visibility has not changed.
+                refreshSharingControls(force = true)
                 updateSidebarGeometry()
                 return@dispatchSafely
             }

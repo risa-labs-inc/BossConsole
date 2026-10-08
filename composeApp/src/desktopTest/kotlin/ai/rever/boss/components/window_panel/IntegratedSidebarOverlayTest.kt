@@ -5,12 +5,14 @@ package ai.rever.boss.components.window_panel
 import ai.rever.boss.components.overlays.OverlayConfig
 import ai.rever.boss.components.overlays.resetOverlayFieldForTest
 import ai.rever.boss.components.sidebar.SidebarContentHost
+import ai.rever.boss.components.sidebar.integratedSidebarLayout
 import ai.rever.boss.components.sidebar.mainPanelSidebarClip
 import ai.rever.boss.components.sidebar.rememberSidebarRevealMotion
 import ai.rever.boss.components.sidebar.sidebarBodyWidth
 import ai.rever.boss.components.sidebar.sidebarFrameWidth
 import ai.rever.boss.components.sidebar.sidebarOverlayLayout
 import ai.rever.boss.components.sidebar.sidebarShouldOverlay
+import ai.rever.boss.components.window_panel.components.main_window_panels.TabBarLayout
 import ai.rever.boss.components.window_panel.components.main_window_panels.TabBarRevealState
 import ai.rever.boss.components.window_panel.components.main_window_panels.rememberTabBarRevealState
 import ai.rever.boss.plugin.ui.BossTheme
@@ -97,6 +99,69 @@ class IntegratedSidebarOverlayTest {
         rule.runOnIdle { reveal.revealed = false }
         rule.mainClock.advanceTimeBy(200)
         rule.onAllNodesWithTag("animated-body").assertCountEquals(0)
+    }
+
+    @Test
+    fun `button opened sidebar retains its viewport reservation until closing finishes`() {
+        val reveal = TabBarRevealState(MutableInteractionSource(), MutableInteractionSource())
+        var progress = 1f
+        var overlay = false
+        rule.mainClock.autoAdvance = false
+        rule.setContent {
+            val motion = rememberSidebarRevealMotion(reveal, railShown = true, integrated = true)
+            progress = motion.progress
+            overlay = motion.overlay
+            Row(Modifier.size(300.dp, 180.dp).background(Color.Black).testTag("closing-root")) {
+                if (motion.visible) {
+                    val bar = TabBarLayout(true, 100.dp, false, false, false)
+                    Box(integratedSidebarLayout(bar, reveal, 0.dp, true, false, motion.overlay, motion.progress)) {
+                        Box(Modifier.width(100.dp).fillMaxHeight().background(Color.Blue))
+                    }
+                }
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .background(Color.Red)
+                        .testTag("closing-main"),
+                )
+            }
+        }
+
+        fun mainWidth() = rule.onNodeWithTag("closing-main").getUnclippedBoundsInRoot().let { it.right - it.left }
+        assertEquals(300.dp, mainWidth())
+        rule.runOnIdle { reveal.openDrawer() }
+        rule.mainClock.advanceTimeByFrame()
+        assertEquals(1f, progress, "a button open must start from full width even on a quick close")
+        assertEquals(192.dp, mainWidth())
+        rule.runOnIdle { reveal.dismiss(pointerInSidebar = true) }
+        repeat(3) {
+            rule.mainClock.advanceTimeByFrame()
+            assertFalse(overlay, "button-opened close must keep its in-flow body")
+            assertEquals(192.dp, mainWidth())
+        }
+        assertTrue(progress > 0f && progress < 0.95f)
+        val pixels = rule.onNodeWithTag("closing-root").captureToImage().toPixelMap()
+        val scale = pixels.width / 300f
+        assertEquals(Color.Black, pixels[(95 * scale).toInt(), pixels.height / 2], "body must close with the header")
+        assertEquals(Color.Red, pixels[(150 * scale).toInt(), pixels.height / 2])
+        rule.mainClock.advanceTimeBy(200)
+        assertEquals(300.dp, mainWidth())
+        rule.runOnIdle { reveal.revealed = true }
+        rule.mainClock.advanceTimeBy(200)
+        assertTrue(overlay, "the next hover reveal must return to overlay mode")
+        assertEquals(300.dp, mainWidth())
+    }
+
+    @Test
+    fun `pinned sidebar stays fully painted without a visible drawer`() {
+        val reveal = TabBarRevealState(MutableInteractionSource(), MutableInteractionSource())
+        rule.setContent {
+            val motion = rememberSidebarRevealMotion(reveal, railShown = false, integrated = true)
+            assertEquals(1f, motion.progress)
+            assertFalse(motion.visible)
+            assertFalse(motion.overlay)
+        }
     }
 
     @Test
