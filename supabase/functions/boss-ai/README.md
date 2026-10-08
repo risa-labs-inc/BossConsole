@@ -103,6 +103,18 @@ or `openai_responses`; the base URL includes the API version prefix, not `/chat/
 `/responses`. Modify mappings in a transaction; each admitted request keeps its captured routing
 configuration. Unpublish to stop new requests. In-flight requests are allowed to finish.
 
+`boss_ai_models.provider_routing` (NULL by default) is an operator-set OpenRouter `provider` object
+sent with every request for that model. Only `order`, `only`, `ignore` (provider slug arrays),
+`allow_fallbacks`, `require_parameters` (booleans) and `sort` (`price`/`throughput`/`latency`)
+are accepted, by a table check and again in the function; a malformed row fails as a 503
+configuration error before any reservation. Set it only on models served through OpenRouter.
+
+```sql
+UPDATE public.boss_ai_models SET provider_routing =
+  '{"order":["cerebras","coreweave"],"allow_fallbacks":true,"ignore":["groq","amazon-bedrock"]}'
+WHERE id = 'optimist';
+```
+
 The Responses adapter translates client function calls, results, structured output and SSE events
 to/from Chat Completions. It requests `store=false` and disables Responses truncation. No
 upstream-hosted tools, conversation IDs, client-selected providers, redirects, or arbitrary request

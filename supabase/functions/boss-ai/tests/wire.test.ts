@@ -1,9 +1,10 @@
-import { assertEquals, assertRejects, assertThrows } from "@std/assert"
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert"
 import {
   completion,
   endpoint,
   events,
   Model,
+  providerRouting,
   readJson,
   requestBody,
   StreamAdapter,
@@ -121,19 +122,67 @@ Deno.test("upstream mapping replaces model, disables storage, and bounds output"
   assertEquals(body.temperature, undefined)
 })
 
-Deno.test("operator provider routing is forwarded; caller routing is still refused", () => {
-  const provider_routing = { order: ["cerebras", "coreweave"], allow_fallbacks: true }
+Deno.test("operator provider routing is allow-listed and copied; NULL sends nothing", () => {
+  const provider_routing = {
+    order: ["cerebras", "coreweave"],
+    only: ["cerebras"],
+    ignore: ["groq", "amazon-bedrock"],
+    allow_fallbacks: true,
+    require_parameters: false,
+    sort: "throughput",
+  }
   const routed = { ...model, provider_routing }
-  assertEquals(requestBody(input, routed, "openai_chat").provider, provider_routing)
-  assertEquals(requestBody(input, model, "openai_chat").provider, undefined)
-  assertEquals(
-    requestBody(input, { ...model, provider_routing: null }, "openai_chat").provider,
-    undefined,
+  for (const type of ["openai_chat", "openai_responses"] as const) {
+    const sent = requestBody(input, routed, type).provider as Record<string, unknown>
+    assertEquals(sent, provider_routing)
+    assert(sent !== provider_routing && sent.order !== provider_routing.order)
+  }
+  assertEquals(providerRouting({ order: [] }), { order: [] })
+  for (const none of [undefined, null, {}]) {
+    assertEquals(
+      requestBody(input, { ...model, provider_routing: none }, "openai_chat").provider,
+      undefined,
+    )
+  }
+  assertEquals("provider" in requestBody(input, model, "openai_chat"), false)
+})
+
+Deno.test("caller-supplied provider is refused even when the model has routing", () => {
+  const routed = { ...model, provider_routing: { order: ["cerebras"] } }
+  const error = assertThrows(
+    () => requestBody({ ...input, provider: { order: ["x"] } }, routed, "openai_chat"),
+    HttpError,
   )
-  assertThrows(() => requestBody({ ...input, provider: { order: ["x"] } }, routed, "openai_chat"))
-  for (const bad of [[], "cerebras"]) {
+  assertEquals(error.status, 400)
+})
+
+Deno.test("malformed provider routing fails closed as a configuration error", () => {
+  for (
+    const bad of [
+      [],
+      "cerebras",
+      42,
+      true,
+      { order: "cerebras" },
+      { order: [1] },
+      { order: ["Cerebras"] },
+      { order: [""] },
+      { order: Array(33).fill("x") },
+      { ignore: [null] },
+      { only: {} },
+      { allow_fallbacks: "true" },
+      { require_parameters: 1 },
+      { sort: "fastest" },
+      { sort: 1 },
+      { order: ["cerebras"], data_collection: "deny" },
+      { quantizations: ["fp8"] },
+      { __proto__: null, model: "other" },
+    ]
+  ) {
+    const error = assertThrows(() => providerRouting(bad), HttpError)
+    assertEquals(error.status, 503)
     assertThrows(
-      () => requestBody(input, { ...model, provider_routing: bad as never }, "openai_chat"),
+      () => requestBody(input, { ...model, provider_routing: bad }, "openai_chat"),
       HttpError,
     )
   }

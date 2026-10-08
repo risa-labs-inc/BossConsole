@@ -23,6 +23,7 @@ async function fixture(options: {
   apiType?: "openai_chat" | "openai_responses"
   eligible?: boolean
   eligibilityError?: boolean
+  providerRouting?: unknown
 } = {}) {
   const calls: { name: string; params: Obj }[] = []
   const requests: Request[] = []
@@ -73,6 +74,7 @@ async function fixture(options: {
             upstream_model: "private-model",
             context_length: 4096,
             max_output_tokens: 512,
+            provider_routing: options.providerRouting ?? null,
             capabilities: options.removeToolsAfterPreflight && name === "boss_ai_lookup"
               ? ["text", "tools"]
               : ["text"],
@@ -218,6 +220,25 @@ Deno.test("server-selected endpoint, model and key; actual usage settlement", as
   assert(!output.includes("private-model"))
   assertEquals(typeof JSON.parse(output).created, "number")
   assert(response.headers.get("x-request-id"))
+})
+
+Deno.test("operator provider routing reaches the upstream; callers cannot set it", async () => {
+  const routing = { order: ["cerebras", "coreweave"], allow_fallbacks: true, ignore: ["groq"] }
+  const routed = await fixture({ providerRouting: routing })
+  assertEquals((await routed.handler(routed.request(body))).status, 200)
+  assertEquals((await routed.requests[0].json()).provider, routing)
+  const caller = { ...body, provider: { order: ["attacker"] } }
+  assertEquals((await routed.handler(routed.request(caller))).status, 400)
+  assertEquals(routed.requests.length, 1)
+
+  const plain = await fixture()
+  assertEquals((await plain.handler(plain.request(body))).status, 200)
+  assertEquals("provider" in await plain.requests[0].json(), false)
+
+  const broken = await fixture({ providerRouting: { order: ["cerebras"], extra: 1 } })
+  assertEquals((await broken.handler(broken.request(body))).status, 503)
+  assert(broken.calls.every((call) => call.name === "boss_ai_lookup"))
+  assertEquals(broken.requests.length, 0)
 })
 
 Deno.test("invalid inputs never create accounting reservations", async () => {

@@ -27,7 +27,7 @@ export interface Model {
   context_length: number
   max_output_tokens: number
   /** Operator-set upstream routing (OpenRouter `provider`); never caller-supplied. */
-  provider_routing?: Obj | null
+  provider_routing?: unknown
 }
 export interface Connection {
   base_url: string
@@ -139,6 +139,36 @@ export function upstreamKey(
   return key
 }
 
+const ROUTING_LISTS = ["order", "only", "ignore"]
+const ROUTING_FLAGS = ["allow_fallbacks", "require_parameters"]
+const ROUTING_SORTS = ["price", "throughput", "latency"]
+
+// Operator-set OpenRouter `provider` object, rebuilt from an allow-list. A malformed
+// row fails closed as a configuration error instead of reaching the upstream.
+export function providerRouting(value: unknown): Obj | undefined {
+  if (value === null || value === undefined) return undefined
+  const misconfigured = () =>
+    new HttpError(503, "configuration", "BOSS AI is temporarily unavailable.")
+  if (typeof value !== "object" || Array.isArray(value)) throw misconfigured()
+  const routing = value as Obj, out: Obj = {}
+  for (const [key, entry] of Object.entries(routing)) {
+    if (ROUTING_LISTS.includes(key)) {
+      if (
+        !Array.isArray(entry) || entry.length > 32 ||
+        entry.some((slug) => typeof slug !== "string" || !/^[a-z0-9][a-z0-9._/-]{0,63}$/.test(slug))
+      ) throw misconfigured()
+      out[key] = [...entry]
+    } else if (ROUTING_FLAGS.includes(key)) {
+      if (typeof entry !== "boolean") throw misconfigured()
+      out[key] = entry
+    } else if (key === "sort") {
+      if (typeof entry !== "string" || !ROUTING_SORTS.includes(entry)) throw misconfigured()
+      out[key] = entry
+    } else throw misconfigured()
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
 export function requestBody(input: Obj, model: Model, type: Connection["api_type"]): Obj {
   const allowed = new Set([
     "model",
@@ -240,13 +270,8 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
     throw invalid()
   }
   const common: Obj = { model: model.upstream_model, stream: input.stream === true, store: false }
-  if (model.provider_routing != null) {
-    const routing = model.provider_routing
-    if (typeof routing !== "object" || Array.isArray(routing)) {
-      throw new HttpError(503, "configuration", "BOSS AI is temporarily unavailable.")
-    }
-    common.provider = routing
-  }
+  const provider = providerRouting(model.provider_routing)
+  if (provider) common.provider = provider
   for (const key of ["temperature", "top_p"]) {
     if (input[key] !== undefined) {
       if (typeof input[key] !== "number" || !Number.isFinite(input[key])) throw invalid()
