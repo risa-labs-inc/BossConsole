@@ -1,0 +1,15 @@
+# fluck.risaboss.com -> the fluck-web edge function, as a same-host proxy.
+#
+# Supabase allows ONE custom domain per project and api.risaboss.com holds it, so a second
+# hostname has to be a reverse proxy. A Workers Custom Domain creates the DNS record for
+# fluck.risaboss.com by itself (the zone is on Cloudflare), so no manual DNS step.
+#
+# Deploy:  cd infra/cloudflare/fluck-web-alias && npx wrangler login && npx wrangler deploy
+name = "fluck-web-alias"
+# The zone risaboss.com lives in the RISA Labs, Inc account.
+account_id = "804b4814a4615997b78ab1d30d12ff77"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+routes = [{ pattern = "fluck.risaboss.com", custom_domain = true }]
+# Secret, set once (same value as the function's FLUCK_WEB_ALIAS_SECRET, e.g. `openssl rand -hex 32`):
+#   npx wrangler secret put FLUCK_WEB_ALIAS_SECRET
