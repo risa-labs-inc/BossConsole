@@ -216,8 +216,9 @@ const SCRIPT = `
     ["signin", "sent", "loading", "list", "opening"].forEach(function (s) {
       $(s).classList.toggle("hidden", s !== id);
     });
-    // Signed in: the account row at the bottom, as on the splash.
-    $("account").classList.toggle("hidden", id !== "list" || !$("who").textContent);
+    // Signed in (the list): the account row and Sign out at the bottom, as on the splash; always
+    // reachable there, even if the session came back without an email.
+    $("account").classList.toggle("hidden", id !== "list");
   }
   function notice(text, kind) {
     if (text && launching) stopLaunching();
