@@ -85,7 +85,7 @@ const STYLES = `
     border-radius: 12px; border: 0; background-color: var(--fill); color: var(--on-signal); text-decoration: none; }
   button:disabled { opacity: 0.45; cursor: default; }
   button.quiet { width: auto; min-height: 44px; padding: 0 4px; background: none; color: var(--signal-text); font-size: 15px; font-weight: 500; }
-  button:focus-visible, a.btn:focus-visible, input:focus-visible { outline: 3px solid var(--wash); outline-offset: 1px; }
+  button:focus-visible, a.btn:focus-visible, input:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
   .providers { display: grid; gap: 10px; }
   a.btn.provider { background-color: var(--raised); color: var(--text); }
   a.btn.provider.apple { background-color: var(--text); color: var(--ink); }
@@ -138,7 +138,6 @@ const STYLES = `
   .account { margin-top: auto; padding-top: 28px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .account .sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   footer { margin-top: 18px; color: var(--text-3); font-size: 12px; text-align: center; }
-  #signin ~ footer, footer { padding-bottom: 4px; }
   a { color: var(--signal-text); }
   /* Embedded Fluck: the frame fills the page; the Fluck's own "Switch BOSS" and Back return to the list. */
   body.viewing { overflow: hidden; }
@@ -225,6 +224,7 @@ const SCRIPT = `
     var n = $("notice");
     n.textContent = text || "";
     n.className = "notice" + (kind ? " " + kind : "");
+    n.setAttribute("role", kind === "error" ? "alert" : "status");
     n.classList.toggle("hidden", !text);
   }
   function store(fn) { try { return fn(window.localStorage); } catch (_) { return null; } }
@@ -358,13 +358,14 @@ const SCRIPT = `
       var icon = document.createElement("span");
       icon.className = "inst-icon" + (i.agent_name === "Fluck" ? " fluck" : "");
       icon.setAttribute("aria-hidden", "true");
-      icon.textContent = (i.agent_name || "?").charAt(0).toUpperCase();
+      icon.textContent = i.agent_name === "Fluck" ? "" : (i.agent_name || "?").charAt(0).toUpperCase();
       var text = document.createElement("span"); text.className = "inst-text";
       var name = document.createElement("span"); name.className = "inst-name"; name.textContent = i.agent_name;
       var meta = document.createElement("span"); meta.className = "inst-meta";
       var dot = document.createElement("span"); dot.className = "dot" + (i.online ? " on" : "");
       meta.appendChild(dot);
-      meta.appendChild(document.createTextNode((i.online ? "Online" : "Offline · last seen " + ago(i.last_seen_at)) + " · " + i.label));
+      // The machine first: it tells two Flucks apart, so it is the part that survives truncation.
+      meta.appendChild(document.createTextNode(i.label + " · " + (i.online ? "Online" : "Offline, last seen " + ago(i.last_seen_at))));
       text.appendChild(name); text.appendChild(meta);
       btn.appendChild(icon); btn.appendChild(text);
       btn.addEventListener("click", function () { openInstance(i); });
@@ -579,7 +580,7 @@ export function fluckPage(model: PageModel, nonce: string): string {
   <header>
     <img class="brand-logo" src="${esc(FAVICON)}" width="56" height="56" alt="">
     <h1>Fluck</h1>
-    <p class="lede" id="lede">Your Fluck, from any browser</p>
+    <p class="lede">Your Fluck, from any browser</p>
   </header>
   <div id="notice" class="notice hidden" role="status"></div>
 
