@@ -121,6 +121,24 @@ Deno.test("upstream mapping replaces model, disables storage, and bounds output"
   assertEquals(body.temperature, undefined)
 })
 
+Deno.test("operator provider routing is forwarded; caller routing is still refused", () => {
+  const provider_routing = { order: ["cerebras", "coreweave"], allow_fallbacks: true }
+  const routed = { ...model, provider_routing }
+  assertEquals(requestBody(input, routed, "openai_chat").provider, provider_routing)
+  assertEquals(requestBody(input, model, "openai_chat").provider, undefined)
+  assertEquals(
+    requestBody(input, { ...model, provider_routing: null }, "openai_chat").provider,
+    undefined,
+  )
+  assertThrows(() => requestBody({ ...input, provider: { order: ["x"] } }, routed, "openai_chat"))
+  for (const bad of [[], "cerebras"]) {
+    assertThrows(
+      () => requestBody(input, { ...model, provider_routing: bad as never }, "openai_chat"),
+      HttpError,
+    )
+  }
+})
+
 Deno.test("Responses adapter retains every tool round with call IDs", () => {
   const body = requestBody(
     {
