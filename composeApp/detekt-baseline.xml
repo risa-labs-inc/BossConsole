@@ -193,7 +193,7 @@
     <ID>CyclomaticComplexMethod:UserExistenceService.kt$UserExistenceService$suspend fun checkUserExists(email: String): Result&lt;UserExistence&gt;</ID>
     <ID>CyclomaticComplexMethod:WorkspaceApplier.kt$private fun createTabFromWorkspaceConfig( tabConfig: TabConfig, projectPath: String, splitViewState: SplitViewState, ): TabInfo?</ID>
     <ID>CyclomaticComplexMethod:WorkspaceSelectionDialog.kt$@Composable private fun WorkspaceSelectionItem( workspace: ai.rever.boss.components.workspaces.LayoutWorkspace, isSelected: Boolean, selectedPanelId: String?, onToggle: () -&gt; Unit, onPanelSelected: (String?) -&gt; Unit, )</ID>
-    <ID>CyclomaticComplexMethod:main.kt$fun main(args: Array&lt;String&gt;)</ID>
+    <ID>CyclomaticComplexMethod:main.kt$fun main(rawArgs: Array&lt;String&gt;)</ID>
     <ID>CyclomaticComplexMethod:main.kt$private fun extractPty4jNatives(targetDir: File)</ID>
     <ID>EmptyElseBlock:FluckEngine.kt$FluckEngine${ }</ID>
     <ID>EmptyFunctionBlock:BossTabsComponentMoveTest.kt$BossTabsComponentMoveTest.TestTabComponent${ }</ID>
@@ -445,7 +445,7 @@
     <ID>LongMethod:WorkspaceExtractor.kt$private fun extractSplitConfig(node: SplitNode): SplitConfig</ID>
     <ID>LongMethod:WorkspaceSelectionDialog.kt$@Composable fun WorkspaceSelectionDialog( title: String, workspaces: List&lt;ai.rever.boss.components.workspaces.LayoutWorkspace&gt;, preselectedWorkspaces: Map&lt;String, String?&gt; = emptyMap(), onDismiss: () -&gt; Unit, onConfirm: (workspacePanelMap: Map&lt;String, String?&gt;) -&gt; Unit, )</ID>
     <ID>LongMethod:WorkspaceSelectionDialog.kt$@Composable private fun WorkspaceSelectionItem( workspace: ai.rever.boss.components.workspaces.LayoutWorkspace, isSelected: Boolean, selectedPanelId: String?, onToggle: () -&gt; Unit, onPanelSelected: (String?) -&gt; Unit, )</ID>
-    <ID>LongMethod:main.kt$fun main(args: Array&lt;String&gt;)</ID>
+    <ID>LongMethod:main.kt$fun main(rawArgs: Array&lt;String&gt;)</ID>
     <ID>LongMethod:main.kt$private fun extractPty4jNatives(targetDir: File)</ID>
     <ID>LongParameterList:BossAppState.kt$BossAppState$( val windowId: String, val isFirstWindow: Boolean, val panelRegistry: PanelRegistry, val tabRegistry: TabRegistry, val panelComponentStore: PanelComponentStore, val draggablePanelComponent: BossDraggableComponent, val tabDragComponent: TabDraggableComponent, val tabsComponent: BossTabsComponent, val splitViewState: SplitViewState, val splitViewOperations: SplitViewOperationsImpl, val workspaceDataProvider: WorkspaceDataProviderImpl, val windowProjectState: WindowProjectState, val windowRunnerState: WindowRunnerState, val windowGitState: WindowGitState, val coroutineScope: CoroutineScope, val updateHandle: UpdateHandle, )</ID>
     <ID>LongParameterList:BossWindow.kt$( current: DpSize, deltaWidthPx: Float, deltaHeightPx: Float, scaleX: Float, scaleY: Float, maxWidthDp: Float, maxHeightDp: Float, minWidthDp: Float = MIN_FIT_WIDTH_DP, minHeightDp: Float = MIN_FIT_HEIGHT_DP, )</ID>
@@ -979,7 +979,7 @@
     <ID>NestedBlockDepth:SplitView.kt$SplitViewState$fun collectAllActiveTabs( workspaceManager: ai.rever.boss.components.workspaces.WorkspaceManager? = null, windowId: String = "unknown", ): List&lt;ActiveTab&gt;</ID>
     <ID>NestedBlockDepth:UrlHistoryManager.kt$UrlHistoryManager$private fun loadHistory()</ID>
     <ID>NestedBlockDepth:UserExistenceService.kt$UserExistenceService$suspend fun checkUserExists(email: String): Result&lt;UserExistence&gt;</ID>
-    <ID>NestedBlockDepth:main.kt$fun main(args: Array&lt;String&gt;)</ID>
+    <ID>NestedBlockDepth:main.kt$fun main(rawArgs: Array&lt;String&gt;)</ID>
     <ID>NestedBlockDepth:main.kt$private fun extractPty4jNatives(targetDir: File)</ID>
     <ID>PackageNaming:BarMenuItemsTest.kt$package ai.rever.boss.components.window_panel</ID>
     <ID>PackageNaming:SplitViewWorkspaceTransferTest.kt$package ai.rever.boss.components.window_panel</ID>

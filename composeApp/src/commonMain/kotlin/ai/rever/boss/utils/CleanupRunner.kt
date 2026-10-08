@@ -10,10 +10,14 @@ import com.arkivanov.essenty.lifecycle.destroy
  * Isolates independent, synchronous teardown actions. It neither schedules work nor
  * changes ownership: callers still claim resources once and preserve release ordering.
  * Use only while releasing resources, never to hide startup or normal operation failures.
+ * A synchronous final-release callback throwing CancellationException is contained so
+ * independent releases still run. Suspending work and its cancellation belong outside
+ * this non-inline guard; coroutine owners retain their cancellation and finally rules.
  */
 internal class CleanupRunner(
     component: String,
     private val context: Map<String, String> = emptyMap(),
+    private val category: LogCategory = LogCategory.UI,
 ) {
     private val logger = BossLogger.forComponent(component)
 
@@ -27,7 +31,7 @@ internal class CleanupRunner(
             cleanup()
             true
         } catch (t: Throwable) {
-            logger.warn(LogCategory.UI, "Cleanup failed (continuing)", context + ("action" to action), t)
+            logger.warn(category, "Cleanup failed (continuing)", context + ("action" to action), t)
             false
         }
 

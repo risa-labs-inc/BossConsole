@@ -27,6 +27,9 @@ BOSS (Business Operating System Service) is a desktop application built with Kot
 
 ### Testing automatic app updates
 
+On macOS, closing the last main window keeps BOSS running in the Dock. A Dock click
+or File > New Window opens a window again; explicit Quit ends the application.
+
 Automatic Updates in Settings downloads new releases and prepares installation after
 manual quit. On macOS it also installs when no main windows remain, including when
 the download finishes after the last window closes. That idle update relaunches

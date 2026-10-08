@@ -51,7 +51,7 @@ class BrowserDisposalWiringTest {
         val handle = source("BrowserHandleImpl")
         val dispose = handle.substringAfter("override fun dispose()")
         assertTrue(dispose.contains("handleCleanup.run("))
-        assertTrue(dispose.contains("cleanup.run(\"close browser pop-out\") { closePopOutOnEdt() }"))
+        assertTrue(dispose.contains("closePopOut = { closePopOutOnEdt() }"))
         val completion = dispose.substringAfter("detachView = {")
         assertTrue(completion.contains("currentViewState?.close()"))
         assertTrue(completion.contains("requestNativeClose = { nativeDisposal.start() }"))

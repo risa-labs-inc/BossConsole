@@ -138,11 +138,17 @@ class UpdateManager private constructor(
             if (!UpdateSettings.autoUpdateEnabled || !canRestart() || !stillStaged) {
                 return@withLock false
             }
-            val path = scheduledDownloadPath ?: return@withLock false
+            val path = scheduledDownloadPath
+            if (path == null) {
+                logger.warn(LogCategory.SYSTEM, "Idle update refused - no scheduled artifact is registered")
+                return@withLock false
+            }
             val prepare = prepareWindowlessOperation ?: updateService::armIdleRelaunch
-            if (!prepare(path)) return@withLock false
-            _updateState.value = UpdateState.RestartRequired
-            true
+            if (!prepare(path)) {
+                logger.warn(LogCategory.SYSTEM, "Idle update deferred - installer relaunch could not be armed")
+                return@withLock false
+            }
+            _updateState.compareAndSet(UpdateState.InstallOnNextRestart, UpdateState.RestartRequired)
         }
 
     internal suspend fun startAutomaticUpdates() =
@@ -418,6 +424,7 @@ class UpdateManager private constructor(
                     ?.let { info -> UpdateState.UpdateAvailable(info) }
                     ?: UpdateState.Idle
             } ?: return
+        scheduledDownloadPath = null
         updateService.discardDownload(claimed.downloadPath)
     }
 
@@ -581,6 +588,7 @@ class UpdateManager private constructor(
             )
             return false
         }
+        scheduledDownloadPath = null
         return try {
             // Use the path won by the claim. A stale UI action must not install an
             // artifact staged later by another download.

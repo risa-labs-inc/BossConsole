@@ -1,19 +1,43 @@
 package ai.rever.boss.window
 
 import ai.rever.boss.utils.CleanupRunner
+import ai.rever.boss.utils.logging.LogCategory
 import java.awt.desktop.QuitResponse
 
 /** Retains the native quit request until Compose has disposed all window compositions. */
 internal class ApplicationQuitLifecycle {
-    @Volatile
-    private var pendingResponse: QuitResponse? = null
+    private val lock = Any()
+    private val responses = mutableListOf<QuitResponse>()
+    private var closeRequested = false
+    private var cleanupComplete = false
+    private val cleanup = CleanupRunner("ApplicationQuitLifecycle", category = LogCategory.SYSTEM)
 
     fun requestQuit(
         response: QuitResponse,
         closeApplication: () -> Unit,
     ) {
-        pendingResponse = response
-        closeApplication()
+        retainResponse(response)
+        val shouldClose =
+            synchronized(lock) {
+                if (cleanupComplete || closeRequested) {
+                    false
+                } else {
+                    closeRequested = true
+                    true
+                }
+            }
+        if (shouldClose) closeApplication()
+    }
+
+    /** Safe on the native event thread; Compose closure is requested separately on the EDT. */
+    fun retainResponse(response: QuitResponse) {
+        val completeNow =
+            synchronized(lock) {
+                if (responses.any { it === response }) return
+                responses += response
+                cleanupComplete
+            }
+        if (completeNow) completeResponse(response)
     }
 
     /** A failing plugin must not prevent the remaining windows or the app from closing. */
@@ -24,8 +48,10 @@ internal class ApplicationQuitLifecycle {
     ) {
         try {
             windowIds.forEach { windowId ->
-                val cleanup = CleanupRunner("ApplicationQuitLifecycle", mapOf("windowId" to windowId))
-                cleanup.run("prepare window for Quit") {
+                val context = mapOf("windowId" to windowId)
+                val windowCleanup =
+                    CleanupRunner("ApplicationQuitLifecycle", context, category = LogCategory.SYSTEM)
+                windowCleanup.run("prepare window for Quit") {
                     prepareWindow(windowId)
                 }
             }
@@ -35,8 +61,16 @@ internal class ApplicationQuitLifecycle {
     }
 
     fun completeQuit() {
-        val response = pendingResponse
-        pendingResponse = null
-        response?.performQuit()
+        val pending =
+            synchronized(lock) {
+                if (cleanupComplete) return
+                cleanupComplete = true
+                responses.toList()
+            }
+        pending.forEach(::completeResponse)
+    }
+
+    private fun completeResponse(response: QuitResponse) {
+        cleanup.run("complete native Quit response") { response.performQuit() }
     }
 }

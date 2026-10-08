@@ -2658,7 +2658,7 @@ class DynamicPluginManager(
         )
 
         // Stop OOP supervision before teardown starts so a crash cannot race shutdown.
-        val cleanup = CleanupRunner("DynamicPluginManager")
+        val cleanup = CleanupRunner("DynamicPluginManager", category = LogCategory.SYSTEM)
         cleanup.run("Out-of-process supervisor") { outOfProcessSpawner?.dispose() }
 
         try {

@@ -891,6 +891,9 @@ internal class BrowserHandleImpl(
     /** The Swing view inside [popOutFrame]; detached before the frame is disposed. */
     @Volatile private var popOutView: com.teamdev.jxbrowser.view.swing.BrowserView? = null
 
+    // EDT-confined: frame disposal may synchronously dispatch a callback that closes it again.
+    private var closingSurfacePopOut = false
+
     /**
      * The AWT window this handle's view is bound to, for the on-screen half of [viewComposed].
      * Null until [Content] resolves one, and treated as "assume showing" while it is.
@@ -3708,31 +3711,33 @@ internal class BrowserHandleImpl(
      * back to a frozen tab.
      */
     private fun closeSurfacePopOut() {
-        val frame = popOutFrame ?: return
-        popOutFrame = null
+        val frame = popOutFrame?.takeUnless { closingSurfacePopOut } ?: return
+        closingSurfacePopOut = true
         val view = popOutView
+        val released =
+            try {
+                closeBrowserPopOutResources(
+                    handleId = id,
+                    detachView = {
+                        view?.let {
+                            it.isVisible = false
+                            it.repaint()
+                            frame.contentPane.remove(it)
+                        }
+                        frame.contentPane.revalidate()
+                    },
+                    disableAlwaysOnTop = { frame.isAlwaysOnTop = false },
+                    disposeWindow = { frame.dispose() },
+                )
+            } finally {
+                closingSurfacePopOut = false
+            }
+        // Keep ownership after a failed dispose so the close button or repeated handle
+        // disposal can retry, even when the browser's once-only cleanup already ran.
+        if (!released) return
+        popOutFrame = null
         popOutView = null
         autoPoppedOut.set(false)
-        try {
-            view?.let {
-                it.isVisible = false
-                it.repaint()
-                frame.contentPane.remove(it)
-            }
-            frame.contentPane.revalidate()
-        } catch (e: Exception) {
-            logger.error(LogCategory.BROWSER, "Error detaching the surface pop-out view", error = e)
-        } finally {
-            // In a finally, because popOutFrame was nulled above: if the detach throws - and
-            // ObjectClosedException from a concurrently closing browser is live here - a dispose
-            // inside the try would be skipped and nothing could ever close this window again.
-            // Its own close button routes through this function, which now returns at the null
-            // check, so it would sit undecorated and always-on-top for the rest of the session.
-            runCatching {
-                frame.isAlwaysOnTop = false
-                frame.dispose()
-            }
-        }
         // The release delay is FullscreenBrowserWindow's SWING_RELEASE_DELAY: the disposed
         // Swing view needs a beat to let go of the rendering surface. Then the repair is the
         // file's own: bump [viewGeneration], which forces the BrowserView node out of
@@ -4487,6 +4492,7 @@ internal class BrowserHandleImpl(
                 }
             },
             requestNativeClose = { nativeDisposal.start() },
+            closePopOut = { closePopOutOnEdt() },
         )
     }
 
@@ -4494,9 +4500,6 @@ internal class BrowserHandleImpl(
         cleanup.run("invalidate browser menu authority") { menuContextAuthority.invalidate() }
         cleanup.run("release browser audio source") { audioSource.close() }
         cleanup.run("release swipe gesture claim") { swipeGestureClaim.close() }
-        // Detach the Swing pop-out on the EDT before requesting native disposal.
-        // The existing bounded EDT hop leaves a delayed cleanup queued if needed.
-        cleanup.run("close browser pop-out") { closePopOutOnEdt() }
         cleanup.run("retire page injection") { pageInjection.onGone() }
         // Shut the interaction bridge FIRST. Its only gate is this authority, and the
         // collector flushes on `pagehide` — which is precisely when this runs. Closing the

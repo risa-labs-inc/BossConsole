@@ -1343,7 +1343,12 @@ class DefaultPlugin(
                         // After the teardown above, so it only catches what a plugin's
                         // teardown did not remove: none of it may be served again when
                         // another window later lets go of the same id.
-                        val cleanup = CleanupRunner("DefaultPlugin", mapOf("windowId" to (_windowId ?: "unknown")))
+                        val cleanup =
+                            CleanupRunner(
+                                "DefaultPlugin",
+                                mapOf("windowId" to (_windowId ?: "unknown")),
+                                category = LogCategory.SYSTEM,
+                            )
                         cleanup.run("Window registrations") { registrations.release(registrationOwner) }
                         try {
                             disposeInitializedProviders(cleanup)

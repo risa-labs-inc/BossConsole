@@ -85,7 +85,8 @@ internal fun openBrowserPopupWindow(
             if (popupCleanup != null) {
                 popupCleanup.close()
             } else {
-                CleanupRunner("BrowserPopupWindow").run("close popup after window creation failure") {
+                val cleanup = CleanupRunner("BrowserPopupWindow", category = LogCategory.BROWSER)
+                cleanup.run("close popup after window creation failure") {
                     if (!popupBrowser.isClosed) popupBrowser.close()
                 }
             }

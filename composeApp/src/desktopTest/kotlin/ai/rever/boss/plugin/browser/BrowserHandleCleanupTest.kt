@@ -7,9 +7,75 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class BrowserHandleCleanupTest {
+    @Test
+    fun `repeat disposal retries a failed pop-out without repeating browser teardown`() {
+        val owner = BrowserHandleCleanup(AtomicBoolean(false), "test")
+        var frameOwned = true
+        var frameDisposals = 0
+        var localTeardowns = 0
+        var nativeRequests = 0
+        val closePopOut = {
+            if (frameOwned) {
+                val released =
+                    closeBrowserPopOutResources(
+                        handleId = "test",
+                        detachView = {},
+                        disableAlwaysOnTop = {},
+                        disposeWindow = {
+                            frameDisposals++
+                            if (frameDisposals == 1) error("transient frame disposal failure")
+                        },
+                    )
+                if (released) frameOwned = false
+            }
+        }
+        repeat(2) { attempt ->
+            owner.run(
+                teardown = { localTeardowns++ },
+                detachView = {},
+                requestNativeClose = { nativeRequests++ },
+                closePopOut = closePopOut,
+            )
+            if (attempt == 0) assertTrue(frameOwned, "Failed frames must remain reachable for retry")
+        }
+        assertFalse(frameOwned)
+        assertEquals(2, frameDisposals)
+        assertEquals(1, localTeardowns)
+        assertEquals(1, nativeRequests)
+    }
+
+    @Test
+    fun `failed EDT submission can retry and reentrant pop-out close does not recurse`() {
+        val owner = BrowserHandleCleanup(AtomicBoolean(false), "test")
+        var closeAttempts = 0
+        var nativeRequests = 0
+        lateinit var closePopOut: () -> Unit
+        closePopOut = {
+            closeAttempts++
+            owner.run(
+                teardown = { error("reentrant cleanup must not run") },
+                detachView = { error("reentrant view teardown must not run") },
+                requestNativeClose = { error("reentrant native disposal must not run") },
+                closePopOut = closePopOut,
+            )
+            if (closeAttempts == 1) error("EDT rejected submission")
+        }
+        repeat(2) {
+            owner.run(
+                teardown = {},
+                detachView = {},
+                requestNativeClose = { nativeRequests++ },
+                closePopOut = closePopOut,
+            )
+        }
+        assertEquals(2, closeAttempts)
+        assertEquals(1, nativeRequests)
+    }
+
     @Test
     fun `failed early resource release does not skip later releases or native request`() {
         val order = mutableListOf<String>()

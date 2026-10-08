@@ -40,6 +40,7 @@ import ai.rever.boss.startup.OverlaySetup
 import ai.rever.boss.startup.PlatformSetup
 import ai.rever.boss.startup.RelaunchHandoff
 import ai.rever.boss.startup.ShutdownSequence
+import ai.rever.boss.startup.parseDesktopLaunchArguments
 import ai.rever.boss.theme.AppThemeSettingsManager
 import ai.rever.boss.updater.AppUpdateRealtimeService
 import ai.rever.boss.updater.UpdateCoordinator
@@ -201,7 +202,9 @@ private fun containRenderFault(
  */
 private val startupScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
-fun main(args: Array<String>) {
+fun main(rawArgs: Array<String>) {
+    val launchArguments = parseDesktopLaunchArguments(rawArgs)
+    val args = launchArguments.cliArgs
     // -------------------------------------------------------------------------
     // Phase 1: Headless CLI & credential helper dispatch (before AWT / logging)
     // -------------------------------------------------------------------------
@@ -377,8 +380,7 @@ fun main(args: Array<String>) {
     // -------------------------------------------------------------------------
     // Phase 7: Post-lock CLI, keyboard interceptor, services & plugins
     // -------------------------------------------------------------------------
-    // --no-window is a GUI lifecycle flag, not a CLI command or an OS open request.
-    CliBootstrap.dispatchPostLock(args.filterNot { it == "--no-window" }.toTypedArray())
+    CliBootstrap.dispatchPostLock(args)
     relaunchHandoff?.requests?.mapNotNull(RelaunchHandoff::toCommand)?.forEach {
         CLICommandHandler.getInstance().queueCommand(it)
     }
@@ -462,7 +464,7 @@ fun main(args: Array<String>) {
 
     val windowLifecycle = ApplicationWindowLifecycle()
     val quitLifecycle = ApplicationQuitLifecycle()
-    val startWithoutWindow = SystemUtils.isMacOS && "--no-window" in args
+    val startWithoutWindow = SystemUtils.isMacOS && launchArguments.windowlessRequested
     // Create the initial window once, except after a windowless macOS update.
     if (!chromiumNeedsDownload) {
         windowLifecycle.openInitialWindow(startWithoutWindow = startWithoutWindow)
@@ -596,6 +598,7 @@ fun main(args: Array<String>) {
                         }
                     },
                     onQuit = { response -> quitLifecycle.requestQuit(response, quitApplication) },
+                    retainQuitResponse = quitLifecycle::retainResponse,
                 )
                 LaunchedEffect(Unit) {
                     updateCoordinator.installAutomaticUpdatesWhenWindowless(
