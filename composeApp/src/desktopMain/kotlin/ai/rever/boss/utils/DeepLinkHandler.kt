@@ -8,6 +8,7 @@ import ai.rever.boss.components.events.PluginActionEventBus
 import ai.rever.boss.components.plugin.PanelIds
 import ai.rever.boss.components.plugin.panels.left_top.ProjectState
 import ai.rever.boss.plugin.api.PanelId
+import ai.rever.boss.profile.ProfileAuthRelay
 import ai.rever.boss.services.URLHandlerService
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
@@ -218,7 +219,7 @@ actual object DeepLinkHandler {
                         // through processDeepLink(uri), which is
                         // DeepLinkOrigin.EXTERNAL — the correct origin for
                         // everything the OS hands over.
-                        _deepLinkFlow.value = uri
+                        emitUnrouted(uri)
                     }
                 }
                 logger.info(LogCategory.SYSTEM, "macOS deep link handler registered successfully")
@@ -280,7 +281,7 @@ actual object DeepLinkHandler {
                         URLHandlerService.handleURL(uri, requiresConfirmation = false)
                     } else {
                         // Handle boss:// deep links for auth
-                        _deepLinkFlow.value = uri
+                        emitUnrouted(uri)
                     }
                 }
             } catch (e: UnsupportedOperationException) {
@@ -298,6 +299,49 @@ actual object DeepLinkHandler {
                 )
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Failed to set up deep link handler", error = e)
+            }
+        }
+    }
+
+    /**
+     * Hands a link no route claims - in practice a sign-in callback - to the auth/other flow.
+     *
+     * Unless a BOSS profile is waiting for a sign-in too: the OS delivers every `boss://` link to
+     * the main profile's process, whichever process started the sign-in, so such a callback is
+     * routed by [ProfileAuthRelay] - kept, claimed by the profile it belongs to, or, when it
+     * could belong to more than one account, used nowhere. The check is local file reads, so
+     * with no profile waiting the link is emitted synchronously exactly as before.
+     */
+    private fun emitUnrouted(uri: String) {
+        if (!ProfileAuthRelay.mightRelay(uri)) {
+            _deepLinkFlow.value = uri
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            when (ProfileAuthRelay.relay(uri)) {
+                ProfileAuthRelay.Outcome.KEEP -> {
+                    _deepLinkFlow.value = uri
+                }
+
+                ProfileAuthRelay.Outcome.RELAYED -> {
+                    Unit
+                }
+
+                ProfileAuthRelay.Outcome.UNCERTAIN -> {
+                    StatusMessageManager.showMessage(
+                        "A sign-in link was passed to another BOSS window. " +
+                            "If no window signs in, request a new link.",
+                        durationMs = REFUSAL_MESSAGE_MS,
+                    )
+                }
+
+                ProfileAuthRelay.Outcome.REFUSED -> {
+                    StatusMessageManager.showMessage(
+                        "Another BOSS window was waiting for a sign-in link, so this one was not used. " +
+                            "Request a new link from the window that should sign in.",
+                        durationMs = REFUSAL_MESSAGE_MS,
+                    )
+                }
             }
         }
     }
@@ -391,7 +435,7 @@ actual object DeepLinkHandler {
                 "Deep link host is not routed, passing to the auth/other flow",
                 mapOf("uri" to LogSanitizer.describeUri(uri)),
             )
-            _deepLinkFlow.value = uri
+            emitUnrouted(uri)
             return null
         }
 

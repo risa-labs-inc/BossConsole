@@ -544,7 +544,20 @@ object BrowserServiceImpl : BrowserService {
                         }
                     }
                     try {
-                        newBrowserTimeBoxed { if (m != null) m.profile.newBrowser() else engine.newBrowser() }
+                        newBrowserTimeBoxed {
+                            when {
+                                m != null -> {
+                                    m.profile.newBrowser()
+                                }
+
+                                // A plain tab in a window opened for a same-account BOSS profile
+                                // runs on that window's own browser profile.
+                                else -> {
+                                    val windowProfile = WindowBrowserProfiles.jxProfileFor(ownerWindowId)
+                                    windowProfile?.newBrowser() ?: engine.newBrowser()
+                                }
+                            }
+                        }
                     } catch (e: Throwable) {
                         engineCallFailed = true
                         throw e
@@ -655,7 +668,13 @@ object BrowserServiceImpl : BrowserService {
                     // Scheme, host and path only: a tab's URL can carry an OAuth code, a sign-in token or a
                     // presigned signature under names maskUriParams does not list, and this line is INFO.
                     "url" to LogSanitizer.describeUri(config.url),
-                    "profile" to (managed?.profileName ?: "default"),
+                    "profile" to (
+                        managed?.profileName
+                            ?: WindowBrowserProfiles
+                                .profileIdFor(ownerWindowId)
+                                ?.let(WindowBrowserProfiles::jxProfileName)
+                            ?: "default"
+                    ),
                     "activeBrowsers" to activeBrowsers.size,
                 ),
             )

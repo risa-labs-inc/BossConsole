@@ -1,5 +1,6 @@
 package ai.rever.boss.components.workspaces
 
+import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
@@ -21,7 +22,7 @@ actual class WorkspaceFileManager actual constructor(
 ) {
     private val logger = BossLogger.forComponent("WorkspaceFileManager")
     private val workspaceDirectory: String by lazy {
-        directoryOverride ?: run {
+        directoryOverride ?: profileWorkspaceDirectory() ?: run {
             val userHome = SystemUtils.getUserHome()
             val documentsPath = Paths.get(userHome, "Documents", WorkspaceFileManagerCommon.getDefaultWorkspaceDirectoryName())
             documentsPath.toString()
@@ -239,3 +240,10 @@ actual class WorkspaceFileManager actual constructor(
             }
         }
 }
+
+/**
+ * A BOSS profile keeps its Spaces inside its own data root, so a profile's Spaces are its own and
+ * the main profile's `~/Documents/BOSS/workspaces` stays exactly as it is. Null for the main profile.
+ */
+private fun profileWorkspaceDirectory(): String? =
+    if (BossDirectories.isProfile) BossDirectories.resolve("workspaces").absolutePath else null

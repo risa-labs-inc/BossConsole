@@ -898,6 +898,13 @@ object FluckEngine {
     // the single shared engine. They are the isolation primitive for running
     // multiple RPAs with different credentials concurrently.
 
+    /**
+     * Runs [block] with the current engine under the engine's own lifecycle lock - the lock a
+     * recycle takes to replace it - so everything [block] does belongs to that one engine. A
+     * snapshot taken outside it can be replaced between two steps (see `WindowBrowserProfiles`).
+     */
+    internal fun <T> withCurrentEngine(block: (Engine) -> T): T = synchronized(engineLock) { block(engine) }
+
     /** Create a fresh isolated profile for an RPA run. Caller must delete it when done. */
     fun newRpaProfile(name: String): com.teamdev.jxbrowser.profile.Profile = synchronized(engineLock) { engine.profiles().newProfile(name) }
 
@@ -2486,8 +2493,16 @@ object FluckEngine {
     }
 
     private fun setupPermissionHandlers(engine: Engine) {
-        // Set up permission handler for all browsers created from this engine
-        val profile = engine.profiles().defaultProfile()
+        // Set up permission handler for all browsers created on the default profile
+        setupPermissionHandlers(engine.profiles().defaultProfile())
+    }
+
+    /**
+     * Installs the permission policy on [profile]. JxBrowser keeps permission callbacks per
+     * profile, so a window's own browser profile ([WindowBrowserProfiles]) needs it as well as
+     * the default one, or its camera, microphone and notification requests would go unanswered.
+     */
+    internal fun setupPermissionHandlers(profile: com.teamdev.jxbrowser.profile.Profile) {
         val permissions = profile.permissions()
 
         permissions.set(

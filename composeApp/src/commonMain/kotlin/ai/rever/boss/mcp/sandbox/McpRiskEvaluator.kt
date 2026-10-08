@@ -88,11 +88,8 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 )
             }
 
-            normalizedName in setOf("get_workspace_context", "get_active_editor_file") -> {
-                McpRiskAssessment(
-                    McpRiskLevel.HIGH,
-                    "Discloses open URLs, file paths, and project structure across workspaces via '$toolName'",
-                )
+            normalizedName in SENSITIVE_READS -> {
+                McpRiskAssessment(McpRiskLevel.HIGH, "${SENSITIVE_READS.getValue(normalizedName)} via '$toolName'")
             }
 
             // Read-only / safe tools
@@ -325,6 +322,9 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
                 "workspace_create",
                 "close_workspace",
                 "workspace_close",
+                // A BOSS profile opens a new window, or a new process with its own sign-in.
+                "profile_create",
+                "profile_open",
             )
 
         private val SECRET_MANAGEMENT_TOOLS =
@@ -387,6 +387,17 @@ class DefaultMcpRiskEvaluator : McpRiskEvaluator {
         private val POLICY_WRITING_TOOLS =
             setOf(
                 "pack_apply",
+            )
+
+        private const val WORKSPACE_DISCLOSURE =
+            "Discloses open URLs, file paths, and project structure across workspaces"
+
+        /** Reads that change nothing but disclose enough to be held like a mutation. */
+        private val SENSITIVE_READS =
+            mapOf(
+                "get_workspace_context" to WORKSPACE_DISCLOSURE,
+                "get_active_editor_file" to WORKSPACE_DISCLOSURE,
+                "profile_list" to "Discloses every BOSS profile and the Spaces bound to it",
             )
 
         private val READ_ONLY_TOOLS =

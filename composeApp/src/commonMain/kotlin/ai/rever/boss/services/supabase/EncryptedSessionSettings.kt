@@ -517,7 +517,10 @@ internal fun createEncryptedSessionSettings(
             storeFile = File(storeDirectory, STORE_FILE_NAME),
             keyFile = File(storeDirectory, KEY_FILE_NAME),
         )
-    if (supabaseUrl != null) {
+    // The legacy store is machine-wide, and what it holds is the MAIN profile's session: a BOSS
+    // profile migrating it would take the main profile's refresh token (and the two would then
+    // log each other out on the first rotation). Only the main profile migrates.
+    if (supabaseUrl != null && !BossDirectories.isProfile) {
         settings.migrateFrom(legacyStore, supabaseUrl)
     }
     return settings

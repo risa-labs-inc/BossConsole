@@ -72,8 +72,15 @@ object WindowManager {
     fun createNewWindow(
         position: WindowPosition? = null,
         windowType: WindowType = WindowType.MAIN,
+        browserProfileId: String? = null,
     ): BossWindowState {
         val windowId = UUID.randomUUID().toString()
+        // A window opened for a same-account BOSS profile: its browser tabs get that profile's
+        // own browser data. Bound before the window exists, so its first tab already uses it.
+        browserProfileId?.let {
+            ai.rever.boss.plugin.browser.WindowBrowserProfiles
+                .bind(windowId, it)
+        }
 
         // Calculate cascade position if not specified
         val windowPosition = position ?: calculateCascadePosition()
@@ -81,7 +88,9 @@ object WindowManager {
         val windowState =
             BossWindowState(
                 id = windowId,
-                title = "BOSS - Business Operating System + Simulation",
+                title =
+                    ai.rever.boss.profile.BossProfileStore
+                        .windowTitle("BOSS - Business Operating System + Simulation", browserProfileId),
                 position = windowPosition,
                 windowType = windowType,
             )
@@ -177,6 +186,8 @@ object WindowManager {
             _windows.remove(window)
             logger.debug(LogCategory.UI, "Closed window", mapOf("windowId" to windowId, "remainingWindows" to _windows.size))
         }
+        ai.rever.boss.plugin.browser.WindowBrowserProfiles
+            .unbind(windowId)
         pendingInitialTabs.remove(windowId)?.let {
             logger.debug(
                 LogCategory.UI,

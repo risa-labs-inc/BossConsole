@@ -447,6 +447,11 @@ class OutOfProcessPluginSpawnerImpl(
     private fun buildEnvironment(jarPath: String): Map<String, String> =
         buildMap {
             put("BOSS_PLUGIN_CLASSPATH", jarPath)
+            // A child of a BOSS profile resolves the profile's data root, not the main one:
+            // the profile may have been named by a system property, which a child does not inherit.
+            ai.rever.boss.plugin.pathutils.BossDirectories.profileId?.let {
+                put(ai.rever.boss.plugin.pathutils.BossDirectories.PROFILE_ENV, it)
+            }
             if (windowId.isNotBlank()) put("BOSS_WINDOW_ID", windowId)
             if (projectPath.isNotEmpty()) put("BOSS_PROJECT_PATH", projectPath)
         }
