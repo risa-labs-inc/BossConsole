@@ -164,6 +164,15 @@ Deno.test("optimist redirect_to → bounce to the GoTrue verify URL with the Opt
   assert(!html.includes("boss://auth/verify"), "must not deep-link the web flow into the desktop app")
 })
 
+Deno.test("askoptimist redirect_to → bounce to the GoTrue verify URL with the Optimist brand", async () => {
+  const rt = "https://askoptimist.com/auth/callback"
+  const conf = "https://api.risaboss.com/auth/v1/verify?token=tok9"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent(conf)}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
+  assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=tok9&amp;type=magiclink&amp;redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
+  assertStringIncludes(html, "<h1>Optimist</h1>")
+  assert(!html.includes("boss://auth/verify"), "must not deep-link the web flow into the desktop app")
+})
+
 Deno.test("optimist: the local chat server callback gets the Optimist brand", async () => {
   const conf = "http://127.0.0.1:54321/auth/v1/verify?token=tok9"
   const html = await pageFor(`/redirect?url=${encodeURIComponent(conf)}&type=magiclink&redirect_to=${encodeURIComponent("http://127.0.0.1:8796/auth/callback")}`)
