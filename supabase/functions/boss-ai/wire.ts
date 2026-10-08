@@ -139,9 +139,9 @@ export function upstreamKey(
   return key
 }
 
-function isOpenRouter(baseUrl: string | undefined): boolean {
+function isOpenRouter(baseUrl: string): boolean {
   try {
-    const url = new URL(baseUrl ?? "")
+    const url = new URL(baseUrl)
     return url.protocol === "https:" && url.hostname === "openrouter.ai"
   } catch {
     return false
@@ -155,14 +155,13 @@ const ROUTING_SORTS = ["price", "throughput", "latency"]
 // Operator-set OpenRouter `provider` object, rebuilt from an allow-list. A malformed row,
 // or routing on a non-OpenRouter connection, fails closed before reaching the upstream.
 // Mirrors public.boss_ai_provider_routing_valid().
-export function providerRouting(value: unknown, baseUrl?: string): Obj | undefined {
+export function providerRouting(value: unknown, baseUrl: string): Obj | undefined {
   if (value === null || value === undefined) return undefined
   const misconfigured = () =>
     new HttpError(503, "configuration", "BOSS AI is temporarily unavailable.")
-  if (!isOpenRouter(baseUrl)) throw misconfigured()
   if (typeof value !== "object" || Array.isArray(value)) throw misconfigured()
-  const routing = value as Obj, out: Obj = {}
-  for (const [key, entry] of Object.entries(routing)) {
+  const out: Obj = {}
+  for (const [key, entry] of Object.entries(value as Obj)) {
     if (ROUTING_LISTS.includes(key)) {
       if (
         !Array.isArray(entry) || entry.length < 1 || entry.length > 32 ||
@@ -177,14 +176,16 @@ export function providerRouting(value: unknown, baseUrl?: string): Obj | undefin
       out[key] = entry
     } else throw misconfigured()
   }
-  return Object.keys(out).length ? out : undefined
+  if (!Object.keys(out).length) return undefined
+  if (!isOpenRouter(baseUrl)) throw misconfigured()
+  return out
 }
 
 export function requestBody(
   input: Obj,
   model: Model,
   type: Connection["api_type"],
-  baseUrl?: string,
+  baseUrl: Connection["base_url"],
 ): Obj {
   const allowed = new Set([
     "model",

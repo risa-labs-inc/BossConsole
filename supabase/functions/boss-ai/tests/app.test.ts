@@ -24,6 +24,7 @@ async function fixture(options: {
   eligible?: boolean
   eligibilityError?: boolean
   providerRouting?: unknown
+  routingAfterPreflight?: unknown
   baseUrl?: string
 } = {}) {
   const calls: { name: string; params: Obj }[] = []
@@ -75,7 +76,10 @@ async function fixture(options: {
             upstream_model: "private-model",
             context_length: 4096,
             max_output_tokens: 512,
-            provider_routing: options.providerRouting ?? null,
+            provider_routing:
+              name === "boss_ai_reserve" && options.routingAfterPreflight !== undefined
+                ? options.routingAfterPreflight
+                : options.providerRouting ?? null,
             capabilities: options.removeToolsAfterPreflight && name === "boss_ai_lookup"
               ? ["text", "tools"]
               : ["text"],
@@ -247,6 +251,18 @@ Deno.test("operator provider routing reaches the upstream; callers cannot set it
     assert(broken.calls.every((call) => call.name === "boss_ai_lookup"))
     assertEquals(broken.requests.length, 0)
   }
+})
+
+Deno.test("routing broken between preflight and admission refunds without dispatch", async () => {
+  const f = await fixture({
+    providerRouting: { order: ["cerebras"] },
+    routingAfterPreflight: { order: ["cerebras"], extra: true },
+    baseUrl: "https://openrouter.ai/api/v1",
+  })
+  assertEquals((await f.handler(f.request(body))).status, 503)
+  assertEquals(f.calls.map((c) => c.name), ["boss_ai_lookup", "boss_ai_reserve", "boss_ai_settle"])
+  assertEquals(f.calls.at(-1)?.params.p_tokens, 0)
+  assertEquals(f.requests.length, 0)
 })
 
 Deno.test("invalid inputs never create accounting reservations", async () => {

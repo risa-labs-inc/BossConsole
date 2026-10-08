@@ -29,6 +29,7 @@ Deno.test("Responses tool results normalize text arrays and reject null or image
       },
       model,
       "openai_responses",
+      OR,
     )
   assertEquals(request([{ type: "text", text: "first" }, { type: "text", text: "second" }]).input, [
     { type: "function_call_output", call_id: "call-1", output: "firstsecond" },
@@ -60,7 +61,7 @@ const OR = "https://openrouter.ai/api/v1"
 Deno.test("stream options permit accounting usage but reject disabling it or extensions", () => {
   const input = { messages: [{ role: "user", content: "hello" }], stream: true }
   assertEquals(
-    requestBody({ ...input, stream_options: { include_usage: true } }, model, "openai_chat")
+    requestBody({ ...input, stream_options: { include_usage: true } }, model, "openai_chat", OR)
       .stream_options,
     { include_usage: true },
   )
@@ -69,7 +70,7 @@ Deno.test("stream options permit accounting usage but reject disabling it or ext
       provider: "override",
     }]
   ) {
-    assertThrows(() => requestBody({ ...input, stream_options }, model, "openai_chat"))
+    assertThrows(() => requestBody({ ...input, stream_options }, model, "openai_chat", OR))
   }
 })
 
@@ -81,21 +82,21 @@ Deno.test("assistant tool calls may omit content without breaking the tool round
     }],
   }
   assertEquals(
-    (requestBody(input, model, "openai_chat").messages as Record<string, unknown>[])[0].content,
+    (requestBody(input, model, "openai_chat", OR).messages as Record<string, unknown>[])[0].content,
     null,
   )
   assertEquals(
-    (requestBody(input, model, "openai_responses").input as Record<string, unknown>[])[0].type,
+    (requestBody(input, model, "openai_responses", OR).input as Record<string, unknown>[])[0].type,
     "function_call",
   )
-  assertThrows(() => requestBody({ messages: [{ role: "user" }] }, model, "openai_chat"))
+  assertThrows(() => requestBody({ messages: [{ role: "user" }] }, model, "openai_chat", OR))
 })
 
 Deno.test("routing overrides and unadvertised capabilities are refused", () => {
   for (const field of ["base_url", "api_key", "provider", "n", "previous_response_id"]) {
-    assertThrows(() => requestBody({ ...input, [field]: "override" }, model, "openai_chat"))
+    assertThrows(() => requestBody({ ...input, [field]: "override" }, model, "openai_chat", OR))
   }
-  assertThrows(() => requestBody({ ...input, max_tokens: 513 }, model, "openai_chat"))
+  assertThrows(() => requestBody({ ...input, max_tokens: 513 }, model, "openai_chat", OR))
   assertThrows(() =>
     requestBody(
       {
@@ -107,15 +108,16 @@ Deno.test("routing overrides and unadvertised capabilities are refused", () => {
       },
       model,
       "openai_chat",
+      OR,
     )
   )
   assertThrows(() =>
-    requestBody({ ...input, tools: [{ type: "web_search" }] }, model, "openai_responses")
+    requestBody({ ...input, tools: [{ type: "web_search" }] }, model, "openai_responses", OR)
   )
 })
 
 Deno.test("upstream mapping replaces model, disables storage, and bounds output", () => {
-  const body = requestBody({ ...input, stream: true, max_tokens: 40 }, model, "openai_chat")
+  const body = requestBody({ ...input, stream: true, max_tokens: 40 }, model, "openai_chat", OR)
   assertEquals(body.model, "private-model")
   assertEquals(body.max_completion_tokens, 40)
   assertEquals(body.store, false)
@@ -142,20 +144,24 @@ Deno.test("operator provider routing is allow-listed and copied; NULL sends noth
     const body = requestBody(input, { ...model, provider_routing: none }, "openai_chat", OR)
     assertEquals("provider" in body, false)
   }
-  // NULL routing needs no OpenRouter connection (boss-free and every existing model).
-  assertEquals("provider" in requestBody(input, model, "openai_chat"), false)
-  assertEquals(
-    "provider" in requestBody(input, model, "openai_chat", "https://x.example/v1"),
-    false,
-  )
+  // NULL or empty routing needs no OpenRouter connection (boss-free and every existing model).
+  for (const none of [undefined, null, {}]) {
+    const body = requestBody(
+      input,
+      { ...model, provider_routing: none },
+      "openai_chat",
+      "https://x.example/v1",
+    )
+    assertEquals("provider" in body, false)
+  }
 })
 
 Deno.test("routing is refused on a connection that is not OpenRouter", () => {
   const routed = { ...model, provider_routing: { order: ["cerebras"] } }
   for (
     const base of [
-      undefined,
       "",
+      "not a url",
       "https://api.openai.com/v1",
       "http://openrouter.ai/api/v1",
       "https://openrouter.ai.evil.example/v1",
@@ -166,7 +172,14 @@ Deno.test("routing is refused on a connection that is not OpenRouter", () => {
   }
 })
 
-Deno.test("caller-supplied provider is refused even when the model has routing", () => {
+Deno.test("caller-supplied provider is refused with or without model routing", () => {
+  for (const base of [OR, "https://x.example/v1"]) {
+    const error = assertThrows(
+      () => requestBody({ ...input, provider: { order: ["x"] } }, model, "openai_chat", base),
+      HttpError,
+    )
+    assertEquals(error.status, 400)
+  }
   const routed = { ...model, provider_routing: { order: ["cerebras"] } }
   const error = assertThrows(
     () => requestBody({ ...input, provider: { order: ["x"] } }, routed, "openai_chat", OR),
@@ -199,7 +212,8 @@ Deno.test("malformed provider routing fails closed as a configuration error", ()
       { sort: 1 },
       { order: ["cerebras"], data_collection: "deny" },
       { quantizations: ["fp8"] },
-      { __proto__: null, model: "other" },
+      JSON.parse('{"__proto__":{"order":["x"]}}'),
+      { model: "other" },
     ]
   ) {
     const error = assertThrows(() => providerRouting(bad, OR), HttpError)
@@ -237,6 +251,7 @@ Deno.test("Responses adapter retains every tool round with call IDs", () => {
     },
     model,
     "openai_responses",
+    OR,
   )
   assertEquals(body.input, [
     { role: "system", content: "system" },
@@ -343,13 +358,13 @@ Deno.test("vision-enabled models accept inline images but refuse remote images a
     }],
   })
   for (const type of ["openai_chat", "openai_responses"] as const) {
-    requestBody(image("data:image/png;base64,YQ=="), vision, type)
-    assertThrows(() => requestBody(image("https://example.com/private"), vision, type))
+    requestBody(image("data:image/png;base64,YQ=="), vision, type, OR)
+    assertThrows(() => requestBody(image("https://example.com/private"), vision, type, OR))
     assertThrows(() =>
-      requestBody(image("data:image/png;base64,YQ==", { provider: "x" }), vision, type)
+      requestBody(image("data:image/png;base64,YQ==", { provider: "x" }), vision, type, OR)
     )
     assertThrows(() =>
-      requestBody(image("data:image/png;base64,YQ==", { detail: "invalid" }), vision, type)
+      requestBody(image("data:image/png;base64,YQ==", { detail: "invalid" }), vision, type, OR)
     )
   }
 })
@@ -369,6 +384,7 @@ Deno.test("function and format envelopes reject vendor extensions", () => {
       },
       model,
       "openai_chat",
+      OR,
     )
   )
   assertThrows(() =>
@@ -382,6 +398,7 @@ Deno.test("function and format envelopes reject vendor extensions", () => {
       },
       model,
       "openai_chat",
+      OR,
     )
   )
 })
@@ -446,11 +463,11 @@ Deno.test("tool call arguments must be parseable JSON (BossConsole#1251)", () =>
     }],
   }
   assertThrows(
-    () => requestBody(input, model, "openai_chat"),
+    () => requestBody(input, model, "openai_chat", OR),
     HttpError,
   )
   assertThrows(
-    () => requestBody(input, model, "openai_responses"),
+    () => requestBody(input, model, "openai_responses", OR),
     HttpError,
   )
 })
@@ -467,7 +484,7 @@ Deno.test("empty and object tool arguments replay, but JSON primitives do not", 
         }],
       }],
     }
-    requestBody(input, model, "openai_chat")
+    requestBody(input, model, "openai_chat", OR)
   }
   for (const args of ["null", "5", "[]"]) {
     const input = {
@@ -480,7 +497,7 @@ Deno.test("empty and object tool arguments replay, but JSON primitives do not", 
         }],
       }],
     }
-    assertThrows(() => requestBody(input, model, "openai_chat"), HttpError)
+    assertThrows(() => requestBody(input, model, "openai_chat", OR), HttpError)
   }
 })
 
@@ -497,7 +514,7 @@ Deno.test("a tool description over 4 KB is rejected (BossConsole#1251)", () => {
     }],
   }
   assertThrows(
-    () => requestBody(input, model, "openai_chat"),
+    () => requestBody(input, model, "openai_chat", OR),
     HttpError,
   )
 })
@@ -512,7 +529,7 @@ Deno.test("a message with more than 128 tool_calls is rejected (BossConsole#1251
     messages: [{ role: "assistant", tool_calls }],
   }
   assertThrows(
-    () => requestBody(input, model, "openai_chat"),
+    () => requestBody(input, model, "openai_chat", OR),
     HttpError,
   )
 })
@@ -522,13 +539,13 @@ Deno.test("structured-output schemas share bounded schema work limits", () => {
     messages: [{ role: "user", content: "hi" }],
     response_format: { type: "json_schema", json_schema: { name: "answer", schema } },
   })
-  requestBody(input({ type: "object" }), model, "openai_chat")
+  requestBody(input({ type: "object" }), model, "openai_chat", OR)
   let deep: unknown = {}
   for (let i = 0; i < 34; i++) deep = { nested: deep }
   for (
     const schema of [deep, { enum: Array(8193).fill("x") }, { description: "x".repeat(65536) }]
   ) {
-    assertThrows(() => requestBody(input(schema), model, "openai_chat"), HttpError)
+    assertThrows(() => requestBody(input(schema), model, "openai_chat", OR), HttpError)
   }
 })
 
@@ -541,14 +558,14 @@ Deno.test("tool envelope accepted boundaries and schema work limits are explicit
   const exactSchema = {
     description: "x".repeat(65536 - JSON.stringify({ description: "" }).length),
   }
-  requestBody(input([tool(exactSchema)]), model, "openai_chat")
-  requestBody(input(Array.from({ length: 128 }, () => tool({}))), model, "openai_chat")
+  requestBody(input([tool(exactSchema)]), model, "openai_chat", OR)
+  requestBody(input(Array.from({ length: 128 }, () => tool({}))), model, "openai_chat", OR)
   assertThrows(
-    () => requestBody(input(Array.from({ length: 129 }, () => tool({}))), model, "openai_chat"),
+    () => requestBody(input(Array.from({ length: 129 }, () => tool({}))), model, "openai_chat", OR),
     HttpError,
   )
   assertThrows(
-    () => requestBody(input([tool({}, "x".repeat(4097))]), model, "openai_chat"),
+    () => requestBody(input([tool({}, "x".repeat(4097))]), model, "openai_chat", OR),
     HttpError,
   )
   assertThrows(
@@ -557,14 +574,15 @@ Deno.test("tool envelope accepted boundaries and schema work limits are explicit
         input([tool({ description: exactSchema.description + "x" })]),
         model,
         "openai_chat",
+        OR,
       ),
     HttpError,
   )
   let deep: unknown = {}
   for (let i = 0; i < 34; i++) deep = { nested: deep }
-  assertThrows(() => requestBody(input([tool(deep)]), model, "openai_chat"), HttpError)
+  assertThrows(() => requestBody(input([tool(deep)]), model, "openai_chat", OR), HttpError)
   assertThrows(
-    () => requestBody(input([tool({ enum: Array(8193).fill("x") })]), model, "openai_chat"),
+    () => requestBody(input([tool({ enum: Array(8193).fill("x") })]), model, "openai_chat", OR),
     HttpError,
   )
   requestBody(
@@ -580,5 +598,6 @@ Deno.test("tool envelope accepted boundaries and schema work limits are explicit
     },
     model,
     "openai_chat",
+    OR,
   )
 })
