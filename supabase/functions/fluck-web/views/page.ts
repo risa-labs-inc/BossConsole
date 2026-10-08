@@ -3,9 +3,10 @@
  *
  * States driven by the inline, nonce-stamped script: sign-in, "check your email", loading,
  * "opening" (shown only for a click in the list), and the list. A load that may auto-open (exactly
- * one Fluck online, or ?instance=<id>) starts in body.launching: the web chat's own boot screen (its name, centred)
- * until the frame is up or the page has to ask (sign-in, several Flucks, offline, an error). No external
- * asset and no third-party script, so the CSP stays `default-src 'none'`.
+ * one Fluck online, or ?instance=<id>) starts in body.launching: the web chat's own boot splash
+ * (logo, the Fluck's agent name once known, pulsing dots) until the frame is up or the page has to
+ * ask (sign-in, several Flucks, offline, an error). No external asset (the splash logo is a data:
+ * URI, allowed by img-src data:) and no third-party script, so the CSP stays `default-src 'none'`.
  *
  * Opening a Fluck embeds the URL /api/open returns (`<endpoint>/#/t/<ticket>`) in a full-viewport
  * iframe, as live-sessions does with its viewer, so the address bar stays on fluck.risaboss.com.
@@ -96,16 +97,34 @@ const STYLES = `
   /* Launching: until the page knows it must ask (sign-in, several Flucks, offline) it shows nothing
      but a quiet line, so opening a Fluck never flashes the portal. */
   body.launching header, body.launching #notice, body.launching .card, body.launching footer { display: none; }
-  /* The launch screen is the Fluck web chat's own boot screen (webchat .boot/.boot-mark: the name,
-     centred, on its --bg in --text-3), so handing over to the frame changes no pixel. Keep these
-     values in step with webchat/src/styles/tokens.css. */
-  :root { --boot-bg: #f5f5f3; --boot-text: #62676d; }
-  @media (prefers-color-scheme: dark) { :root { --boot-bg: #111112; --boot-text: #98989f; } }
+  /* The launch screen is the Fluck web chat's own boot splash (webchat .splash: logo, name, three
+     pulsing dots, status line, on --surface), so handing over to the frame changes no pixel. Its
+     tokens are scoped to #launch so they do not touch the portal's own. Keep in step with the web
+     chat's splash CSS and tokens.css. */
+  :root { --boot-bg: #ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --boot-bg: #1c1c1e; } }
   body.launching, body.viewing { background-color: var(--boot-bg); }
-  #launch { display: none; }
-  body.launching:not(.viewing) #launch { display: grid; place-items: center; position: fixed; inset: 0; background-color: var(--boot-bg);
-    color: var(--boot-text); font: 600 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    letter-spacing: -0.01em; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  #launch { display: none; --surface: #ffffff; --text: #1b1d1f; --text-3: #62676d; --accent: #0f5bff; }
+  @media (prefers-color-scheme: dark) { #launch { --surface: #1c1c1e; --text: #f2f2f7; --text-3: #98989f; --accent: #5b8cff; } }
+  body.launching:not(.viewing) #launch { display: grid; position: fixed; inset: 0; overflow: auto;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  .splash { min-height: 100%; display: grid; grid-template-rows: 1fr auto 1fr; justify-items: center;
+    padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); background: var(--surface); }
+  .splash-main { grid-row: 2; width: 100%; max-width: 340px; display: grid; justify-items: center; text-align: center; }
+  .splash-logo { display: block; width: 64px; height: 64px; }
+  /* min-height: the name is filled in once the portal knows which Fluck it is opening. */
+  .splash-name { min-height: 1.2em; margin: 18px 0 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 24px; line-height: 1.2; font-weight: 600; letter-spacing: -0.02em; color: var(--text); overflow-wrap: anywhere; }
+  .splash-dots { display: flex; gap: 6px; height: 8px; margin-top: 28px; }
+  .splash-dots span { width: 6px; height: 6px; margin-top: 1px; border-radius: 50%; background: var(--accent); opacity: .3;
+    animation: splash-pulse 1.4s ease-in-out infinite; }
+  .splash-dots span:nth-child(2) { animation-delay: .2s; }
+  .splash-dots span:nth-child(3) { animation-delay: .4s; }
+  @keyframes splash-pulse { 0%, 60%, 100% { opacity: .3; } 30% { opacity: 1; } }
+  .splash-status { min-height: 1.5em; margin: 14px 0 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 15px; line-height: 1.5; color: var(--text-3); overflow-wrap: anywhere; }
+  .splash-foot { grid-row: 3; align-self: end; padding-top: 24px; }
+  @media (prefers-reduced-motion: reduce) { .splash-dots span { animation: none; opacity: .55; } }
   #viewer { display: none; flex: 1; flex-direction: column; min-height: 0; }
   body.viewing #viewer { display: flex; }
   #fluckframe { flex: 1; width: 100%; border: 0; background-color: var(--boot-bg); }
@@ -300,6 +319,9 @@ const SCRIPT = `
     if (opening) return;
     opening = true; cancelOpenTimer(); stopPolling();
     $("opening-name").textContent = title(i);
+    // The launch splash names the Fluck it is opening, as its web chat's splash will.
+    $("launch-name").textContent = i.agent_name;
+    $("launch-status").textContent = "Opening on " + i.label + ".";
     show("opening");
     try {
       var r = await api("/api/open", { method: "POST", headers: { "X-Fluck-Web-CSRF": csrf }, body: { instance_id: i.instance_id } });
@@ -506,7 +528,7 @@ export function fluckPage(model: PageModel, nonce: string): string {
     <div class="row"><button id="sent-back" class="secondary" type="button">Use a different email</button></div>
   </section>
 
-  <div id="launch" role="status" aria-label="Opening your Fluck"><span>Fluck</span></div>
+  <div id="launch" class="splash boot" role="status" aria-busy="true" aria-label="Opening your Fluck"><div class="splash-main"><img class="splash-logo" src="${esc(FAVICON)}" width="64" height="64" alt="" /><p id="launch-name" class="splash-name"></p><span class="splash-dots" aria-hidden="true"><span></span><span></span><span></span></span><p id="launch-status" class="splash-status"></p></div><div class="splash-foot"></div></div>
 
   <section id="loading" class="card hidden"><div class="sub">Loading your Flucks…</div></section>
 

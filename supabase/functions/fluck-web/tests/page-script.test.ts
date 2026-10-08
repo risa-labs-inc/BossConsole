@@ -231,6 +231,14 @@ Deno.test("one online Fluck opens straight away: no countdown, never the list or
   assert(!h.body.classList.contains("launching"))
 })
 
+Deno.test("the launch splash names the Fluck it opens, from the registry row", async () => {
+  const h = harness("")
+  assertEquals(h.get("launch-name").textContent, "", "unknown until the list loads")
+  await h.settle()
+  assertEquals(h.get("launch-name").textContent, "Fluck")
+  assertEquals(h.get("launch-status").textContent, "Opening on Mac.")
+})
+
 Deno.test("without the reload marker, a single online Fluck still auto-opens in the frame", async () => {
   const h = harness("")
   await h.settle()
