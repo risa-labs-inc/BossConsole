@@ -63,11 +63,14 @@ object ProjectState {
             kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob(),
         )
 
+    private var loadJob: kotlinx.coroutines.Job? = null
+
     init {
         // Load recent projects from disk on startup (async to avoid blocking main thread)
-        ioScope.launch {
-            loadRecentProjects()
-        }
+        loadJob =
+            ioScope.launch {
+                loadRecentProjects()
+            }
     }
 
     /**
@@ -79,6 +82,8 @@ object ProjectState {
      */
     internal suspend fun resetForTesting(testFile: java.io.File) {
         synchronized(saveJobLock) {
+            loadJob?.cancel()
+            loadJob = null
             saveJob?.cancel()
             saveJob = null
         }
@@ -280,6 +285,12 @@ object ProjectState {
     private fun logRecentProjectsLoadFailure(error: Exception) =
         if (error is SerializationException) {
             logger.warn(LogCategory.FILE, "Failed to load recent projects", decodeFailure(error))
+        } else if (error is IllegalArgumentException) {
+            logger.warn(
+                LogCategory.FILE,
+                "Failed to load recent projects",
+                mapOf("decodeFailure" to (error::class.simpleName ?: "IllegalArgumentException")),
+            )
         } else {
             logger.warn(LogCategory.FILE, "Failed to load recent projects", error = error)
         }

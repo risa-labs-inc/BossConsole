@@ -146,7 +146,9 @@ class ProjectStateConcurrencyTest {
                 runBlocking { ProjectState.resetForTesting(tempFile) }
             }
 
-        val failure = logged.single { it.message == "Failed to load recent projects" }
+        val failures = logged.filter { it.message == "Failed to load recent projects" }
+        assertTrue(failures.isNotEmpty(), "expected 'Failed to load recent projects' to be logged")
+        val failure = failures.last()
         assertNull(failure.error, "the decoder exception includes recent project paths and must not be attached")
         assertEquals("JsonDecodingException", failure.data?.get("decodeFailure"))
         for (entry in logged) {

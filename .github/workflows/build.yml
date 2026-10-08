@@ -56,11 +56,9 @@ jobs:
       - name: Headless CLI launcher tests
         run: bash scripts/test/test-headless-cli.sh
 
-      - name: 🧪 boss.bat :urlencode injection regression (#1057)
-        # The shipped Windows CLI shim interpolated the CLI argument into a
-        # single-quoted PowerShell string; one quote in any argument executed
-        # attacker PowerShell. Source-shape checks run everywhere; the live
-        # probes need cmd.exe and skip where it is absent.
+      - name: 🧪 Windows launcher argument handling tests (#1057, #1617)
+        # Source-shape checks and live PowerShell routing checks run everywhere;
+        # the live cmd.exe probes run on Windows in windows-script-tests.
         run: pwsh -NoProfile -File scripts/test/test-boss-bat-urlencode.ps1
 
       - name: 🧪 Release publish — TUS slice tests
@@ -183,6 +181,23 @@ jobs:
         # pre-release page whose "always latest" links point at an older stable.
         run: bash scripts/test/test-release-download-table.sh
 
+  windows-script-tests:
+    name: 🪟 Windows Launcher Tests
+    runs-on: windows-latest
+    env:
+      JXBROWSER_LICENSE_KEY: ''
+      SUPABASE_ANON_KEY: ''
+      SUPABASE_URL: ''
+      SUPABASE_FUNCTION_URL: ''
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: 🧪 Windows boss.bat launcher tests (#1057, #1617)
+        # Runs the end-to-end Windows launcher suite on the real cmd.exe and
+        # pwsh to verify argument parsing, command forwarding, and injection guards.
+        run: pwsh -NoProfile -File scripts/test/test-boss-bat-urlencode.ps1
+
   version-check:
     runs-on: ubuntu-latest
     outputs:
@@ -234,6 +249,7 @@ jobs:
         # hosted macOS and Windows runners run few jobs at once.
         os: ${{ fromJSON(((github.event_name == 'pull_request' && github.base_ref != 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/dev')) && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
 
     steps:
       - name: 📥 Checkout Repository
@@ -273,7 +289,10 @@ jobs:
 
       - name: Install packaged capture helper dependencies (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ pkg-config libx11-dev libxcomposite-dev libxres-dev libxdamage-dev libxrender-dev libsystemd-dev
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cmake g++ pkg-config libx11-dev libxcomposite-dev libxres-dev libxdamage-dev libxrender-dev libsystemd-dev
 
       - name: Native macOS address shortcut smoke
         if: runner.os == 'macOS'
@@ -517,39 +536,61 @@ jobs:
         run: supabase stop --no-backup || true
 
   build-summary:
-    if: ${{ !cancelled() }}
-    needs: [version-check, script-tests, build-test, code-quality, compatibility-test, database-tests, boss-ai-tests]
+    if: always()
+    needs: [version-check, script-tests, windows-script-tests, build-test, code-quality, compatibility-test, database-tests, boss-ai-tests]
     runs-on: ubuntu-latest
 
     steps:
       - name: 📊 Build Summary
+        if: always()
+        env:
+          VERSION_RESULT: ${{ needs.version-check.result }}
+          SCRIPT_RESULT: ${{ needs.script-tests.result }}
+          WINDOWS_RESULT: ${{ needs.windows-script-tests.result }}
+          BUILD_RESULT: ${{ needs.build-test.result }}
+          QUALITY_RESULT: ${{ needs.code-quality.result }}
+          COMPATIBILITY_RESULT: ${{ needs.compatibility-test.result }}
+          DATABASE_RESULT: ${{ needs.database-tests.result }}
+          AI_RESULT: ${{ needs.boss-ai-tests.result }}
         run: |
-          echo "## 🔨 Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Version**: ${{ needs.version-check.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Build Number**: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Job status
-          echo "### 📋 Job Results" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version Check**: ${{ needs.version-check.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Shell Script Tests**: ${{ needs.script-tests.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Build & Test**: ${{ needs.build-test.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Code Quality**: ${{ needs.code-quality.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Compatibility Test**: ${{ needs.compatibility-test.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Database (pgTAP)**: ${{ needs.database-tests.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **BOSS AI contracts**: ${{ needs.boss-ai-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          set -u
 
-          # Overall status
-          if [[ "${{ needs.version-check.result }}" == "success" && "${{ needs.script-tests.result }}" == "success" && "${{ needs.build-test.result }}" == "success" && "${{ needs.code-quality.result }}" == "success" && "${{ needs.compatibility-test.result }}" == "success" && "${{ needs.database-tests.result }}" == "success" && "${{ needs.boss-ai-tests.result }}" == "success" ]]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "🎉 **Overall Status**: ✅ SUCCESS" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "❌ **Overall Status**: FAILED" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## 🔨 Build Summary"
+            echo ""
+            echo "| Job | Result |"
+            echo "| --- | --- |"
+            echo "| Version Check | ${VERSION_RESULT} |"
+            echo "| Shell Script Tests | ${SCRIPT_RESULT} |"
+            echo "| Windows Launcher Tests | ${WINDOWS_RESULT} |"
+            echo "| Build & Test | ${BUILD_RESULT} |"
+            echo "| Code Quality | ${QUALITY_RESULT} |"
+            echo "| Compatibility Test | ${COMPATIBILITY_RESULT} |"
+            echo "| Database | ${DATABASE_RESULT} |"
+            echo "| BOSS AI Contracts | ${AI_RESULT} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          failed=0
+          for result in \
+            "$VERSION_RESULT" \
+            "$SCRIPT_RESULT" \
+            "$WINDOWS_RESULT" \
+            "$BUILD_RESULT" \
+            "$QUALITY_RESULT" \
+            "$COMPATIBILITY_RESULT" \
+            "$DATABASE_RESULT" \
+            "$AI_RESULT"; do
+            if [[ "$result" != "success" ]]; then
+              failed=1
+            fi
+          done
+
+          if [[ "$failed" -ne 0 ]]; then
+            echo "One or more required jobs failed or were skipped."
             exit 1
           fi
+
+          echo "🎉 Overall Status: SUCCESS" >> "$GITHUB_STEP_SUMMARY" 
 
 # Temporarily disabled for debugging
   # notify-build:
