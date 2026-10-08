@@ -15,6 +15,7 @@ import kotlinx.coroutines.withTimeout
 import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
@@ -376,6 +377,7 @@ class McpToolRegistryCoreTest {
         val namespacedId = "plugin-a::shared-provider"
         val namespacedProvider = provider(namespacedId, echoTool("open_tool"))
 
+        val policyBytesBefore = policyFile.readBytes()
         core.registerProvider(namespacedProvider)
 
         assertEquals(
@@ -389,10 +391,9 @@ class McpToolRegistryCoreTest {
                 .containsKey(namespacedId),
             "registration must not persist a derived scoped DENY",
         )
-        assertFalse(
-            McpPolicyEngine(policyFile)
-                .config.value.providerRules
-                .containsKey(namespacedId),
+        assertContentEquals(
+            policyBytesBefore,
+            policyFile.readBytes(),
             "registration must leave the policy file unchanged",
         )
         assertEquals(

@@ -50,11 +50,12 @@ import kotlinx.coroutines.launch
  * there is nothing else a provider rule can currently hold when this UI is the only writer.
  */
 @Composable
-@Suppress("LongMethod") // Declarative Compose layout.
+@Suppress("LongMethod", "CyclomaticComplexMethod") // Declarative Compose layout.
 fun McpProviderTrustDialog(
     providerRules: Map<String, McpPolicyAction>,
     onRevoke: suspend (providerId: String) -> Boolean,
     onDismiss: () -> Unit,
+    unresolvedLegacyRules: Map<String, McpPolicyAction> = emptyMap(),
 ) {
     val colors = BossTheme.colors
     val radii = BossTheme.radius
@@ -109,43 +110,48 @@ fun McpProviderTrustDialog(
                                 .heightIn(max = 280.dp)
                                 .verticalScroll(rememberScrollState()),
                     ) {
+                        val pluginNames = mcpPolicyPluginNames()
                         trusted.keys.sorted().forEach { providerId ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = providerId,
-                                        fontSize = 13.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = colors.textPrimary,
-                                    )
-                                    Text(
-                                        text = "All tools trusted",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = colors.signal,
-                                    )
-                                    if (failedRevoke == providerId) {
-                                        Text(
-                                            text = "Could not save - see the host log for the reason.",
-                                            fontSize = 11.sp,
-                                            color = colors.alert,
-                                        )
+                            val isNamespaced = providerId.contains("::")
+                            val pluginId = if (isNamespaced) providerId.substringBefore("::") else null
+                            val pluginDisplayName = pluginId?.let { pluginNames[it] ?: it }
+                            TrustedProviderRow(
+                                providerId = providerId,
+                                pluginDisplayName = pluginDisplayName,
+                                failedRevoke = failedRevoke == providerId,
+                                onRevoke = {
+                                    scope.launch {
+                                        failedRevoke = if (onRevoke(providerId)) null else providerId
                                     }
-                                }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                TextButton(
-                                    onClick = {
-                                        scope.launch {
-                                            failedRevoke = if (onRevoke(providerId)) null else providerId
-                                        }
-                                    },
-                                ) {
-                                    Text("Revoke", fontSize = 12.sp)
-                                }
-                            }
+                                },
+                            )
+                        }
+                    }
+                }
+
+                if (unresolvedLegacyRules.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Unresolved legacy rules · ${unresolvedLegacyRules.size}",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.textPrimary,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text =
+                            "Legacy provider rules awaiting migration. " +
+                                "Ambiguous ALLOW rules remain inert; legacy DENY rules remain in effect.",
+                        fontSize = 11.sp,
+                        color = colors.textSecondary,
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        unresolvedLegacyRules.toSortedMap().forEach { (rawId, action) ->
+                            UnresolvedLegacyRuleRow(rawId = rawId, action = action)
                         }
                     }
                 }
@@ -160,6 +166,86 @@ fun McpProviderTrustDialog(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun TrustedProviderRow(
+    providerId: String,
+    pluginDisplayName: String?,
+    failedRevoke: Boolean,
+    onRevoke: () -> Unit,
+) {
+    val colors = BossTheme.colors
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            if (pluginDisplayName != null) {
+                Text(
+                    text = "Plugin: $pluginDisplayName",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colors.textPrimary,
+                )
+            }
+            Text(
+                text = providerId,
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
+                color = colors.textSecondary,
+            )
+            Text(
+                text = "All tools trusted",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = colors.signal,
+            )
+            if (failedRevoke) {
+                Text(
+                    text = "Could not save - see the host log for the reason.",
+                    fontSize = 11.sp,
+                    color = colors.alert,
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        TextButton(onClick = onRevoke) {
+            Text("Revoke", fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+private fun UnresolvedLegacyRuleRow(
+    rawId: String,
+    action: McpPolicyAction,
+) {
+    val colors = BossTheme.colors
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = rawId,
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
+                color = colors.textPrimary,
+            )
+            Text(
+                text =
+                    when (action) {
+                        McpPolicyAction.DENY -> "DENY (legacy denial in effect)"
+                        McpPolicyAction.ALLOW -> "ALLOW (inert for namespaced plugins)"
+                        McpPolicyAction.ASK -> "ASK (legacy rule)"
+                    },
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (action == McpPolicyAction.DENY) colors.alert else colors.warn,
+            )
         }
     }
 }

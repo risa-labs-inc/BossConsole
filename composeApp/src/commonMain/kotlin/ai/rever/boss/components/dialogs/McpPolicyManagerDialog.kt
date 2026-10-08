@@ -95,6 +95,7 @@ fun McpPolicyManagerDialog(
     onDismiss: () -> Unit,
     sectionTools: List<McpToolIdentity>? = null,
     onApplySection: (suspend (List<McpSectionPolicyChange>) -> McpProactivePolicyOutcome)? = null,
+    unresolvedLegacyRules: Map<String, McpPolicyAction> = emptyMap(),
 ) {
     val windowSize = LocalWindowInfo.current.containerSize
     val windowHeight = with(LocalDensity.current) { windowSize.height.toDp() }
@@ -223,75 +224,27 @@ fun McpPolicyManagerDialog(
                             )
                         } else {
                             filteredRules.toSortedMap().forEach { (toolName, action) ->
-                                Row(
-                                    modifier =
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 3.dp)
-                                            .background(
-                                                color = colors.textSecondary.copy(alpha = 0.04f),
-                                                shape = RoundedCornerShape(8.dp),
-                                            ).padding(horizontal = 12.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = toolName,
-                                            fontSize = 13.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            color = colors.textPrimary,
-                                        )
-                                        Text(
-                                            text = action.name,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            // Both values represent a durable, disk-persisted rule -
-                                            // the same category McpApprovalDialog's "Always Allow"/
-                                            // "Always Deny" buttons are, which use warn/alert rather
-                                            // than an ordinary success color.
-                                            color = if (action == McpPolicyAction.DENY) colors.alert else colors.warn,
-                                        )
-                                        if (failedRevoke == toolName) {
-                                            Text(
-                                                // Session trust clears even on failure, but a saved ALLOW still
-                                                // permits calls. Do not promise ASK while that durable rule remains.
-                                                text =
-                                                    "Saved rule unchanged; this tool's session trust was cleared. " +
-                                                        "See the host log.",
-                                                fontSize = 11.sp,
-                                                color = colors.alert,
-                                            )
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.width(8.dp))
-
-                                    fun revoke() {
+                                SavedRuleRow(
+                                    toolName = toolName,
+                                    action = action,
+                                    isFailedRevoke = failedRevoke == toolName,
+                                    isConfirmingDeny = confirmingDeny == toolName,
+                                    onRevoke = {
                                         confirmingDeny = null
                                         scope.launch {
                                             failedRevoke = if (onRevoke(toolName)) null else toolName
                                         }
-                                    }
-                                    // Removing an ALLOW is a de-escalation and needs no confirmation.
-                                    // Removing a DENY is the one control in this dialog that INCREASES
-                                    // what the tool is allowed to do, so it gets a second tap instead of
-                                    // firing on the first click like every other row's button does.
-                                    if (action == McpPolicyAction.DENY && confirmingDeny != toolName) {
-                                        TextButton(onClick = { confirmingDeny = toolName }) {
-                                            Text("Remove denial", fontSize = 12.sp, color = colors.alert)
-                                        }
-                                    } else if (action == McpPolicyAction.DENY) {
-                                        TextButton(onClick = { revoke() }) {
-                                            Text("Confirm remove?", fontSize = 12.sp, color = colors.alert)
-                                        }
-                                    } else {
-                                        TextButton(onClick = { revoke() }) {
-                                            Text("Reset", fontSize = 12.sp, color = colors.signal)
-                                        }
-                                    }
-                                }
+                                    },
+                                    onRequireDenyConfirmation = { confirmingDeny = toolName },
+                                    colors = colors,
+                                )
                             }
                         }
                     }
+                    UnresolvedLegacyRulesSection(
+                        unresolvedLegacyRules = unresolvedLegacyRules,
+                        colors = colors,
+                    )
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 Divider(color = colors.textSecondary.copy(alpha = 0.15f))
@@ -308,14 +261,6 @@ fun McpPolicyManagerDialog(
         }
     }
 }
-
-private fun emptyRulesMessage(noSavedRules: Boolean): String =
-    if (noSavedRules) "No saved rules. Default policies and session trust still apply." else "No matching saved rules."
-
-private fun McpToolIdentity.matchesPolicyQuery(query: String): Boolean =
-    toolName.contains(query.trim(), ignoreCase = true) ||
-        providerId.contains(query.trim(), ignoreCase = true) ||
-        description.contains(query.trim(), ignoreCase = true)
 
 @Composable
 private fun FilteredPolicyCandidates(
@@ -386,17 +331,31 @@ private fun ProactivePolicySectionContent(
         return
     }
 
+    val pluginNames = mcpPolicyPluginNames()
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         availableTools.groupBy { it.providerId }.forEach { (provider, tools) ->
-            Text(
-                text = "$provider · ${tools.size} tools",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = colors.textSecondary,
-                modifier = Modifier.padding(top = 8.dp),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            val isNamespaced = provider.contains("::")
+            val pluginId = if (isNamespaced) provider.substringBefore("::") else null
+            val pluginDisplayName = if (pluginId != null) pluginNames[pluginId] ?: pluginId else null
+            Column(modifier = Modifier.padding(top = 8.dp)) {
+                if (pluginDisplayName != null) {
+                    Text(
+                        text = "Plugin: $pluginDisplayName",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.textPrimary,
+                    )
+                }
+                Text(
+                    text = "$provider · ${tools.size} tools",
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.textSecondary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             tools.forEach { tool ->
                 ProactivePolicyRow(
                     tool = tool,
@@ -434,13 +393,7 @@ private fun ProactivePolicyRow(
         border = BorderStroke(1.dp, colors.textSecondary.copy(alpha = 0.14f)),
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = tool.toolName,
-                fontSize = 14.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.SemiBold,
-                color = colors.textPrimary,
-            )
+            ProactiveToolHeader(tool, colors)
             Text(
                 text = tool.description.ifBlank { "No description provided by this tool." },
                 fontSize = 13.sp,
@@ -530,30 +483,6 @@ private fun ProactiveAllowConfirmation(
     )
 }
 
-/** Refusals refresh candidates but always require a new operator confirmation. */
-internal fun McpProactivePolicyOutcome.proactivePolicyMessage(): String? =
-    when (this) {
-        McpProactivePolicyOutcome.Saved -> {
-            null
-        }
-
-        McpProactivePolicyOutcome.Refused -> {
-            "Policy changed. Candidates refreshed; review the current policy before trying again."
-        }
-
-        McpProactivePolicyOutcome.PolicyUnreadable -> {
-            "Policy file unreadable: all tools are withheld. Preserve a backup, repair the file, and restart BOSS."
-        }
-
-        McpProactivePolicyOutcome.Denied -> {
-            "Current policy already denies this tool. Review the provider policy or defaults before adding a rule."
-        }
-
-        is McpProactivePolicyOutcome.Failed -> {
-            "Could not save this rule. Check the host log and storage, then try again."
-        }
-    }
-
 @Composable
 private fun PolicyToolContent(
     sections: List<McpToolIdentity>?,
@@ -570,5 +499,176 @@ private fun PolicyToolContent(
         McpPolicySections(sections, rules, query, onApply, onRefresh)
     } else {
         FilteredPolicyCandidates(filteredTools, hasTools, onSet, onRefresh, colors)
+    }
+}
+
+@Composable
+private fun ProactiveToolHeader(
+    tool: McpToolIdentity,
+    colors: BossColorScheme,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = tool.toolName,
+            fontSize = 14.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.SemiBold,
+            color = colors.textPrimary,
+            modifier = Modifier.weight(1f),
+        )
+        val pluginNames = mcpPolicyPluginNames()
+        val isNamespaced = tool.providerId.contains("::")
+        val pluginId = if (isNamespaced) tool.providerId.substringBefore("::") else null
+        val pluginDisplayName = if (pluginId != null) pluginNames[pluginId] ?: pluginId else null
+        Column(horizontalAlignment = Alignment.End) {
+            if (pluginDisplayName != null) {
+                Text(
+                    text = pluginDisplayName,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.textSecondary,
+                )
+            }
+            Text(
+                text = tool.providerId,
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                color = colors.textSecondary.copy(alpha = 0.8f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SavedRuleRow(
+    toolName: String,
+    action: McpPolicyAction,
+    isFailedRevoke: Boolean,
+    isConfirmingDeny: Boolean,
+    onRevoke: () -> Unit,
+    onRequireDenyConfirmation: () -> Unit,
+    colors: BossColorScheme,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 3.dp)
+                .background(
+                    color = colors.textSecondary.copy(alpha = 0.04f),
+                    shape = RoundedCornerShape(8.dp),
+                ).padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = toolName,
+                fontSize = 13.sp,
+                fontFamily = FontFamily.Monospace,
+                color = colors.textPrimary,
+            )
+            Text(
+                text = action.name,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                // Both values represent a durable, disk-persisted rule -
+                // the same category McpApprovalDialog's "Always Allow"/
+                // "Always Deny" buttons are, which use warn/alert rather
+                // than an ordinary success color.
+                color = if (action == McpPolicyAction.DENY) colors.alert else colors.warn,
+            )
+            if (isFailedRevoke) {
+                Text(
+                    // Session trust clears even on failure, but a saved ALLOW still
+                    // permits calls. Do not promise ASK while that durable rule remains.
+                    text =
+                        "Saved rule unchanged; this tool's session trust was cleared. " +
+                            "See the host log.",
+                    fontSize = 11.sp,
+                    color = colors.alert,
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+
+        // Removing an ALLOW is a de-escalation and needs no confirmation.
+        // Removing a DENY is the one control in this dialog that INCREASES
+        // what the tool is allowed to do, so it gets a second tap instead of
+        // firing on the first click like every other row's button does.
+        if (action == McpPolicyAction.DENY && !isConfirmingDeny) {
+            TextButton(onClick = onRequireDenyConfirmation) {
+                Text("Remove denial", fontSize = 12.sp, color = colors.alert)
+            }
+        } else if (action == McpPolicyAction.DENY) {
+            TextButton(onClick = onRevoke) {
+                Text("Confirm remove?", fontSize = 12.sp, color = colors.alert)
+            }
+        } else {
+            TextButton(onClick = onRevoke) {
+                Text("Reset", fontSize = 12.sp, color = colors.signal)
+            }
+        }
+    }
+}
+
+@Composable
+private fun UnresolvedLegacyRulesSection(
+    unresolvedLegacyRules: Map<String, McpPolicyAction>,
+    colors: BossColorScheme,
+) {
+    if (unresolvedLegacyRules.isEmpty()) return
+    Spacer(modifier = Modifier.height(20.dp))
+    Text(
+        text = "Unresolved legacy rules · ${unresolvedLegacyRules.size}",
+        fontSize = 13.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = colors.textPrimary,
+    )
+    Spacer(modifier = Modifier.height(6.dp))
+    Text(
+        text =
+            "Legacy provider rules awaiting migration. " +
+                "Ambiguous ALLOW rules remain inert; legacy DENY rules remain in effect.",
+        fontSize = 11.sp,
+        color = colors.textSecondary,
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        unresolvedLegacyRules.toSortedMap().forEach { (rawId, action) ->
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .background(
+                            color = colors.textSecondary.copy(alpha = 0.04f),
+                            shape = RoundedCornerShape(8.dp),
+                        ).padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = rawId,
+                        fontSize = 13.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = colors.textPrimary,
+                    )
+                    val statusText =
+                        when (action) {
+                            McpPolicyAction.DENY -> "DENY (legacy denial in effect)"
+                            McpPolicyAction.ALLOW -> "ALLOW (inert for namespaced plugins)"
+                            McpPolicyAction.ASK -> "ASK (legacy rule)"
+                        }
+                    Text(
+                        text = statusText,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (action == McpPolicyAction.DENY) colors.alert else colors.warn,
+                    )
+                }
+            }
+        }
     }
 }

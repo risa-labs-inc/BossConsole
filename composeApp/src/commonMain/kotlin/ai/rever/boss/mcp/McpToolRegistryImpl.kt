@@ -1,6 +1,7 @@
 package ai.rever.boss.mcp
 
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
+import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.mcp.context.WorkspaceContextMcpProvider
 import ai.rever.boss.mcp.sandbox.DefaultMcpRiskEvaluator
 import ai.rever.boss.mcp.sandbox.McpRiskLevel
@@ -137,20 +138,32 @@ object McpToolRegistryImpl : McpToolRegistry {
             }
         }
 
-    val policyEngine =
+    val policyEngine: McpPolicyEngine =
         McpPolicyEngine(
             policyFile = BossDirectories.resolve("mcp-tool-policy.json"),
+            mappingFile = BossDirectories.resolve("mcp-provider-mapping.json"),
+            getInstalledPluginIds = {
+                DynamicPluginManager
+                    .anyActiveManager()
+                    ?.getInstalledPlugins()
+                    ?.map { it.manifest.pluginId }
+                    ?.toSet()
+                    .orEmpty()
+            },
+            getRegisteredHostProviderIds = {
+                core.registeredHostProviderIds()
+            },
             onFault = { StatusMessageManager.showMessage(it.message, durationMs = FAULT_MESSAGE_MS) },
         )
 
-    val approvalBus = McpApprovalBus()
+    val approvalBus: McpApprovalBus = McpApprovalBus()
 
-    val ledger =
+    val ledger: McpOperationLedger =
         McpOperationLedger(
             ledgerFile = BossDirectories.resolve("mcp-calls.jsonl"),
         )
 
-    private val core =
+    private val core: McpToolRegistryCore =
         McpToolRegistryCore(
             disabledFile = BossDirectories.resolve("mcp-disabled-tools.json"),
             // The Toolbox MCP tab lives in a plugin and cannot see [killSwitchFault]
@@ -751,11 +764,17 @@ internal class McpToolRegistryCore(
         }
     }
 
+    internal fun registeredHostProviderIds(): Set<String> {
+        val keys = _providers.value.keys
+        return keys.filterTo(mutableSetOf()) { "::" !in it }
+    }
+
     fun registerProvider(provider: McpToolProvider) {
         // Query the plugin's tools() OUTSIDE the lock - see mutationLock KDoc. Window arbitration
         // passes a snapshot provider here, so restoring another window reuses its cached list.
         val prepared = if (provider is ProviderSnapshot) provider else snapshotProvider(provider)
         val providerId = prepared.providerId
+        policyEngine.recordProviderRegistration(providerId)
         val defs = prepared.tools()
         val aliases = (prepared as? McpToolAliasProvider)?.toolAliases.orEmpty()
         val preparer = (prepared as? McpToolPreparer) ?: (provider as? McpToolPreparer)

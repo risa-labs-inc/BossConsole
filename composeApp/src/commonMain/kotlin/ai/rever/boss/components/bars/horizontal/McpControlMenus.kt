@@ -51,9 +51,14 @@ internal fun rememberMcpAccessMenu(persistedPolicyConfig: McpToolPolicyConfig): 
             onDismiss = { showSessionTrust = false },
         )
     }
+    val unresolvedLegacyRules =
+        remember(persistedPolicyConfig.providerRules) {
+            McpToolRegistryImpl.policyEngine.unresolvedLegacyRules()
+        }
     if (showTrustedPlugins) {
         McpProviderTrustDialog(
             providerRules = persistedPolicyConfig.providerRules,
+            unresolvedLegacyRules = unresolvedLegacyRules,
             // Dispatchers.IO: revokeProviderPolicy performs the same synchronized atomicWriteText
             // disk write as revokePersistedPolicy, off the UI thread for the same reason.
             onRevoke = { providerId ->
@@ -79,6 +84,7 @@ internal fun rememberMcpAccessMenu(persistedPolicyConfig: McpToolPolicyConfig): 
         McpPolicyManagerDialog(
             rules = persistedPolicyConfig.rules,
             availableTools = availableTools,
+            unresolvedLegacyRules = unresolvedLegacyRules,
             // Dispatchers.IO: revokePersistedPolicy and setToolPolicyIfAbsent both do a
             // synchronized atomicWriteText disk write - this call site was the one still running
             // it on the UI thread, where a click could block behind another write holding the
