@@ -24,6 +24,7 @@ async function fixture(options: {
   eligible?: boolean
   eligibilityError?: boolean
   providerRouting?: unknown
+  baseUrl?: string
 } = {}) {
   const calls: { name: string; params: Obj }[] = []
   const requests: Request[] = []
@@ -80,7 +81,7 @@ async function fixture(options: {
               : ["text"],
           },
           connection: {
-            base_url: "https://upstream.example/v1",
+            base_url: options.baseUrl ?? "https://upstream.example/v1",
             api_type: options.apiType ?? "openai_chat",
             api_key_secret: options.keyName ?? "BOSS_AI_TEST",
           },
@@ -224,7 +225,8 @@ Deno.test("server-selected endpoint, model and key; actual usage settlement", as
 
 Deno.test("operator provider routing reaches the upstream; callers cannot set it", async () => {
   const routing = { order: ["cerebras", "coreweave"], allow_fallbacks: true, ignore: ["groq"] }
-  const routed = await fixture({ providerRouting: routing })
+  const openrouter = "https://openrouter.ai/api/v1"
+  const routed = await fixture({ providerRouting: routing, baseUrl: openrouter })
   assertEquals((await routed.handler(routed.request(body))).status, 200)
   assertEquals((await routed.requests[0].json()).provider, routing)
   const caller = { ...body, provider: { order: ["attacker"] } }
@@ -235,10 +237,16 @@ Deno.test("operator provider routing reaches the upstream; callers cannot set it
   assertEquals((await plain.handler(plain.request(body))).status, 200)
   assertEquals("provider" in await plain.requests[0].json(), false)
 
-  const broken = await fixture({ providerRouting: { order: ["cerebras"], extra: 1 } })
-  assertEquals((await broken.handler(broken.request(body))).status, 503)
-  assert(broken.calls.every((call) => call.name === "boss_ai_lookup"))
-  assertEquals(broken.requests.length, 0)
+  for (
+    const broken of [
+      await fixture({ providerRouting: { order: ["cerebras"], extra: 1 }, baseUrl: openrouter }),
+      await fixture({ providerRouting: routing }),
+    ]
+  ) {
+    assertEquals((await broken.handler(broken.request(body))).status, 503)
+    assert(broken.calls.every((call) => call.name === "boss_ai_lookup"))
+    assertEquals(broken.requests.length, 0)
+  }
 })
 
 Deno.test("invalid inputs never create accounting reservations", async () => {

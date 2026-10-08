@@ -104,10 +104,11 @@ or `openai_responses`; the base URL includes the API version prefix, not `/chat/
 configuration. Unpublish to stop new requests. In-flight requests are allowed to finish.
 
 `boss_ai_models.provider_routing` (NULL by default) is an operator-set OpenRouter `provider` object
-sent with every request for that model. Only `order`, `only`, `ignore` (provider slug arrays),
-`allow_fallbacks`, `require_parameters` (booleans) and `sort` (`price`/`throughput`/`latency`)
-are accepted, by a table check and again in the function; a malformed row fails as a 503
-configuration error before any reservation. Set it only on models served through OpenRouter.
+sent with every request for that model. Only `order`, `only`, `ignore` (1-32 lowercase provider
+slugs), `allow_fallbacks`, `require_parameters` (booleans) and `sort` (`price`/`throughput`/
+`latency`) are accepted, by `boss_ai_provider_routing_valid()` in the table check and again in the
+function. Routing on a connection whose base URL is not `https://openrouter.ai` is refused. Either
+fault fails as a 503 configuration error before any reservation.
 
 ```sql
 UPDATE public.boss_ai_models SET provider_routing =

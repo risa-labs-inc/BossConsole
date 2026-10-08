@@ -139,22 +139,33 @@ export function upstreamKey(
   return key
 }
 
+function isOpenRouter(baseUrl: string | undefined): boolean {
+  try {
+    const url = new URL(baseUrl ?? "")
+    return url.protocol === "https:" && url.hostname === "openrouter.ai"
+  } catch {
+    return false
+  }
+}
+
 const ROUTING_LISTS = ["order", "only", "ignore"]
 const ROUTING_FLAGS = ["allow_fallbacks", "require_parameters"]
 const ROUTING_SORTS = ["price", "throughput", "latency"]
 
-// Operator-set OpenRouter `provider` object, rebuilt from an allow-list. A malformed
-// row fails closed as a configuration error instead of reaching the upstream.
-export function providerRouting(value: unknown): Obj | undefined {
+// Operator-set OpenRouter `provider` object, rebuilt from an allow-list. A malformed row,
+// or routing on a non-OpenRouter connection, fails closed before reaching the upstream.
+// Mirrors public.boss_ai_provider_routing_valid().
+export function providerRouting(value: unknown, baseUrl?: string): Obj | undefined {
   if (value === null || value === undefined) return undefined
   const misconfigured = () =>
     new HttpError(503, "configuration", "BOSS AI is temporarily unavailable.")
+  if (!isOpenRouter(baseUrl)) throw misconfigured()
   if (typeof value !== "object" || Array.isArray(value)) throw misconfigured()
   const routing = value as Obj, out: Obj = {}
   for (const [key, entry] of Object.entries(routing)) {
     if (ROUTING_LISTS.includes(key)) {
       if (
-        !Array.isArray(entry) || entry.length > 32 ||
+        !Array.isArray(entry) || entry.length < 1 || entry.length > 32 ||
         entry.some((slug) => typeof slug !== "string" || !/^[a-z0-9][a-z0-9._/-]{0,63}$/.test(slug))
       ) throw misconfigured()
       out[key] = [...entry]
@@ -169,7 +180,12 @@ export function providerRouting(value: unknown): Obj | undefined {
   return Object.keys(out).length ? out : undefined
 }
 
-export function requestBody(input: Obj, model: Model, type: Connection["api_type"]): Obj {
+export function requestBody(
+  input: Obj,
+  model: Model,
+  type: Connection["api_type"],
+  baseUrl?: string,
+): Obj {
   const allowed = new Set([
     "model",
     "messages",
@@ -270,7 +286,7 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
     throw invalid()
   }
   const common: Obj = { model: model.upstream_model, stream: input.stream === true, store: false }
-  const provider = providerRouting(model.provider_routing)
+  const provider = providerRouting(model.provider_routing, baseUrl)
   if (provider) common.provider = provider
   for (const key of ["temperature", "top_p"]) {
     if (input[key] !== undefined) {

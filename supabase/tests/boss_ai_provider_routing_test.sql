@@ -41,6 +41,17 @@ SELECT throws_ok($$UPDATE public.boss_ai_models SET provider_routing='{"allow_fa
  '23514',NULL,'flags must be booleans');
 SELECT throws_ok($$UPDATE public.boss_ai_models SET provider_routing='{"sort":"fastest"}' WHERE id='pgtap-routing'$$,
  '23514',NULL,'sort must be a known strategy');
+SELECT throws_ok($$UPDATE public.boss_ai_models SET provider_routing='{"sort":null}' WHERE id='pgtap-routing'$$,
+ '23514',NULL,'a JSON null value is refused like the function refuses it');
+SELECT throws_ok($$UPDATE public.boss_ai_models SET provider_routing='{"only":[]}' WHERE id='pgtap-routing'$$,
+ '23514',NULL,'empty provider lists are refused');
+SELECT throws_ok($$UPDATE public.boss_ai_models SET provider_routing='{"order":["Cerebras"]}' WHERE id='pgtap-routing'$$,
+ '23514',NULL,'slugs must be lowercase provider ids');
+SELECT throws_ok($$UPDATE public.boss_ai_models SET provider_routing='{"order":[1]}' WHERE id='pgtap-routing'$$,
+ '23514',NULL,'slugs must be strings');
+SELECT throws_ok($$UPDATE public.boss_ai_models SET provider_routing=
+ jsonb_build_object('ignore',(SELECT jsonb_agg('p'||g) FROM generate_series(1,33) g)) WHERE id='pgtap-routing'$$,
+ '23514',NULL,'lists are bounded at 32 providers');
 
 SELECT ok(NOT EXISTS (SELECT 1 FROM jsonb_array_elements(public.boss_ai_catalog('bc000000-0000-4000-8000-000000000001')) e
  WHERE e ? 'provider_routing'),'the user catalog does not expose routing');
