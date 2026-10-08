@@ -108,6 +108,18 @@ actual object WorkspaceSettingsManager {
             val defaultSettings = WorkspaceSettings(settingsVersion = WorkspaceSettings.CURRENT_SETTINGS_VERSION)
             _currentSettings.value = defaultSettings
             writeSettings(defaultSettings)
+        } catch (e: IllegalArgumentException) {
+            logger.error(
+                LogCategory.SYSTEM,
+                "Workspace settings file is corrupt, resetting to defaults",
+                error = e,
+            )
+            if (!settingsFile.renameAsideCorrupt()) {
+                logger.warn(LogCategory.SYSTEM, "Workspace settings file not moved aside; overwriting it")
+            }
+            val defaultSettings = WorkspaceSettings(settingsVersion = WorkspaceSettings.CURRENT_SETTINGS_VERSION)
+            _currentSettings.value = defaultSettings
+            writeSettings(defaultSettings)
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Error loading settings", error = e)
         }

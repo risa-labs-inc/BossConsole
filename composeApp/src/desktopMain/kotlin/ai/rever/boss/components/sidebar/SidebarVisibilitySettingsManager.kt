@@ -2,6 +2,7 @@ package ai.rever.boss.components.sidebar
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.decodeFailure
@@ -88,7 +89,12 @@ actual object SidebarVisibilitySettingsManager {
                 _currentSettings.value = SidebarVisibilitySettings()
             }
         } catch (e: SerializationException) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
             logger.warn(LogCategory.SYSTEM, "Failed to load sidebar visibility, using defaults", decodeFailure(e))
+            _currentSettings.value = SidebarVisibilitySettings()
+        } catch (e: IllegalArgumentException) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
+            logger.warn(LogCategory.SYSTEM, "Failed to load sidebar visibility, using defaults", error = e)
             _currentSettings.value = SidebarVisibilitySettings()
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load sidebar visibility, using defaults", error = e)

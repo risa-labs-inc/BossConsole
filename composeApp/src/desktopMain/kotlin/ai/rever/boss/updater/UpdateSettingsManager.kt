@@ -2,6 +2,7 @@ package ai.rever.boss.updater
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.decodeFailure
@@ -201,7 +202,12 @@ actual object UpdateSettingsManager {
                 logger.debug(LogCategory.SYSTEM, "No saved update settings found, using defaults")
             }
         } catch (e: SerializationException) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
             logger.warn(LogCategory.SYSTEM, "Failed to load update settings", decodeFailure(e))
+            // Continue with defaults
+        } catch (e: IllegalArgumentException) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
+            logger.warn(LogCategory.SYSTEM, "Failed to load update settings", error = e)
             // Continue with defaults
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load update settings", error = e)

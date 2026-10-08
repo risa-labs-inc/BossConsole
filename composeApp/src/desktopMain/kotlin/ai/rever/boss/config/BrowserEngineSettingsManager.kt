@@ -3,6 +3,7 @@ package ai.rever.boss.config
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.VersionConstants
 import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.decodeFailure
@@ -101,10 +102,19 @@ object BrowserEngineSettingsManager {
                     BrowserEngineSettings()
                 }
             } catch (e: SerializationException) {
+                settingsFile.backupCorrupt(logger, LogCategory.BROWSER, e)
                 logger.warn(
                     LogCategory.BROWSER,
                     "Error loading browser engine settings, using defaults",
                     decodeFailure(e),
+                )
+                BrowserEngineSettings()
+            } catch (e: IllegalArgumentException) {
+                settingsFile.backupCorrupt(logger, LogCategory.BROWSER, e)
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Error loading browser engine settings, using defaults",
+                    error = e,
                 )
                 BrowserEngineSettings()
             } catch (e: Exception) {

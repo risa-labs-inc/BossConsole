@@ -2,6 +2,7 @@ package ai.rever.boss.performance
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.decodeFailure
@@ -57,10 +58,19 @@ actual object PerformanceSettingsManager {
                 _currentSettings.value = PerformanceSettings()
             }
         } catch (e: SerializationException) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
             logger.warn(
                 LogCategory.SYSTEM,
                 "Failed to load performance settings - using defaults",
                 decodeFailure(e),
+            )
+            _currentSettings.value = PerformanceSettings()
+        } catch (e: IllegalArgumentException) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Failed to load performance settings - using defaults",
+                error = e,
             )
             _currentSettings.value = PerformanceSettings()
         } catch (e: Exception) {

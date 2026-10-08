@@ -1,12 +1,14 @@
 package ai.rever.boss.html
 
 import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.IOException
@@ -53,12 +55,21 @@ internal class HtmlFileSettingsStore(
     private fun loadLocked() {
         if (loaded) return
         try {
-            if (file.exists()) state.value = json.decodeFromString<HtmlFileSettings>(file.readText())
+            if (file.exists()) {
+                val content = file.readText()
+                try {
+                    state.value = json.decodeFromString<HtmlFileSettings>(content)
+                } catch (e: SerializationException) {
+                    file.backupCorrupt(error = e)
+                    onFailure(e)
+                } catch (e: IllegalArgumentException) {
+                    file.backupCorrupt(error = e)
+                    onFailure(e)
+                }
+            }
         } catch (e: IOException) {
             onFailure(e)
         } catch (e: SecurityException) {
-            onFailure(e)
-        } catch (e: IllegalArgumentException) {
             onFailure(e)
         }
         loaded = true

@@ -1,10 +1,11 @@
 package ai.rever.boss.theme
-
 import ai.rever.boss.components.workspaces.SettingsThemeBaseline
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.plugin.ui.BossThemes
 import ai.rever.boss.utils.SystemUtils
+import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.decodeFailure
@@ -108,7 +109,12 @@ object AppThemeSettingsManager {
             val content = if (settingsFile.exists()) settingsFile.readText() else null
             _settings.value = AppThemeSettings.decodeOrDefaults(content, SystemUtils.isWindows)
         } catch (e: SerializationException) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
             logger.warn(LogCategory.SYSTEM, "Failed to load app theme settings, using default", decodeFailure(e))
+            _settings.value = platformDefaults
+        } catch (e: IllegalArgumentException) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
+            logger.warn(LogCategory.SYSTEM, "Failed to load app theme settings, using default", error = e)
             _settings.value = platformDefaults
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load app theme settings, using default", error = e)
@@ -123,7 +129,7 @@ object AppThemeSettingsManager {
     private suspend fun save() =
         withContext(Dispatchers.IO) {
             try {
-                settingsFile.writeText(
+                settingsFile.atomicWriteText(
                     AppThemeSettings.storageJson.encodeToString(
                         AppThemeSettings.serializer(),
                         _settings.value,

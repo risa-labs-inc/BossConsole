@@ -1,6 +1,9 @@
+@file:Suppress("TooManyFunctions")
+
 package ai.rever.boss.utils
 
 import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
 import java.io.IOException
@@ -282,5 +285,149 @@ private fun Path.restrictToOwner() {
     } catch (e: SecurityException) {
         // The move itself succeeded, so the bytes are preserved; only the narrowing was refused.
         asideLogger.warn(LogCategory.FILE, "Could not restrict a corrupt-file aside to its owner", error = e)
+    }
+}
+
+const val DEFAULT_MAX_CORRUPT_BACKUPS = 5
+
+private fun pruneCorruptBackups(
+    parent: File,
+    originalName: String,
+    maxBackups: Int,
+) {
+    try {
+        val prefix = "$originalName.corrupt-"
+        val siblings = parent.listFiles { file -> file.isFile && file.name.startsWith(prefix) } ?: return
+        if (siblings.size <= maxBackups) return
+        val sorted = siblings.sortedWith(compareBy<File> { it.lastModified() }.thenBy { it.name })
+        val toDelete = sorted.take(siblings.size - maxBackups)
+        for (oldBackup in toDelete) {
+            oldBackup.delete()
+        }
+    } catch (_: Exception) {
+        // Best effort cleanup; never fail quarantine if pruning encounters an error
+    }
+}
+
+private fun resolveBackupCandidate(
+    parent: File,
+    name: String,
+    clock: () -> Long,
+): File {
+    val timestamp = clock()
+    var candidate = File(parent, "$name.corrupt-$timestamp")
+    var counter = 1
+    while (candidate.exists()) {
+        candidate = File(parent, "$name.corrupt-$timestamp-$counter")
+        counter++
+    }
+    return candidate
+}
+
+private fun copyFallbackAndClear(
+    source: File,
+    candidate: File,
+    deleteSource: (File) -> Boolean,
+    logger: ComponentLogger?,
+    category: LogCategory,
+): Boolean {
+    source.copyTo(candidate, overwrite = true)
+    if (Files.getFileAttributeView(candidate.toPath(), PosixFileAttributeView::class.java) != null) {
+        Files.setPosixFilePermissions(candidate.toPath(), OWNER_ONLY_FILE_PERMISSIONS)
+    }
+    val deleted = deleteSource(source)
+    if (!deleted) {
+        candidate.delete()
+        val activeLogger = logger ?: BossLogger.forComponent("FilePersistence")
+        activeLogger.error(
+            category,
+            "Failed to delete corrupt settings file after copy to quarantine: ${source.name}",
+        )
+    }
+    return deleted
+}
+
+/**
+ * Back up this file to a sibling `<name>.corrupt-<timestamp>` if it exists.
+ *
+ * Used when a settings or configuration file fails to deserialize. Preserves the user's
+ * damaged configuration for diagnosis and recovery, while clearing the path so that
+ * subsequent atomic saves can write clean defaults without silently destroying the old data.
+ *
+ * If the file is 0 bytes (e.g. from an interrupted non-atomic write), it contains no data
+ * to preserve, so it is deleted directly to clear the path.
+ *
+ * Note: To prevent sensitive data leakage (such as JSON payloads embedded in deserialization
+ * error messages), this function logs the exception class name rather than the raw error message.
+ *
+ * @param logger Optional logger to report quarantine events.
+ * @param category Log category (defaults to [LogCategory.SYSTEM]).
+ * @param error The exception that triggered quarantine, logged for diagnostics.
+ * @param clock Timestamp provider, injectable for collision testing.
+ * @param maxBackups Maximum number of .corrupt-* backups to retain before pruning oldest.
+ * @param move Move function, injectable for testing the copy fallback.
+ * @param deleteSource Deletion function for the original file, injectable for testing.
+ * @return The backup file if the quarantine succeeded, or null if this file did not exist,
+ *         was 0 bytes, or could not be cleared.
+ */
+@Suppress("LongParameterList", "ReturnCount", "CyclomaticComplexMethod")
+fun File.backupCorrupt(
+    logger: ComponentLogger? = null,
+    category: LogCategory = LogCategory.SYSTEM,
+    error: Throwable? = null,
+    clock: () -> Long = System::currentTimeMillis,
+    maxBackups: Int = DEFAULT_MAX_CORRUPT_BACKUPS,
+    move: (File, File) -> Unit = { src, dst ->
+        Files.move(src.toPath(), dst.toPath(), StandardCopyOption.REPLACE_EXISTING)
+    },
+    deleteSource: (File) -> Boolean = File::delete,
+): File? {
+    if (!exists() || isDirectory) return null
+    if (length() == 0L) {
+        delete()
+        return null
+    }
+    val parent = parentFile ?: return null
+
+    return try {
+        val candidate = resolveBackupCandidate(parent, name, clock)
+        try {
+            move(this, candidate)
+        } catch (_: IOException) {
+            if (!copyFallbackAndClear(this, candidate, deleteSource, logger, category)) {
+                return null
+            }
+        }
+
+        pruneCorruptBackups(parent, name, maxBackups)
+
+        val activeLogger = logger ?: BossLogger.forComponent("FilePersistence")
+        val errorType = error?.let { it::class.simpleName ?: "Throwable" } ?: "unknown"
+        activeLogger.warn(
+            category,
+            "Quarantined corrupt settings file to ${candidate.name} (error: $errorType)",
+            mapOf(
+                "original" to absolutePath,
+                "backup" to candidate.absolutePath,
+                "size" to candidate.length(),
+            ),
+        )
+        candidate
+    } catch (e: IOException) {
+        val activeLogger = logger ?: BossLogger.forComponent("FilePersistence")
+        activeLogger.error(
+            category,
+            "Failed to quarantine corrupt settings file $name",
+            error = e,
+        )
+        null
+    } catch (e: SecurityException) {
+        val activeLogger = logger ?: BossLogger.forComponent("FilePersistence")
+        activeLogger.error(
+            category,
+            "Failed to quarantine corrupt settings file $name",
+            error = e,
+        )
+        null
     }
 }

@@ -2,6 +2,7 @@ package ai.rever.boss.config
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.decodeFailure
@@ -12,6 +13,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.io.IOException
 
 /**
  * The user's persisted resource-mode preferences.
@@ -89,11 +91,34 @@ object ResourceModeSettings {
     // readText inside the runCatching, not outside it: current()'s contract is "defaults when the
     // file is absent OR unreadable", and an existing-but-unreadable file throws an IOException
     // that would escape the `by lazy` and take startup's publishToPlugins() with it.
-    private fun load(): ResourceModeSettingsData =
-        runCatching { if (settingsFile.exists()) settingsFile.readText() else null }
-            .getOrNull()
-            ?.let { decode(it) }
-            ?: ResourceModeSettingsData()
+    private fun load(): ResourceModeSettingsData {
+        if (!settingsFile.exists()) return ResourceModeSettingsData()
+        val content =
+            try {
+                settingsFile.readText()
+            } catch (e: IOException) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Could not read resource-mode settings - using defaults",
+                    mapOf("error" to (e.message ?: "unknown")),
+                )
+                null
+            } catch (e: SecurityException) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Could not read resource-mode settings - using defaults",
+                    mapOf("error" to (e.message ?: "unknown")),
+                )
+                null
+            }
+        return if (content != null) {
+            decode(content) { error ->
+                settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, error)
+            }
+        } else {
+            ResourceModeSettingsData()
+        }
+    }
 
     /**
      * Parses the settings document, falling back to defaults rather than throwing.
@@ -106,12 +131,18 @@ object ResourceModeSettings {
      * wrote - the same additive-migration hazard documented for the Supabase models in AGENTS.md,
      * where one unmodelled field emptied whole lists on installed builds.
      */
-    internal fun decode(raw: String): ResourceModeSettingsData =
+    internal fun decode(
+        raw: String,
+        onFailure: ((Throwable) -> Unit)? = null,
+    ): ResourceModeSettingsData =
         // runCatching preserves Throwable-to-defaults parity: load initializes lazy state and
         // an escaping Error would be retried on later current() calls.
         runCatching {
             json.decodeFromString(serializer, raw)
         }.getOrElse { e ->
+            if (e is SerializationException || e is IllegalArgumentException) {
+                onFailure?.invoke(e)
+            }
             if (e is SerializationException) {
                 logger.warn(
                     LogCategory.SYSTEM,

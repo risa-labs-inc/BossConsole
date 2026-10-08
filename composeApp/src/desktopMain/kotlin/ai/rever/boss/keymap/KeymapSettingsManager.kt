@@ -139,6 +139,16 @@ actual object KeymapSettingsManager {
             val defaultSettings = KeymapPresets.getBOSSDefault()
             _currentSettings.value = defaultSettings
             writeDefaultAfterCorruption(settingsFile, json, defaultSettings, logger)
+        } catch (e: IllegalArgumentException) {
+            logger.error(LogCategory.SYSTEM, "Keymap settings file is corrupt, resetting to defaults", error = e)
+            val preservedFile = settingsFile.renameAsideCorruptFile(stamp = corruptFileStamp)
+            if (preservedFile == null) {
+                logger.warn(LogCategory.SYSTEM, "Keymap settings file not moved aside; overwriting it")
+            }
+            KeymapRecoveryNotices.publish(preservedFile?.absolutePath)
+            val defaultSettings = KeymapPresets.getBOSSDefault()
+            _currentSettings.value = defaultSettings
+            writeDefaultAfterCorruption(settingsFile, json, defaultSettings, logger)
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Failed to load keymap settings, using defaults", error = e)
             _currentSettings.value = KeymapPresets.getBOSSDefault()

@@ -13,6 +13,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -354,5 +356,113 @@ class AtomicFileWriteTest {
     @Test
     fun `renameAsideCorrupt reports a name the filesystem cannot represent instead of throwing`() {
         assertFalse(File(tempDir, "bad\u0000name.json").renameAsideCorrupt())
+    }
+
+    @Test
+    fun `backupCorrupt creates timestamped backup and removes original file`() {
+        val target = File(tempDir, "broken-settings.json")
+        target.writeText("{ invalid json }")
+
+        val backup = target.backupCorrupt()
+
+        assertNotNull(backup)
+        assertFalse(target.exists(), "Original file should have been moved")
+        assertTrue(backup.exists(), "Backup file should exist")
+        assertTrue(backup.name.startsWith("broken-settings.json.corrupt-"))
+        assertEquals("{ invalid json }", backup.readText())
+    }
+
+    @Test
+    fun `backupCorrupt returns null when target does not exist or is empty`() {
+        val missing = File(tempDir, "does-not-exist.json")
+        assertNull(missing.backupCorrupt())
+
+        val empty = File(tempDir, "empty.json").apply { writeText("") }
+        assertNull(empty.backupCorrupt())
+        assertFalse(empty.exists(), "0-byte file must be deleted to clear the path")
+    }
+
+    @Test
+    fun `backupCorrupt handles filename collisions within same millisecond`() {
+        val target = File(tempDir, "collision-settings.json")
+        val fixedTime = 1700000000000L
+        target.writeText("first-broken")
+        val backup1 = target.backupCorrupt(clock = { fixedTime })
+        assertNotNull(backup1)
+        assertEquals("collision-settings.json.corrupt-$fixedTime", backup1.name)
+
+        target.writeText("second-broken")
+        val backup2 = target.backupCorrupt(clock = { fixedTime })
+        assertNotNull(backup2)
+        assertEquals("collision-settings.json.corrupt-$fixedTime-1", backup2.name)
+
+        assertTrue(backup1.exists())
+        assertTrue(backup2.exists())
+        assertEquals("first-broken", backup1.readText())
+        assertEquals("second-broken", backup2.readText())
+    }
+
+    @Test
+    fun `backupCorrupt fallback succeeds and applies owner-only permissions when move fails with IOException`() {
+        val target = File(tempDir, "locked-settings.json").apply { writeText("corrupt-bytes") }
+        val backup =
+            target.backupCorrupt(
+                move = { _, _ -> throw IOException("simulated file lock") },
+            )
+        assertNotNull(backup)
+        assertFalse(target.exists(), "Original file should have been deleted by fallback")
+        assertTrue(backup.exists())
+        assertEquals("corrupt-bytes", backup.readText())
+
+        val path = backup.toPath()
+        if (Files.getFileAttributeView(path, PosixFileAttributeView::class.java) != null) {
+            val expected = setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
+            val actual = Files.getPosixFilePermissions(path)
+            assertEquals(expected, actual, "Fallback copy must apply owner-only permissions (0600)")
+        }
+    }
+
+    @Test
+    fun `backupCorrupt fallback cleans up copy and returns null when delete fails`() {
+        val target = File(tempDir, "undeletable-settings.json").apply { writeText("corrupt-bytes") }
+        val backup =
+            target.backupCorrupt(
+                move = { _, _ -> throw IOException("simulated file lock") },
+                deleteSource = { false },
+            )
+        assertNull(backup, "Must return null when original file could not be deleted")
+        assertTrue(target.exists(), "Target file was not deleted")
+        assertEquals("corrupt-bytes", target.readText())
+        val strays = tempDir.listFiles()?.filter { it.name.startsWith("undeletable-settings.json.corrupt-") }.orEmpty()
+        assertTrue(strays.isEmpty(), "Copied candidate must be cleaned up when delete fails: $strays")
+    }
+
+    @Test
+    fun `backupCorrupt prunes older backups when exceeding retention cap`() {
+        val target = File(tempDir, "pruned-settings.json")
+        val baseTime = 1700000000000L
+        val maxBackups = 3
+
+        repeat(5) { i ->
+            target.writeText("corrupt-$i")
+            val backup =
+                target.backupCorrupt(
+                    clock = { baseTime + (i * 1000) },
+                    maxBackups = maxBackups,
+                )
+            assertNotNull(backup)
+        }
+
+        val backups =
+            tempDir
+                .listFiles()
+                ?.filter { it.name.startsWith("pruned-settings.json.corrupt-") }
+                ?.sortedBy { it.name }
+                .orEmpty()
+
+        assertEquals(maxBackups, backups.size, "Should retain at most $maxBackups backups")
+        assertEquals("corrupt-2", backups[0].readText())
+        assertEquals("corrupt-3", backups[1].readText())
+        assertEquals("corrupt-4", backups[2].readText())
     }
 }

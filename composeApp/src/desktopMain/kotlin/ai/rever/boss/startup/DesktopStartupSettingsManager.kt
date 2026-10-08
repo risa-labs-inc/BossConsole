@@ -2,9 +2,11 @@ package ai.rever.boss.startup
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.decodeFailure
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -89,8 +91,25 @@ actual object StartupSettingsManager {
                     settingsFile.parentFile?.mkdirs()
 
                     if (settingsFile.exists()) {
-                        val content = settingsFile.readText()
-                        val settings = json.decodeFromString<StartupSettings>(content)
+                        val content =
+                            try {
+                                settingsFile.readText()
+                            } catch (e: Exception) {
+                                logger.warn(LogCategory.SYSTEM, "Error reading startup settings file", error = e)
+                                return@withLock
+                            }
+                        val settings =
+                            try {
+                                json.decodeFromString<StartupSettings>(content)
+                            } catch (e: SerializationException) {
+                                settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
+                                logger.warn(LogCategory.SYSTEM, "Error loading settings", decodeFailure(e))
+                                return@withLock
+                            } catch (e: IllegalArgumentException) {
+                                settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
+                                logger.warn(LogCategory.SYSTEM, "Error decoding startup settings", error = e)
+                                return@withLock
+                            }
                         applyLoadedIfUnchanged(settings, epochAtStart)
                         logger.debug(LogCategory.SYSTEM, "Loaded settings")
                     } else {
@@ -98,9 +117,8 @@ actual object StartupSettingsManager {
                         createDefaultFile(epochAtStart)
                         logger.debug(LogCategory.SYSTEM, "Created default settings file")
                     }
-                } catch (e: SerializationException) {
-                    logger.warn(LogCategory.SYSTEM, "Error loading settings", decodeFailure(e))
-                    // Keep default settings on error
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (
                     @Suppress("TooGenericExceptionCaught") e: Exception,
                 ) {

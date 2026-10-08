@@ -1,8 +1,9 @@
 package ai.rever.boss.window
-
 import ai.rever.boss.layout.ChromeDensity
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.SystemUtils
+import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.decodeFailure
@@ -60,47 +61,90 @@ actual object WindowAppearanceSettingsManager {
      * Load settings synchronously on startup.
      * If file doesn't exist, uses platform-specific defaults and saves them.
      */
+    private fun handleCorruptFile(e: Exception) {
+        settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
+        if (e is SerializationException) {
+            logger.warn(LogCategory.SYSTEM, "Failed to load settings", decodeFailure(e))
+        } else {
+            logger.warn(LogCategory.SYSTEM, "Failed to decode settings", error = e)
+        }
+        val defaults = defaultWindowAppearanceSettings(isMacOs = SystemUtils.isMacOS)
+        _currentSettings.value = defaults
+        runCatching {
+            val content = json.encodeToString(WindowAppearanceSettings.serializer(), defaults)
+            settingsFile.atomicWriteText(content)
+        }.onFailure { err ->
+            logger.warn(LogCategory.SYSTEM, "Could not write recovered default settings file", error = err)
+        }
+    }
+
+    private fun initDefaultSettings() {
+        val defaults = getDefaultSettings()
+        _currentSettings.value = defaults
+        try {
+            val content = json.encodeToString(WindowAppearanceSettings.serializer(), defaults)
+            settingsFile.atomicWriteText(content)
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Created default settings",
+                mapOf("path" to settingsFile.absolutePath),
+            )
+        } catch (e: Exception) {
+            logger.warn(LogCategory.SYSTEM, "Could not write default settings file", error = e)
+        }
+    }
+
     private fun loadSettingsSync() {
         try {
-            if (settingsFile.exists()) {
-                val content = settingsFile.readText()
-                val loaded = json.decodeFromString<WindowAppearanceSettings>(content)
-                // A file written by an older build may need moving to this one's defaults. See
-                // WindowAppearanceMigrations - changing the defaults alone would reach new
-                // installs only, because this manager writes the whole object on every save.
-                val migrated = WindowAppearanceMigrations.migrate(loaded)
+            if (!settingsFile.exists()) {
+                initDefaultSettings()
+                return
+            }
+
+            val content =
+                try {
+                    settingsFile.readText()
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.SYSTEM, "Failed to read settings file", error = e)
+                    _currentSettings.value = defaultWindowAppearanceSettings(isMacOs = SystemUtils.isMacOS)
+                    return
+                }
+
+            val loaded =
+                try {
+                    json.decodeFromString<WindowAppearanceSettings>(content)
+                } catch (e: IllegalArgumentException) {
+                    handleCorruptFile(e)
+                    null
+                }
+
+            if (loaded != null) {
+                val migrated =
+                    try {
+                        WindowAppearanceMigrations.migrate(loaded)
+                    } catch (e: Exception) {
+                        logger.warn(LogCategory.SYSTEM, "Could not migrate settings", error = e)
+                        null
+                    }
+
                 _currentSettings.value = migrated ?: loaded
                 if (migrated != null) {
-                    // Written back immediately, so the step is not re-applied on every launch -
-                    // and so a value the user changes afterwards is never overwritten by it.
                     runCatching {
-                        settingsFile.writeText(json.encodeToString(WindowAppearanceSettings.serializer(), migrated))
+                        val serialized =
+                            json.encodeToString(WindowAppearanceSettings.serializer(), migrated)
+                        settingsFile.atomicWriteText(serialized)
                     }.onFailure { e ->
                         logger.warn(LogCategory.SYSTEM, "Could not write migrated settings", error = e)
                     }
                 }
-                logger.debug(LogCategory.SYSTEM, "Loaded settings", mapOf("path" to settingsFile.absolutePath))
-            } else {
-                // First run - create default settings file with platform-specific defaults
-                val defaults = getDefaultSettings()
-                _currentSettings.value = defaults
-
-                // Save default settings to file
-                try {
-                    val content = json.encodeToString(WindowAppearanceSettings.serializer(), defaults)
-                    settingsFile.writeText(content)
-                    logger.debug(LogCategory.SYSTEM, "Created default settings", mapOf("path" to settingsFile.absolutePath))
-                } catch (e: Exception) {
-                    logger.warn(LogCategory.SYSTEM, "Could not write default settings file", error = e)
-                }
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Loaded settings",
+                    mapOf("path" to settingsFile.absolutePath),
+                )
             }
-        } catch (e: SerializationException) {
-            logger.warn(LogCategory.SYSTEM, "Failed to load settings", decodeFailure(e))
-            // An unreadable existing file is not a fresh install. Do not apply a screen profile.
-            _currentSettings.value = defaultWindowAppearanceSettings(isMacOs = SystemUtils.isMacOS)
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load settings", error = e)
-            // An unreadable existing file is not a fresh install. Do not apply a screen profile.
             _currentSettings.value = defaultWindowAppearanceSettings(isMacOs = SystemUtils.isMacOS)
         }
     }
@@ -116,7 +160,7 @@ actual object WindowAppearanceSettingsManager {
         withContext(Dispatchers.IO) {
             try {
                 val content = json.encodeToString(WindowAppearanceSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
                 logger.debug(LogCategory.SYSTEM, "Settings saved", mapOf("path" to settingsFile.absolutePath))
             } catch (e: Exception) {
                 logger.warn(LogCategory.SYSTEM, "Failed to save settings", error = e)

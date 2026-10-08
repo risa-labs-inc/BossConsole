@@ -2,6 +2,7 @@ package ai.rever.boss.filetypes
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.decodeFailure
@@ -109,7 +110,12 @@ internal object DefaultAppsSettingsManager {
                 mapOf("promptShown" to _settings.value.promptShown),
             )
         } catch (e: SerializationException) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
             logger.warn(LogCategory.SYSTEM, "Could not read default-apps settings", decodeFailure(e))
+            _settings.value = DefaultAppsSettings()
+        } catch (e: IllegalArgumentException) {
+            settingsFile.backupCorrupt(logger, LogCategory.SYSTEM, e)
+            logger.warn(LogCategory.SYSTEM, "Could not read default-apps settings", error = e)
             _settings.value = DefaultAppsSettings()
         } catch (e: Exception) {
             // Defaults, which means the prompt may be offered again. Better than

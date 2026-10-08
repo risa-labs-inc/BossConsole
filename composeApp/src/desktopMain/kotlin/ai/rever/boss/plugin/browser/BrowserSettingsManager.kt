@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.atomicWriteText
+import ai.rever.boss.utils.backupCorrupt
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.decodeFailure
@@ -104,9 +105,13 @@ object BrowserSettingsManager {
                 }
             }
         } catch (e: SerializationException) {
+            settingsFile.backupCorrupt(logger, LogCategory.BROWSER, e)
             // Decoder messages contain the input document. Browser settings may hold custom
             // user-agent/profile values and must not copy them into the host log.
             logger.warn(LogCategory.BROWSER, "Failed to load browser settings", decodeFailure(e))
+        } catch (e: IllegalArgumentException) {
+            settingsFile.backupCorrupt(logger, LogCategory.BROWSER, e)
+            logger.warn(LogCategory.BROWSER, "Failed to load browser settings", error = e)
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Failed to load browser settings", error = e)
         }

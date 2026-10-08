@@ -148,6 +148,17 @@ object BrowserZoomSettingsManager {
                 }
                 settings = BrowserZoomSettingsData()
                 saveSettingsSync()
+            } catch (e: IllegalArgumentException) {
+                logger.error(
+                    LogCategory.BROWSER,
+                    "Zoom settings file is corrupt, resetting to defaults",
+                    error = e,
+                )
+                if (!settingsFile.renameAsideCorrupt()) {
+                    logger.warn(LogCategory.BROWSER, "Zoom settings file not moved aside; overwriting it")
+                }
+                settings = BrowserZoomSettingsData()
+                saveSettingsSync()
             } catch (e: Exception) {
                 logger.warn(LogCategory.BROWSER, "Error loading zoom settings", error = e)
                 settings = BrowserZoomSettingsData()
