@@ -173,7 +173,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           "This model's allowance cannot fit a request. Contact your BOSS administrator.",
         )
       }
-      requestBody(input, lookup.model, lookup.connection.api_type)
+      requestBody(input, lookup.model, lookup.connection.api_type, lookup.connection.base_url)
       phase = "reservation"
       const result = await deps.rpc("boss_ai_reserve", {
         p_user_id: user,
@@ -197,7 +197,12 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         throw new HttpError(429, "busy", "Too many requests for this model. Try again shortly.")
       }
       reservation = requestId
-      const body = requestBody(input, result.model, result.connection.api_type)
+      const body = requestBody(
+        input,
+        result.model,
+        result.connection.api_type,
+        result.connection.base_url,
+      )
       const url = endpoint(result.connection)
       const apiKey = upstreamKey(result.connection, deps.secret)
       // Never follow redirects with an upstream credential. Only configured servers

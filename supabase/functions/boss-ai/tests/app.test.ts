@@ -23,6 +23,9 @@ async function fixture(options: {
   apiType?: "openai_chat" | "openai_responses"
   eligible?: boolean
   eligibilityError?: boolean
+  providerRouting?: unknown
+  routingAfterPreflight?: unknown
+  baseUrl?: string
 } = {}) {
   const calls: { name: string; params: Obj }[] = []
   const requests: Request[] = []
@@ -73,12 +76,16 @@ async function fixture(options: {
             upstream_model: "private-model",
             context_length: 4096,
             max_output_tokens: 512,
+            provider_routing:
+              name === "boss_ai_reserve" && options.routingAfterPreflight !== undefined
+                ? options.routingAfterPreflight
+                : options.providerRouting ?? null,
             capabilities: options.removeToolsAfterPreflight && name === "boss_ai_lookup"
               ? ["text", "tools"]
               : ["text"],
           },
           connection: {
-            base_url: "https://upstream.example/v1",
+            base_url: options.baseUrl ?? "https://upstream.example/v1",
             api_type: options.apiType ?? "openai_chat",
             api_key_secret: options.keyName ?? "BOSS_AI_TEST",
           },
@@ -218,6 +225,44 @@ Deno.test("server-selected endpoint, model and key; actual usage settlement", as
   assert(!output.includes("private-model"))
   assertEquals(typeof JSON.parse(output).created, "number")
   assert(response.headers.get("x-request-id"))
+})
+
+Deno.test("operator provider routing reaches the upstream; callers cannot set it", async () => {
+  const routing = { order: ["cerebras", "coreweave"], allow_fallbacks: true, ignore: ["groq"] }
+  const openrouter = "https://openrouter.ai/api/v1"
+  const routed = await fixture({ providerRouting: routing, baseUrl: openrouter })
+  assertEquals((await routed.handler(routed.request(body))).status, 200)
+  assertEquals((await routed.requests[0].json()).provider, routing)
+  const caller = { ...body, provider: { order: ["attacker"] } }
+  assertEquals((await routed.handler(routed.request(caller))).status, 400)
+  assertEquals(routed.requests.length, 1)
+
+  const plain = await fixture()
+  assertEquals((await plain.handler(plain.request(body))).status, 200)
+  assertEquals("provider" in await plain.requests[0].json(), false)
+
+  for (
+    const broken of [
+      await fixture({ providerRouting: { order: ["cerebras"], extra: 1 }, baseUrl: openrouter }),
+      await fixture({ providerRouting: routing }),
+    ]
+  ) {
+    assertEquals((await broken.handler(broken.request(body))).status, 503)
+    assert(broken.calls.every((call) => call.name === "boss_ai_lookup"))
+    assertEquals(broken.requests.length, 0)
+  }
+})
+
+Deno.test("routing broken between preflight and admission refunds without dispatch", async () => {
+  const f = await fixture({
+    providerRouting: { order: ["cerebras"] },
+    routingAfterPreflight: { order: ["cerebras"], extra: true },
+    baseUrl: "https://openrouter.ai/api/v1",
+  })
+  assertEquals((await f.handler(f.request(body))).status, 503)
+  assertEquals(f.calls.map((c) => c.name), ["boss_ai_lookup", "boss_ai_reserve", "boss_ai_settle"])
+  assertEquals(f.calls.at(-1)?.params.p_tokens, 0)
+  assertEquals(f.requests.length, 0)
 })
 
 Deno.test("invalid inputs never create accounting reservations", async () => {
