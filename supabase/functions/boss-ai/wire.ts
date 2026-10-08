@@ -89,30 +89,47 @@ function functionCall(value: unknown): Obj {
 
 // Provider phrasings for a prompt over the window (OpenAI/OpenRouter, vLLM, Anthropic-style).
 const CONTEXT_ERROR =
-  /"code"\s*:\s*"context_length_exceeded"|maximum context length is \d|context length is \d+ tokens|prompt is too long: \d|exceeds the (model's )?(maximum )?context (window|length)/i
+  /\bcontext_length_exceeded\b|maximum context length is \d|context length is \d+ tokens|prompt is too long: \d|exceeds the (model's )?(maximum )?context (window|length)/i
+
+const ERROR_BODY_BYTES = 65_536
 
 // Whether an upstream rejection says the prompt exceeded the context window. Reads at most
-// 64 KiB and never surfaces the upstream text itself.
+// 64 KiB and never surfaces the upstream text itself. For a JSON error only its code and
+// message are matched, not the whole body, which can echo request content.
 export async function isUpstreamContextError(response: Response): Promise<boolean> {
   if (![400, 413, 422].includes(response.status) || !response.body) {
     await response.body?.cancel()
     return false
   }
   const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let text = ""
+  const bytes = new Uint8Array(ERROR_BODY_BYTES)
+  let size = 0
   try {
-    while (text.length < 65_536) {
+    while (size < ERROR_BODY_BYTES) {
       const { done, value } = await reader.read()
       if (done) break
-      text += decoder.decode(value, { stream: true })
+      const take = Math.min(value.length, ERROR_BODY_BYTES - size)
+      bytes.set(value.subarray(0, take), size)
+      size += take
     }
   } catch {
     return false
   } finally {
     await reader.cancel().catch(() => {})
   }
-  return CONTEXT_ERROR.test(text)
+  const text = new TextDecoder().decode(bytes.subarray(0, size))
+  let subject = text
+  try {
+    const root = JSON.parse(text)
+    const error = root && typeof root === "object" ? (root as Obj).error : undefined
+    if (error && typeof error === "object") {
+      const e = error as Obj
+      subject = [e.code, e.type, e.message].filter((v) => typeof v === "string").join("\n")
+    } else if (typeof error === "string") subject = error
+  } catch {
+    // Not JSON (or truncated): match the raw text.
+  }
+  return CONTEXT_ERROR.test(subject)
 }
 
 // Bounded reads apply even when Content-Length is absent or false.
@@ -285,6 +302,9 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
     }
     return m
   })
+  if (!Number.isSafeInteger(model.max_output_tokens) || model.max_output_tokens < 1) {
+    throw new HttpError(503, "configuration", "BOSS AI is temporarily unavailable.")
+  }
   const requested = input.max_completion_tokens ?? input.max_tokens ??
     Math.min(2000, model.max_output_tokens)
   if (!Number.isSafeInteger(requested) || Number(requested) < 1) throw invalid()
@@ -299,12 +319,13 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
     }
   }
   if (input.reasoning_effort !== undefined) {
-    if (
-      !model.capabilities.includes("reasoning") ||
-      !REASONING_EFFORTS.includes(String(input.reasoning_effort))
-    ) throw invalid()
-    if (type === "openai_responses") common.reasoning = { effort: input.reasoning_effort }
-    else common.reasoning_effort = input.reasoning_effort
+    const effort = input.reasoning_effort
+    if (typeof effort !== "string" || !REASONING_EFFORTS.includes(effort)) throw invalid()
+    // A hint agents send unconditionally; a model without the capability ignores it.
+    if (model.capabilities.includes("reasoning")) {
+      if (type === "openai_responses") common.reasoning = { effort }
+      else common.reasoning_effort = effort
+    }
   }
   // Chat Completions sampling controls; the Responses API has no equivalent.
   for (const key of ["presence_penalty", "frequency_penalty"]) {

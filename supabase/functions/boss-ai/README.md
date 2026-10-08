@@ -32,10 +32,13 @@ support every OpenAI parameter. Unknown top-level fields and function/format/ima
 rejected; JSON Schema contents remain opaque schema data. Also accepted: `reasoning_effort`
 (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`, only on models with the `reasoning` capability;
 sent as `reasoning.effort` on Responses connections), and on Chat connections `stop` (1-4 strings),
-`seed`, `presence_penalty` and `frequency_penalty` (-2 to 2). A `max_tokens` above the model's
-`max_output_tokens` is clamped to it. Reasoning usage remains included in the output count.
-Streaming always requests usage for accounting; `stream_options` accepts only `include_usage=true`
-(or an empty object), never disabling usage or adding vendor fields.
+`seed`, `presence_penalty` and `frequency_penalty` (-2 to 2); each `stop` string is at most 256
+characters. These Chat-only fields are refused on Responses connections. `reasoning_effort` is
+ignored on models without the `reasoning` capability. A `max_tokens` above the model's
+`max_output_tokens` is clamped to it, so a long answer ends with `finish_reason: length`. Reasoning
+usage remains included in the output count. Streaming always requests usage for accounting;
+`stream_options` accepts only `include_usage=true` (or an empty object), never disabling usage or
+adding vendor fields.
 
 No migration publishes a made-up model, invents an API key, or picks an allowance. Those are
 required deployment inputs. Plugin bundling is outside this change.

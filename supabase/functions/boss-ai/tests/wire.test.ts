@@ -544,10 +544,21 @@ Deno.test("standard OpenAI agent fields are accepted, validated and forwarded", 
     requestBody({ ...input, reasoning_effort: "low" }, reasoning, "openai_responses").reasoning,
     { effort: "low" },
   )
+  // Valid but on a model without the capability: ignored, not refused.
+  const plain = requestBody({ ...input, reasoning_effort: "high" }, model, "openai_chat")
+  assertEquals("reasoning_effort" in plain, false)
+  for (const cap of [0, -1, NaN]) {
+    const error = assertThrows(
+      () => requestBody(input, { ...model, max_output_tokens: cap }, "openai_chat"),
+      HttpError,
+    )
+    assertEquals(error.status, 503)
+  }
   for (
     const [extra, m, type] of [
-      [{ reasoning_effort: "high" }, model, "openai_chat"],
       [{ reasoning_effort: "max" }, reasoning, "openai_chat"],
+      [{ reasoning_effort: ["high"] }, reasoning, "openai_chat"],
+      [{ reasoning_effort: "max" }, model, "openai_chat"],
       [{ stop: [] }, model, "openai_chat"],
       [{ stop: ["a", "b", "c", "d", "e"] }, model, "openai_chat"],
       [{ stop: [""] }, model, "openai_chat"],
@@ -584,6 +595,7 @@ Deno.test("upstream context-length rejections are recognised without leaking the
   // Echoed user text and non-context limits are not mistaken for an overflow.
   for (
     const body of [
+      `{"error":{"message":"Invalid tool 'x'","param":"tools[0].description: maximum context length is 4096"}}`,
       `{"error":"bad tool schema"}`,
       `{"error":{"message":"invalid schema for tool: 'keeps the context window small'"}}`,
       `{"error":{"message":"max_tokens is too large: 99999. This model supports at most 4096 completion tokens"}}`,
@@ -592,4 +604,22 @@ Deno.test("upstream context-length rejections are recognised without leaking the
   ) assertEquals(await isUpstreamContextError(res(400, body)), false)
   assertEquals(await isUpstreamContextError(res(500, "maximum context length")), false)
   assertEquals(await isUpstreamContextError(res(403, "context length")), false)
+  for (const status of [413, 422]) {
+    assert(
+      await isUpstreamContextError(res(status, `{"error":{"code":"context_length_exceeded"}}`)),
+    )
+  }
+  // Only the first 64 KiB is read, however the upstream chunks it.
+  const late = "x".repeat(70_000) + "maximum context length is 4096"
+  assertEquals(await isUpstreamContextError(res(400, late)), false)
+  const chunked = new ReadableStream<Uint8Array>({
+    start(c) {
+      const enc = new TextEncoder()
+      c.enqueue(enc.encode(`{"error":{"message":"maximum context `))
+      c.enqueue(enc.encode(`length is 32768 tokens"}}`))
+      c.close()
+    },
+  })
+  assert(await isUpstreamContextError(new Response(chunked, { status: 400 })))
+  assertEquals(await isUpstreamContextError(new Response(null, { status: 400 })), false)
 })
