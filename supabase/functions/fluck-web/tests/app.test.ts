@@ -123,6 +123,9 @@ Deno.test("GET / renders the Fluck page with nonce'd script and style, strict CS
   assert(!/--boot-bg: #f5f5f3/.test(html), "launch background is the web chat's --surface")
   assertStringIncludes(html, "--boot-bg: #ffffff")
   assertStringIncludes(html, "--boot-bg: #1c1c1e")
+  // Sign-in and list screens too: the page background is --boot-bg, never the old portal ink.
+  assertStringIncludes(html, "html, body { margin: 0; padding: 0; background-color: var(--boot-bg);")
+  assert(!/#05070B|#F4F6FA/i.test(html), "no portal-only page background left")
   assertStringIncludes(html, 'id="signin-form"')
   assertStringIncludes(html, 'href="/api/oauth/google"')
   assertStringIncludes(html, 'href="/api/oauth/apple"')

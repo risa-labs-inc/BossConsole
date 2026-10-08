@@ -46,20 +46,22 @@ export const FLUCK_MARK =
 const FAVICON = `data:image/svg+xml,${encodeURIComponent(FLUCK_MARK)}`
 
 const STYLES = `
+  /* Surfaces are the Fluck web chat's (tokens.css --surface, --surface-2, --border), so the page,
+     Safari's bars (theme-color) and a framed chat are one colour on every screen. */
   :root {
-    --ink: #05070B; --raised: #0E141E; --line: #1C2432; --line-strong: #5A6474;
+    --ink: #1c1c1e; --raised: #2c2c2e; --line: #3a3a3c; --line-strong: #5A6474;
     --text: #E6EBF2; --text-2: #9AA6B8; --signal: #0F5BFF; --signal-text: #88A9FF;
     --ok: #3DDC97; --danger: #FF5C5C; --wash: rgba(15, 91, 255, 0.12);
   }
   @media (prefers-color-scheme: light) {
     :root {
-      --ink: #F4F6FA; --raised: #FFFFFF; --line: #DCE2EB; --line-strong: #868E9B;
+      --ink: #ffffff; --raised: #f0f0ed; --line: #e2e2dd; --line-strong: #868E9B;
       --text: #0B1220; --text-2: #4B5565; --signal: #0F5BFF; --signal-text: #0B45C2;
       --ok: #0F8A5F; --wash: rgba(15, 91, 255, 0.08);
     }
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background-color: var(--ink); color: var(--text);
+  html, body { margin: 0; padding: 0; background-color: var(--boot-bg); color: var(--text);
     font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
   /* viewport-fit=cover: keep the portal's own chrome inside the safe areas. */
   main { max-width: 560px; margin: 0 auto; padding: max(32px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
@@ -107,13 +109,11 @@ const STYLES = `
      pulsing dots, status line, on --surface), so handing over to the frame changes no pixel. Its
      tokens are scoped to #launch so they do not touch the portal's own. Keep in step with the web
      chat's splash CSS and tokens.css. */
-  /* --boot-bg also matches the theme-color metas, so Safari's bars, the page and the chat are one
-     colour. A framed chat's fluck-theme overrides it inline on <html> (applyTheme). */
+  /* --boot-bg is the page background on every screen and matches the theme-color metas, so Safari's
+     bars and the page are one colour. A framed chat's fluck-theme overrides it inline on <html>
+     (applyTheme); closing the frame restores it. */
   :root { --boot-bg: #ffffff; }
   @media (prefers-color-scheme: dark) { :root { --boot-bg: #1c1c1e; } }
-  /* Separate rules: a browser without :has() drops its whole rule, and must keep the body one. */
-  body.launching, body.viewing { background-color: var(--boot-bg); }
-  html:has(> body.launching), html:has(> body.viewing) { background-color: var(--boot-bg); }
   #launch { display: none; --surface: #ffffff; --text: #1b1d1f; --text-3: #62676d; --accent: #0f5bff; }
   @media (prefers-color-scheme: dark) { #launch { --surface: #1c1c1e; --text: #f2f2f7; --text-3: #98989f; --accent: #5b8cff; } }
   body.launching:not(.viewing) #launch { display: grid; position: fixed; inset: 0; overflow: auto;
