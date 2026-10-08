@@ -2,8 +2,11 @@ import { bearer, HttpError, mintToken, signingKey, verifyToken } from "./auth.ts
 import {
   completion,
   Connection,
+  contextTooLong,
   endpoint,
   events,
+  isUpstreamContextError,
+  LIMITS,
   Model,
   Obj,
   readJson,
@@ -154,7 +157,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       if (request.method !== "POST" || path !== "/v1/chat/completions") {
         throw new HttpError(404, "not_found", "Unknown BOSS AI endpoint.")
       }
-      const input = await readJson(request.body)
+      const input = await readJson(request.body, LIMITS.requestBytes)
       if (typeof input.model !== "string" || !/^[a-z0-9][a-z0-9._-]{0,99}$/.test(input.model)) {
         throw new HttpError(400, "invalid_model", "Choose a published BOSS model.")
       }
@@ -230,7 +233,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         throw e
       }
       if (!upstream.ok) {
-        await upstream.body?.cancel()
+        const contextError = await isUpstreamContextError(upstream)
         cleanup()
         // Known validation/auth/billing rejections can be refunded. A timeout or 5xx
         // does not prove inference did not run (a proxy can fail after forwarding).
@@ -238,6 +241,10 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           dispatched = false
         }
         audit(`upstream_status_${upstream.status}`)
+        if (contextError) {
+          audit("upstream_context_length_exceeded")
+          throw contextTooLong(result.model.context_length)
+        }
         throw new HttpError(
           upstream.status === 429 ? 503 : 502,
           "upstream_error",

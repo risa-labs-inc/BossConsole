@@ -1,9 +1,12 @@
-import { assertEquals, assertRejects, assertThrows } from "@std/assert"
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert"
 import {
   completion,
   endpoint,
   events,
+  isUpstreamContextError,
+  LIMITS,
   Model,
+  Obj,
   readJson,
   requestBody,
   StreamAdapter,
@@ -93,7 +96,14 @@ Deno.test("routing overrides and unadvertised capabilities are refused", () => {
   for (const field of ["base_url", "api_key", "provider", "n", "previous_response_id"]) {
     assertThrows(() => requestBody({ ...input, [field]: "override" }, model, "openai_chat"))
   }
-  assertThrows(() => requestBody({ ...input, max_tokens: 513 }, model, "openai_chat"))
+  // An over-cap output request is clamped, not refused; zero and non-integers still are.
+  assertEquals(
+    requestBody({ ...input, max_tokens: 513 }, model, "openai_chat").max_completion_tokens,
+    512,
+  )
+  for (const bad of [0, -1, 1.5, "100"]) {
+    assertThrows(() => requestBody({ ...input, max_tokens: bad }, model, "openai_chat"))
+  }
   assertThrows(() =>
     requestBody(
       {
@@ -394,101 +404,194 @@ Deno.test("empty and object tool arguments replay, but JSON primitives do not", 
   }
 })
 
-Deno.test("a tool description over 4 KB is rejected (BossConsole#1251)", () => {
-  const input = {
-    ...{ messages: [{ role: "user", content: "hi" }] },
-    tools: [{
-      type: "function",
-      function: {
-        name: "lookup",
-        description: "x".repeat(5_000),
-        parameters: { type: "object" },
-      },
-    }],
-  }
-  assertThrows(
-    () => requestBody(input, model, "openai_chat"),
-    HttpError,
-  )
-})
-
-Deno.test("a message with more than 128 tool_calls is rejected (BossConsole#1251)", () => {
-  const tool_calls = Array.from({ length: 129 }, (_, i) => ({
-    id: `call-${i}`,
-    type: "function",
-    function: { name: "lookup", arguments: "{}" },
-  }))
-  const input = {
-    messages: [{ role: "assistant", tool_calls }],
-  }
-  assertThrows(
-    () => requestBody(input, model, "openai_chat"),
-    HttpError,
-  )
-})
+const roomy: Model = { ...model, context_length: 10_000_000, max_output_tokens: 512 }
+const deepSchema = (depth: number) => {
+  let deep: unknown = {}
+  for (let i = 0; i < depth; i++) deep = { nested: deep }
+  return deep
+}
 
 Deno.test("structured-output schemas share bounded schema work limits", () => {
   const input = (schema: unknown) => ({
     messages: [{ role: "user", content: "hi" }],
     response_format: { type: "json_schema", json_schema: { name: "answer", schema } },
   })
-  requestBody(input({ type: "object" }), model, "openai_chat")
-  let deep: unknown = {}
-  for (let i = 0; i < 34; i++) deep = { nested: deep }
+  requestBody(input({ type: "object" }), roomy, "openai_chat")
+  requestBody(input(deepSchema(LIMITS.schemaDepth - 1)), roomy, "openai_chat")
   for (
-    const schema of [deep, { enum: Array(8193).fill("x") }, { description: "x".repeat(65536) }]
+    const schema of [
+      deepSchema(LIMITS.schemaDepth + 2),
+      { enum: Array(LIMITS.schemaNodes + 1).fill("x") },
+      { description: "x".repeat(LIMITS.schemaLength) },
+    ]
   ) {
-    assertThrows(() => requestBody(input(schema), model, "openai_chat"), HttpError)
+    assertThrows(() => requestBody(input(schema), roomy, "openai_chat"), HttpError)
   }
 })
 
-Deno.test("tool envelope accepted boundaries and schema work limits are explicit", () => {
-  const tool = (parameters: unknown, description = "x".repeat(4096)) => ({
+Deno.test("agent-sized tool lists, descriptions, schemas and transcripts are accepted", () => {
+  const tool = (parameters: unknown, description = "x".repeat(LIMITS.toolDescription)) => ({
     type: "function",
     function: { name: "lookup", description, parameters },
   })
   const input = (tools: unknown[]) => ({ messages: [{ role: "user", content: "hi" }], tools })
   const exactSchema = {
-    description: "x".repeat(65536 - JSON.stringify({ description: "" }).length),
+    description: "x".repeat(LIMITS.schemaLength - JSON.stringify({ description: "" }).length),
   }
-  requestBody(input([tool(exactSchema)]), model, "openai_chat")
-  requestBody(input(Array.from({ length: 128 }, () => tool({}))), model, "openai_chat")
-  assertThrows(
-    () => requestBody(input(Array.from({ length: 129 }, () => tool({}))), model, "openai_chat"),
-    HttpError,
+  requestBody(input([tool(exactSchema)]), roomy, "openai_chat")
+  requestBody(
+    input(Array.from({ length: LIMITS.tools }, () => tool({}, "d"))),
+    roomy,
+    "openai_chat",
   )
-  assertThrows(
-    () => requestBody(input([tool({}, "x".repeat(4097))]), model, "openai_chat"),
-    HttpError,
-  )
-  assertThrows(
-    () =>
-      requestBody(
-        input([tool({ description: exactSchema.description + "x" })]),
-        model,
-        "openai_chat",
-      ),
-    HttpError,
-  )
-  let deep: unknown = {}
-  for (let i = 0; i < 34; i++) deep = { nested: deep }
-  assertThrows(() => requestBody(input([tool(deep)]), model, "openai_chat"), HttpError)
-  assertThrows(
-    () => requestBody(input([tool({ enum: Array(8193).fill("x") })]), model, "openai_chat"),
-    HttpError,
-  )
+  const many = Array.from({ length: LIMITS.messages }, (_, i) => ({
+    role: i % 2 ? "assistant" : "user",
+    content: `turn ${i}`,
+  }))
+  requestBody({ messages: many }, roomy, "openai_chat")
   requestBody(
     {
       messages: [{
         role: "assistant",
-        tool_calls: Array.from({ length: 128 }, (_, i) => ({
+        tool_calls: Array.from({ length: LIMITS.toolCallsPerMessage }, (_, i) => ({
           id: `call-${i}`,
           type: "function",
           function: { name: "lookup", arguments: "{}" },
         })),
       }],
     },
-    model,
+    roomy,
     "openai_chat",
   )
+})
+
+Deno.test("size limits still have a ceiling one past each bound", () => {
+  const tool = (parameters: unknown, description = "d") => ({
+    type: "function",
+    function: { name: "lookup", description, parameters },
+  })
+  const input = (tools: unknown[]) => ({ messages: [{ role: "user", content: "hi" }], tools })
+  const refused = (body: Obj) => {
+    const error = assertThrows(() => requestBody(body, roomy, "openai_chat"), HttpError)
+    assertEquals(error.status, 400)
+  }
+  refused(input(Array.from({ length: LIMITS.tools + 1 }, () => tool({}))))
+  refused(input([tool({}, "x".repeat(LIMITS.toolDescription + 1))]))
+  refused(input([tool({ description: "x".repeat(LIMITS.schemaLength) })]))
+  refused(input([tool(deepSchema(LIMITS.schemaDepth + 2))]))
+  refused(input([tool({ enum: Array(LIMITS.schemaNodes + 1).fill("x") })]))
+  refused({
+    messages: Array.from({ length: LIMITS.messages + 1 }, () => ({ role: "user", content: "x" })),
+  })
+  refused({
+    messages: [{
+      role: "assistant",
+      tool_calls: Array.from({ length: LIMITS.toolCallsPerMessage + 1 }, (_, i) => ({
+        id: `call-${i}`,
+        type: "function",
+        function: { name: "lookup", arguments: "{}" },
+      })),
+    }],
+  })
+})
+
+Deno.test("a 216-tool agent request like Fluck's is accepted (the v72 128-tool cap refused it)", () => {
+  const tools = Array.from({ length: 216 }, (_, i) => ({
+    type: "function",
+    function: {
+      name: `mcp__boss__tool_${i}`,
+      description: "Does one thing. ".repeat(100),
+      parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+    },
+  }))
+  const body = requestBody(
+    {
+      model: "optimist",
+      max_tokens: 4096,
+      stream: true,
+      stream_options: { include_usage: true },
+      tools,
+      messages: [{ role: "system", content: "s".repeat(11_896) }, { role: "user", content: "hi" }],
+    },
+    { ...model, context_length: 131_072, max_output_tokens: 32_768 },
+    "openai_chat",
+  )
+  assertEquals((body.tools as unknown[]).length, 216)
+  assertEquals(body.max_completion_tokens, 4096)
+})
+
+Deno.test("standard OpenAI agent fields are accepted, validated and forwarded", () => {
+  const reasoning: Model = { ...model, capabilities: [...model.capabilities, "reasoning"] }
+  const chat = requestBody(
+    {
+      ...input,
+      reasoning_effort: "high",
+      stop: ["END"],
+      seed: 7,
+      presence_penalty: 0.5,
+      frequency_penalty: -0.5,
+    },
+    reasoning,
+    "openai_chat",
+  )
+  assertEquals(chat.reasoning_effort, "high")
+  assertEquals(chat.stop, ["END"])
+  assertEquals(chat.seed, 7)
+  assertEquals(chat.presence_penalty, 0.5)
+  assertEquals(chat.frequency_penalty, -0.5)
+  assertEquals(requestBody({ ...input, stop: "END" }, model, "openai_chat").stop, "END")
+  assertEquals(
+    requestBody({ ...input, reasoning_effort: "low" }, reasoning, "openai_responses").reasoning,
+    { effort: "low" },
+  )
+  for (
+    const [extra, m, type] of [
+      [{ reasoning_effort: "high" }, model, "openai_chat"],
+      [{ reasoning_effort: "max" }, reasoning, "openai_chat"],
+      [{ stop: [] }, model, "openai_chat"],
+      [{ stop: ["a", "b", "c", "d", "e"] }, model, "openai_chat"],
+      [{ stop: [""] }, model, "openai_chat"],
+      [{ stop: 1 }, model, "openai_chat"],
+      [{ stop: "END" }, model, "openai_responses"],
+      [{ seed: 1.5 }, model, "openai_chat"],
+      [{ seed: 1 }, model, "openai_responses"],
+      [{ presence_penalty: 3 }, model, "openai_chat"],
+      [{ frequency_penalty: "1" }, model, "openai_chat"],
+      [{ frequency_penalty: NaN }, model, "openai_chat"],
+    ] as const
+  ) {
+    assertThrows(() => requestBody({ ...input, ...extra }, m, type), HttpError)
+  }
+})
+
+Deno.test("a prompt that cannot fit the model context is a clear 400", () => {
+  const small: Model = { ...model, context_length: 1_000 }
+  const error = assertThrows(
+    () =>
+      requestBody(
+        { messages: [{ role: "user", content: "x".repeat(16 * 1_000 + 64) }] },
+        small,
+        "openai_chat",
+      ),
+    HttpError,
+  )
+  assertEquals(error.status, 400)
+  assertEquals(error.code, "context_length_exceeded")
+  assert(error.message.includes("1000 tokens"))
+  // The local check is a lower bound: a prompt that may fit goes upstream.
+  requestBody({ messages: [{ role: "user", content: "x".repeat(15_000) }] }, small, "openai_chat")
+})
+
+Deno.test("upstream context-length rejections are recognised without leaking their text", async () => {
+  const res = (status: number, body: string) => new Response(body, { status })
+  for (
+    const body of [
+      `{"error":{"message":"This endpoint's maximum context length is 32768 tokens."}}`,
+      `{"error":{"code":"context_length_exceeded"}}`,
+      `{"error":{"message":"prompt is too long: 40000 tokens > 32768 maximum"}}`,
+    ]
+  ) assert(await isUpstreamContextError(res(400, body)))
+  assertEquals(await isUpstreamContextError(res(400, `{"error":"bad tool schema"}`)), false)
+  assertEquals(await isUpstreamContextError(res(500, "maximum context length")), false)
+  assertEquals(await isUpstreamContextError(res(403, "context length")), false)
 })

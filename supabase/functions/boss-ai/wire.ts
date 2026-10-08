@@ -1,22 +1,32 @@
 import { HttpError } from "./auth.ts"
 
-const MAX_TOOL_CALLS_PER_MESSAGE = 128
-const MAX_TOOL_DESCRIPTION_LENGTH = 4_096
-const MAX_TOOL_SCHEMA_LENGTH = 65_536
+// Sized for agent clients (hundreds of tools, long transcripts). Context fit is checked
+// against the model separately; these only bound per-request parse and walk work.
+export const LIMITS = {
+  requestBytes: 16 * 1024 * 1024,
+  messages: 2_048,
+  tools: 512,
+  toolCallsPerMessage: 512,
+  toolDescription: 32_768,
+  schemaLength: 262_144,
+  schemaNodes: 32_768,
+  schemaDepth: 64,
+} as const
+const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"]
 
 function boundedToolSchema(value: unknown): void {
   const pending: { value: unknown; depth: number }[] = [{ value: object(value), depth: 0 }]
   let visited = 0
   while (pending.length) {
     const next = pending.pop()!
-    if (++visited > 8_192 || next.depth > 32) throw invalid()
+    if (++visited > LIMITS.schemaNodes || next.depth > LIMITS.schemaDepth) throw invalid()
     if (next.value && typeof next.value === "object") {
       const children = Object.values(next.value)
-      if (children.length + pending.length + visited > 8_192) throw invalid()
+      if (children.length + pending.length + visited > LIMITS.schemaNodes) throw invalid()
       for (const child of children) pending.push({ value: child, depth: next.depth + 1 })
     }
   }
-  if (JSON.stringify(value).length > MAX_TOOL_SCHEMA_LENGTH) throw invalid()
+  if (JSON.stringify(value).length > LIMITS.schemaLength) throw invalid()
 }
 
 export type Obj = Record<string, unknown>
@@ -35,6 +45,13 @@ export interface Connection {
 export function object(value: unknown): Obj {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid()
   return value as Obj
+}
+export function contextTooLong(contextLength: number): HttpError {
+  return new HttpError(
+    400,
+    "context_length_exceeded",
+    `This request is longer than the selected BOSS model's context window (${contextLength} tokens). Shorten the conversation or send fewer tools.`,
+  )
 }
 export function invalid(): HttpError {
   return new HttpError(
@@ -68,6 +85,33 @@ function functionCall(value: unknown): Obj {
     throw invalid()
   }
   return call
+}
+
+const CONTEXT_ERROR =
+  /context[ _-]?(length|window)|maximum context|too many (input )?tokens|prompt is too long|input is too long|reduce the length/i
+
+// Whether an upstream rejection says the prompt exceeded the context window. Reads at most
+// 64 KiB and never surfaces the upstream text itself.
+export async function isUpstreamContextError(response: Response): Promise<boolean> {
+  if (![400, 413, 422].includes(response.status) || !response.body) {
+    await response.body?.cancel()
+    return false
+  }
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let text = ""
+  try {
+    while (text.length < 65_536) {
+      const { done, value } = await reader.read()
+      if (done) break
+      text += decoder.decode(value, { stream: true })
+    }
+  } catch {
+    return false
+  } finally {
+    await reader.cancel().catch(() => {})
+  }
+  return CONTEXT_ERROR.test(text)
 }
 
 // Bounded reads apply even when Content-Length is absent or false.
@@ -151,9 +195,17 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
     "tool_choice",
     "parallel_tool_calls",
     "response_format",
+    "reasoning_effort",
+    "stop",
+    "seed",
+    "presence_penalty",
+    "frequency_penalty",
   ])
   if (Object.keys(input).some((key) => !allowed.has(key))) throw invalid()
-  if (!Array.isArray(input.messages) || !input.messages.length || input.messages.length > 512) {
+  if (
+    !Array.isArray(input.messages) || !input.messages.length ||
+    input.messages.length > LIMITS.messages
+  ) {
     throw invalid()
   }
   if (input.stream !== undefined && typeof input.stream !== "boolean") throw invalid()
@@ -221,7 +273,7 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
     // Keep it high enough to replay the broker's own parallel-call responses.
     if (
       Array.isArray(m.tool_calls) &&
-      m.tool_calls.length > MAX_TOOL_CALLS_PER_MESSAGE
+      m.tool_calls.length > LIMITS.toolCallsPerMessage
     ) throw invalid()
     if (Array.isArray(m.tool_calls)) m.tool_calls.forEach(functionCall)
     if (
@@ -232,11 +284,12 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
     }
     return m
   })
-  const max = input.max_completion_tokens ?? input.max_tokens ??
+  const requested = input.max_completion_tokens ?? input.max_tokens ??
     Math.min(2000, model.max_output_tokens)
-  if (!Number.isSafeInteger(max) || Number(max) < 1 || Number(max) > model.max_output_tokens) {
-    throw invalid()
-  }
+  if (!Number.isSafeInteger(requested) || Number(requested) < 1) throw invalid()
+  // Agents size their reserve from their own (possibly stale) model metadata; clamp
+  // to the configured cap instead of refusing an otherwise valid request.
+  const max = Math.min(Number(requested), model.max_output_tokens)
   const common: Obj = { model: model.upstream_model, stream: input.stream === true, store: false }
   for (const key of ["temperature", "top_p"]) {
     if (input[key] !== undefined) {
@@ -244,23 +297,49 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
       common[key] = input[key]
     }
   }
+  if (input.reasoning_effort !== undefined) {
+    if (
+      !model.capabilities.includes("reasoning") ||
+      !REASONING_EFFORTS.includes(String(input.reasoning_effort))
+    ) throw invalid()
+    if (type === "openai_responses") common.reasoning = { effort: input.reasoning_effort }
+    else common.reasoning_effort = input.reasoning_effort
+  }
+  // Chat Completions sampling controls; the Responses API has no equivalent.
+  for (const key of ["presence_penalty", "frequency_penalty"]) {
+    if (input[key] === undefined) continue
+    const v = input[key]
+    if (type !== "openai_chat" || typeof v !== "number" || !(v >= -2 && v <= 2)) throw invalid()
+    common[key] = v
+  }
+  if (input.seed !== undefined) {
+    if (type !== "openai_chat" || !Number.isSafeInteger(input.seed)) throw invalid()
+    common.seed = input.seed
+  }
+  if (input.stop !== undefined) {
+    const stop = typeof input.stop === "string" ? [input.stop] : input.stop
+    if (
+      type !== "openai_chat" || !Array.isArray(stop) || stop.length < 1 || stop.length > 4 ||
+      stop.some((v) => typeof v !== "string" || !v || v.length > 256)
+    ) throw invalid()
+    common.stop = input.stop
+  }
   let tools: Obj[] | undefined
   if (input.tools !== undefined) {
     if (
       !model.capabilities.includes("tools") || !Array.isArray(input.tools) ||
-      input.tools.length > 128
+      input.tools.length > LIMITS.tools
     ) throw invalid()
     tools = input.tools.map((value) => {
       const t = object(value)
       const f = object(t.function)
       onlyKeys(t, ["type", "function"])
       onlyKeys(f, ["name", "description", "parameters", "strict"])
-      // Host policy bounds each description/schema as well as the 128-tool list.
-      // The overall 4 MiB request-body cap remains the aggregate bound.
+      // Per-tool bounds; the request-body cap is the aggregate bound.
       if (f.description !== undefined) {
         if (
           typeof f.description !== "string" ||
-          f.description.length > MAX_TOOL_DESCRIPTION_LENGTH
+          f.description.length > LIMITS.toolDescription
         ) throw invalid()
       }
       if (f.strict !== undefined && typeof f.strict !== "boolean") throw invalid()
@@ -312,6 +391,10 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
           : format,
       }}
   }
+  // Lower bound only (no tokenizer yields fewer than 1 token per 16 characters of JSON), so
+  // a request that fits is never refused here; the upstream's own limit is mapped in app.ts.
+  const promptChars = JSON.stringify(messages).length + (tools ? JSON.stringify(tools).length : 0)
+  if (Math.ceil(promptChars / 16) > model.context_length) throw contextTooLong(model.context_length)
   if (type === "openai_chat") {
     if (tools) common.tools = tools
     if (common.stream) common.stream_options = { include_usage: true }
