@@ -124,6 +124,15 @@ extensions are forwarded. Vision accepts inline PNG/JPEG/WebP images, not remote
 endpoint must enforce the configured context limit; this is part of the upstream contract, not an
 assertion inferred from a model name.
 
+## Restricting a model to an organisation
+
+An allowance names a permission, so a model can be limited to one group without code. Give the
+group's organisation user-kind role a dedicated permission (for example `ai.optimist`) and put the
+model's only allowance on it. Members see and use the model; everyone else gets neither the catalog
+entry nor admission. Platform admins hold every permission and see it too. Organisation admins
+cannot grant `ai.*` through `grant_organisation_role_permission`; only a platform admin or an
+operator write can, so holders cannot pass a model on to another organisation.
+
 ## Allowance semantics
 
 Request validation uses a read-only, permission-filtered preflight before inserting any ledger row.
