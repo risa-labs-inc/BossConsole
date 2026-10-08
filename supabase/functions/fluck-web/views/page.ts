@@ -15,7 +15,8 @@
  * from the list pushes `?instance=<id>`, so "back" closes the frame and shows the list, and a
  * reload reopens that Fluck with a fresh ticket (the single-use ticket never enters the address
  * bar). Switching Fluck or signing out drops `?instance`. The frame talks back with
- * postMessage (onFrameMessage): hello, signed out, switch Fluck, and its title.
+ * postMessage (onFrameMessage): hello, signed out, switch Fluck, its title, and its background
+ * (fluck-theme), which the page mirrors into theme-color so Safari's bars match the chat.
  *
  * Fallback for Flucks older than framing: a framing-capable Fluck posts `fluck-hello` as soon as
  * its script starts, before redeeming the ticket. If none arrives within HELLO_TIMEOUT_MS the
@@ -92,7 +93,10 @@ const STYLES = `
   a { color: var(--signal-text); }
   /* Embedded Fluck: the frame fills the page; the Fluck's own "Switch BOSS" and Back return to the list. */
   body.viewing { overflow: hidden; }
-  body.viewing main { max-width: none; padding: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  /* Edge to edge, under the safe areas (viewport-fit=cover): the framed chat pads its own insets.
+     fitViewport() overrides the height and offset while the on-screen keyboard is up. */
+  body.viewing main { position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; margin: 0; padding: 0;
+    display: flex; flex-direction: column; overflow: hidden; }
   body.viewing header, body.viewing #notice, body.viewing .card, body.viewing footer { display: none; }
   /* Launching: until the page knows it must ask (sign-in, several Flucks, offline) it shows nothing
      but a quiet line, so opening a Fluck never flashes the portal. */
@@ -101,9 +105,11 @@ const STYLES = `
      pulsing dots, status line, on --surface), so handing over to the frame changes no pixel. Its
      tokens are scoped to #launch so they do not touch the portal's own. Keep in step with the web
      chat's splash CSS and tokens.css. */
+  /* --boot-bg also matches the theme-color metas, so Safari's bars, the page and the chat are one
+     colour. A framed chat's fluck-theme overrides it inline on <html> (applyTheme). */
   :root { --boot-bg: #ffffff; }
   @media (prefers-color-scheme: dark) { :root { --boot-bg: #1c1c1e; } }
-  body.launching, body.viewing { background-color: var(--boot-bg); }
+  html:has(> body.launching), html:has(> body.viewing), body.launching, body.viewing { background-color: var(--boot-bg); }
   #launch { display: none; --surface: #ffffff; --text: #1b1d1f; --text-3: #62676d; --accent: #0f5bff; }
   @media (prefers-color-scheme: dark) { #launch { --surface: #1c1c1e; --text: #f2f2f7; --text-3: #98989f; --accent: #5b8cff; } }
   body.launching:not(.viewing) #launch { display: grid; position: fixed; inset: 0; overflow: auto;
@@ -127,7 +133,7 @@ const STYLES = `
   @media (prefers-reduced-motion: reduce) { .splash-dots span { animation: none; opacity: .55; } }
   #viewer { display: none; flex: 1; flex-direction: column; min-height: 0; }
   body.viewing #viewer { display: flex; }
-  #fluckframe { flex: 1; width: 100%; border: 0; background-color: var(--boot-bg); }
+  #fluckframe { display: block; flex: 1; width: 100%; height: 100%; min-height: 0; margin: 0; border: 0; background-color: var(--boot-bg); }
   .providers { display: grid; gap: 10px; }
   a.btn.provider { display: flex; align-items: center; justify-content: center; gap: 10px;
     background-color: transparent; color: var(--text); border-color: var(--line-strong); }
@@ -148,6 +154,7 @@ const SCRIPT = `
   var OPEN_URL_RE = /^https:\\/\\/[A-Za-z0-9.-]+(:[0-9]{1,5})?\\/#\\/t\\/[A-Za-z0-9_-]{43}$/;
   var WANT_KEY = "fluck-web.instance", WANT_TTL_MS = 15 * 60 * 1000;
   var TITLE_MAX = 120, PAGE_TITLE = "Fluck", HELLO_TIMEOUT_MS = 8000;
+  var THEME_RE = /^#[0-9a-f]{6}$/i, THEME_DEFAULTS = { "theme-light": "#ffffff", "theme-dark": "#1c1c1e" };
   var pollTimer = null, openTimer = null, csrf = "", opening = false, requestGeneration = 0;
   var viewing = null; // { url, label } while a Fluck is framed
   var helloTimer = null; // pending top-level fallback until the frame says fluck-hello
@@ -388,6 +395,18 @@ const SCRIPT = `
     } catch (_) {}
     helloTimer = setTimeout(function () { helloTimer = null; navigateTopLevel(url); }, HELLO_TIMEOUT_MS);
   }
+  // Safari paints its status bar and toolbar from the TOP document's theme-color, which a framed
+  // chat cannot set, so the chat posts its background (fluck-theme) and the page mirrors it on both
+  // metas and on --boot-bg. null restores the defaults (the web chat's --surface per scheme).
+  function applyTheme(color) {
+    Object.keys(THEME_DEFAULTS).forEach(function (id) {
+      var m = $(id);
+      if (m) m.setAttribute("content", color || THEME_DEFAULTS[id]);
+    });
+    var root = document.documentElement.style;
+    if (color) root.setProperty("--boot-bg", color);
+    else root.removeProperty("--boot-bg");
+  }
   function cancelHelloTimer() { if (helloTimer) { clearTimeout(helloTimer); helloTimer = null; } }
   // An older Fluck refused the frame and never redeemed the ticket: open it the pre-iframe way.
   function navigateTopLevel(url) {
@@ -406,6 +425,7 @@ const SCRIPT = `
     $("fluckframe").setAttribute("src", "about:blank");
     document.body.classList.remove("viewing");
     document.title = PAGE_TITLE;
+    applyTheme(null);
     fitViewport();
     autoOpenDone = true; // do not bounce straight back into a Fluck that was just closed
     if (reload === "quiet") { show("list"); loadInstances(true).catch(function () {}); }
@@ -424,6 +444,7 @@ const SCRIPT = `
     else if (d.type === "fluck-signed-out") { dropInstanceFromUrl(); closeFrame(true); }
     else if (d.type === "fluck-switch") { dropInstanceFromUrl(); closeFrame("quiet"); }
     else if (d.type === "fluck-title" && typeof d.title === "string") document.title = frameTitle(d.title);
+    else if (d.type === "fluck-theme" && typeof d.color === "string" && THEME_RE.test(d.color)) applyTheme(d.color);
   }
   window.addEventListener("message", onFrameMessage);
   window.addEventListener("popstate", function () { if (viewing) closeFrame(true); });
@@ -490,7 +511,9 @@ export function fluckPage(model: PageModel, nonce: string): string {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta id="theme-light" name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta id="theme-dark" name="theme-color" content="#1c1c1e" media="(prefers-color-scheme: dark)">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <title>Fluck</title>

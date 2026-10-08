@@ -57,9 +57,19 @@ function harness(search: string, initialState: unknown = null) {
   const body = new FakeElement()
   if (/<body class="launching">/.test(html)) body.classList.add("launching") // as the markup ships
   const main = new FakeElement()
+  const rootVars: Record<string, string> = {}
+  const documentElement = {
+    style: {
+      setProperty: (k: string, v: string) => void (rootVars[k] = v),
+      removeProperty: (k: string) => void delete rootVars[k],
+    },
+  }
+  // The theme-color metas as the markup ships them.
+  for (const m of html.matchAll(/<meta id="(theme-[a-z]+)" name="theme-color" content="([^"]+)"/g)) get(m[1]).setAttribute("content", m[2])
   const document = {
     title: "Fluck",
     body,
+    documentElement,
     getElementById: get,
     createElement: () => new FakeElement(),
     createTextNode: (t: string) => Object.assign(new FakeElement(), { textContent: t }),
@@ -124,7 +134,7 @@ function harness(search: string, initialState: unknown = null) {
   }
   const popstate = () => { for (const fn of winListeners.popstate ?? []) fn({}) }
   const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0)) }
-  return { get, body, document, history, location, pushed, calls, frameWindow, message, popstate, settle, assigned, fire, pending }
+  return { get, rootVars, body, document, history, location, pushed, calls, frameWindow, message, popstate, settle, assigned, fire, pending }
 }
 
 async function opened() {
@@ -154,6 +164,39 @@ Deno.test("fluck-title sets a capped, single-line document title; only from the 
   h.message({ type: "fluck-title", title: "evil" }, { origin: "https://evil.example" })
   h.message({ type: "fluck-title", title: "evil" }, { source: {} })
   assertEquals(h.document.title.length, 120, "wrong origin or source ignored")
+})
+
+const themeOf = (h: ReturnType<typeof harness>) =>
+  [h.get("theme-light").getAttribute("content"), h.get("theme-dark").getAttribute("content"), h.rootVars["--boot-bg"]]
+
+Deno.test("the page ships the web chat's --surface as theme-color for each scheme, edge to edge", () => {
+  const html = fluckPage({ basePath: "", liveWindowSeconds: 90 }, "test")
+  assert(html.includes('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'))
+  assert(html.includes('<meta id="theme-light" name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">'))
+  assert(html.includes('<meta id="theme-dark" name="theme-color" content="#1c1c1e" media="(prefers-color-scheme: dark)">'))
+  assertEquals(themeOf(harness("")), ["#ffffff", "#1c1c1e", undefined])
+})
+
+Deno.test("fluck-theme from the frame sets theme-color and the backgrounds; closing the frame restores the defaults", async () => {
+  const h = await opened()
+  h.message({ type: "fluck-theme", color: "#1C1C1E" })
+  assertEquals(themeOf(h), ["#1C1C1E", "#1C1C1E", "#1C1C1E"])
+  h.message({ type: "fluck-theme", color: "#2a1f3d" }) // a persona's own background, or a scheme flip
+  assertEquals(themeOf(h), ["#2a1f3d", "#2a1f3d", "#2a1f3d"])
+  h.message({ type: "fluck-switch" })
+  assertEquals(themeOf(h), ["#ffffff", "#1c1c1e", undefined], "the list is back on the defaults")
+  h.message({ type: "fluck-theme", color: "#000000" })
+  assertEquals(themeOf(h), ["#ffffff", "#1c1c1e", undefined], "nothing framed: ignored")
+})
+
+Deno.test("fluck-theme from another origin or window, or with a bad colour, is ignored", async () => {
+  const h = await opened()
+  h.message({ type: "fluck-theme", color: "#000000" }, { origin: "https://evil.example" })
+  h.message({ type: "fluck-theme", color: "#000000" }, { source: {} })
+  for (const color of ["#fff", "red", "#1c1c1e;", "#1c1c1e ", "url(x)", "#gggggg", 0x1c1c1e, null]) {
+    h.message({ type: "fluck-theme", color })
+  }
+  assertEquals(themeOf(h), ["#ffffff", "#1c1c1e", undefined])
 })
 
 Deno.test("messages from another origin or window, or of unknown type, do not close the frame", async () => {
