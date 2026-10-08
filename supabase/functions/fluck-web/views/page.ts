@@ -61,7 +61,9 @@ const STYLES = `
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background-color: var(--ink); color: var(--text);
     font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
-  main { max-width: 560px; margin: 0 auto; padding: 32px 16px 48px; }
+  /* viewport-fit=cover: keep the portal's own chrome inside the safe areas. */
+  main { max-width: 560px; margin: 0 auto; padding: max(32px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+    max(48px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
   .brand { display: flex; align-items: center; gap: 12px; }
   .brand svg { width: 32px; height: 32px; flex: none; }
@@ -109,7 +111,9 @@ const STYLES = `
      colour. A framed chat's fluck-theme overrides it inline on <html> (applyTheme). */
   :root { --boot-bg: #ffffff; }
   @media (prefers-color-scheme: dark) { :root { --boot-bg: #1c1c1e; } }
-  html:has(> body.launching), html:has(> body.viewing), body.launching, body.viewing { background-color: var(--boot-bg); }
+  /* Separate rules: a browser without :has() drops its whole rule, and must keep the body one. */
+  body.launching, body.viewing { background-color: var(--boot-bg); }
+  html:has(> body.launching), html:has(> body.viewing) { background-color: var(--boot-bg); }
   #launch { display: none; --surface: #ffffff; --text: #1b1d1f; --text-3: #62676d; --accent: #0f5bff; }
   @media (prefers-color-scheme: dark) { #launch { --surface: #1c1c1e; --text: #f2f2f7; --text-3: #98989f; --accent: #5b8cff; } }
   body.launching:not(.viewing) #launch { display: grid; position: fixed; inset: 0; overflow: auto;
