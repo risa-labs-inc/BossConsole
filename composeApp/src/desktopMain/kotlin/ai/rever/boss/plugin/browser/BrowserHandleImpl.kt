@@ -15,6 +15,7 @@ import ai.rever.boss.plugin.api.LocalIsPanelActive
 import ai.rever.boss.plugin.window.LocalWindowId
 import ai.rever.boss.tabfullscreen.FullscreenBrowserWindow
 import ai.rever.boss.tabfullscreen.TabFullscreenStateManager
+import ai.rever.boss.utils.CleanupRunner
 import ai.rever.boss.utils.MacOSGestureHandler
 import ai.rever.boss.utils.PinchZoomAccumulator
 import ai.rever.boss.utils.WindowFocusManager
@@ -382,6 +383,7 @@ internal class BrowserHandleImpl(
 
     private val menuContextAuthority = BrowserMenuContextAuthority()
     private val disposed = AtomicBoolean(false)
+    private val handleCleanup = BrowserHandleCleanup(disposed, id)
 
     /**
      * Latched when a synchronous RPC through this browser fails because its transport is gone.
@@ -4470,138 +4472,123 @@ internal class BrowserHandleImpl(
     }
 
     override fun dispose() {
-        menuContextAuthority.invalidate()
-        audioSource.close()
-        swipeGestureClaim.close()
-        // Synchronously, and before the guard below: invokeLater would let browser.close() run
-        // first, and closing the browser under a still-attached Swing view is exactly the
-        // ordering that leaves an undecorated always-on-top window on screen with nothing able
-        // to dispose it.
-        //
-        // BOUNDED, not invokeAndWait, and copied from FullscreenBrowserWindow's own EDT hop for
-        // the same reason: disposeBrowser is a suspend function, so this can arrive off the EDT,
-        // and an unbounded block there deadlocks the moment the EDT is itself waiting on
-        // anything this thread holds. A timeout turns that into a late cleanup instead of a
-        // frozen app, and the task stays queued so the window is still disposed once the EDT
-        // frees up. On the EDT already - composition teardown - it runs inline.
-        val popOutCleanup = runCatching { closePopOutOnEdt() }
-        if (!disposed.compareAndSet(false, true)) {
-            popOutCleanup.getOrThrow()
-            return
-        }
-        try {
-            popOutCleanup.getOrThrow()
-            pageInjection.onGone()
-            // Shut the interaction bridge FIRST. Its only gate is this authority, and the
-            // collector flushes on `pagehide` — which is precisely when this runs. Closing the
-            // tracker first left a window between the two statements in which a batch arriving on
-            // the JS thread still read a non-null authority, so a tab close emitted PAGE_LEFT,
-            // TAB_CLOSED, and then clicks on a tab that was already gone: the exact race this
-            // pair exists to close. Nulling first cannot lose a visit, since closed() is guarded
-            // by its own `finished` flag and does not consult this.
-            currentPageAuthority = null
-            // Then flush the visit in progress. This is the only place a page's dwell time can be
-            // closed out when a tab is shut while still on a page — every other path ends a visit
-            // by starting the next one.
-            visitTracker.closed()
-            FullscreenBrowserWindow.exitFullscreen(browser)
-
-            // Stop co-browse capture so a disposed tab can never keep streaming.
-            coBrowseCapturing = false
-            coBrowseControlGranted = false
-            coBrowseSink = null
-            coBrowseBridge.onEvent = null
-            coBrowseScope.cancel()
-            // Same for the page event channel: a disposed tab must not deliver another event, and the
-            // sink belongs to a plugin that may itself be going away.
-            pageEventScript = null
-            pageEventBridge.onEvent = null
-            // The provider closes over `browser`, so it goes too rather than outliving the handle.
-            pageEventBridge.urlProvider = { "" }
-            pageEventScope.cancel()
-            // A pending frame-stall probe outlives the tab otherwise, and its next act is a blocking
-            // executeJavaScript against a browser that is being torn down. shutdown() not
-            // shutdownNow(), for the same reason as the context-menu executor: a round-trip already
-            // inside executeJavaScript cannot be interrupted, and the thread is daemon.
-            frameStallJob.getAndSet(null)?.cancel()
-            frameStallScope.cancel()
-            // Stops queued menu lookups from starting. A lookup already blocked inside
-            // executeJavaScript cannot be interrupted by cancellation — the delivery site
-            // checks `disposed` before handing anything back. shutdown() (not shutdownNow())
-            // for the same reason: the thread is daemon, so a wedged lookup cannot hold up
-            // exit, and interrupting it would buy nothing.
-            contextMenuScope.cancel()
-            // A pending commit follow-up outlives the tab otherwise, and its next act is a blocking
-            // round trip against a browser being torn down. shutdown() not shutdownNow(), for the
-            // reason the two above give: the thread is daemon and a call already inside JxBrowser
-            // cannot be interrupted, so interrupting would buy nothing.
-            pageInjectScope.cancel()
-            // Last of the four. Note what this ordering does NOT buy: coBrowseScope and pageEventScope
-            // were cancelled above, and cancelling a scope also cancels children that were dispatched but
-            // have not started - startCoroutineCancellable means DispatchedTask.run sees an inactive job
-            // and resumes with the cancellation instead of running the body. So the teardown queued by
-            // stopCoBrowseCapture (recordStop, setControlGuard(false)) does not run here, and did not
-            // before this change either, when both scopes were cancelled the same way on Main.
-            //
-            // Left alone rather than re-posted outside the cancelled scope: the native disposal below
-            // closes the browser after these workers drain, and capture delivery is already disabled.
-            // See [BoundedBrowserCall.shutdown] for why not shutdownNow().
-            // Drop this browser's injectors, WITHOUT unclaiming the shared callback slot - that slot
-            // belongs to BrowserInjectDispatcher on behalf of every registered injector, and removing
-            // it here would tear down another feature's hook as a side effect of this teardown.
-            //
-            // An earlier version of this comment claimed nothing leaked because the dispatcher keys its
-            // registry weakly. That was wrong: a WeakHashMap value strongly references whatever it
-            // captures, and these injectors are lambdas closing over `this` - which holds the key. So
-            // the entry pinned a whole BrowserHandleImpl per closed tab. unregister() is the fix.
-            BrowserInjectDispatcher.unregister(browser)
-            // The flags are latched SET rather than cleared: the entry has just been dropped, so a
-            // re-registration here would put an injector back on a browser that is closing. isValid is
-            // already false too, which is what stops setPageEventScript reaching this in the first place.
-            coBrowseInjectRegistered.set(true)
-            pageEventInjectRegistered.set(true)
-
-            // Unsubscribe from all events. runCatching, as in the BrowserPopupWindow handler: a
-            // browser that closed on its own reaches dispose() with the native side already gone,
-            // and a dead-transport throw here must not abort the teardown.
-            subscriptions.forEach { runCatching { it.unsubscribe() } }
-            subscriptions.clear()
-
-            // Clear listeners
-            navigationListeners.clear()
-            titleListeners.clear()
-            faviconListeners.clear()
-            loadingListeners.clear()
-            zoomListeners.clear()
-
-            // Release find-in-page state and its timers before closing the browser: a debounce that
-            // fires afterwards would search a closed object.
-            BrowserFindController.dispose(browser)
-        } finally {
-            // Unconditional, unlike the composition's token-guarded removal: the handle is gone, so
-            // there is no successor registration this could delete. Covers a handle disposed out from
-            // under a surface that is still composed - an engine generation bump does exactly that.
-            // In the finally, not the try: a throw anywhere above (a dead-transport unsubscribe,
-            // for instance) must not skip the unregister - pinning the handle for the session is the
-            // leak the BrowserClosed routing above exists to close.
-            ActiveBrowserRegistry.unregister(id)
-            BrowserTabOwnership.unbind(id)
-            // Do not turn a caller deadline into permission to close a live native call.
-            // This also covers direct plugin/window disposal and local teardown failures.
-            finishLocalBrowserDisposal(
-                detachView = {
+        handleCleanup.run(
+            teardown = { cleanup ->
+                releaseBrowserSurfaceResources(cleanup)
+                stopBrowserEventDelivery(cleanup)
+                releaseBrowserRegistrations(cleanup)
+            },
+            detachView = {
+                try {
                     currentViewState?.close()
+                } finally {
                     currentViewState = null
                     currentViewStateWindowId = null
-                },
-                requestNativeClose = { nativeDisposal.start() },
-            )
-            logger.debug(
-                LogCategory.BROWSER,
-                "Browser native disposal requested",
-                mapOf("handleId" to id),
-            )
+                }
+            },
+            requestNativeClose = { nativeDisposal.start() },
+        )
+    }
+
+    private fun releaseBrowserSurfaceResources(cleanup: CleanupRunner) {
+        cleanup.run("invalidate browser menu authority") { menuContextAuthority.invalidate() }
+        cleanup.run("release browser audio source") { audioSource.close() }
+        cleanup.run("release swipe gesture claim") { swipeGestureClaim.close() }
+        // Detach the Swing pop-out on the EDT before requesting native disposal.
+        // The existing bounded EDT hop leaves a delayed cleanup queued if needed.
+        cleanup.run("close browser pop-out") { closePopOutOnEdt() }
+        cleanup.run("retire page injection") { pageInjection.onGone() }
+        // Shut the interaction bridge FIRST. Its only gate is this authority, and the
+        // collector flushes on `pagehide` — which is precisely when this runs. Closing the
+        // tracker first left a window between the two statements in which a batch arriving on
+        // the JS thread still read a non-null authority, so a tab close emitted PAGE_LEFT,
+        // TAB_CLOSED, and then clicks on a tab that was already gone: the exact race this
+        // pair exists to close. Nulling first cannot lose a visit, since closed() is guarded
+        // by its own `finished` flag and does not consult this.
+        currentPageAuthority = null
+        // Then flush the visit in progress. This is the only place a page's dwell time can be
+        // closed out when a tab is shut while still on a page — every other path ends a visit
+        // by starting the next one.
+        cleanup.run("flush browser visit") { visitTracker.closed() }
+        cleanup.run("exit browser fullscreen") { FullscreenBrowserWindow.exitFullscreen(browser) }
+    }
+
+    private fun stopBrowserEventDelivery(cleanup: CleanupRunner) {
+        // Stop co-browse capture so a disposed tab can never keep streaming.
+        coBrowseCapturing = false
+        coBrowseControlGranted = false
+        coBrowseSink = null
+        coBrowseBridge.onEvent = null
+        cleanup.run("cancel co-browse capture") { coBrowseScope.cancel() }
+        // Same for the page event channel: a disposed tab must not deliver another event, and the
+        // sink belongs to a plugin that may itself be going away.
+        pageEventScript = null
+        pageEventBridge.onEvent = null
+        // The provider closes over `browser`, so it goes too rather than outliving the handle.
+        pageEventBridge.urlProvider = { "" }
+        cleanup.run("cancel page event delivery") { pageEventScope.cancel() }
+        // A pending frame-stall probe outlives the tab otherwise, and its next act is a blocking
+        // executeJavaScript against a browser that is being torn down. shutdown() not
+        // shutdownNow(), for the same reason as the context-menu executor: a round-trip already
+        // inside executeJavaScript cannot be interrupted, and the thread is daemon.
+        cleanup.run("cancel frame stall probe") { frameStallJob.getAndSet(null)?.cancel() }
+        cleanup.run("cancel frame stall scope") { frameStallScope.cancel() }
+        // Stops queued menu lookups from starting. A lookup already blocked inside
+        // executeJavaScript cannot be interrupted by cancellation — the delivery site
+        // checks `disposed` before handing anything back. shutdown() (not shutdownNow())
+        // for the same reason: the thread is daemon, so a wedged lookup cannot hold up
+        // exit, and interrupting it would buy nothing.
+        cleanup.run("cancel context menu delivery") { contextMenuScope.cancel() }
+        // A pending commit follow-up outlives the tab otherwise, and its next act is a blocking
+        // round trip against a browser being torn down. shutdown() not shutdownNow(), for the
+        // reason the two above give: the thread is daemon and a call already inside JxBrowser
+        // cannot be interrupted, so interrupting would buy nothing.
+        cleanup.run("cancel page injection scope") { pageInjectScope.cancel() }
+        // Last of the four. Note what this ordering does NOT buy: coBrowseScope and pageEventScope
+        // were cancelled above, and cancelling a scope also cancels children that were dispatched but
+        // have not started - startCoroutineCancellable means DispatchedTask.run sees an inactive job
+        // and resumes with the cancellation instead of running the body. So the teardown queued by
+        // stopCoBrowseCapture (recordStop, setControlGuard(false)) does not run here, and did not
+        // before this change either, when both scopes were cancelled the same way on Main.
+        //
+        // Left alone rather than re-posted outside the cancelled scope: the native disposal below
+        // closes the browser after these workers drain, and capture delivery is already disabled.
+        // See [BoundedBrowserCall.shutdown] for why not shutdownNow().
+        // Drop this browser's injectors, WITHOUT unclaiming the shared callback slot - that slot
+        // belongs to BrowserInjectDispatcher on behalf of every registered injector, and removing
+        // it here would tear down another feature's hook as a side effect of this teardown.
+        //
+        // An earlier version of this comment claimed nothing leaked because the dispatcher keys its
+        // registry weakly. That was wrong: a WeakHashMap value strongly references whatever it
+        // captures, and these injectors are lambdas closing over `this` - which holds the key. So
+        // the entry pinned a whole BrowserHandleImpl per closed tab. unregister() is the fix.
+        cleanup.run("unregister page injectors") { BrowserInjectDispatcher.unregister(browser) }
+        // The flags are latched SET rather than cleared: the entry has just been dropped, so a
+        // re-registration here would put an injector back on a browser that is closing. isValid is
+        // already false too, which is what stops setPageEventScript reaching this in the first place.
+        coBrowseInjectRegistered.set(true)
+        pageEventInjectRegistered.set(true)
+    }
+
+    private fun releaseBrowserRegistrations(cleanup: CleanupRunner) {
+        // A closed native transport must not stop release of the remaining subscriptions.
+        subscriptions.forEach { subscription ->
+            cleanup.run("unsubscribe browser event") { subscription.unsubscribe() }
         }
+        subscriptions.clear()
+
+        // Clear listeners
+        navigationListeners.clear()
+        titleListeners.clear()
+        faviconListeners.clear()
+        loadingListeners.clear()
+        zoomListeners.clear()
+
+        // Release find-in-page state and its timers before closing the browser: a debounce that
+        // fires afterwards would search a closed object.
+        cleanup.run("release find-in-page state") { BrowserFindController.dispose(browser) }
+        cleanup.run("unregister active browser") { ActiveBrowserRegistry.unregister(id) }
+        cleanup.run("unbind browser tab owner") { BrowserTabOwnership.unbind(id) }
     }
 
     companion object {

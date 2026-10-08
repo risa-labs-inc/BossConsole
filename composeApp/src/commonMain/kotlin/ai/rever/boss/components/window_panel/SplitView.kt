@@ -62,6 +62,7 @@ import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.workspace.uniqueId
 import ai.rever.boss.project.DefaultWorkingDirectory
 import ai.rever.boss.topofmind.ActiveTab
+import ai.rever.boss.utils.CleanupRunner
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -253,8 +254,9 @@ class SplitViewState(
      * silently doing nothing.
      */
     internal fun dispose() {
-        openScope.cancel()
-        htmlFileOpens.close()
+        val cleanup = CleanupRunner("SplitViewState", mapOf("windowId" to windowId))
+        cleanup.run("Deferred tab opens") { openScope.cancel() }
+        cleanup.run("HTML file open queue") { htmlFileOpens.close() }
     }
 
     /**
@@ -1484,10 +1486,11 @@ class SplitViewState(
      * - Prevents EXC_BAD_ACCESS crashes in getWindowHandle native code
      */
     fun disposeAllBrowsersBlocking() {
+        val cleanup = CleanupRunner("SplitViewState", mapOf("windowId" to windowId))
         getAllPanels().forEach { panel ->
-            panel.tabsComponent.disposeAllTabsBlocking()
+            cleanup.run("Panel browser tabs ${panel.id}") { panel.tabsComponent.disposeAllTabsBlocking() }
         }
-        disposePluginBrowsers(windowId)
+        cleanup.run("Window plugin browsers") { disposePluginBrowsers(windowId) }
     }
 
     /**

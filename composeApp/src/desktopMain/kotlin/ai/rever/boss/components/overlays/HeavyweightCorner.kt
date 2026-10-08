@@ -1,6 +1,7 @@
 package ai.rever.boss.components.overlays
 
 import ai.rever.boss.plugin.browser.LocalAwtWindow
+import ai.rever.boss.utils.CleanupRunner
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.ApplyBossWindowIcon
@@ -28,9 +29,11 @@ import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.rememberWindowState
 import kotlinx.coroutines.delay
+import java.awt.Component
 import java.awt.Dialog
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
+import java.awt.event.ComponentListener
 import javax.swing.RootPaneContainer
 import kotlin.math.roundToInt
 import java.awt.Window as AwtWindow
@@ -339,8 +342,7 @@ internal fun trackedContentPaneBounds(parent: AwtWindow?): IntArray? {
         parent?.addComponentListener(listener)
         pane?.addComponentListener(listener)
         onDispose {
-            parent?.removeComponentListener(listener)
-            pane?.removeComponentListener(listener)
+            CornerBoundsListenerCleanup.remove(parent, pane, listener)
         }
     }
 
@@ -376,6 +378,19 @@ internal fun trackedContentPaneBounds(parent: AwtWindow?): IntArray? {
     }
 
     return bounds
+}
+
+/** Both registrations belong to the same overlay, even if one native removal fails. */
+internal object CornerBoundsListenerCleanup {
+    fun remove(
+        parent: Component?,
+        pane: Component?,
+        listener: ComponentListener,
+    ) {
+        val cleanup = CleanupRunner("HeavyweightCorner")
+        cleanup.run("remove parent bounds listener") { parent?.removeComponentListener(listener) }
+        cleanup.run("remove content pane bounds listener") { pane?.removeComponentListener(listener) }
+    }
 }
 
 /**

@@ -1,6 +1,7 @@
 package ai.rever.boss.window
 
 import ai.rever.boss.components.window_panel.SplitViewStateRegistry
+import ai.rever.boss.utils.CleanupRunner
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.logging.BossLogger
@@ -13,19 +14,24 @@ private val closeLogger = BossLogger.forComponent("WindowClosePreparation")
 
 /** Shared by window close and app Quit, before Compose disposes the owning AWT window. */
 internal fun prepareWindowForClose(windowId: String) {
+    val cleanup = CleanupRunner("WindowClosePreparation", mapOf("windowId" to windowId))
     val window = WindowFocusManager.getWindow(windowId)
     if (window is Frame) {
         var needsTransitionWait = false
-        if (window.extendedState != Frame.NORMAL) {
-            closeLogger.debug(
-                LogCategory.UI,
-                "Exiting maximized state before window close",
-                mapOf("windowId" to windowId, "extendedState" to window.extendedState.toString()),
-            )
-            window.extendedState = Frame.NORMAL
-            needsTransitionWait = true
+        cleanup.run("restore maximized window") {
+            if (window.extendedState != Frame.NORMAL) {
+                closeLogger.debug(
+                    LogCategory.UI,
+                    "Exiting maximized state before window close",
+                    mapOf("windowId" to windowId, "extendedState" to window.extendedState.toString()),
+                )
+                window.extendedState = Frame.NORMAL
+                needsTransitionWait = true
+            }
         }
-        if (SystemUtils.isMacOS && exitNativeFullscreenForClose(windowId, window)) needsTransitionWait = true
+        cleanup.run("exit native fullscreen") {
+            if (SystemUtils.isMacOS && exitNativeFullscreenForClose(windowId, window)) needsTransitionWait = true
+        }
         // Preserve the existing close-path wait: both transitions are asynchronous.
         if (needsTransitionWait) runBlocking { delay(150) }
     }

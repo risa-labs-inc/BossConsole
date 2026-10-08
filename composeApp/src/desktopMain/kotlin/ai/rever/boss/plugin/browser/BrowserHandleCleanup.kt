@@ -1,0 +1,29 @@
+package ai.rever.boss.plugin.browser
+
+import ai.rever.boss.utils.CleanupRunner
+import java.util.concurrent.atomic.AtomicBoolean
+
+/** Own local teardown once, retaining view-before-native ordering after any local failure. */
+internal class BrowserHandleCleanup(
+    private val disposed: AtomicBoolean,
+    private val handleId: String,
+) {
+    fun run(
+        teardown: (CleanupRunner) -> Unit,
+        detachView: () -> Unit,
+        requestNativeClose: () -> Unit,
+    ) {
+        if (!disposed.compareAndSet(false, true)) return
+        val cleanup = CleanupRunner("BrowserHandleImpl", mapOf("handleId" to handleId))
+        try {
+            cleanup.run("release local browser resources") { teardown(cleanup) }
+        } finally {
+            // This only requests the existing owned-executor drain. It does not close native
+            // state under a running renderer call, even if a local cleanup step failed.
+            finishLocalBrowserDisposal(
+                detachView = { cleanup.run("detach browser view", detachView) },
+                requestNativeClose = { cleanup.run("request native browser disposal", requestNativeClose) },
+            )
+        }
+    }
+}

@@ -1,5 +1,6 @@
 package ai.rever.boss.window
 
+import ai.rever.boss.utils.CleanupRunner
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -68,9 +69,10 @@ internal fun MacOSApplicationLifecycle(
 
         onDispose {
             disposed = true
-            desktop.removeAppEventListener(reopenListener)
-            desktop.setQuitHandler(null)
-            if (supportsDefaultMenu) desktop.setDefaultMenuBar(null)
+            val cleanup = CleanupRunner("MacOSApplicationLifecycle")
+            cleanup.run("remove reopen listener") { desktop.removeAppEventListener(reopenListener) }
+            cleanup.run("remove quit handler") { desktop.setQuitHandler(null) }
+            if (supportsDefaultMenu) cleanup.run("remove default menu") { desktop.setDefaultMenuBar(null) }
         }
     }
 }

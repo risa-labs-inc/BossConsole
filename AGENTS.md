@@ -935,6 +935,18 @@ came from `docs/release-notes/`.
 
 ## Logging
 
+### Resource cleanup
+
+Use `ai.rever.boss.utils.CleanupRunner` for independent synchronous teardown actions
+when one plugin callback or native release failure could skip remaining cleanup.
+Claim resource ownership before callbacks, preserve release order and the owning
+thread, and keep native browser drains before releasing their profiles. The helper
+logs each failed action and continues; it does not schedule cleanup or make an owner
+idempotent. Its `destroyLifecycle` method advances after a failed pause/stop only
+when Essenty changed state, and never redelivers a destroyed lifecycle. Keep startup,
+normal actions, and cancellation from suspended operations outside this guard.
+Simple dialogs with only Compose state need no extra cleanup wrapper.
+
 Use structured logging via `BossLogger` (SLF4J backend):
 
 ```kotlin

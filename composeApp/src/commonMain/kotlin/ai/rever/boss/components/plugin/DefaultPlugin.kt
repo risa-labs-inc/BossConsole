@@ -111,6 +111,7 @@ import ai.rever.boss.services.supabase.SecretDataProviderImpl
 import ai.rever.boss.services.supabase.SupabaseDataProviderImpl
 import ai.rever.boss.services.supabase.UserManagementProviderImpl
 import ai.rever.boss.topofmind.TopOfMindStateHolder
+import ai.rever.boss.utils.CleanupRunner
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.LogSanitizer
@@ -1334,7 +1335,7 @@ class DefaultPlugin(
                     )
                 } catch (e: CancellationException) {
                     throw e
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
                     logger.error(LogCategory.SYSTEM, "Plugin teardown failed", error = e)
                 } finally {
                     withContext(NonCancellable) {
@@ -1342,24 +1343,13 @@ class DefaultPlugin(
                         // After the teardown above, so it only catches what a plugin's
                         // teardown did not remove: none of it may be served again when
                         // another window later lets go of the same id.
-                        registrations.release(registrationOwner)
-                        // Providers that registered themselves with a process-wide
-                        // singleton, or that own a coroutine, do not go away with
-                        // `pluginScope` - it is not their scope. Only the ones actually
-                        // built: see [logDataProviderDelegate].
-                        if (logDataProviderDelegate.isInitialized()) {
-                            (logDataProvider as? DisposableProvider)?.dispose()
+                        val cleanup = CleanupRunner("DefaultPlugin", mapOf("windowId" to (_windowId ?: "unknown")))
+                        cleanup.run("Window registrations") { registrations.release(registrationOwner) }
+                        try {
+                            disposeInitializedProviders(cleanup)
+                        } finally {
+                            cleanup.run("Plugin coroutine scope") { pluginScope.cancel() }
                         }
-                        if (gitDataProviderDelegate.isInitialized()) {
-                            (gitDataProvider as? DisposableProvider)?.dispose()
-                        }
-                        if (projectDataProviderDelegate.isInitialized()) {
-                            (projectDataProvider as? DisposableProvider)?.dispose()
-                        }
-                        if (splitViewOperationsDelegate.isInitialized()) {
-                            (splitViewOperations as? DisposableProvider)?.dispose()
-                        }
-                        pluginScope.cancel()
                     }
                 }
             }
@@ -1383,6 +1373,35 @@ class DefaultPlugin(
         return checkNotNull(canonical)
     }
 
+    /** Release only providers already constructed for this window. */
+    private fun disposeInitializedProviders(cleanup: CleanupRunner) {
+        // Provider-owned listeners and coroutines outlive pluginScope unless released.
+        if (logDataProviderDelegate.isInitialized()) {
+            cleanup.run("Log data provider") {
+                val provider = logDataProvider as? DisposableProvider
+                provider?.dispose()
+            }
+        }
+        if (gitDataProviderDelegate.isInitialized()) {
+            cleanup.run("Git data provider") {
+                val provider = gitDataProvider as? DisposableProvider
+                provider?.dispose()
+            }
+        }
+        if (projectDataProviderDelegate.isInitialized()) {
+            cleanup.run("Project data provider") {
+                val provider = projectDataProvider as? DisposableProvider
+                provider?.dispose()
+            }
+        }
+        if (splitViewOperationsDelegate.isInitialized()) {
+            cleanup.run("Split view operations") {
+                val provider = splitViewOperations as? DisposableProvider
+                provider?.dispose()
+            }
+        }
+    }
+
     /** Run sandbox cleanup even when plugin unloading used up its own timeout. */
     @Suppress("TooGenericExceptionCaught") // a failing plugin must not skip release bookkeeping
     private suspend fun disposeSandboxWithin(timeoutMillis: Long) {
@@ -1390,7 +1409,7 @@ class DefaultPlugin(
             withTimeout(timeoutMillis) { sandboxManager.dispose() }
         } catch (e: TimeoutCancellationException) {
             logger.error(LogCategory.SYSTEM, "Sandbox teardown exceeded its bound", error = e)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             logger.error(LogCategory.SYSTEM, "Sandbox teardown failed", error = e)
         }
     }
