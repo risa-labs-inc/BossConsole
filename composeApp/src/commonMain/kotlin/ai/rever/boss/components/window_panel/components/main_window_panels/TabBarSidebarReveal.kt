@@ -18,7 +18,7 @@ import androidx.compose.ui.unit.IntRect
  * Brief grace after leaving the 100dp retention margin, so a transient native cursor sample
  * does not dispose an interaction.
  */
-internal const val SIDEBAR_REVEAL_CLOSE_DELAY_MS = 250L
+internal const val SIDEBAR_REVEAL_CLOSE_DELAY_MS = 40L
 
 /**
  * Whether the hover drawer should be revealed.

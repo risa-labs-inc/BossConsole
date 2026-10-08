@@ -21,7 +21,7 @@ internal fun rememberSidebarRevealMotion(
 ): SidebarRevealMotion {
     val animatedProgress by animateFloatAsState(
         targetValue = if (railShown && reveal.drawerVisible) 1f else 0f,
-        animationSpec = tween(durationMillis = 180),
+        animationSpec = tween(durationMillis = 80),
         label = "sidebar-reveal",
     )
     val progress = if (reveal.drawerOpen) 1f else animatedProgress
