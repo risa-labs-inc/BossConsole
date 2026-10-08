@@ -31,12 +31,23 @@ export function generateApiKey(): string {
  * @returns Random string from the charset
  */
 function generateSecureRandomString(length: number): string {
-  const array = new Uint8Array(length)
-  crypto.getRandomValues(array)
-
+  // Rejection sampling: 62 does not divide 256 (256 = 4*62 + 8), so mapping
+  // every byte through `% CHARSET.length` overweights the first 8 charset
+  // entries by 25%. Drawing until the byte is below 248 (the largest multiple
+  // of 62 in range) makes every index exactly 4/248 likely; roughly 3% of
+  // bytes are rejected, so a 32-char key only occasionally needs a redraw.
+  const unbiasedLimit = Math.floor(256 / CHARSET.length) * CHARSET.length // 248
   let result = ""
-  for (let i = 0; i < length; i++) {
-    result += CHARSET[array[i] % CHARSET.length]
+  while (result.length < length) {
+    // Draw in batches so a run of rejected bytes cannot stretch generation
+    // into one crypto call per character.
+    const array = new Uint8Array(length * 2)
+    crypto.getRandomValues(array)
+    for (let i = 0; i < array.length && result.length < length; i++) {
+      if (array[i] < unbiasedLimit) {
+        result += CHARSET[array[i] % CHARSET.length]
+      }
+    }
   }
   return result
 }
