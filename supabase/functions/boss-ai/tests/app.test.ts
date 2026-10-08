@@ -335,22 +335,20 @@ Deno.test("an upstream context-length rejection is a clear, refunded 400", async
   assertEquals(response.status, 400)
   const output = await response.text()
   assertEquals(JSON.parse(output).error.code, "context_length_exceeded")
-  assert(output.includes("4096 tokens"))
+  assert(output.includes("context window"))
   assert(!output.includes("private-model"))
   assertEquals(f.calls.at(-1)?.params.p_tokens, 0)
   assert(f.audits.includes("upstream_context_length_exceeded"))
 })
 
-Deno.test("agent-sized request bodies up to the raised cap reach validation", async () => {
+Deno.test("agent-sized request bodies up to the raised cap are dispatched", async () => {
   const f = await fixture()
-  // 5 MiB was over the old 4 MiB cap (413); now it is read and judged against the context.
+  // 5 MiB was over the old 4 MiB cap (413).
   const response = await f.handler(
     f.request({ ...body, messages: [{ role: "user", content: "x".repeat(5 * 1024 * 1024) }] }),
   )
-  assertEquals(response.status, 400)
-  assertEquals((await response.json()).error.code, "context_length_exceeded")
-  assert(f.calls.every((call) => call.name === "boss_ai_lookup"))
-  assertEquals(f.requests.length, 0)
+  assertEquals(response.status, 200)
+  assertEquals(f.requests.length, 1)
 })
 
 Deno.test("failed dispatch and timeout are observable unknown outcomes not inferred refunds", async () => {

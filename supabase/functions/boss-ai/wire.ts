@@ -46,11 +46,11 @@ export function object(value: unknown): Obj {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid()
   return value as Obj
 }
-export function contextTooLong(contextLength: number): HttpError {
+export function contextTooLong(): HttpError {
   return new HttpError(
     400,
     "context_length_exceeded",
-    `This request is longer than the selected BOSS model's context window (${contextLength} tokens). Shorten the conversation or send fewer tools.`,
+    "This request is longer than the selected BOSS model's context window. Shorten the conversation, send fewer tools or ask for fewer output tokens.",
   )
 }
 export function invalid(): HttpError {
@@ -87,8 +87,9 @@ function functionCall(value: unknown): Obj {
   return call
 }
 
+// Provider phrasings for a prompt over the window (OpenAI/OpenRouter, vLLM, Anthropic-style).
 const CONTEXT_ERROR =
-  /context[ _-]?(length|window)|maximum context|too many (input )?tokens|prompt is too long|input is too long|reduce the length/i
+  /"code"\s*:\s*"context_length_exceeded"|maximum context length is \d|context length is \d+ tokens|prompt is too long: \d|exceeds the (model's )?(maximum )?context (window|length)/i
 
 // Whether an upstream rejection says the prompt exceeded the context window. Reads at most
 // 64 KiB and never surfaces the upstream text itself.
@@ -322,7 +323,7 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
       type !== "openai_chat" || !Array.isArray(stop) || stop.length < 1 || stop.length > 4 ||
       stop.some((v) => typeof v !== "string" || !v || v.length > 256)
     ) throw invalid()
-    common.stop = input.stop
+    common.stop = stop
   }
   let tools: Obj[] | undefined
   if (input.tools !== undefined) {
@@ -391,10 +392,6 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
           : format,
       }}
   }
-  // Lower bound only (no tokenizer yields fewer than 1 token per 16 characters of JSON), so
-  // a request that fits is never refused here; the upstream's own limit is mapped in app.ts.
-  const promptChars = JSON.stringify(messages).length + (tools ? JSON.stringify(tools).length : 0)
-  if (Math.ceil(promptChars / 16) > model.context_length) throw contextTooLong(model.context_length)
   if (type === "openai_chat") {
     if (tools) common.tools = tools
     if (common.stream) common.stream_options = { include_usage: true }

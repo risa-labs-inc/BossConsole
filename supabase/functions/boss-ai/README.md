@@ -29,102 +29,15 @@ The integration audit checked AI Gateway's `OpenAiChatFormat.buildPayload` in `W
 `model`, `max_tokens`, optional temperature, streaming with usage, tools, and complete message/tool
 history all fit the allowlist. This is a constrained Chat Completions surface, not a promise to
 support every OpenAI parameter. Unknown top-level fields and function/format/image envelopes are
-rejected; JSON Schema contents remain opaque schema data. `reasoning` is descriptive metadata for
-models that reason internally, not an exposed reasoning-effort control. Reasoning usage remains
-included in the output count regardless of that metadata. Streaming always requests usage for
-accounting; `stream_options` accepts only `include_usage=true` (or an empty object), never disabling
-usage or adding vendor fields.
-
-No migration publishes a made-up model, invents an API key, or picks an allowance. Those are
-required deployment inputs. Plugin bundling is outside this change.
-
-## Plugin-owned authentication and discovery
-
-1. Secret Manager calls `boss_ai_create_exchange_ticket()` through the existing authenticated RPC
-   API. The database derives the user from `auth.uid()` and checks `ai.use`, bans and anonymous
-   status. No caller-supplied user id is accepted.
-2. The plugin POSTs the returned ticket to `/auth/exchange`. The edge function redeems it through
-   the service-only `boss_ai_consume_exchange_ticket` RPC, then mints a five-minute AI token.
-3. The plugin GETs `/v1/provider` with that AI token. The versioned metadata supplies the provider
-   name, API base and new-user default recommendation. The plugin confines all endpoints to its
-   trusted BOSS AI scope and refuses redirects.
-4. `/v1/models` supplies permission-filtered models, capabilities, limits, defaults and allowances.
-   Inference independently enforces live authorization and usage policy.
-
-Tickets expire after 60 seconds, are stored only as SHA-256 hashes, and are consumed atomically.
-Each user may hold at most eight pending tickets; issuance removes their expired tickets. The edge
-function alone can redeem them. Ban and permission checks run again at redemption. No BOSS login
-token reaches the plugin, and no extra signing secret is required by the database. Credentials and
-account-specific catalogs stay in memory. Explicit provider/model preferences remain local and are
-never overwritten by a provider default. The stable provider id is `managed:boss-ai`; optional
-legacy shared definitions for this same provider are deduplicated.
-
-`/auth/token` remains for compatibility with already shipped host brokers. The plugin does not use
-it or require a host broker registration. The function source lives in this repository for backend
-deployment; it is not desktop runtime code.
-
-The `/v1/provider` response is:
-
-```json
-{
-  "schema": "boss-managed-provider-v1",
-  "name": "BOSS AI",
-  "brokerId": "boss-ai",
-  "baseUrl": "https://api.risaboss.com/functions/v1/boss-ai/v1",
-  "defaultForNewUsers": true
-}
-```
-
-## Server configuration example
-
-This is a template, not an automatically applied seed. Replace the upstream model and all limits
-with the approved production values; verify capabilities against the actual endpoint before setting
-`published=true`.
-
-```sql
-INSERT INTO public.boss_ai_connections
-  (id, base_url, api_key_secret, api_type)
-VALUES ('openrouter', 'https://openrouter.ai/api/v1',
-        'BOSS_AI_OPENROUTER', 'openai_chat');
-
-INSERT INTO public.boss_ai_models
-  (id, display_name, connection_id, upstream_model, capabilities,
-   context_length, max_output_tokens, published, is_default)
-VALUES ('boss-general', 'BOSS General', 'openrouter', '<upstream-model-id>',
-        ARRAY['text','tools'], 32768, 4096, false, true);
-
-INSERT INTO public.boss_ai_allowances
-  (model_id, permission_name, tokens_per_day, tokens_per_week, tokens_per_month)
-VALUES ('boss-general', 'ai.use', 100000, 500000, 2000000);
-```
-
-Repeat the model and allowance inserts to publish multiple models. Connections may use `openai_chat`
-or `openai_responses`; the base URL includes the API version prefix, not `/chat/completions` or
-`/responses`. Modify mappings in a transaction; each admitted request keeps its captured routing
-configuration. Unpublish to stop new requests. In-flight requests are allowed to finish.
-
-The Responses adapter translates client function calls, results, structured output and SSE events
-to/from Chat Completions. It requests `store=false` and disables Responses truncation. No
-upstream-hosted tools, conversation IDs, client-selected providers, redirects, or arbitrary request
-extensions are forwarded. Vision accepts inline PNG/JPEG/WebP images, not remote image URLs. The
-endpoint must enforce the configured context limit; this is part of the upstream contract, not an
-assertion inferred from a model name.
-
-## Allowance semantics
-
-Request validation uses a read-only, permission-filtered preflight before inserting any ledger row.
-Admission rechecks current policy/configuration under its lock, and the handler revalidates against
-the admitted snapshot. Normal malformed/capability-invalid requests create no ledger rows; a
-configuration change between preflight and admission can still require a zero-charge settlement.
-Admission requires READ COMMITTED so the post-lock usage recount sees earlier admissions. Other
-transaction isolation levels are refused explicitly. An effective allowance smaller than the model's
-context cannot admit even one request: preflight returns `503 misconfigured_allowance`, without a
-ledger row. This is distinct from temporary quota exhaustion (`429`).
-
-For each model, use the maximum allowance from matching permissions for each period, never the sum.
-Every configured period applies. Days, ISO weeks starting Monday, and months reset at their UTC
-calendar boundaries. Usage belongs to the request's admission period and is never reset by a
-permission change.
+rejected; JSON Schema contents remain opaque schema data. Also accepted: `reasoning_effort`
+(`none`/`minimal`/`low`/`medium`/`high`/`xhigh`, only on models with the `reasoning` capability;
+sent as `reasoning.effort` on Responses connections), and on Chat connections `stop` (1-4 strings),
+`seed`, `presence_penalty` and `frequency_penalty` (-2 to 2). A `max_tokens` above the model's
+`max_output_tokens` is clamped to it. Reasoning usage remains included in the output count.
+Streaming always requests usage for accounting; `stream_options` accepts only `include_usage=true`
+(or an empty object), never disabling usage or adding vendor fields. Every configured period
+applies. Days, ISO weeks starting Monday, and months reset at their UTC calendar boundaries. Usage
+belongs to the request's admission period and is never reset by a permission change.
 
 Admission reserves the model's entire configured context allowance, including input, output and
 reasoning. This conservative bound works across upstream tokenizers and inline images without
@@ -153,11 +66,13 @@ Timeouts retry safely because `boss_ai_settle` is first-writer-wins for a reques
 attempts emit `settlement_failed_reservation_retained`; operators must reconcile the request ledger
 by that ID. There is no automatic refund or background reconciler in this change.
 
-Tool envelopes allow at most 128 tools and 128 replayed calls per message. Per-tool descriptions are
-limited to 4,096 characters; parameter and structured-output schemas to 65,536 serialized
-characters, depth 32 and 8,192 visited values. The overall 4 MiB body cap is the aggregate limit.
-Valid signed-in sessions without AI eligibility receive 403, not a request to sign in again;
-eligibility RPC failures return 503 without minting a token.
+Limits are sized for agent clients: at most 512 tools and 512 replayed calls per message, 2,048
+messages, 32,768-character tool descriptions, and parameter/structured-output schemas of 262,144
+serialized characters, depth 64 and 32,768 visited values. The 16 MiB request body cap is the
+aggregate limit. Prompt length is judged by the model: an upstream context-length rejection is
+returned as a refunded 400 `context_length_exceeded` (the upstream text is never echoed). Valid
+signed-in sessions without AI eligibility receive 403, not a request to sign in again; eligibility
+RPC failures return 503 without minting a token.
 
 Requests are limited to four minutes, below the five-minute concurrency lease. A worker crash leaves
 the charge in place but releases its concurrency slot after the lease. Usage rows should be retained

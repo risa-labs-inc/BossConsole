@@ -243,7 +243,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         audit(`upstream_status_${upstream.status}`)
         if (contextError) {
           audit("upstream_context_length_exceeded")
-          throw contextTooLong(result.model.context_length)
+          throw contextTooLong()
         }
         throw new HttpError(
           upstream.status === 429 ? 503 : 502,

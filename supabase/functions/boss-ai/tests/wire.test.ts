@@ -539,7 +539,7 @@ Deno.test("standard OpenAI agent fields are accepted, validated and forwarded", 
   assertEquals(chat.seed, 7)
   assertEquals(chat.presence_penalty, 0.5)
   assertEquals(chat.frequency_penalty, -0.5)
-  assertEquals(requestBody({ ...input, stop: "END" }, model, "openai_chat").stop, "END")
+  assertEquals(requestBody({ ...input, stop: "END" }, model, "openai_chat").stop, ["END"])
   assertEquals(
     requestBody({ ...input, reasoning_effort: "low" }, reasoning, "openai_responses").reasoning,
     { effort: "low" },
@@ -564,22 +564,10 @@ Deno.test("standard OpenAI agent fields are accepted, validated and forwarded", 
   }
 })
 
-Deno.test("a prompt that cannot fit the model context is a clear 400", () => {
+Deno.test("prompt size within the body cap is left to the model's own context check", () => {
+  // No local token estimate: images and padded text tokenize far below their JSON size.
   const small: Model = { ...model, context_length: 1_000 }
-  const error = assertThrows(
-    () =>
-      requestBody(
-        { messages: [{ role: "user", content: "x".repeat(16 * 1_000 + 64) }] },
-        small,
-        "openai_chat",
-      ),
-    HttpError,
-  )
-  assertEquals(error.status, 400)
-  assertEquals(error.code, "context_length_exceeded")
-  assert(error.message.includes("1000 tokens"))
-  // The local check is a lower bound: a prompt that may fit goes upstream.
-  requestBody({ messages: [{ role: "user", content: "x".repeat(15_000) }] }, small, "openai_chat")
+  requestBody({ messages: [{ role: "user", content: " ".repeat(200_000) }] }, small, "openai_chat")
 })
 
 Deno.test("upstream context-length rejections are recognised without leaking their text", async () => {
@@ -589,9 +577,19 @@ Deno.test("upstream context-length rejections are recognised without leaking the
       `{"error":{"message":"This endpoint's maximum context length is 32768 tokens."}}`,
       `{"error":{"code":"context_length_exceeded"}}`,
       `{"error":{"message":"prompt is too long: 40000 tokens > 32768 maximum"}}`,
+      `{"error":{"message":"This model's maximum context length is 32768 tokens. However, you requested 40000 tokens"}}`,
+      `{"error":{"message":"Input exceeds the context window of this model"}}`,
     ]
   ) assert(await isUpstreamContextError(res(400, body)))
-  assertEquals(await isUpstreamContextError(res(400, `{"error":"bad tool schema"}`)), false)
+  // Echoed user text and non-context limits are not mistaken for an overflow.
+  for (
+    const body of [
+      `{"error":"bad tool schema"}`,
+      `{"error":{"message":"invalid schema for tool: 'keeps the context window small'"}}`,
+      `{"error":{"message":"max_tokens is too large: 99999. This model supports at most 4096 completion tokens"}}`,
+      `{"error":{"message":"too many tokens in stop sequence"}}`,
+    ]
+  ) assertEquals(await isUpstreamContextError(res(400, body)), false)
   assertEquals(await isUpstreamContextError(res(500, "maximum context length")), false)
   assertEquals(await isUpstreamContextError(res(403, "context length")), false)
 })
