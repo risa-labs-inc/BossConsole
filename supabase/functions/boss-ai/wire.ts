@@ -26,8 +26,6 @@ export interface Model {
   capabilities: string[]
   context_length: number
   max_output_tokens: number
-  /** Operator-set upstream routing (OpenRouter `provider`); never caller-supplied. */
-  provider_routing?: Obj | null
 }
 export interface Connection {
   base_url: string
@@ -240,13 +238,6 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
     throw invalid()
   }
   const common: Obj = { model: model.upstream_model, stream: input.stream === true, store: false }
-  if (model.provider_routing != null) {
-    const routing = model.provider_routing
-    if (typeof routing !== "object" || Array.isArray(routing)) {
-      throw new HttpError(503, "configuration", "BOSS AI is temporarily unavailable.")
-    }
-    common.provider = routing
-  }
   for (const key of ["temperature", "top_p"]) {
     if (input[key] !== undefined) {
       if (typeof input[key] !== "number" || !Number.isFinite(input[key])) throw invalid()
