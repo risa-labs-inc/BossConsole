@@ -88,6 +88,12 @@ export interface OrgInvite {
   revoked_at: string | null
   created_by_email: string | null
   is_live: boolean
+  /**
+   * The consume-time authority re-check, exposed separately from is_live: the inviter
+   * still holds admin over the org. False means the link stops admitting until the
+   * inviter is re-promoted -- it is NOT expired, and it can re-arm.
+   */
+  inviter_admin: boolean
 }
 
 export function getOrgDetail(actorId: string, orgId: string) {

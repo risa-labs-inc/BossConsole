@@ -335,6 +335,11 @@ function invitesCard(
     .map((role) => `<option value="${esc(role.role_id)}">${esc(role.role_name)}</option>`)
     .join("")
 
+  // is_live answers "expired or not" and drives both the status pill and
+  // whether the Revoke button renders at all. inviter_admin is the
+  // consume-time authority re-check, kept separate: a link whose inviter
+  // lost admin is not expired -- it re-arms if the inviter is re-promoted
+  // -- so it keeps its Revoke button and gets its own pill state.
   const rows = invites.length === 0
     ? '<tr><td colspan="5" class="empty">No invite links yet.</td></tr>'
     : invites.map((invite) => `
@@ -344,8 +349,10 @@ function invitesCard(
       <td>${esc(invite.role_name ?? "default role")}</td>
       <td>${esc(invite.uses)}${invite.max_uses ? ` / ${esc(invite.max_uses)}` : ""}</td>
       <td>${
-      invite.is_live
+      invite.is_live && invite.inviter_admin
         ? '<span class="pill ok">live</span>'
+        : invite.is_live
+        ? '<span class="pill warn">inviter lost admin</span>'
         : '<span class="pill warn">expired</span>'
     } ${esc(formatDate(invite.expires_at))}</td>
       <td>${

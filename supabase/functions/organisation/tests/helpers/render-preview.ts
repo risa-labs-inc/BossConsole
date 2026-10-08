@@ -160,6 +160,7 @@ const invites: OrgInvite[] = [
     revoked_at: null,
     created_by_email: "shivang@risalabs.ai",
     is_live: true,
+    inviter_admin: true,
   },
   {
     invite_id: "i2",
@@ -173,6 +174,23 @@ const invites: OrgInvite[] = [
     revoked_at: "2026-06-20T10:00:00Z",
     created_by_email: "aamer@risalabs.ai",
     is_live: false,
+    inviter_admin: true,
+  },
+  {
+    invite_id: "i3",
+    token_prefix: "qW9sT4",
+    label: "Hiring freeze",
+    role_id: null,
+    role_name: null,
+    max_uses: 20,
+    uses: 5,
+    expires_at: "2026-12-01T10:00:00Z",
+    revoked_at: null,
+    created_by_email: "aamer@risalabs.ai",
+    // Not expired, but the inviter lost admin: the link stops admitting
+    // until they are re-promoted -- its own pill state, Revoke intact.
+    is_live: true,
+    inviter_admin: false,
   },
 ]
 
