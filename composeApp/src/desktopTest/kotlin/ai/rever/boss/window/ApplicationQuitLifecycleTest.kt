@@ -3,8 +3,89 @@ package ai.rever.boss.window
 import java.awt.desktop.QuitResponse
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 
 class ApplicationQuitLifecycleTest {
+    @Test
+    fun failedComposeDisposalStillAcknowledgesNativeQuitBeforeProcessExit() {
+        val events = mutableListOf<String>()
+        val lifecycle = ApplicationQuitLifecycle()
+        val failure = NoClassDefFoundError("plugin disposal classloader closed")
+        val thrown =
+            assertFailsWith<NoClassDefFoundError> {
+                lifecycle.runApplication(terminate = { events.add("exit $it") }) {
+                    lifecycle.requestQuit(RecordingQuitResponse("native", events)) {
+                        events.add("exit composition requested")
+                    }
+                    events.add("composition disposal attempted")
+                    throw failure
+                }
+            }
+        assertSame(failure, thrown)
+        assertEquals(
+            listOf("exit composition requested", "composition disposal attempted", "native quit", "exit 1"),
+            events,
+        )
+        lifecycle.completeQuit()
+        assertEquals(4, events.size, "Native completion must remain once-only after failed disposal")
+    }
+
+    @Test
+    fun manualQuitWithoutNativeResponseStillExitsAfterFailedComposeDisposal() {
+        val events = mutableListOf<String>()
+        val lifecycle = ApplicationQuitLifecycle()
+        assertFailsWith<IllegalStateException> {
+            lifecycle.runApplication(terminate = { events.add("exit $it") }) {
+                lifecycle.closeApplication(
+                    windowIds = emptyList(),
+                    prepareWindow = { error("There are no windows") },
+                    exitApplication = { events.add("exit composition requested") },
+                )
+                error("onDispose failed")
+            }
+        }
+        assertEquals(listOf("exit composition requested", "exit 1"), events)
+    }
+
+    @Test
+    fun failedDisposalCompletesNativeRequestRetainedBeforeUiDispatch() {
+        val events = mutableListOf<String>()
+        val lifecycle = ApplicationQuitLifecycle()
+        assertFailsWith<IllegalStateException> {
+            lifecycle.runApplication(terminate = { events.add("exit $it") }) {
+                lifecycle.retainResponse(RecordingQuitResponse("queued", events))
+                events.add("composition disposal attempted")
+                error("onDispose failed before the queued UI task ran")
+            }
+        }
+        assertEquals(listOf("composition disposal attempted", "queued quit", "exit 1"), events)
+    }
+
+    @Test
+    fun applicationFailureBeforeQuitStillPropagatesWithoutProcessTermination() {
+        val lifecycle = ApplicationQuitLifecycle()
+        val failure = IllegalStateException("application failed before Quit")
+        val thrown =
+            assertFailsWith<IllegalStateException> {
+                lifecycle.runApplication(terminate = { error("The crash handler must receive this failure") }) {
+                    throw failure
+                }
+            }
+        assertSame(failure, thrown)
+    }
+
+    @Test
+    fun normalApplicationReturnCompletesQuitBeforeSuccessfulProcessExit() {
+        val events = mutableListOf<String>()
+        val lifecycle = ApplicationQuitLifecycle()
+        lifecycle.runApplication(terminate = { events.add("exit $it") }) {
+            lifecycle.retainResponse(RecordingQuitResponse("native", events))
+            events.add("composition disposed")
+        }
+        assertEquals(listOf("composition disposed", "native quit", "exit 0"), events)
+    }
+
     @Test
     fun repeatedNativeRequestsRemainPendingAndCloseCompositionsOnce() {
         val events = mutableListOf<String>()

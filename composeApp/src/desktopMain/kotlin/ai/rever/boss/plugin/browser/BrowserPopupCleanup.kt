@@ -11,16 +11,32 @@ internal class BrowserPopupCleanup(
     private val disposeWindow: () -> Unit,
     private val closeBrowser: () -> Unit,
 ) {
-    private val closed = AtomicBoolean(false)
+    private val closing = AtomicBoolean(false)
+    private var pendingSubscriptions: List<() -> Unit>? = null
+    private var viewDetached = false
+    private var windowDisposed = false
+    private var browserClosed = false
 
     fun close() {
-        if (!closed.compareAndSet(false, true)) return
+        if (!closing.compareAndSet(false, true)) return
         val cleanup = CleanupRunner("BrowserPopupWindow", category = LogCategory.BROWSER)
-        cleanup.run("release popup subscriptions") {
-            unsubscribe().forEach { release -> cleanup.run("unsubscribe popup event", release) }
+        try {
+            releaseSubscriptions(cleanup)
+            // Keep failed releases retryable, while successful releases stay once-only.
+            // Each attempt preserves view-before-window-before-native ownership ordering.
+            if (!viewDetached) viewDetached = cleanup.run("detach popup browser view", detachView)
+            if (!windowDisposed) windowDisposed = cleanup.run("dispose popup window", disposeWindow)
+            if (!browserClosed) browserClosed = cleanup.run("close popup browser", closeBrowser)
+        } finally {
+            closing.set(false)
         }
-        cleanup.run("detach popup browser view", detachView)
-        cleanup.run("dispose popup window", disposeWindow)
-        cleanup.run("close popup browser", closeBrowser)
+    }
+
+    private fun releaseSubscriptions(cleanup: CleanupRunner) {
+        if (pendingSubscriptions == null) {
+            cleanup.run("capture popup subscriptions") { pendingSubscriptions = unsubscribe() }
+        }
+        val pending = pendingSubscriptions ?: return
+        pendingSubscriptions = pending.filterNot { release -> cleanup.run("unsubscribe popup event", release) }
     }
 }

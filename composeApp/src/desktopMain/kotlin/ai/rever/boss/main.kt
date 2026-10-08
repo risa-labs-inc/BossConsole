@@ -483,290 +483,297 @@ fun main(rawArgs: Array<String>) {
     // the entire disk. Project indexing belongs to the editor plugin's project lifecycle.
     // Phase 8: Compose Application Entry & Window Loop
     // -------------------------------------------------------------------------
-    application(exitProcessOnExit = false) {
-        var quitting by remember { mutableStateOf(false) }
-        val quitApplication: () -> Unit = {
-            if (!quitting) {
-                quitting = true
-                // Preserve the normal window-close preparation on native Quit too.
-                quitLifecycle.closeApplication(
-                    windowIds = WindowManager.windows.map { it.id },
-                    prepareWindow = ::prepareWindowForClose,
-                    exitApplication = { exitApplication() },
-                )
+    quitLifecycle.runApplication(terminate = ::exitProcess) {
+        application(exitProcessOnExit = false) {
+            var quitting by remember { mutableStateOf(false) }
+            val quitApplication: () -> Unit = {
+                if (!quitting) {
+                    quitting = true
+                    // Preserve the normal window-close preparation on native Quit too.
+                    quitLifecycle.closeApplication(
+                        windowIds = WindowManager.windows.map { it.id },
+                        prepareWindow = ::prepareWindowForClose,
+                        exitApplication = { exitApplication() },
+                    )
+                }
             }
-        }
-        val updateCoordinator = remember { UpdateCoordinator.instance }
-        LaunchedEffect(Unit) { updateCoordinator.ensureStarted() }
-        // Provide a custom WindowExceptionHandlerFactory that intercepts plugin crashes
-        // during composition. Compose's default factory shows an error dialog and disposes
-        // the window, which bypasses our UncaughtExceptionHandler-based interceptor.
-        @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
-        val defaultExceptionHandlerFactory = LocalWindowExceptionHandlerFactory.current
+            val updateCoordinator = remember { UpdateCoordinator.instance }
+            LaunchedEffect(Unit) { updateCoordinator.ensureStarted() }
+            // Provide a custom WindowExceptionHandlerFactory that intercepts plugin crashes
+            // during composition. Compose's default factory shows an error dialog and disposes
+            // the window, which bypasses our UncaughtExceptionHandler-based interceptor.
+            @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+            val defaultExceptionHandlerFactory = LocalWindowExceptionHandlerFactory.current
 
-        // Shared across windows on purpose: a corrupted scene tends to throw from
-        // whichever window repaints next, and the question being asked is "is this
-        // app still rendering?", not "is this window still rendering?".
-        val renderCrashPolicy =
-            remember {
-                ai.rever.boss.crash
-                    .RenderCrashPolicy()
-            }
+            // Shared across windows on purpose: a corrupted scene tends to throw from
+            // whichever window repaints next, and the question being asked is "is this
+            // app still rendering?", not "is this window still rendering?".
+            val renderCrashPolicy =
+                remember {
+                    ai.rever.boss.crash
+                        .RenderCrashPolicy()
+                }
 
-        @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
-        val pluginAwareExceptionHandlerFactory =
-            remember(defaultExceptionHandlerFactory) {
-                object : WindowExceptionHandlerFactory {
-                    override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler {
-                        val defaultHandler = defaultExceptionHandlerFactory.exceptionHandler(window)
-                        return WindowExceptionHandler { throwable ->
-                            val pluginId =
-                                PluginCrashInterceptor.attributeToPlugin(throwable)
-                            // Not computed under an OOM. Blame walks the stack and
-                            // may call into the plugin manager, which allocates —
-                            // and a fatal heap is escalated regardless, so the
-                            // answer could not change the route anyway.
-                            val blamedPluginId =
-                                if (pluginId != null || throwable.hasFatalCause()) {
-                                    null
-                                } else {
-                                    PluginCrashInterceptor.blameFor(throwable)
-                                }
-                            when (decideWindowExceptionRoute(throwable, pluginId, renderCrashPolicy, blamedPluginId)) {
-                                WindowExceptionRoute.PluginHandled -> {
-                                    logger.warn(
-                                        LogCategory.SYSTEM,
-                                        "Compose exception intercepted for plugin",
-                                        mapOf(
-                                            "pluginId" to pluginId.orEmpty(),
-                                            "errorType" to throwable.javaClass.simpleName,
-                                        ),
-                                    )
-                                    PluginCrashInterceptor.tryHandle(pluginId.orEmpty(), throwable)
-                                }
-
-                                WindowExceptionRoute.QuarantinePlugin -> {
-                                    quarantineBlamedPlugin(blamedPluginId.orEmpty(), throwable)
-                                }
-
-                                WindowExceptionRoute.Contain -> {
-                                    containRenderFault(throwable, renderCrashPolicy)
-                                }
-
-                                WindowExceptionRoute.Escalate -> {
-                                    logger.error(
-                                        LogCategory.UI,
-                                        "Render exception is not containable - escalating to the default handler",
-                                        mapOf(
-                                            "errorType" to throwable.javaClass.simpleName,
-                                            "recentFailures" to renderCrashPolicy.recentFailureCount().toString(),
-                                        ),
+            @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+            val pluginAwareExceptionHandlerFactory =
+                remember(defaultExceptionHandlerFactory) {
+                    object : WindowExceptionHandlerFactory {
+                        override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler {
+                            val defaultHandler = defaultExceptionHandlerFactory.exceptionHandler(window)
+                            return WindowExceptionHandler { throwable ->
+                                val pluginId =
+                                    PluginCrashInterceptor.attributeToPlugin(throwable)
+                                // Not computed under an OOM. Blame walks the stack and
+                                // may call into the plugin manager, which allocates —
+                                // and a fatal heap is escalated regardless, so the
+                                // answer could not change the route anyway.
+                                val blamedPluginId =
+                                    if (pluginId != null || throwable.hasFatalCause()) {
+                                        null
+                                    } else {
+                                        PluginCrashInterceptor.blameFor(throwable)
+                                    }
+                                val route =
+                                    decideWindowExceptionRoute(
                                         throwable,
+                                        pluginId,
+                                        renderCrashPolicy,
+                                        blamedPluginId,
                                     )
-                                    defaultHandler.onException(throwable)
+                                when (route) {
+                                    WindowExceptionRoute.PluginHandled -> {
+                                        logger.warn(
+                                            LogCategory.SYSTEM,
+                                            "Compose exception intercepted for plugin",
+                                            mapOf(
+                                                "pluginId" to pluginId.orEmpty(),
+                                                "errorType" to throwable.javaClass.simpleName,
+                                            ),
+                                        )
+                                        PluginCrashInterceptor.tryHandle(pluginId.orEmpty(), throwable)
+                                    }
+
+                                    WindowExceptionRoute.QuarantinePlugin -> {
+                                        quarantineBlamedPlugin(blamedPluginId.orEmpty(), throwable)
+                                    }
+
+                                    WindowExceptionRoute.Contain -> {
+                                        containRenderFault(throwable, renderCrashPolicy)
+                                    }
+
+                                    WindowExceptionRoute.Escalate -> {
+                                        logger.error(
+                                            LogCategory.UI,
+                                            "Render exception is not containable - escalating to the default handler",
+                                            mapOf(
+                                                "errorType" to throwable.javaClass.simpleName,
+                                                "recentFailures" to renderCrashPolicy.recentFailureCount().toString(),
+                                            ),
+                                            throwable,
+                                        )
+                                        defaultHandler.onException(throwable)
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
-        @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
-        CompositionLocalProvider(
-            LocalWindowExceptionHandlerFactory provides pluginAwareExceptionHandlerFactory,
-        ) {
-            // State for Chromium download
-            var isDownloadingChromium by remember { mutableStateOf(chromiumNeedsDownload) }
-            // A windowless relaunch also defers first-time engine setup until a Dock request.
-            var windowRequested by remember { mutableStateOf(!startWithoutWindow) }
-            var downloadProgress by remember {
-                mutableStateOf(ChromiumAutoDownloader.DownloadProgress(0, 0))
-            }
-            var restartingAfterDownload by remember { mutableStateOf(false) }
+            @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+            CompositionLocalProvider(
+                LocalWindowExceptionHandlerFactory provides pluginAwareExceptionHandlerFactory,
+            ) {
+                // State for Chromium download
+                var isDownloadingChromium by remember { mutableStateOf(chromiumNeedsDownload) }
+                // A windowless relaunch also defers first-time engine setup until a Dock request.
+                var windowRequested by remember { mutableStateOf(!startWithoutWindow) }
+                var downloadProgress by remember {
+                    mutableStateOf(ChromiumAutoDownloader.DownloadProgress(0, 0))
+                }
+                var restartingAfterDownload by remember { mutableStateOf(false) }
 
-            if (SystemUtils.isMacOS) {
-                MacOSApplicationLifecycle(
-                    onReopen = {
-                        if (!quitting) {
-                            windowRequested = true
-                            if (!isDownloadingChromium) windowLifecycle.reopen()
-                        }
-                    },
-                    onNewWindow = {
-                        if (!quitting) {
-                            windowRequested = true
-                            if (!isDownloadingChromium) WindowManager.createNewWindow()
-                        }
-                    },
-                    onQuit = { response -> quitLifecycle.requestQuit(response, quitApplication) },
-                    retainQuitResponse = quitLifecycle::retainResponse,
-                )
-                LaunchedEffect(Unit) {
-                    updateCoordinator.installAutomaticUpdatesWhenWindowless(
-                        windowsOpen =
-                            snapshotFlow {
-                                WindowManager.windowCount > 0 || (isDownloadingChromium && windowRequested)
-                            },
-                        canRestart = {
-                            !quitting && !(isDownloadingChromium && windowRequested) && WindowManager.windowCount == 0
+                if (SystemUtils.isMacOS) {
+                    MacOSApplicationLifecycle(
+                        onReopen = {
+                            if (!quitting) {
+                                windowRequested = true
+                                if (!isDownloadingChromium) windowLifecycle.reopen()
+                            }
                         },
-                        quitForUpdate = quitApplication,
+                        onNewWindow = {
+                            if (!quitting) {
+                                windowRequested = true
+                                if (!isDownloadingChromium) WindowManager.createNewWindow()
+                            }
+                        },
+                        onQuit = { response -> quitLifecycle.requestQuit(response, quitApplication) },
+                        retainQuitResponse = quitLifecycle::retainResponse,
                     )
-                }
-            }
-
-            // The engine is on disk. Packaged macOS relaunches instead of booting it here: loading
-            // it with AppKit running crashed fresh installs (see onEngineDownloadComplete).
-            val onEngineDownloaded = {
-                ChromiumBootstrap.onEngineDownloadComplete(
-                    onRelaunching = { restartingAfterDownload = true },
-                    bootInProcess = {
-                        restartingAfterDownload = false
-                        // Download complete - create window and proceed
-                        WindowManager.createNewWindow()
-                        // The pre-warm was skipped at startup because the engine
-                        // was missing; now that it is installed, warm it so the
-                        // first tab does not pay the full boot.
-                        //
-                        // force, because it was skipped for a SECOND reason this
-                        // comment did not know about: the unforced gate wants an
-                        // existing browser profile, and a machine that has just
-                        // downloaded its engine has never had one. So this call
-                        // silently did nothing, on the one launch it was written for.
-                        runCatching {
-                            ai.rever.boss.plugin.browser.FluckEngine
-                                .prewarmInBackground(force = true)
-                        }
-                        isDownloadingChromium = false
-                    },
-                )
-            }
-
-            // Show Chromium download dialog if needed
-            if (isDownloadingChromium && windowRequested) {
-                val downloadWindowState =
-                    rememberWindowState(
-                        position = WindowPosition.Aligned(Alignment.Center),
-                        width = 500.dp,
-                        height = 220.dp,
-                    )
-
-                // The error state adds a failure message plus Retry/Exit buttons; grow the
-                // window so they aren't clipped by the fixed 220dp height.
-                LaunchedEffect(downloadProgress.error != null) {
-                    downloadWindowState.size =
-                        DpSize(
-                            500.dp,
-                            if (downloadProgress.error != null) 360.dp else 220.dp,
-                        )
-                }
-
-                Window(
-                    onCloseRequest = quitApplication,
-                    state = downloadWindowState,
-                    title = "BOSS - Setup",
-                    resizable = false,
-                    // This is the one window that opens before any main window exists, so it can
-                    // inherit an icon from nothing - and it is the first thing a new user sees.
-                    icon = BossWindowIcon.painter,
-                ) {
-                    ApplyBossWindowIcon(window)
-
-                    // Start download when dialog opens
                     LaunchedEffect(Unit) {
-                        ChromiumAutoDownloader.downloadChromium { progress ->
-                            downloadProgress = progress
-                            if (progress.isComplete) onEngineDownloaded()
-                        }
+                        updateCoordinator.installAutomaticUpdatesWhenWindowless(
+                            windowsOpen =
+                                snapshotFlow {
+                                    WindowManager.windowCount > 0 || (isDownloadingChromium && windowRequested)
+                                },
+                            canRestart = {
+                                val setupWindowOpen = isDownloadingChromium && windowRequested
+                                !quitting && !setupWindowOpen && WindowManager.windowCount == 0
+                            },
+                            quitForUpdate = quitApplication,
+                        )
+                    }
+                }
+
+                // The engine is on disk. Packaged macOS relaunches instead of booting it here: loading
+                // it with AppKit running crashed fresh installs (see onEngineDownloadComplete).
+                val onEngineDownloaded = {
+                    ChromiumBootstrap.onEngineDownloadComplete(
+                        onRelaunching = { restartingAfterDownload = true },
+                        bootInProcess = {
+                            restartingAfterDownload = false
+                            // Download complete - create window and proceed
+                            WindowManager.createNewWindow()
+                            // The pre-warm was skipped at startup because the engine
+                            // was missing; now that it is installed, warm it so the
+                            // first tab does not pay the full boot.
+                            //
+                            // force, because it was skipped for a SECOND reason this
+                            // comment did not know about: the unforced gate wants an
+                            // existing browser profile, and a machine that has just
+                            // downloaded its engine has never had one. So this call
+                            // silently did nothing, on the one launch it was written for.
+                            runCatching {
+                                ai.rever.boss.plugin.browser.FluckEngine
+                                    .prewarmInBackground(force = true)
+                            }
+                            isDownloadingChromium = false
+                        },
+                    )
+                }
+
+                // Show Chromium download dialog if needed
+                if (isDownloadingChromium && windowRequested) {
+                    val downloadWindowState =
+                        rememberWindowState(
+                            position = WindowPosition.Aligned(Alignment.Center),
+                            width = 500.dp,
+                            height = 220.dp,
+                        )
+
+                    // The error state adds a failure message plus Retry/Exit buttons; grow the
+                    // window so they aren't clipped by the fixed 220dp height.
+                    LaunchedEffect(downloadProgress.error != null) {
+                        downloadWindowState.size =
+                            DpSize(
+                                500.dp,
+                                if (downloadProgress.error != null) 360.dp else 220.dp,
+                            )
                     }
 
-                    BossTheme {
-                        Box(
-                            modifier =
-                                androidx.compose.ui.Modifier
-                                    .fillMaxSize()
-                                    .background(BossThemeController.current.colors.panel),
-                        ) {
-                            ChromiumDownloadContent(
-                                progress = if (restartingAfterDownload) 1f else downloadProgress.progressFraction,
-                                downloadedMB = downloadProgress.downloadedMB,
-                                totalMB = downloadProgress.totalMB,
-                                // Name the version being fetched. This dialog blocks
-                                // the whole app for a several-hundred-MB download, and
-                                // which engine it is turns out to be the first thing
-                                // anyone asks when it appears unexpectedly — an engine
-                                // mismatch is exactly what triggers it.
-                                status =
-                                    ai.rever.boss.components.dialogs.engineDownloadStatus(
-                                        engineLabel = engineLabel,
-                                        isExtracting = downloadProgress.isExtracting,
-                                        totalBytes = downloadProgress.totalBytes,
-                                        isRestarting = restartingAfterDownload,
-                                    ),
-                                error = downloadProgress.error,
-                                onCancel = quitApplication,
-                                onRetry = {
-                                    // Reset progress and retry
-                                    downloadProgress = ChromiumAutoDownloader.DownloadProgress(0, 0)
-                                    CoroutineScope(Dispatchers.IO).launch {
-                                        ChromiumAutoDownloader.downloadChromium { progress ->
-                                            downloadProgress = progress
-                                            if (progress.isComplete) onEngineDownloaded()
+                    Window(
+                        onCloseRequest = quitApplication,
+                        state = downloadWindowState,
+                        title = "BOSS - Setup",
+                        resizable = false,
+                        // This is the one window that opens before any main window exists, so it can
+                        // inherit an icon from nothing - and it is the first thing a new user sees.
+                        icon = BossWindowIcon.painter,
+                    ) {
+                        ApplyBossWindowIcon(window)
+
+                        // Start download when dialog opens
+                        LaunchedEffect(Unit) {
+                            ChromiumAutoDownloader.downloadChromium { progress ->
+                                downloadProgress = progress
+                                if (progress.isComplete) onEngineDownloaded()
+                            }
+                        }
+
+                        BossTheme {
+                            Box(
+                                modifier =
+                                    androidx.compose.ui.Modifier
+                                        .fillMaxSize()
+                                        .background(BossThemeController.current.colors.panel),
+                            ) {
+                                ChromiumDownloadContent(
+                                    progress = if (restartingAfterDownload) 1f else downloadProgress.progressFraction,
+                                    downloadedMB = downloadProgress.downloadedMB,
+                                    totalMB = downloadProgress.totalMB,
+                                    // Name the version being fetched. This dialog blocks
+                                    // the whole app for a several-hundred-MB download, and
+                                    // which engine it is turns out to be the first thing
+                                    // anyone asks when it appears unexpectedly — an engine
+                                    // mismatch is exactly what triggers it.
+                                    status =
+                                        ai.rever.boss.components.dialogs.engineDownloadStatus(
+                                            engineLabel = engineLabel,
+                                            isExtracting = downloadProgress.isExtracting,
+                                            totalBytes = downloadProgress.totalBytes,
+                                            isRestarting = restartingAfterDownload,
+                                        ),
+                                    error = downloadProgress.error,
+                                    onCancel = quitApplication,
+                                    onRetry = {
+                                        // Reset progress and retry
+                                        downloadProgress = ChromiumAutoDownloader.DownloadProgress(0, 0)
+                                        CoroutineScope(Dispatchers.IO).launch {
+                                            ChromiumAutoDownloader.downloadChromium { progress ->
+                                                downloadProgress = progress
+                                                if (progress.isComplete) onEngineDownloaded()
+                                            }
                                         }
-                                    }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Initialize CLI handler once app is running (only after Chromium is ready)
+                if (!isDownloadingChromium) {
+                    LaunchedEffect(Unit) {
+                        CLICommandHandler.getInstance().initialize(
+                            windowManager = WindowManager,
+                            getSplitViewState = {
+                                // Workspace loading now handled via WorkspaceManager from BossApp
+                                // No need to expose SplitViewState to CLI handler
+                                null
+                            },
+                        )
+                    }
+
+                    // Render each window with stable identity via key()
+                    // This prevents re-composition of existing windows when new windows are added
+                    //
+                    // IMPORTANT: No auto-creation logic here!
+                    // When all windows close, app stays running (standard macOS behavior)
+                    // User can create new windows via UI elements (+ button, File menu, etc.)
+                    WindowManager.windows.forEach { windowState ->
+                        key(windowState.id) {
+                            BossWindow(
+                                windowState = windowState,
+                                onQuitRequest = quitApplication,
+                                onCloseRequest = {
+                                    prepareWindowForClose(windowState.id)
+
+                                    // Clean up runner terminal state to prevent memory leaks (Issue #498)
+                                    ai.rever.boss.run.RunnerTerminalService
+                                        .cleanupWindow(windowState.id)
+                                    ai.rever.boss.services.terminal.TerminalAPIAccess
+                                        .removeAllForWindow(windowState.id)
+
+                                    WindowManager.closeWindow(windowState.id)
+                                    ai.rever.boss.utils.WindowFocusManager
+                                        .unregisterWindow(windowState.id)
+                                    // Don't call exitApplication - keep app running (macOS style)
+                                    // When window count reaches 0, app stays in Dock
+                                    // User can quit via Cmd+Q or right-click Dock → Quit
                                 },
                             )
                         }
                     }
                 }
-            }
-
-            // Initialize CLI handler once app is running (only after Chromium is ready)
-            if (!isDownloadingChromium) {
-                LaunchedEffect(Unit) {
-                    CLICommandHandler.getInstance().initialize(
-                        windowManager = WindowManager,
-                        getSplitViewState = {
-                            // Workspace loading now handled via WorkspaceManager from BossApp
-                            // No need to expose SplitViewState to CLI handler
-                            null
-                        },
-                    )
-                }
-
-                // Render each window with stable identity via key()
-                // This prevents re-composition of existing windows when new windows are added
-                //
-                // IMPORTANT: No auto-creation logic here!
-                // When all windows close, app stays running (standard macOS behavior)
-                // User can create new windows via UI elements (+ button, File menu, etc.)
-                WindowManager.windows.forEach { windowState ->
-                    key(windowState.id) {
-                        BossWindow(
-                            windowState = windowState,
-                            onQuitRequest = quitApplication,
-                            onCloseRequest = {
-                                prepareWindowForClose(windowState.id)
-
-                                // Clean up runner terminal state to prevent memory leaks (Issue #498)
-                                ai.rever.boss.run.RunnerTerminalService
-                                    .cleanupWindow(windowState.id)
-                                ai.rever.boss.services.terminal.TerminalAPIAccess
-                                    .removeAllForWindow(windowState.id)
-
-                                WindowManager.closeWindow(windowState.id)
-                                ai.rever.boss.utils.WindowFocusManager
-                                    .unregisterWindow(windowState.id)
-                                // Don't call exitApplication - keep app running (macOS style)
-                                // When window count reaches 0, app stays in Dock
-                                // User can quit via Cmd+Q or right-click Dock → Quit
-                            },
-                        )
-                    }
-                }
-            }
-        } // CompositionLocalProvider
+            } // CompositionLocalProvider
+        }
     }
-    // Complete a native quit only after Compose cleanup, without vetoing OS shutdown.
-    quitLifecycle.completeQuit()
-    exitProcess(0)
 }

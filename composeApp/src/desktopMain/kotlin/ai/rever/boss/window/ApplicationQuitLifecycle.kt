@@ -1,6 +1,7 @@
 package ai.rever.boss.window
 
 import ai.rever.boss.utils.CleanupRunner
+import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import java.awt.desktop.QuitResponse
 
@@ -11,6 +12,43 @@ internal class ApplicationQuitLifecycle {
     private var closeRequested = false
     private var cleanupComplete = false
     private val cleanup = CleanupRunner("ApplicationQuitLifecycle", category = LogCategory.SYSTEM)
+    private val logger = BossLogger.forComponent("ApplicationQuitLifecycle")
+
+    /** Finalize an attempted Quit even if a plugin's Compose disposal throws. */
+    @Suppress("TooGenericExceptionCaught")
+    fun runApplication(
+        terminate: (Int) -> Unit,
+        application: () -> Unit,
+    ) {
+        var failure: Throwable? = null
+        try {
+            application()
+        } catch (t: Throwable) {
+            // Observe and rethrow: failures before Quit still reach the crash handler.
+            failure = t
+            throw t
+        } finally {
+            val quitRequested = synchronized(lock) { closeRequested || responses.isNotEmpty() }
+            if (failure == null || quitRequested) completeApplication(failure, terminate)
+        }
+    }
+
+    private fun completeApplication(
+        failure: Throwable?,
+        terminate: (Int) -> Unit,
+    ) {
+        try {
+            if (failure != null) {
+                logger.error(LogCategory.SYSTEM, "Application cleanup failed during Quit", error = failure)
+            }
+        } finally {
+            try {
+                completeQuit()
+            } finally {
+                terminate(if (failure == null) 0 else 1)
+            }
+        }
+    }
 
     fun requestQuit(
         response: QuitResponse,
@@ -46,6 +84,7 @@ internal class ApplicationQuitLifecycle {
         prepareWindow: (String) -> Unit,
         exitApplication: () -> Unit,
     ) {
+        synchronized(lock) { closeRequested = true }
         try {
             windowIds.forEach { windowId ->
                 val context = mapOf("windowId" to windowId)
