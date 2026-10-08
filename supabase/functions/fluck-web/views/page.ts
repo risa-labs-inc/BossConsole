@@ -46,52 +46,98 @@ export const FLUCK_MARK =
 const FAVICON = `data:image/svg+xml,${encodeURIComponent(FLUCK_MARK)}`
 
 const STYLES = `
+  /* The Fluck web chat's tokens (tokens.css): surfaces, text and the one accent, so the page, Safari's
+     bars (theme-color) and a framed chat read as one app. */
   :root {
-    --ink: #05070B; --raised: #0E141E; --line: #1C2432; --line-strong: #5A6474;
-    --text: #E6EBF2; --text-2: #9AA6B8; --signal: #0F5BFF; --signal-text: #88A9FF;
-    --ok: #3DDC97; --danger: #FF5C5C; --wash: rgba(15, 91, 255, 0.12);
+    --ink: #ffffff; --raised: #f2f2f7; --raised-2: #e5e5ea; --line: rgba(60, 60, 67, 0.16);
+    --text: #1b1d1f; --text-2: #464b51; --text-3: #62676d; --signal: #0f5bff; --signal-text: #0b45c2;
+    --fill: #0f5bff; --on-signal: #ffffff; --ok: #1f9d55; --off: #aeaeb2; --danger: #c4312a; --wash: rgba(15, 91, 255, 0.08);
+    --danger-wash: rgba(196, 49, 42, 0.08);
   }
-  @media (prefers-color-scheme: light) {
+  @media (prefers-color-scheme: dark) {
     :root {
-      --ink: #F4F6FA; --raised: #FFFFFF; --line: #DCE2EB; --line-strong: #868E9B;
-      --text: #0B1220; --text-2: #4B5565; --signal: #0F5BFF; --signal-text: #0B45C2;
-      --ok: #0F8A5F; --wash: rgba(15, 91, 255, 0.08);
+      --ink: #1c1c1e; --raised: #2c2c2e; --raised-2: #3a3a3c; --line: rgba(84, 84, 88, 0.6);
+      --text: #f2f2f7; --text-2: #c7c7cc; --text-3: #98989f; --signal: #5b8cff; --signal-text: #8aaeff;
+      --ok: #34c759; --off: #636366; --danger: #ff6961; --wash: rgba(91, 140, 255, 0.14);
+      --danger-wash: rgba(255, 105, 97, 0.12);
     }
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background-color: var(--ink); color: var(--text);
-    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
-  /* viewport-fit=cover: keep the portal's own chrome inside the safe areas. */
-  main { max-width: 560px; margin: 0 auto; padding: max(32px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
-    max(48px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
-  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
-  .brand { display: flex; align-items: center; gap: 12px; }
-  .brand svg { width: 32px; height: 32px; flex: none; }
-  h1 { font-size: 20px; margin: 0; letter-spacing: -0.2px; }
-  .sub { color: var(--text-2); font-size: 13px; }
-  .card { background-color: var(--raised); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
-  label { display: block; font-size: 13px; color: var(--text-2); margin-bottom: 6px; }
-  input[type=email] { width: 100%; font: inherit; color: var(--text); background-color: var(--ink);
-    border: 1px solid var(--line-strong); border-radius: 7px; padding: 10px 12px; }
-  input[type=email]:focus-visible, button:focus-visible, a.btn:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
-  button, a.btn { font: inherit; font-weight: 600; border-radius: 7px; padding: 10px 16px; cursor: pointer;
-    border: 1px solid var(--signal); background-color: var(--signal); color: #FFFFFF; text-decoration: none; display: inline-block; }
-  button.secondary, a.btn.secondary { background-color: transparent; color: var(--text-2); border-color: var(--line-strong); }
-  button:disabled { opacity: 0.5; cursor: default; }
-  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+  html, body { margin: 0; padding: 0; background-color: var(--boot-bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; -webkit-text-size-adjust: 100%; }
+  /* One centred column, inside the safe areas (viewport-fit=cover); the account row sits at the bottom. */
+  main { min-height: 100vh; min-height: 100dvh; max-width: 440px; margin: 0 auto; display: flex; flex-direction: column;
+    padding: max(40px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right))
+      max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); }
+  header { display: grid; justify-items: center; text-align: center; margin: 12px 0 28px; }
+  .brand-logo { display: block; width: 56px; height: 56px; }
+  h1 { margin: 14px 0 0; font-size: 26px; line-height: 1.15; font-weight: 700; letter-spacing: -0.02em; }
+  .lede { margin: 6px 0 0; color: var(--text-3); font-size: 15px; }
+  h2 { margin: 0; font-size: 20px; line-height: 1.25; font-weight: 600; letter-spacing: -0.01em; }
+  .sub { color: var(--text-3); font-size: 13px; line-height: 1.45; }
   .hidden { display: none !important; }
-  .notice { border-left: 3px solid var(--signal); padding: 8px 12px; color: var(--text-2); margin-bottom: 14px; background-color: var(--wash); border-radius: 0 7px 7px 0; }
-  .notice.error { border-left-color: var(--danger); }
-  ul.instances { list-style: none; margin: 0; padding: 0; }
-  ul.instances li { display: flex; justify-content: space-between; align-items: center; gap: 12px;
-    padding: 14px 0; border-top: 1px solid var(--line); }
-  ul.instances li:first-child { border-top: 0; padding-top: 0; }
-  ul.instances li > div { min-width: 0; }
-  .name { font-weight: 600; overflow-wrap: anywhere; }
-  .meta { color: var(--text-2); font-size: 13px; overflow-wrap: anywhere; }
-  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background-color: var(--line-strong); }
+  section { width: 100%; }
+  /* Buttons: one accent fill for the main action (the Fluck tile's blue in both schemes, so white text
+     keeps its contrast), quiet text buttons for the rest. */
+  button, a.btn { -webkit-appearance: none; appearance: none; font: inherit; font-size: 16px; font-weight: 600; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 50px; padding: 0 18px;
+    border-radius: 12px; border: 0; background-color: var(--fill); color: var(--on-signal); text-decoration: none; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.quiet { width: auto; min-height: 44px; padding: 0 4px; background: none; color: var(--signal-text); font-size: 15px; font-weight: 500; }
+  button:focus-visible, a.btn:focus-visible, input:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+  .providers { display: grid; gap: 10px; }
+  a.btn.provider { background-color: var(--raised); color: var(--text); }
+  a.btn.provider.apple { background-color: var(--text); color: var(--ink); }
+  a.btn.provider svg { width: 18px; height: 18px; flex: none; }
+  .or { display: flex; align-items: center; gap: 12px; color: var(--text-3); font-size: 13px; margin: 22px 0; }
+  .or::before, .or::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+  label { display: block; font-size: 13px; font-weight: 500; color: var(--text-2); margin: 0 0 6px 2px; }
+  input[type=email] { width: 100%; height: 50px; font: inherit; font-size: 16px; color: var(--text); background-color: var(--raised);
+    border: 1px solid transparent; border-radius: 12px; padding: 0 14px; }
+  input[type=email]::placeholder { color: var(--text-3); }
+  input[type=email]:focus { border-color: var(--signal); outline: none; }
+  .stack { display: grid; gap: 12px; }
+  .hint { margin: 2px 2px 0; }
+  .notice { margin: 0 0 18px; padding: 12px 14px; border-radius: 12px; background-color: var(--wash); color: var(--text); font-size: 14px; }
+  .notice.error { background-color: var(--danger-wash); color: var(--danger); }
+  .center { display: grid; justify-items: center; text-align: center; gap: 8px; }
+  .center p { margin: 0; }
+  #sent .center { margin-top: 8px; }
+  #sent button.quiet { margin-top: 8px; }
+  /* The list: an inset grouped list, each Fluck one row and one tap target. */
+  .list-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 4px 8px; }
+  .list-head h2 { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--text-3); }
+  ul.instances { list-style: none; margin: 0; padding: 0; border-radius: 14px; overflow: hidden; background-color: var(--raised); }
+  ul.instances:empty { display: none; }
+  ul.instances li + li .inst { border-top: 1px solid var(--line); }
+  ul.instances li { margin: 0; }
+  button.inst { width: 100%; min-height: 64px; padding: 10px 14px; border-radius: 0; background: none; color: var(--text);
+    display: flex; align-items: center; justify-content: flex-start; gap: 12px; text-align: left; font-weight: 400; }
+  button.inst:not(:disabled):active { background-color: var(--raised-2); }
+  @media (hover: hover) { button.inst:not(:disabled):hover { background-color: var(--raised-2); } }
+  button.inst:disabled { opacity: 1; }
+  button.inst:disabled .inst-name, button.inst:disabled .inst-icon { opacity: 0.55; }
+  button.inst.on::after { content: ""; flex: none; width: 8px; height: 8px; margin-right: 4px; border-top: 2px solid var(--text-3);
+    border-right: 2px solid var(--text-3); transform: rotate(45deg); opacity: 0.7; }
+  .inst-icon { flex: none; width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center;
+    background-color: var(--fill); color: #ffffff; font-size: 18px; font-weight: 600; }
+  .inst-icon.fluck { background: url("${FAVICON}") center / 100% 100% no-repeat; color: transparent; }
+  .inst-text { flex: 1; min-width: 0; display: grid; gap: 1px; }
+  .inst-name { font-size: 16px; font-weight: 600; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .inst-meta { font-size: 13px; line-height: 1.35; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background-color: var(--off); }
   .dot.on { background-color: var(--ok); }
-  footer { margin-top: 28px; color: var(--text-2); font-size: 12px; text-align: center; }
+  #empty { padding: 28px 20px; border-radius: 14px; background-color: var(--raised); }
+  #empty p { margin: 0; }
+  .list-note { margin: 10px 4px 0; }
+  /* Loading: the splash's dots, so the wait looks like the rest of the app. */
+  .wait { display: grid; justify-items: center; gap: 14px; padding: 40px 0; color: var(--text-3); font-size: 15px; }
+  .wait p { margin: 0; }
+  /* Signed-in account and sign out, at the bottom like the splash's footer. */
+  .account { margin-top: auto; padding-top: 28px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .account .sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  footer { margin-top: 18px; color: var(--text-3); font-size: 12px; text-align: center; }
   a { color: var(--signal-text); }
   /* Embedded Fluck: the frame fills the page; the Fluck's own "Switch BOSS" and Back return to the list. */
   body.viewing { overflow: hidden; }
@@ -99,21 +145,19 @@ const STYLES = `
      fitViewport() overrides the height and offset while the on-screen keyboard is up. */
   body.viewing main { position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; margin: 0; padding: 0;
     display: flex; flex-direction: column; overflow: hidden; }
-  body.viewing header, body.viewing #notice, body.viewing .card, body.viewing footer { display: none; }
+  body.viewing header, body.viewing #notice, body.viewing main > section, body.viewing footer { display: none; }
   /* Launching: until the page knows it must ask (sign-in, several Flucks, offline) it shows nothing
      but a quiet line, so opening a Fluck never flashes the portal. */
-  body.launching header, body.launching #notice, body.launching .card, body.launching footer { display: none; }
+  body.launching header, body.launching #notice, body.launching main > section, body.launching footer { display: none; }
   /* The launch screen is the Fluck web chat's own boot splash (webchat .splash: logo, name, three
      pulsing dots, status line, on --surface), so handing over to the frame changes no pixel. Its
      tokens are scoped to #launch so they do not touch the portal's own. Keep in step with the web
      chat's splash CSS and tokens.css. */
-  /* --boot-bg also matches the theme-color metas, so Safari's bars, the page and the chat are one
-     colour. A framed chat's fluck-theme overrides it inline on <html> (applyTheme). */
+  /* --boot-bg is the page background on every screen and matches the theme-color metas, so Safari's
+     bars and the page are one colour. A framed chat's fluck-theme overrides it inline on <html>
+     (applyTheme); closing the frame restores it. */
   :root { --boot-bg: #ffffff; }
   @media (prefers-color-scheme: dark) { :root { --boot-bg: #1c1c1e; } }
-  /* Separate rules: a browser without :has() drops its whole rule, and must keep the body one. */
-  body.launching, body.viewing { background-color: var(--boot-bg); }
-  html:has(> body.launching), html:has(> body.viewing) { background-color: var(--boot-bg); }
   #launch { display: none; --surface: #ffffff; --text: #1b1d1f; --text-3: #62676d; --accent: #0f5bff; }
   @media (prefers-color-scheme: dark) { #launch { --surface: #1c1c1e; --text: #f2f2f7; --text-3: #98989f; --accent: #5b8cff; } }
   body.launching:not(.viewing) #launch { display: grid; position: fixed; inset: 0; overflow: auto;
@@ -125,26 +169,21 @@ const STYLES = `
   /* min-height: the name is filled in once the portal knows which Fluck it is opening. */
   .splash-name { min-height: 1.2em; margin: 18px 0 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     font-size: 24px; line-height: 1.2; font-weight: 600; letter-spacing: -0.02em; color: var(--text); overflow-wrap: anywhere; }
-  .splash-dots { display: flex; gap: 6px; height: 8px; margin-top: 28px; }
-  .splash-dots span { width: 6px; height: 6px; margin-top: 1px; border-radius: 50%; background: var(--accent); opacity: .3;
+  .splash-dots, .wait-dots { display: flex; gap: 6px; height: 8px; margin-top: 28px; }
+  .splash-dots span, .wait-dots span { width: 6px; height: 6px; margin-top: 1px; border-radius: 50%; background: var(--accent); opacity: .3;
     animation: splash-pulse 1.4s ease-in-out infinite; }
-  .splash-dots span:nth-child(2) { animation-delay: .2s; }
-  .splash-dots span:nth-child(3) { animation-delay: .4s; }
+  .splash-dots span:nth-child(2), .wait-dots span:nth-child(2) { animation-delay: .2s; }
+  .splash-dots span:nth-child(3), .wait-dots span:nth-child(3) { animation-delay: .4s; }
+  .wait-dots { margin-top: 0; }
+  .wait-dots span { background: var(--signal); }
   @keyframes splash-pulse { 0%, 60%, 100% { opacity: .3; } 30% { opacity: 1; } }
   .splash-status { min-height: 1.5em; margin: 14px 0 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     font-size: 15px; line-height: 1.5; color: var(--text-3); overflow-wrap: anywhere; }
   .splash-foot { grid-row: 3; align-self: end; padding-top: 24px; }
-  @media (prefers-reduced-motion: reduce) { .splash-dots span { animation: none; opacity: .55; } }
+  @media (prefers-reduced-motion: reduce) { .splash-dots span, .wait-dots span { animation: none; opacity: .55; } }
   #viewer { display: none; flex: 1; flex-direction: column; min-height: 0; }
   body.viewing #viewer { display: flex; }
   #fluckframe { display: block; flex: 1; width: 100%; height: 100%; min-height: 0; margin: 0; border: 0; background-color: var(--boot-bg); }
-  .providers { display: grid; gap: 10px; }
-  a.btn.provider { display: flex; align-items: center; justify-content: center; gap: 10px;
-    background-color: transparent; color: var(--text); border-color: var(--line-strong); }
-  a.btn.provider.apple { background-color: var(--text); color: var(--ink); border-color: var(--text); }
-  a.btn.provider svg { width: 18px; height: 18px; flex: none; }
-  .or { display: flex; align-items: center; gap: 10px; color: var(--text-2); font-size: 13px; margin: 16px 0; }
-  .or::before, .or::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
 `
 
 /** Browser script. Plain ES2017, no build step; config comes from the #cfg JSON block. */
@@ -177,12 +216,16 @@ const SCRIPT = `
     ["signin", "sent", "loading", "list", "opening"].forEach(function (s) {
       $(s).classList.toggle("hidden", s !== id);
     });
+    // Signed in (the list): the account row and Sign out at the bottom, as on the splash; always
+    // reachable there, even if the session came back without an email.
+    $("account").classList.toggle("hidden", id !== "list");
   }
   function notice(text, kind) {
     if (text && launching) stopLaunching();
     var n = $("notice");
     n.textContent = text || "";
     n.className = "notice" + (kind ? " " + kind : "");
+    n.setAttribute("role", kind === "error" ? "alert" : "status");
     n.classList.toggle("hidden", !text);
   }
   function store(fn) { try { return fn(window.localStorage); } catch (_) { return null; } }
@@ -308,18 +351,26 @@ const SCRIPT = `
     $("empty").classList.toggle("hidden", instances.length > 0);
     instances.forEach(function (i) {
       var li = document.createElement("li");
-      var left = document.createElement("div");
-      var name = document.createElement("div"); name.className = "name"; name.textContent = i.agent_name;
-      var meta = document.createElement("div"); meta.className = "meta";
+      // The whole row is the tap target; an offline Fluck stays listed but cannot be opened.
+      var btn = document.createElement("button");
+      btn.type = "button"; btn.disabled = !i.online;
+      btn.className = "inst" + (i.online ? " on" : "");
+      btn.setAttribute("aria-label", title(i) + (i.online ? ", online" : ", offline"));
+      var icon = document.createElement("span");
+      icon.className = "inst-icon" + (i.agent_name === "Fluck" ? " fluck" : "");
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = i.agent_name === "Fluck" ? "" : (i.agent_name || "?").charAt(0).toUpperCase();
+      var text = document.createElement("span"); text.className = "inst-text";
+      var name = document.createElement("span"); name.className = "inst-name"; name.textContent = i.agent_name;
+      var meta = document.createElement("span"); meta.className = "inst-meta";
       var dot = document.createElement("span"); dot.className = "dot" + (i.online ? " on" : "");
       meta.appendChild(dot);
-      meta.appendChild(document.createTextNode(i.label + " · " + (i.online ? "online" : "last seen " + ago(i.last_seen_at))));
-      left.appendChild(name); left.appendChild(meta);
-      var btn = document.createElement("button");
-      btn.type = "button"; btn.textContent = "Open"; btn.disabled = !i.online;
-      if (!i.online) btn.className = "secondary";
+      // The machine first: it tells two Flucks apart, so it is the part that survives truncation.
+      meta.appendChild(document.createTextNode(i.label + " · " + (i.online ? "Online" : "Offline, last seen " + ago(i.last_seen_at))));
+      text.appendChild(name); text.appendChild(meta);
+      btn.appendChild(icon); btn.appendChild(text);
       btn.addEventListener("click", function () { openInstance(i); });
-      li.appendChild(left); li.appendChild(btn);
+      li.appendChild(btn);
       ul.appendChild(li);
     });
     show("list");
@@ -528,65 +579,71 @@ export function fluckPage(model: PageModel, nonce: string): string {
 <!--email_off-->
 <main>
   <header>
-    <div class="brand">${FLUCK_MARK}<div><h1>Fluck</h1><div class="sub">Your Fluck, from any browser</div></div></div>
-    <div class="sub" id="who"></div>
+    <img class="brand-logo" src="${esc(FAVICON)}" width="56" height="56" alt="">
+    <h1>Fluck</h1>
+    <p class="lede">Your Fluck, from any browser</p>
   </header>
-  <div id="notice" class="notice hidden"></div>
+  <div id="notice" class="notice hidden" role="status"></div>
 
-  <section id="signin" class="card hidden">
+  <section id="signin" class="hidden">
     <div class="providers">
       <a id="oauth-google" class="btn provider" href="${esc(model.basePath)}/api/oauth/google">${GOOGLE_MARK}Continue with Google</a>
       <a id="oauth-apple" class="btn provider apple" href="${esc(model.basePath)}/api/oauth/apple">${APPLE_MARK}Continue with Apple</a>
     </div>
     <div class="or">or</div>
-    <form id="signin-form" autocomplete="on">
-      <label for="email">Email</label>
-      <input id="email" name="email" type="email" required autocomplete="email" inputmode="email" placeholder="you@company.com">
-      <div class="row">
-        <button id="send" type="submit">Email me a sign-in link</button>
-        <span class="sub">Use the account your BOSS is signed in with.</span>
+    <form id="signin-form" class="stack" autocomplete="on">
+      <div>
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required autocomplete="email" inputmode="email" placeholder="you@company.com">
       </div>
+      <button id="send" type="submit">Email me a sign-in link</button>
+      <p class="sub hint">Use the account your BOSS is signed in with.</p>
     </form>
   </section>
 
-  <section id="sent" class="card hidden">
-    <div class="name">Check your email</div>
-    <p class="sub">We sent a sign-in link to <strong id="sent-email"></strong>. Open it in this browser and your Flucks will appear here.</p>
-    <div class="row"><button id="sent-back" class="secondary" type="button">Use a different email</button></div>
+  <section id="sent" class="hidden">
+    <div class="center">
+      <h2>Check your email</h2>
+      <p class="sub">We sent a sign-in link to <strong id="sent-email"></strong>. Open it in this browser and your Flucks will appear here.</p>
+      <button id="sent-back" class="quiet" type="button">Use a different email</button>
+    </div>
   </section>
 
   <div id="launch" class="splash boot" role="status" aria-busy="true" aria-label="Opening your Fluck"><div class="splash-main"><img class="splash-logo" src="${esc(FAVICON)}" width="64" height="64" alt="" /><p id="launch-name" class="splash-name"></p><span class="splash-dots" aria-hidden="true"><span></span><span></span><span></span></span><p id="launch-status" class="splash-status"></p></div><div class="splash-foot"></div></div>
 
-  <section id="loading" class="card hidden"><div class="sub">Loading your Flucks…</div></section>
+  <section id="loading" class="hidden" aria-busy="true">
+    <div class="wait"><span class="wait-dots" aria-hidden="true"><span></span><span></span><span></span></span><p>Loading your Flucks</p></div>
+  </section>
 
-  <section id="opening" class="card hidden">
-    <div class="name">Opening <span id="opening-name"></span>…</div>
-    <p class="sub">You will land signed in on its web chat.</p>
-    <div class="row">
-      <button id="opening-now" type="button">Open now</button>
-      <button id="opening-cancel" class="secondary" type="button">Show the list instead</button>
+  <section id="opening" class="hidden" aria-busy="true">
+    <div class="wait">
+      <span class="wait-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+      <p>Opening <span id="opening-name"></span></p>
+      <button id="opening-cancel" class="quiet" type="button">Show the list instead</button>
     </div>
   </section>
 
-  <section id="list" class="card hidden">
-    <h2 class="name">Your Flucks</h2>
-    <div id="empty" class="hidden">
-      <p class="name">No Flucks yet</p>
+  <section id="list" class="hidden">
+    <div class="list-head">
+      <h2>Your Flucks</h2>
+      <button id="refresh" class="quiet" type="button">Refresh</button>
+    </div>
+    <div id="empty" class="center hidden">
+      <h2>No Flucks yet</h2>
       <p class="sub">Turn on Web chat in Fluck → Settings, and choose a way to reach it. It appears here within half a minute.</p>
     </div>
-    <ul id="instances" class="instances"></ul>
-    <div class="row">
-      <button id="refresh" class="secondary" type="button">Refresh</button>
-      <button id="signout" class="secondary" type="button">Sign out</button>
-      <span class="sub">A Fluck shows as offline about ${esc(String(model.liveWindowSeconds))} seconds after its BOSS stops.</span>
-    </div>
+    <ul id="instances" class="instances" aria-label="Your Flucks"></ul>
+    <p class="sub list-note">A Fluck shows as offline about ${esc(String(model.liveWindowSeconds))} seconds after its BOSS stops. Only you can see this list; each Fluck admits only the BOSS account it is signed in as.</p>
   </section>
 
   <div id="viewer">
     <iframe id="fluckframe" title="Fluck" allow="clipboard-read; clipboard-write; fullscreen" allowfullscreen src="about:blank"></iframe>
   </div>
 
-  <footer>Only you can see this list. Each Fluck admits only the BOSS account it is signed in as.</footer>
+  <footer id="account" class="account hidden">
+    <span class="sub" id="who"></span>
+    <button id="signout" class="quiet" type="button">Sign out</button>
+  </footer>
 </main>
 <!--/email_off-->
 <script id="cfg" type="application/json">${jsonForScript(cfg)}</script>

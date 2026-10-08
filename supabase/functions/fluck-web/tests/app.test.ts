@@ -113,7 +113,8 @@ Deno.test("GET / renders the Fluck page with nonce'd script and style, strict CS
   assertStringIncludes(html, `<script nonce="${nonce}">`)
   assertStringIncludes(html, `<style nonce="${nonce}">`)
   assertStringIncludes(html, "<title>Fluck</title>")
-  assertStringIncludes(html, FLUCK_MARK)
+  // The Fluck tile heads every screen, as on the splash.
+  assertStringIncludes(html, `<img class="brand-logo" src="data:image/svg+xml,${encodeURIComponent(FLUCK_MARK)}" width="56" height="56" alt="">`)
   // Launch splash: the web chat's boot markup, its logo a data: URI the CSP admits.
   assertStringIncludes(csp, "img-src data:")
   assertStringIncludes(html, '<div id="launch" class="splash boot"')
@@ -123,6 +124,10 @@ Deno.test("GET / renders the Fluck page with nonce'd script and style, strict CS
   assert(!/--boot-bg: #f5f5f3/.test(html), "launch background is the web chat's --surface")
   assertStringIncludes(html, "--boot-bg: #ffffff")
   assertStringIncludes(html, "--boot-bg: #1c1c1e")
+  // Sign-in and list screens too: the page background is --boot-bg, never the old portal ink.
+  assert(/html,\s*body\s*\{[^}]*background-color:\s*var\(--boot-bg\)/.test(html), "html and body paint --boot-bg")
+  const styles = /<style[^>]*>([\s\S]*?)<\/style>/.exec(html)![1]
+  assert(!/#05070B|#F4F6FA/i.test(styles), "no portal-only page background left in the stylesheet")
   assertStringIncludes(html, 'id="signin-form"')
   assertStringIncludes(html, 'href="/api/oauth/google"')
   assertStringIncludes(html, 'href="/api/oauth/apple"')
