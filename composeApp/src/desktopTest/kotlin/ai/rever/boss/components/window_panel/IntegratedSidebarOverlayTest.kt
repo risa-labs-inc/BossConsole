@@ -6,6 +6,7 @@ import ai.rever.boss.components.overlays.OverlayConfig
 import ai.rever.boss.components.overlays.resetOverlayFieldForTest
 import ai.rever.boss.components.sidebar.SidebarContentHost
 import ai.rever.boss.components.sidebar.mainPanelSidebarClip
+import ai.rever.boss.components.sidebar.rememberSidebarRevealMotion
 import ai.rever.boss.components.sidebar.sidebarBodyWidth
 import ai.rever.boss.components.sidebar.sidebarOverlayLayout
 import ai.rever.boss.components.sidebar.sidebarShouldOverlay
@@ -17,12 +18,14 @@ import ai.rever.boss.theme.LocalWindowGlass
 import ai.rever.boss.theme.WindowGlass
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -53,6 +56,42 @@ class IntegratedSidebarOverlayTest {
         OverlayConfig.heavyweightCorner = previousRenderer
         resetOverlayFieldForTest("useHeavyweightOverlays")
         OverlayConfig.useHeavyweightPopups = previousHeavyweight
+    }
+
+    @Test
+    fun `interrupting a bouncing collapse keeps one body until the animation settles`() {
+        val reveal =
+            TabBarRevealState(MutableInteractionSource(), MutableInteractionSource()).apply {
+                revealed = true
+            }
+        var mounts = 0
+        var progress = 1f
+        rule.mainClock.autoAdvance = false
+        rule.setContent {
+            val motion = rememberSidebarRevealMotion(reveal, railShown = true, integrated = true)
+            progress = motion.progress
+            if (motion.visible) {
+                DisposableEffect(Unit) {
+                    mounts++
+                    onDispose { }
+                }
+                Box(Modifier.size(100.dp).testTag("bouncing-body"))
+            }
+        }
+        rule.onAllNodesWithTag("bouncing-body").assertCountEquals(1)
+        rule.runOnIdle { reveal.revealed = false }
+        repeat(3) {
+            rule.mainClock.advanceTimeByFrame()
+            rule.onAllNodesWithTag("bouncing-body").assertCountEquals(1)
+            assertTrue(progress in 0f..1f, "bounce must keep native body geometry within its bounds")
+        }
+        rule.runOnIdle { reveal.revealed = true }
+        rule.mainClock.advanceTimeBy(200)
+        rule.onAllNodesWithTag("bouncing-body").assertCountEquals(1)
+        assertEquals(1, mounts, "reversing the bounce must retain the existing sidebar body")
+        rule.runOnIdle { reveal.revealed = false }
+        rule.mainClock.advanceTimeBy(200)
+        rule.onAllNodesWithTag("bouncing-body").assertCountEquals(0)
     }
 
     @Test

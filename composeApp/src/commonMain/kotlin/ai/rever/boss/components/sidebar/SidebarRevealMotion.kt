@@ -1,8 +1,10 @@
 package ai.rever.boss.components.sidebar
 
 import ai.rever.boss.components.window_panel.components.main_window_panels.TabBarRevealState
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.EaseOutBounce
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 
@@ -19,13 +21,14 @@ internal fun rememberSidebarRevealMotion(
     railShown: Boolean,
     integrated: Boolean,
 ): SidebarRevealMotion {
-    val animatedProgress by animateFloatAsState(
-        targetValue = if (railShown && reveal.drawerVisible) 1f else 0f,
-        animationSpec = tween(durationMillis = 80),
-        label = "sidebar-reveal",
-    )
+    val transition = updateTransition(railShown && reveal.drawerVisible, label = "sidebar-reveal")
+    val animatedProgress by transition.animateFloat(
+        transitionSpec = { tween(durationMillis = 80, easing = EaseOutBounce) },
+        label = "sidebar-reveal-progress",
+    ) { visible -> if (visible) 1f else 0f }
     val progress = if (reveal.drawerOpen) 1f else animatedProgress
-    val visible = reveal.drawerVisible || (integrated && progress > 0f)
+    // Keep the one native body alive when a closing bounce briefly reaches zero.
+    val visible = reveal.drawerVisible || (integrated && (transition.isRunning || progress > 0f))
     val overlay = integrated && sidebarShouldOverlay(railShown, visible && !reveal.drawerOpen)
     return SidebarRevealMotion(progress, visible, overlay)
 }
