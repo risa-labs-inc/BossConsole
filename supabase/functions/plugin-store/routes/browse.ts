@@ -12,10 +12,15 @@ import { listPlugins, searchPlugins, getPlugin, getPopularTags } from "../servic
 import { getPluginVersions } from "../services/versions.ts"
 import { clientKey, rateLimit } from "../utils/rate-limit.ts"
 import { newRouter } from "../utils/router.ts"
+import { catalogueCachePolicy, PRIVATE_NO_STORE, PUBLIC_CATALOGUE_CACHE } from "../utils/cache.ts"
 
 // A request that fails its route's schema is answered by the router itself, before any handler
 // runs, with the ErrorResponseSchema 400 the routes below declare: see newRouter.
 const browse = newRouter()
+browse.use("/list", catalogueCachePolicy())
+browse.use("/search", catalogueCachePolicy())
+browse.use("/tags/popular", catalogueCachePolicy())
+browse.use("/:pluginId", catalogueCachePolicy())
 
 // Per-client limit on the anonymous catalogue routes (/list, /search,
 // /tags/popular): the same in-isolate token bucket the organisation function
@@ -105,7 +110,10 @@ browse.openapi(listRoute, async (ctx) => {
     // PRIVATE when the answer depends on who asked. The same URL now returns different rows per
     // reader, so a shared cache holding one reader's copy would serve somebody else's
     // organisation plugins to the next caller. The other follow-up 20260803000000 asked for.
-    ctx.header("Cache-Control", viewer ? "private, no-store" : "public, max-age=60")
+    // Note: The handler decides Cache-Control from the resolved viewer, while catalogueCachePolicy
+    // middleware guards header presence (Authorization or X-API-Key) in its finally block.
+    // For expired/malformed credentials, the middleware safely falls back to private, no-store.
+    ctx.header("Cache-Control", viewer ? PRIVATE_NO_STORE : PUBLIC_CATALOGUE_CACHE)
 
     return ctx.json({
       plugins: result.plugins,
@@ -286,7 +294,7 @@ browse.openapi(getPluginRoute, async (ctx) => {
     // PRIVATE when the answer depends on who asked - the same reason and the
     // same header as /list: a shared cache holding one reader's copy would
     // serve somebody else's organisation plugins to the next caller.
-    ctx.header("Cache-Control", viewer ? "private, no-store" : "public, max-age=60")
+    ctx.header("Cache-Control", viewer ? PRIVATE_NO_STORE : PUBLIC_CATALOGUE_CACHE)
 
     return ctx.json({
       id: plugin.id,
