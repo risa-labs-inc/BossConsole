@@ -82,6 +82,36 @@ SELECT ok(public.user_has_permission('0e000000-0000-4000-8000-000000000002','ai.
 SELECT ok(NOT public.user_has_permission('0e000000-0000-4000-8000-000000000003','ai.optimist'),
  'the outsider does not hold ai.optimist');
 
+-- Another organisation's admin cannot extend the model to their organisation through the org-admin
+-- RPC (20261008100000), even when they hold ai.optimist themselves.
+SELECT is(public.create_organisation_internal(p_slug=>'pgtopt2', p_name=>'PGTap Other',
+ p_owner_id=>'0e000000-0000-4000-8000-000000000002')->>'success','true',
+ 'the member owns a second organisation');
+SELECT is(public.create_organisation_internal(p_slug=>'pgtopt3', p_name=>'PGTap Third',
+ p_owner_id=>'0e000000-0000-4000-8000-000000000003')->>'success','true',
+ 'the outsider owns a third organisation');
+CREATE TEMP TABLE t_opt_roles AS SELECT o.slug, o.id AS org_id, orl.role_id
+ FROM public.organisations o JOIN public.organisation_roles orl ON orl.org_id=o.id AND orl.kind='user'
+ WHERE o.slug IN ('pgtopt2','pgtopt3');
+GRANT SELECT ON t_opt_roles TO authenticated;
+
+SELECT set_config('request.jwt.claims','{"sub":"0e000000-0000-4000-8000-000000000002","role":"authenticated"}',true);
+SET LOCAL ROLE authenticated;
+SELECT is((SELECT public.grant_organisation_role_permission(org_id, role_id, 'ai.optimist')->>'success'
+ FROM t_opt_roles WHERE slug='pgtopt2'),'false',
+ 'an organisation admin holding ai.optimist cannot grant it to another organisation');
+RESET ROLE;
+SELECT set_config('request.jwt.claims','{"sub":"0e000000-0000-4000-8000-000000000003","role":"authenticated"}',true);
+SET LOCAL ROLE authenticated;
+SELECT is((SELECT public.grant_organisation_role_permission(org_id, role_id, 'ai.optimist')->>'success'
+ FROM t_opt_roles WHERE slug='pgtopt3'),'false',
+ 'an organisation admin without ai.optimist cannot grant it');
+RESET ROLE;
+SELECT set_config('request.jwt.claims','',true);
+SELECT ok(NOT EXISTS(SELECT 1 FROM public.role_permissions rp JOIN t_opt_roles t ON t.role_id=rp.role_id
+ JOIN public.permissions p ON p.id=rp.permission_id AND p.name='ai.optimist'),
+ 'neither organisation role carries ai.optimist');
+
 SET LOCAL ROLE service_role;
 SELECT ok(public.boss_ai_catalog('0e000000-0000-4000-8000-000000000002') @> '[{"id":"pgtopt"}]'::jsonb,
  'the member catalog lists the organisation model');
