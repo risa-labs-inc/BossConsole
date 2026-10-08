@@ -1,6 +1,5 @@
 package ai.rever.boss.window
 
-import ai.rever.boss.components.sidebar.updateSidebarOverlayBounds
 import ai.rever.boss.window.MacToolbarRuntime.number
 import ai.rever.boss.window.MacToolbarRuntime.pointer
 import ai.rever.boss.window.MacToolbarRuntime.send
@@ -12,7 +11,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposeDialog
 import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.IntRect
 import com.sun.jna.Memory
 import com.sun.jna.NativeLibrary
 import com.sun.jna.Pointer
@@ -22,7 +20,6 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 import java.awt.Dialog
-import java.awt.Rectangle
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import javax.swing.SwingUtilities
@@ -86,11 +83,9 @@ class MacSidebarOverlayOwnerSmokeTest {
     fun `delayed owner screen bounds do not move an attached sidebar back`() {
         val (window, dialog) = createWindows()
         val attachment = MacSidebarOverlayOwner(window.windowHandle, dialog.windowHandle)
-        val region = IntRect(0, 40, 100, 180)
-        val oldBounds = Rectangle(80, 120, 100, 140)
-        val applied = Rectangle()
+        val anchor = SidebarOverlayAnchor(0.0, 40.0, 20.0, 100.0)
         try {
-            SwingUtilities.invokeAndWait { updateSidebarOverlayBounds(dialog, oldBounds, region, applied, true) }
+            attachment.updateGeometry(anchor)
             attachment.attach()
             val moved =
                 onAppKit {
@@ -99,7 +94,7 @@ class MacSidebarOverlayOwnerSmokeTest {
                     send(parent, "setFrameOrigin:", SidebarTestPoint(original[0] + 61.0, original[1] + 39.0))
                     frame(Pointer(dialog.windowHandle))
                 }
-            SwingUtilities.invokeAndWait { updateSidebarOverlayBounds(dialog, oldBounds, region, applied, true) }
+            attachment.updateGeometry(anchor)
             onAppKit {
                 assertEquals(moved.toList(), frame(Pointer(dialog.windowHandle)).toList())
             }

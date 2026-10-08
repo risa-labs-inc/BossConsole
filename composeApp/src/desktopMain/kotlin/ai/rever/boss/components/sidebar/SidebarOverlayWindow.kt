@@ -7,6 +7,7 @@ import ai.rever.boss.components.overlays.trackedContentPaneBounds
 import ai.rever.boss.plugin.browser.LocalAwtWindow
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.window.MacSidebarOverlayOwner
+import ai.rever.boss.window.SidebarOverlayAnchor
 import ai.rever.boss.window.updateMacSidebarOverlayPresentation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
@@ -15,10 +16,12 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.awt.ComposeDialog
 import androidx.compose.ui.awt.ComposeWindow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
@@ -27,6 +30,7 @@ import androidx.compose.ui.window.WindowState
 import java.awt.Rectangle
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
+import javax.swing.SwingUtilities
 import kotlin.math.roundToInt
 
 /** Apply this frame's size directly; measuring an animated body adds two stale render frames. */
@@ -34,6 +38,7 @@ import kotlin.math.roundToInt
 internal actual fun SidebarOverlayWindow(
     size: DpSize,
     region: IntRect,
+    bottomInset: Dp,
     content: @Composable () -> Unit,
 ) {
     val parent = LocalAwtWindow.current
@@ -49,24 +54,31 @@ internal actual fun SidebarOverlayWindow(
     var nativeWindow by remember { mutableStateOf<java.awt.Window?>(null) }
     val appliedBounds = remember(parent) { Rectangle() }
     val nativeOwner = SystemUtils.isMacOS && parent is ComposeWindow
+    var controller by remember(parent) { mutableStateOf<MacSidebarOverlayOwner?>(null) }
+    val paneOrigin =
+        (parent as? ComposeWindow)?.let {
+            SwingUtilities.convertPoint(it.contentPane, 0, 0, it)
+        }
+    val anchor =
+        SidebarOverlayAnchor(
+            (region.left + (paneOrigin?.x ?: 0)).toDouble(),
+            (region.top + (paneOrigin?.y ?: 0)).toDouble(),
+            (bottomInset.value + parent.insets.bottom).toDouble(),
+            size.width.value.toDouble(),
+        )
     // This runs on the owner's frame, rather than waiting for the dialog's separate composition.
     // Keep one state object so a delayed dialog update also reads the newest geometry.
     SideEffect {
         state.size = size
         state.position = WindowPosition(x.dp, y.dp)
         nativeWindow?.let { window ->
-            val screenBounds =
-                Rectangle(
-                    x,
-                    y,
-                    size.width.value
-                        .roundToInt()
-                        .coerceAtLeast(1),
-                    size.height.value
-                        .roundToInt()
-                        .coerceAtLeast(1),
-                )
-            updateSidebarOverlayBounds(window, screenBounds, region, appliedBounds, nativeOwner)
+            val screenBounds = sidebarScreenBounds(x, y, size)
+            if (nativeOwner) {
+                controller?.updateGeometry(anchor)
+                updateMacSidebarOverlayPresentation((window as? ComposeDialog)?.windowHandle ?: 0L, screenBounds.width)
+            } else {
+                updateSidebarOverlayBounds(window, screenBounds, appliedBounds)
+            }
         }
     }
     OverlayWindow(
@@ -76,30 +88,37 @@ internal actual fun SidebarOverlayWindow(
         boundsManagedExternally = nativeOwner,
     ) { window ->
         SideEffect { nativeWindow = window }
-        AttachSidebarOverlayOwner(parent, window, nativeOwner)
+        AttachSidebarOverlayOwner(parent, window, nativeOwner, anchor) { controller = it }
         EnsureOverlayWindowTransparent(window, kind = "sidebar-reveal")
         content()
     }
 }
 
-/** Keep native movement independent of delayed AWT move events and Compose recomposition. */
+private fun sidebarScreenBounds(
+    x: Int,
+    y: Int,
+    size: DpSize,
+): Rectangle =
+    Rectangle(
+        x,
+        y,
+        size.width.value
+            .roundToInt()
+            .coerceAtLeast(1),
+        size.height.value
+            .roundToInt()
+            .coerceAtLeast(1),
+    )
+
+/** Non-native hosts continue to apply screen bounds through AWT. */
 internal fun updateSidebarOverlayBounds(
     window: java.awt.Window,
     screenBounds: Rectangle,
-    region: IntRect,
     appliedBounds: Rectangle,
-    nativeOwner: Boolean,
 ) {
-    val requested = Rectangle(screenBounds)
-    if (nativeOwner) requested.setLocation(region.left, region.top)
-    if (appliedBounds == requested) return
-    val sameOrigin = appliedBounds.x == region.left && appliedBounds.y == region.top
-    if (nativeOwner && appliedBounds.width > 0 && sameOrigin) {
-        window.setSize(screenBounds.width, screenBounds.height)
-    } else {
-        window.bounds = screenBounds
-    }
-    appliedBounds.setBounds(requested)
+    if (appliedBounds == screenBounds) return
+    window.bounds = screenBounds
+    appliedBounds.setBounds(screenBounds)
     if (SystemUtils.isMacOS) {
         updateMacSidebarOverlayPresentation((window as? ComposeDialog)?.windowHandle ?: 0L, screenBounds.width)
     }
@@ -110,7 +129,11 @@ private fun AttachSidebarOverlayOwner(
     parent: java.awt.Window,
     window: java.awt.Window,
     nativeOwner: Boolean,
+    anchor: SidebarOverlayAnchor,
+    onAttach: (MacSidebarOverlayOwner) -> Unit,
 ) {
+    val currentAnchor by rememberUpdatedState(anchor)
+    val currentOnAttach by rememberUpdatedState(onAttach)
     DisposableEffect(parent, window) {
         var owner: MacSidebarOverlayOwner? = null
 
@@ -120,6 +143,8 @@ private fun AttachSidebarOverlayOwner(
             if (nativeOwner && parentHandle != 0L && childHandle != 0L) {
                 if (owner == null) owner = MacSidebarOverlayOwner(parentHandle, childHandle)
                 owner.attach()
+                owner.updateGeometry(currentAnchor)
+                currentOnAttach(owner)
             }
         }
         val listener =

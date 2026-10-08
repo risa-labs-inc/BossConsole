@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
@@ -58,15 +59,19 @@ internal fun SidebarContentHost(
     }
     val density = LocalDensity.current.density
     var region by remember { mutableStateOf<IntRect?>(null) }
+    var bottomInset by remember { mutableStateOf(0.dp) }
     Box(
         Modifier.width(width).fillMaxHeight().onGloballyPositioned {
-            region = overlayRegionInWindow(it.boundsInWindow(), density)
+            val bounds = it.boundsInWindow()
+            region = overlayRegionInWindow(bounds, density)
+            bottomInset = ((it.findRootCoordinates().size.height - bounds.bottom) / density).dp
         },
     ) {
         val bounds = region ?: return@Box
         SidebarOverlayWindow(
             size = DpSize(sidebarBodyWidth(width, revealProgress).coerceAtLeast(1.dp), bounds.height.dp),
             region = bounds,
+            bottomInset = bottomInset,
         ) {
             val bodyWidth = sidebarBodyWidth(width, revealProgress).coerceAtLeast(1.dp)
             OpaqueSidebarBody(
@@ -109,5 +114,6 @@ private fun OpaqueSidebarBody(
 internal expect fun SidebarOverlayWindow(
     size: DpSize,
     region: IntRect,
+    bottomInset: Dp = 0.dp,
     content: @Composable () -> Unit,
 )

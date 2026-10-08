@@ -3,7 +3,7 @@ package ai.rever.boss.window
 import ai.rever.boss.window.MacToolbarRuntime.send
 import com.sun.jna.Pointer
 
-/** AWT owns geometry; native presentation must never resize or force-display the window again. */
+/** Presentation is independent of geometry; never force-display the window again. */
 internal fun updateMacSidebarOverlayPresentation(
     handle: Long,
     width: Int,
