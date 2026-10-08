@@ -1,5 +1,6 @@
 package ai.rever.boss.window
 
+import ai.rever.boss.components.sidebar.updateSidebarOverlayBounds
 import ai.rever.boss.window.MacToolbarRuntime.number
 import ai.rever.boss.window.MacToolbarRuntime.pointer
 import ai.rever.boss.window.MacToolbarRuntime.send
@@ -20,6 +21,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 import java.awt.Dialog
+import java.awt.Rectangle
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import javax.swing.SwingUtilities
@@ -44,6 +46,7 @@ class MacSidebarOverlayOwnerSmokeTest {
                 val app = pointer(MacToolbarRuntime.clazz("NSApplication"), "sharedApplication")
                 send(app, "unhideWithoutActivation")
                 send(owner, "orderFrontRegardless")
+                send(child, "orderFrontRegardless")
             }
             awaitVisible(owner, child)
             onAppKit {
@@ -103,6 +106,25 @@ class MacSidebarOverlayOwnerSmokeTest {
             SwingUtilities.invokeAndWait {
                 dialog.dispose()
                 window.dispose()
+            }
+        }
+    }
+
+    @Test
+    fun `disposed sidebar dialogs ignore late AWT bounds updates`() {
+        val (owner, child) = createWindows()
+        try {
+            SwingUtilities.invokeAndWait {
+                child.dispose()
+                val previous = child.bounds
+                updateSidebarOverlayBounds(child, Rectangle(10, 20, 50, 60), Rectangle())
+                assertEquals(previous, child.bounds)
+                assertTrue(!child.isDisplayable)
+            }
+        } finally {
+            SwingUtilities.invokeAndWait {
+                child.dispose()
+                owner.dispose()
             }
         }
     }

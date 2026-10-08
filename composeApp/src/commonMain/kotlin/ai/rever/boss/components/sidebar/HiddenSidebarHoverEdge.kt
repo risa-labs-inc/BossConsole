@@ -1,7 +1,7 @@
 package ai.rever.boss.components.sidebar
 
-import ai.rever.boss.components.overlays.overlayCornerIsHeavyweight
 import ai.rever.boss.components.window_panel.components.main_window_panels.TabBarRevealState
+import ai.rever.boss.components.window_panel.components.main_window_panels.sidebarNativePointerTrackingAvailable
 import ai.rever.boss.window.LocalWindowFullscreen
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.layout.Box
@@ -23,10 +23,10 @@ internal fun BoxScope.HiddenSidebarHoverEdge(
 ) {
     // Native cursor tracking already crosses Chromium. Creating an invisible dialog here
     // adds a window show/close transaction every time the pinned sidebar is toggled.
-    if (LocalWindowFullscreen.current || overlayCornerIsHeavyweight()) return
+    if (LocalWindowFullscreen.current || sidebarNativePointerTrackingAvailable()) return
     if (!enabled || revealing || !LocalWindowInfo.current.isWindowFocused) return
-    // Match BossTerm: the hidden target is as wide as its 44 dp collapsed tab strip.
-    val edgeWidth = 44.dp
+    // Fallback activation still belongs to the exact window edge, not the retention margin.
+    val edgeWidth = 1.dp
     Box(
         Modifier
             .align(Alignment.CenterStart)

@@ -39,6 +39,7 @@ internal actual fun SidebarOverlayWindow(
     size: DpSize,
     region: IntRect,
     bottomInset: Dp,
+    rightInset: Dp?,
     content: @Composable () -> Unit,
 ) {
     val parent = LocalAwtWindow.current
@@ -48,10 +49,10 @@ internal actual fun SidebarOverlayWindow(
         return
     }
     val bounds = trackedContentPaneBounds(parent) ?: return
-    val x = bounds[0] + region.left
+    val x = bounds[0] + if (rightInset == null) region.left else region.right - size.width.value.roundToInt()
     val y = bounds[1] + region.top
     val state = remember { WindowState(size = size, position = WindowPosition(x.dp, y.dp)) }
-    var nativeWindow by remember { mutableStateOf<java.awt.Window?>(null) }
+    var nativeWindow by remember(parent) { mutableStateOf<java.awt.Window?>(null) }
     val appliedBounds = remember(parent) { Rectangle() }
     val nativeOwner = SystemUtils.isMacOS && parent is ComposeWindow
     var controller by remember(parent) { mutableStateOf<MacSidebarOverlayOwner?>(null) }
@@ -65,13 +66,14 @@ internal actual fun SidebarOverlayWindow(
             (region.top + (paneOrigin?.y ?: 0)).toDouble(),
             (bottomInset.value + parent.insets.bottom).toDouble(),
             size.width.value.toDouble(),
+            rightInset?.let { (it.value + parent.insets.right).toDouble() },
         )
     // This runs on the owner's frame, rather than waiting for the dialog's separate composition.
     // Keep one state object so a delayed dialog update also reads the newest geometry.
     SideEffect {
         state.size = size
         state.position = WindowPosition(x.dp, y.dp)
-        nativeWindow?.let { window ->
+        nativeWindow?.takeIf { it.isDisplayable }?.let { window ->
             val screenBounds = sidebarScreenBounds(x, y, size)
             if (nativeOwner) {
                 controller?.updateGeometry(anchor)
@@ -87,7 +89,15 @@ internal actual fun SidebarOverlayWindow(
         focusable = false,
         boundsManagedExternally = nativeOwner,
     ) { window ->
-        SideEffect { nativeWindow = window }
+        DisposableEffect(window) {
+            nativeWindow = window
+            onDispose {
+                if (nativeWindow === window) {
+                    nativeWindow = null
+                    controller = null
+                }
+            }
+        }
         AttachSidebarOverlayOwner(parent, window, nativeOwner, anchor) { controller = it }
         EnsureOverlayWindowTransparent(window, kind = "sidebar-reveal")
         content()
@@ -116,7 +126,7 @@ internal fun updateSidebarOverlayBounds(
     screenBounds: Rectangle,
     appliedBounds: Rectangle,
 ) {
-    if (appliedBounds == screenBounds) return
+    if (!window.isDisplayable || appliedBounds == screenBounds) return
     window.bounds = screenBounds
     appliedBounds.setBounds(screenBounds)
     if (SystemUtils.isMacOS) {
@@ -141,10 +151,10 @@ private fun AttachSidebarOverlayOwner(
             val parentHandle = (parent as? ComposeWindow)?.windowHandle ?: 0L
             val childHandle = (window as? ComposeDialog)?.windowHandle ?: 0L
             if (nativeOwner && parentHandle != 0L && childHandle != 0L) {
-                if (owner == null) owner = MacSidebarOverlayOwner(parentHandle, childHandle)
-                owner.attach()
-                owner.updateGeometry(currentAnchor)
-                currentOnAttach(owner)
+                val attached = owner ?: MacSidebarOverlayOwner(parentHandle, childHandle).also { owner = it }
+                attached.attach()
+                attached.updateGeometry(currentAnchor)
+                currentOnAttach(attached)
             }
         }
         val listener =

@@ -54,3 +54,23 @@ internal class NativeTitleBarTextInput(
     val address: BrowserAddressBarState? = null,
     val favicon: Painter? = null,
 )
+
+/** Width animation may update sidebar geometry without refreshing menus or address-field text. */
+internal fun sidebarGeometryOnlyChange(
+    before: List<NativeTitleBarAction>,
+    after: List<NativeTitleBarAction>,
+): Boolean =
+    before.size == after.size &&
+        before.zip(after).all { (old, new) ->
+            if (old.id == "sidebar" && new.id == "sidebar") {
+                val geometry =
+                    old.copy(
+                        sidebarWidth = new.sidebarWidth,
+                        sidebarLeading = new.sidebarLeading,
+                        active = new.active,
+                    )
+                geometry == new
+            } else {
+                old == new
+            }
+        }

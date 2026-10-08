@@ -15,7 +15,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
@@ -131,12 +133,15 @@ class TabBarRevealState internal constructor(
         y: Int,
         region: IntRect,
         sidebarWidth: Dp,
+        direction: LayoutDirection = LayoutDirection.Ltr,
     ) {
         val inMainPanel =
-            region.contains(
-                androidx.compose.ui.unit
-                    .IntOffset(x, y),
-            ) && x >= region.left + sidebarWidth.value
+            region.contains(IntOffset(x, y)) &&
+                if (direction == LayoutDirection.Ltr) {
+                    x >= region.left + sidebarWidth.value
+                } else {
+                    x < region.right - sidebarWidth.value
+                }
         if (inMainPanel) dismissFromMainPanel()
     }
 
@@ -183,12 +188,14 @@ fun rememberTabBarRevealState(
 
     val pointerOnRail by state.railHover.collectIsHoveredAsState()
     val pointerOnDrawer by state.drawerHover.collectIsHoveredAsState()
+    val nativeTracking = sidebarNativePointerTrackingAvailable()
+    val drawerHovered = sidebarHoverSignal(nativeTracking, state.pointerInRevealArea, pointerOnDrawer)
     val target =
         hoverRevealTarget(
             enabled = hoverExpand,
             railShown = railShown,
-            pointerOnRail = state.pointerAtEdge,
-            pointerOnDrawer = state.revealed && state.pointerInRevealArea,
+            pointerOnRail = sidebarHoverSignal(nativeTracking, state.pointerAtEdge, pointerOnRail),
+            pointerOnDrawer = state.revealed && drawerHovered,
             drawerBusy = state.busy,
         )
 
@@ -216,6 +223,10 @@ fun rememberTabBarRevealState(
     return state
 }
 
+/** Hosts without an AWT content pane use the in-tree hover edge and drawer hover sources. */
+@Composable
+internal expect fun sidebarNativePointerTrackingAvailable(): Boolean
+
 /** Track native cursor coordinates across the host, browser and drawer windows. */
 @Composable
 expect fun TrackTabBarRevealPointer(
@@ -237,3 +248,9 @@ fun TabBarRevealState.pointerInSidebar(): Boolean {
     val onDrawer by drawerHover.collectIsHoveredAsState()
     return onRail || onDrawer
 }
+
+private fun sidebarHoverSignal(
+    nativeTracking: Boolean,
+    tracked: Boolean,
+    hovered: Boolean,
+): Boolean = tracked || (!nativeTracking && hovered)

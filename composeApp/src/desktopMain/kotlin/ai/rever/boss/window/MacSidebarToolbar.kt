@@ -46,6 +46,7 @@ internal class MacSidebarToolbar(
     private var previousTitle: Pointer? = null
     private var previousSubtitle: Pointer? = null
     private var measuredHeight: Double? = null
+    private var presentation: SidebarToolbarPresentation? = null
 
     @Volatile private var closed = false
 
@@ -57,7 +58,16 @@ internal class MacSidebarToolbar(
         icons: Map<String, ByteArray>,
     ) {
         remoteInput.updateActions(newActions)
+        val requestedPresentation = SidebarToolbarPresentation(title, dark, background, icons)
         dispatchSafely {
+            val unchangedStyle = presentation == requestedPresentation
+            val geometryOnly = unchangedStyle && sidebarGeometryOnlyChange(baseActions, newActions)
+            if (toolbar != null && geometryOnly) {
+                baseActions = newActions
+                actions = newActions.associateBy { it.id }
+                updateSidebarGeometry()
+                return@dispatchSafely
+            }
             customIcons.update(icons)
             baseActions = newActions
             actions = newActions.associateBy { it.id }
@@ -70,14 +80,26 @@ internal class MacSidebarToolbar(
             send(window, "setTitleVisibility:", if (space != null || windowTitle.isEmpty()) 1L else 0L)
             refreshSharingControls(force = true)
             updateIdentifiers()
-            listOf("sidebar_leading", "sidebar_boundary").forEach { id ->
-                items[id]?.let { MacSidebarBoundary.update(it, actions["sidebar"], id == "sidebar_leading") }
-            }
+            updateSidebarBoundaries()
             actions.forEach { (id, action) -> items[id]?.let { updateItem(it, action) } }
             MacToolbarGroups.members.keys.forEach { id ->
                 items[id]?.let { MacToolbarGroups.update(id, it, actions, groupedItems, ::makeItem) }
             }
             measure()
+            presentation = requestedPresentation
+        }
+    }
+
+    private fun updateSidebarGeometry() {
+        updateIdentifiers()
+        updateSidebarBoundaries()
+        actions["sidebar"]?.let { sidebar -> items["sidebar"]?.let { updateItem(it, sidebar) } }
+        measure()
+    }
+
+    private fun updateSidebarBoundaries() {
+        listOf("sidebar_leading", "sidebar_boundary").forEach { id ->
+            items[id]?.let { MacSidebarBoundary.update(it, actions["sidebar"], id == "sidebar_leading") }
         }
     }
 
@@ -522,3 +544,10 @@ internal object MacSidebarToolbarBridge {
         cls
     }
 }
+
+private data class SidebarToolbarPresentation(
+    val title: String,
+    val dark: Boolean,
+    val background: Int,
+    val icons: Map<String, ByteArray>,
+)

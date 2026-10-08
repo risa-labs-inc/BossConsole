@@ -1,6 +1,7 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.LayoutDirection
 
 /**
  * Hover-reveal for the collapsed vertical tab bar: when the bar is down to its slim icon rail -
@@ -15,10 +16,11 @@ import androidx.compose.ui.unit.IntRect
  */
 
 /**
- * Brief grace after leaving the 100dp retention margin, so a transient native cursor sample
- * does not dispose an interaction.
+ * Forty milliseconds after leaving the retention margin covers more than two 16ms cursor samples.
+ * One transient outside sample therefore cannot close the drawer before the next sample recovers.
  */
 internal const val SIDEBAR_REVEAL_CLOSE_DELAY_MS = 40L
+internal const val SIDEBAR_POINTER_SAMPLE_INTERVAL_MS = 16L
 
 /**
  * Whether the hover drawer should be revealed.
@@ -58,21 +60,30 @@ internal fun pointerReachesSidebarEdge(
     y: Int,
     previousX: Int?,
     region: IntRect,
-): Boolean =
-    y >= region.top && y < region.bottom &&
+    direction: LayoutDirection = LayoutDirection.Ltr,
+): Boolean {
+    val edge = if (direction == LayoutDirection.Ltr) region.left else region.right - 1
+    return y >= region.top && y < region.bottom &&
         (
-            x == region.left || (
+            x == edge || (
                 previousX != null &&
                     (
-                        (previousX > region.left && x < region.left) ||
-                            (previousX < region.left && x > region.left)
+                        (previousX > edge && x < edge) ||
+                            (previousX < edge && x > edge)
                     )
             )
         )
+}
 
 /** Retention is horizontal only: leaving through the left edge keeps the reveal open. */
 internal fun pointerWithinSidebarMargin(
     x: Int,
     region: IntRect,
     sidebarWidthDp: Float,
-): Boolean = x <= region.left + sidebarWidthDp + 100f
+    direction: LayoutDirection = LayoutDirection.Ltr,
+): Boolean =
+    if (direction == LayoutDirection.Ltr) {
+        x <= region.left + sidebarWidthDp + 100f
+    } else {
+        x >= region.right - sidebarWidthDp - 100f
+    }

@@ -13,6 +13,7 @@ import ai.rever.boss.plugin.window.LocalWindowId
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
@@ -24,6 +25,52 @@ class TabBarRevealPointerTest {
     val rule = createComposeRule()
 
     private val region = IntRect(40, 20, 1000, 800)
+
+    @Test
+    fun `one outside cursor sample does not close a reveal`() {
+        lateinit var state: TabBarRevealState
+        rule.mainClock.autoAdvance = false
+        rule.setContent { state = rememberTabBarRevealState(true, false, true) }
+        rule.runOnIdle {
+            state.pointerAtEdge = true
+            state.pointerInRevealArea = true
+        }
+        rule.mainClock.advanceTimeByFrame()
+        rule.runOnIdle {
+            assertTrue(state.drawerVisible)
+            state.pointerAtEdge = false
+            state.pointerInRevealArea = false
+        }
+        rule.mainClock.advanceTimeByFrame()
+        rule.runOnIdle {
+            assertTrue(state.drawerVisible, "one 16ms sample must not end the reveal")
+            state.pointerInRevealArea = true
+        }
+        rule.mainClock.advanceTimeBy(200)
+        rule.runOnIdle { assertTrue(state.drawerVisible) }
+        rule.runOnIdle { state.pointerInRevealArea = false }
+        rule.mainClock.advanceTimeBy(200)
+        rule.runOnIdle { assertFalse(state.drawerVisible) }
+    }
+
+    @Test
+    fun `RTL edge retention and outside presses mirror the sidebar`() {
+        val direction = LayoutDirection.Rtl
+        assertTrue(pointerReachesSidebarEdge(999, 100, 998, region, direction))
+        assertFalse(pointerReachesSidebarEdge(40, 100, 41, region, direction))
+        assertTrue(pointerWithinSidebarMargin(660, region, 240f, direction))
+        assertFalse(pointerWithinSidebarMargin(659, region, 240f, direction))
+        lateinit var state: TabBarRevealState
+        rule.setContent { state = rememberTabBarRevealState(true, false, true) }
+        rule.runOnIdle {
+            state.revealed = true
+            state.pointerInRevealArea = true
+            state.dismissMainPanelPress(800, 100, region, 240.dp, direction)
+            assertTrue(state.drawerVisible, "pressing the RTL sidebar must not dismiss it")
+            state.dismissMainPanelPress(759, 100, region, 240.dp, direction)
+            assertFalse(state.drawerVisible)
+        }
+    }
 
     @Test
     fun `native page presses dismiss only the hover reveal in their current window`() {

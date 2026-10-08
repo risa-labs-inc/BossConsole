@@ -1,6 +1,5 @@
 package ai.rever.boss.components.sidebar
 
-import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.overlays.overlayCornerIsHeavyweight
 import ai.rever.boss.components.window_panel.components.main_window_panels.TabBarLayout
 import ai.rever.boss.components.window_panel.components.main_window_panels.TabBarRevealState
@@ -13,16 +12,9 @@ import ai.rever.boss.theme.sidebarGlassEnabled
 import ai.rever.boss.utils.SystemUtils
 import androidx.compose.foundation.background
 import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredWidth
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.GenericShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -30,7 +22,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
@@ -50,13 +41,16 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+
+// Finite window-sized clearance avoids Skia's infinite-rectangle rejection while painting the header.
+private const val SIDEBAR_HEADER_PAINT_CLEARANCE = 10000f
 
 /** BossTerm's main-window panel: its background continues behind the native toolbar. */
 @Composable
@@ -76,16 +70,19 @@ internal fun integratedSidebarSurface(
     if (!enabled) return Modifier.background(if (glass) Color.Transparent else colors.raised)
     val geometry = LocalGlassSidebarGeometry.current
     val density = LocalDensity.current
+    val direction = LocalLayoutDirection.current
     DisposableEffect(geometry) { onDispose { geometry.shape = null } }
     var top by remember { mutableFloatStateOf(0f) }
     val nativeFrame = SystemUtils.isMacOS && extendsIntoTitleBar
     var measuredBounds by remember { mutableStateOf<Rect?>(null) }
-    SideEffect {
+
+    fun updateGeometry(bounds: Rect?) {
         geometry.shape =
-            measuredBounds?.takeIf { glass }?.let { bounds ->
-                sidebarSurfaceGeometry(bounds, nativeFrame, revealProgress, density)
+            bounds?.takeIf { glass }?.let {
+                sidebarSurfaceGeometry(it, nativeFrame, revealProgress, density, direction)
             }
     }
+    SideEffect { updateGeometry(measuredBounds) }
     return Modifier
         // Paint beneath the outer gap and clipped corners, before applying the panel inset.
         .background(if (glass || headerOnly) Color.Transparent else colors.raised)
@@ -93,11 +90,15 @@ internal fun integratedSidebarSurface(
         .onGloballyPositioned {
             val position = it.positionInRoot()
             top = position.y
-            measuredBounds = Rect(position.x, position.y, position.x + it.size.width, position.y + it.size.height)
+            val bounds = Rect(position.x, position.y, position.x + it.size.width, position.y + it.size.height)
+            measuredBounds = bounds
+            // Layout changes must update the glass cutout in this frame, not after recomposition.
+            updateGeometry(bounds)
         }.drawBehind {
             val extension = if (nativeFrame) (top - 4.dp.toPx()).coerceAtLeast(0f) else 0f
-            val origin = Offset(0f, -extension)
             val bodyWidth = sidebarBodyWidth(size.width.toDp(), revealProgress).toPx()
+            val left = if (layoutDirection == LayoutDirection.Rtl) size.width - bodyWidth else 0f
+            val origin = Offset(left, -extension)
             val bounds = Size(bodyWidth, size.height + extension)
             val radius = CornerRadius(22.dp.toPx())
             clipRect(top = origin.y, bottom = if (headerOnly) 0f else size.height) {
@@ -175,12 +176,20 @@ internal fun sidebarOverlayLayout(
         .zIndex(if (overlay) 1f else 0f)
         .layout { measurable, constraints ->
             val sidebar = measurable.measure(constraints)
+            // placeRelative does not mirror children when their parent reports zero width.
+            val left = if (overlay && layoutDirection == LayoutDirection.Rtl) -sidebar.width else 0
             layout(if (overlay) 0 else sidebar.width, sidebar.height) {
-                sidebar.placeRelative(0, 0)
+                sidebar.place(left, 0)
             }
         }.drawWithContent {
             if (overlay) {
-                clipRect(top = -10000f, right = size.width * revealProgress) { this@drawWithContent.drawContent() }
+                val width = size.width * revealProgress.coerceIn(0f, 1f)
+                clipRect(
+                    // Leave room for the native header while keeping Skia clip bounds finite.
+                    top = -SIDEBAR_HEADER_PAINT_CLEARANCE,
+                    left = if (layoutDirection == LayoutDirection.Rtl) size.width - width else 0f,
+                    right = if (layoutDirection == LayoutDirection.Ltr) width else size.width,
+                ) { this@drawWithContent.drawContent() }
             } else {
                 drawContent()
             }
@@ -203,25 +212,20 @@ internal fun mainPanelSidebarClip(
         }
     }
 
-/** Header and body share this width equation, including the existing 4dp side insets. */
-internal fun sidebarBodyWidth(
-    width: Dp,
-    progress: Float,
-): Dp = ((width.value + 8f) * progress.coerceIn(0f, 1f) - 8f).coerceIn(0f, width.value).dp
-
 private fun sidebarPanelShape(
     nativeFrame: Boolean,
     density: Density,
     progress: Float,
 ): Shape =
-    GenericShape { size, _ ->
+    GenericShape { size, direction ->
         val radius = CornerRadius(with(density) { 22.dp.toPx() })
         val width = with(density) { sidebarBodyWidth(size.width.toDp(), progress).toPx() }
+        val left = if (direction == LayoutDirection.Rtl) size.width - width else 0f
         addRoundRect(
             RoundRect(
-                left = 0f,
+                left = left,
                 top = 0f,
-                right = width,
+                right = left + width,
                 bottom = size.height,
                 topLeftCornerRadius = if (nativeFrame) CornerRadius.Zero else radius,
                 topRightCornerRadius = if (nativeFrame) CornerRadius.Zero else radius,
@@ -231,17 +235,20 @@ private fun sidebarPanelShape(
         )
     }
 
-private fun sidebarSurfaceGeometry(
+internal fun sidebarSurfaceGeometry(
     bounds: Rect,
     nativeFrame: Boolean,
     progress: Float,
     density: Density,
+    direction: LayoutDirection = LayoutDirection.Ltr,
 ): RoundRect =
     with(density) {
+        val width = sidebarBodyWidth(bounds.width.toDp(), progress).toPx()
+        val left = if (direction == LayoutDirection.Rtl) bounds.right - width else bounds.left
         RoundRect(
-            bounds.left,
+            left,
             if (nativeFrame) 4.dp.toPx() else bounds.top,
-            bounds.left + sidebarBodyWidth(bounds.width.toDp(), progress).toPx(),
+            left + width,
             bounds.bottom,
             CornerRadius(22.dp.toPx()),
         )

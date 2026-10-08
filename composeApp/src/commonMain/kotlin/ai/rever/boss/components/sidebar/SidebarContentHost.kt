@@ -27,9 +27,11 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 
 /** Explicitly opened drawers and pinned sidebars reserve width; only hover reveal overlays. */
@@ -60,11 +62,15 @@ internal fun SidebarContentHost(
     val density = LocalDensity.current.density
     var region by remember { mutableStateOf<IntRect?>(null) }
     var bottomInset by remember { mutableStateOf(0.dp) }
+    var rightInset by remember { mutableStateOf(0.dp) }
+    val direction = LocalLayoutDirection.current
     Box(
         Modifier.width(width).fillMaxHeight().onGloballyPositioned {
             val bounds = it.boundsInWindow()
             region = overlayRegionInWindow(bounds, density)
-            bottomInset = ((it.findRootCoordinates().size.height - bounds.bottom) / density).dp
+            val root = it.findRootCoordinates().size
+            bottomInset = ((root.height - bounds.bottom) / density).dp
+            rightInset = ((root.width - bounds.right) / density).dp
         },
     ) {
         val bounds = region ?: return@Box
@@ -72,6 +78,7 @@ internal fun SidebarContentHost(
             size = DpSize(sidebarBodyWidth(width, revealProgress).coerceAtLeast(1.dp), bounds.height.dp),
             region = bounds,
             bottomInset = bottomInset,
+            rightInset = rightInset.takeIf { direction == LayoutDirection.Rtl },
         ) {
             val bodyWidth = sidebarBodyWidth(width, revealProgress).coerceAtLeast(1.dp)
             OpaqueSidebarBody(
@@ -115,5 +122,6 @@ internal expect fun SidebarOverlayWindow(
     size: DpSize,
     region: IntRect,
     bottomInset: Dp = 0.dp,
+    rightInset: Dp? = null,
     content: @Composable () -> Unit,
 )

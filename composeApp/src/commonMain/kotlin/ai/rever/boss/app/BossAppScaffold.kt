@@ -29,6 +29,7 @@ import ai.rever.boss.components.plugin.providers.TopOfMindDataProvider
 import ai.rever.boss.components.plugin.providers.WindowIdProviderImpl
 import ai.rever.boss.components.plugin.providers.WindowProjectStateProviderImpl
 import ai.rever.boss.components.plugin.registries.HomeToolAccess
+import ai.rever.boss.components.sidebar.sidebarFrameWidth
 import ai.rever.boss.components.window_panel.BossWindow
 import ai.rever.boss.components.window_panel.components.main_window_panels.TabCycleOverlayHost
 import ai.rever.boss.components.workspaces.LayoutWorkspace
@@ -104,6 +105,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -310,7 +312,7 @@ internal fun BossAppScaffold(
     // The drawer takes the host actions when the header replaces the rail. Its visibility is
     // reported by SplitViewPanel, which owns the measured layout and drawer state.
     var drawerVisible by remember { mutableStateOf(false) }
-    var sidebarRevealProgress by remember { mutableFloatStateOf(0f) }
+    val sidebarRevealProgress = remember { mutableFloatStateOf(0f) }
 
     // Whether the bar in the layout is the RAIL, reported by SplitViewPanel once it has measured.
     //
@@ -808,7 +810,7 @@ internal fun BossAppScaffold(
                                 )
                             },
                             onDrawerVisibleChange = { visible -> drawerVisible = visible },
-                            onSidebarRevealProgressChange = { sidebarRevealProgress = it },
+                            onSidebarRevealProgressChange = { sidebarRevealProgress.floatValue = it },
                             onBarRailedChange = { railed -> barRailed = railed },
                             sidebarToggleRequests = sidebarToggleRequests.takeIf { sidebarInHeader },
                             onSidebarLeadingChange = { sidebarLeading = it },
@@ -1115,7 +1117,7 @@ private fun SidebarTitleBar(
     trafficLights: TrafficLightInset,
     barRailed: Boolean,
     drawerVisible: Boolean,
-    sidebarRevealProgress: Float,
+    sidebarRevealProgress: State<Float>,
     toggleRequests: MutableSharedFlow<Unit>,
     state: BossAppState,
     spaceAction: NativeTitleBarAction,
@@ -1132,22 +1134,19 @@ private fun SidebarTitleBar(
         val toggleSidebar: () -> Unit = { toggleRequests.tryEmit(Unit) }
         val title = if (appearance.showTitleBar) spaceAction.label else ""
         val expanded = !barRailed || drawerVisible
-        val sidebarWidth =
-            if (!barRailed) {
-                appearance.tabBarVerticalWidth + 8f
-            } else if (drawerVisible) {
-                (appearance.tabBarVerticalWidth + 8f) *
-                    sidebarRevealProgress
-            } else {
-                0f
-            }
+        val sidebarWidth = if (expanded) sidebarFrameWidth(appearance.tabBarVerticalWidth.dp).value else 0f
         val actions =
             mergeNativeSharingActions(
                 sidebarTitleActions(state, toggleSidebar, sidebarWidth, sidebarLeading, sidebarBelowTopChrome) +
                     spaceAction + nativeTerminalTitleLabel(state.splitViewState) + nativeBrowserTitleActions(state),
             )
         val sharing = AppSharingActive(state.windowId)
-        val nativeReady = sidebarInHeader && NativeSidebarTitleBar(title, actions, sharing)
+        var nativeReady by remember { mutableStateOf(false) }
+        if (sidebarInHeader) {
+            AnimatedSidebarNativeHeader(title, actions, sharing, barRailed, sidebarRevealProgress) { nativeReady = it }
+        } else {
+            SideEffect { nativeReady = false }
+        }
         NativeBrowserHostAvailability(state.windowId, nativeReady)
         NativeTerminalHostAvailability(state.windowId, nativeReady)
         SideEffect { onNativeReadyChange(nativeReady) }

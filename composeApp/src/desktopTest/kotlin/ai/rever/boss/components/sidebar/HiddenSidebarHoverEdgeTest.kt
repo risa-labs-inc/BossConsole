@@ -50,6 +50,17 @@ class HiddenSidebarHoverEdgeTest {
     }
 
     @Test
+    fun heavyweightHostWithoutNativeCursorUsesAnInTreeEdge() {
+        render(focused = true, enabled = true, heavyweight = true, integratedPanel = true)
+        rule.onNodeWithTag("window").performMouseInput {
+            enter(Offset(with(rule.density) { 0.5.dp.toPx() }, 100f))
+        }
+        rule.mainClock.advanceTimeBy(16)
+        rule.runOnIdle { assertTrue(reveal.drawerVisible) }
+        rule.onNodeWithTag("content").assertWidthIsEqualTo(320.dp)
+    }
+
+    @Test
     fun nativeCursorRevealNeedsNoInvisibleEdgeWindow() {
         val previousRenderer = OverlayConfig.heavyweightCorner
         var windows = 0

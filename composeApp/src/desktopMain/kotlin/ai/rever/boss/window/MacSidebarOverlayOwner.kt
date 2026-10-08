@@ -10,6 +10,7 @@ import com.sun.jna.CallbackReference
 import com.sun.jna.Memory
 import com.sun.jna.Pointer
 import com.sun.jna.Structure
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /** Native ownership and resize notifications keep the body above and anchored to its owner. */
@@ -57,7 +58,7 @@ internal class MacSidebarOverlayOwner(
             }
         val rect =
             SidebarOverlayRect(
-                frame[0] + anchor.left,
+                frame[0] + if (anchor.right == null) anchor.left else frame[2] - anchor.right - anchor.width,
                 frame[1] + anchor.bottom,
                 anchor.width.coerceAtLeast(1.0),
                 (frame[3] - anchor.top - anchor.bottom).coerceAtLeast(1.0),
@@ -86,6 +87,7 @@ internal data class SidebarOverlayAnchor(
     val top: Double,
     val bottom: Double,
     val width: Double,
+    val right: Double? = null,
 )
 
 @Structure.FieldOrder("x", "y", "width", "height")
@@ -112,10 +114,12 @@ private object SidebarOverlayResizeBridge {
     private val callback = ResizeCallback { self, _, _ -> refreshSafely(self) }
     private val bridgeClass by lazy {
         val objc = MacToolbarRuntime.objc
+        val name = "BossSidebarOverlayObserver_" + UUID.randomUUID().toString().replace("-", "")
         val type =
             objc
                 .getFunction("objc_allocateClassPair")
-                .invokePointer(arrayOf(clazz("NSObject"), "BossConsoleSidebarOverlayResizeObserver", 0L))
+                .invokePointer(arrayOf(clazz("NSObject"), name, 0L))
+        checkNotNull(type) { "Could not allocate the sidebar resize observer class" }
         objc.getFunction("class_addMethod").invokeInt(
             arrayOf(type, selector("windowChanged:"), CallbackReference.getFunctionPointer(callback), "v@:@"),
         )

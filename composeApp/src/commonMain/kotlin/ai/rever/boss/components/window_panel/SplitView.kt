@@ -17,6 +17,7 @@ import ai.rever.boss.components.sidebar.integratedSidebarLayout
 import ai.rever.boss.components.sidebar.integratedSidebarToggle
 import ai.rever.boss.components.sidebar.mainPanelSidebarClip
 import ai.rever.boss.components.sidebar.rememberSidebarRevealMotion
+import ai.rever.boss.components.sidebar.sidebarFrameWidth
 import ai.rever.boss.components.sidebar.sidebarRegion
 import ai.rever.boss.components.sidebar.sidebarResizeResult
 import ai.rever.boss.components.window_panel.components.BossResizablePanel
@@ -2716,7 +2717,7 @@ fun SplitViewPanel(
         state = reveal,
         enabled = edgeRevealTracking(bar.railShown, bar.hoverExpand, LocalWindowFullscreen.current),
         region = contentRegion,
-        sidebarWidth = bar.width + if (sidebarToggleRequests != null) 8.dp else tabBarRailWidth,
+        sidebarWidth = if (sidebarToggleRequests != null) sidebarFrameWidth(bar.width) else bar.width + tabBarRailWidth,
     )
 
     // In an effect, not during composition: the window turns this into a placement decision that
@@ -2919,7 +2920,7 @@ private fun WindowBarRow(
             Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .then(mainPanelSidebarClip(overlaySidebar, (barWidth + 8.dp) * revealProgress)),
+                .then(mainPanelSidebarClip(overlaySidebar, sidebarFrameWidth(barWidth, revealProgress))),
         )
     }
 }

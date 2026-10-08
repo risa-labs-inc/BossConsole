@@ -21,6 +21,7 @@ import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.runComposeUiTest
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
@@ -91,6 +92,55 @@ class SidebarOverlayNativeLifecycleTest {
             onAppKit { assertAnchored(owner, child, 55.0) }
         }
 
+    @Test
+    fun `right anchored hover overlay follows native width changes`(): Unit =
+        runComposeUiTest {
+            val fixture = SidebarFixture(rightInset = 20.dp)
+            setContent { SidebarWindow(fixture) }
+            waitUntil(timeoutMillis = 10_000) {
+                onEdt { fixture.owner?.isShowing == true && fixture.child?.isShowing == true }
+            }
+            val (owner, child) =
+                onEdt {
+                    val parent = Pointer(assertNotNull(fixture.owner).windowHandle)
+                    val body = Pointer(assertNotNull(fixture.child).windowHandle)
+                    parent to body
+                }
+            waitUntil(timeoutMillis = 10_000) {
+                onAppKit {
+                    val parent = frame(owner)
+                    val body = frame(child)
+                    kotlin.math.abs(parent[0] + parent[2] - body[0] - body[2] - 20) < 0.01
+                }
+            }
+            onAppKit {
+                val parent = frame(owner)
+                send(
+                    owner,
+                    "setFrame:display:",
+                    SidebarLifecycleRect(
+                        parent[0] - 60,
+                        parent[1] - 30,
+                        parent[2] + 90,
+                        parent[3] + 60,
+                    ),
+                    0.toByte(),
+                )
+                val resized = frame(owner)
+                val body = frame(child)
+                assertEquals(owner, pointer(child, "parentWindow"))
+                assertEquals(resized[0] + resized[2] - 20, body[0] + body[2], 0.01)
+                assertEquals(resized[3] - 60, body[3], 0.01)
+            }
+            runOnIdle { fixture.width = 55.dp }
+            waitUntil(timeoutMillis = 10_000) { onAppKit { frame(child)[2] == 55.0 } }
+            onAppKit {
+                val parent = frame(owner)
+                val body = frame(child)
+                assertEquals(parent[0] + parent[2] - 20, body[0] + body[2], 0.01)
+            }
+        }
+
     private fun assertNativeResize(
         owner: Pointer,
         child: Pointer,
@@ -151,7 +201,12 @@ class SidebarOverlayNativeLifecycleTest {
             }
             Box(Modifier.fillMaxSize().background(Color.DarkGray)) {
                 CompositionLocalProvider(LocalAwtWindow provides window) {
-                    SidebarOverlayWindow(DpSize(fixture.width, 140.dp), IntRect(0, 40, 100, 180), bottomInset = 20.dp) {
+                    SidebarOverlayWindow(
+                        DpSize(fixture.width, 140.dp),
+                        IntRect(0, 40, 100, 180),
+                        bottomInset = 20.dp,
+                        rightInset = fixture.rightInset,
+                    ) {
                         val child = LocalAwtWindow.current as ComposeDialog
                         DisposableEffect(child) {
                             fixture.child = child
@@ -183,7 +238,9 @@ class SidebarOverlayNativeLifecycleTest {
         return result.get(10, TimeUnit.SECONDS)
     }
 
-    private class SidebarFixture {
+    private class SidebarFixture(
+        val rightInset: Dp? = null,
+    ) {
         var width by mutableStateOf(100.dp)
         var owner: ComposeWindow? = null
         var child: ComposeDialog? = null
