@@ -3,9 +3,10 @@
  *
  * States driven by the inline, nonce-stamped script: sign-in, "check your email", loading,
  * "opening" (shown only for a click in the list), and the list. A load that may auto-open (exactly
- * one Fluck online, or ?instance=<id>) starts in body.launching: the web chat's own boot screen (its name, centred)
- * until the frame is up or the page has to ask (sign-in, several Flucks, offline, an error). No external
- * asset and no third-party script, so the CSP stays `default-src 'none'`.
+ * one Fluck online, or ?instance=<id>) starts in body.launching: the web chat's own boot splash
+ * (logo, the Fluck's agent name once known, pulsing dots) until the frame is up or the page has to
+ * ask (sign-in, several Flucks, offline, an error). No external asset (the splash logo is a data:
+ * URI, allowed by img-src data:) and no third-party script, so the CSP stays `default-src 'none'`.
  *
  * Opening a Fluck embeds the URL /api/open returns (`<endpoint>/#/t/<ticket>`) in a full-viewport
  * iframe, as live-sessions does with its viewer, so the address bar stays on fluck.risaboss.com.
@@ -14,7 +15,8 @@
  * from the list pushes `?instance=<id>`, so "back" closes the frame and shows the list, and a
  * reload reopens that Fluck with a fresh ticket (the single-use ticket never enters the address
  * bar). Switching Fluck or signing out drops `?instance`. The frame talks back with
- * postMessage (onFrameMessage): hello, signed out, switch Fluck, and its title.
+ * postMessage (onFrameMessage): hello, signed out, switch Fluck, its title, and its background
+ * (fluck-theme), which the page mirrors into theme-color so Safari's bars match the chat.
  *
  * Fallback for Flucks older than framing: a framing-capable Fluck posts `fluck-hello` as soon as
  * its script starts, before redeeming the ticket. If none arrives within HELLO_TIMEOUT_MS the
@@ -59,7 +61,9 @@ const STYLES = `
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background-color: var(--ink); color: var(--text);
     font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
-  main { max-width: 560px; margin: 0 auto; padding: 32px 16px 48px; }
+  /* viewport-fit=cover: keep the portal's own chrome inside the safe areas. */
+  main { max-width: 560px; margin: 0 auto; padding: max(32px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+    max(48px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
   .brand { display: flex; align-items: center; gap: 12px; }
   .brand svg { width: 32px; height: 32px; flex: none; }
@@ -91,24 +95,49 @@ const STYLES = `
   a { color: var(--signal-text); }
   /* Embedded Fluck: the frame fills the page; the Fluck's own "Switch BOSS" and Back return to the list. */
   body.viewing { overflow: hidden; }
-  body.viewing main { max-width: none; padding: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  /* Edge to edge, under the safe areas (viewport-fit=cover): the framed chat pads its own insets.
+     fitViewport() overrides the height and offset while the on-screen keyboard is up. */
+  body.viewing main { position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; margin: 0; padding: 0;
+    display: flex; flex-direction: column; overflow: hidden; }
   body.viewing header, body.viewing #notice, body.viewing .card, body.viewing footer { display: none; }
   /* Launching: until the page knows it must ask (sign-in, several Flucks, offline) it shows nothing
      but a quiet line, so opening a Fluck never flashes the portal. */
   body.launching header, body.launching #notice, body.launching .card, body.launching footer { display: none; }
-  /* The launch screen is the Fluck web chat's own boot screen (webchat .boot/.boot-mark: the name,
-     centred, on its --bg in --text-3), so handing over to the frame changes no pixel. Keep these
-     values in step with webchat/src/styles/tokens.css. */
-  :root { --boot-bg: #f5f5f3; --boot-text: #62676d; }
-  @media (prefers-color-scheme: dark) { :root { --boot-bg: #111112; --boot-text: #98989f; } }
+  /* The launch screen is the Fluck web chat's own boot splash (webchat .splash: logo, name, three
+     pulsing dots, status line, on --surface), so handing over to the frame changes no pixel. Its
+     tokens are scoped to #launch so they do not touch the portal's own. Keep in step with the web
+     chat's splash CSS and tokens.css. */
+  /* --boot-bg also matches the theme-color metas, so Safari's bars, the page and the chat are one
+     colour. A framed chat's fluck-theme overrides it inline on <html> (applyTheme). */
+  :root { --boot-bg: #ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --boot-bg: #1c1c1e; } }
+  /* Separate rules: a browser without :has() drops its whole rule, and must keep the body one. */
   body.launching, body.viewing { background-color: var(--boot-bg); }
-  #launch { display: none; }
-  body.launching:not(.viewing) #launch { display: grid; place-items: center; position: fixed; inset: 0; background-color: var(--boot-bg);
-    color: var(--boot-text); font: 600 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    letter-spacing: -0.01em; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  html:has(> body.launching), html:has(> body.viewing) { background-color: var(--boot-bg); }
+  #launch { display: none; --surface: #ffffff; --text: #1b1d1f; --text-3: #62676d; --accent: #0f5bff; }
+  @media (prefers-color-scheme: dark) { #launch { --surface: #1c1c1e; --text: #f2f2f7; --text-3: #98989f; --accent: #5b8cff; } }
+  body.launching:not(.viewing) #launch { display: grid; position: fixed; inset: 0; overflow: auto;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  .splash { min-height: 100%; display: grid; grid-template-rows: 1fr auto 1fr; justify-items: center;
+    padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); background: var(--surface); }
+  .splash-main { grid-row: 2; width: 100%; max-width: 340px; display: grid; justify-items: center; text-align: center; }
+  .splash-logo { display: block; width: 64px; height: 64px; }
+  /* min-height: the name is filled in once the portal knows which Fluck it is opening. */
+  .splash-name { min-height: 1.2em; margin: 18px 0 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 24px; line-height: 1.2; font-weight: 600; letter-spacing: -0.02em; color: var(--text); overflow-wrap: anywhere; }
+  .splash-dots { display: flex; gap: 6px; height: 8px; margin-top: 28px; }
+  .splash-dots span { width: 6px; height: 6px; margin-top: 1px; border-radius: 50%; background: var(--accent); opacity: .3;
+    animation: splash-pulse 1.4s ease-in-out infinite; }
+  .splash-dots span:nth-child(2) { animation-delay: .2s; }
+  .splash-dots span:nth-child(3) { animation-delay: .4s; }
+  @keyframes splash-pulse { 0%, 60%, 100% { opacity: .3; } 30% { opacity: 1; } }
+  .splash-status { min-height: 1.5em; margin: 14px 0 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 15px; line-height: 1.5; color: var(--text-3); overflow-wrap: anywhere; }
+  .splash-foot { grid-row: 3; align-self: end; padding-top: 24px; }
+  @media (prefers-reduced-motion: reduce) { .splash-dots span { animation: none; opacity: .55; } }
   #viewer { display: none; flex: 1; flex-direction: column; min-height: 0; }
   body.viewing #viewer { display: flex; }
-  #fluckframe { flex: 1; width: 100%; border: 0; background-color: var(--boot-bg); }
+  #fluckframe { display: block; flex: 1; width: 100%; height: 100%; min-height: 0; margin: 0; border: 0; background-color: var(--boot-bg); }
   .providers { display: grid; gap: 10px; }
   a.btn.provider { display: flex; align-items: center; justify-content: center; gap: 10px;
     background-color: transparent; color: var(--text); border-color: var(--line-strong); }
@@ -129,6 +158,7 @@ const SCRIPT = `
   var OPEN_URL_RE = /^https:\\/\\/[A-Za-z0-9.-]+(:[0-9]{1,5})?\\/#\\/t\\/[A-Za-z0-9_-]{43}$/;
   var WANT_KEY = "fluck-web.instance", WANT_TTL_MS = 15 * 60 * 1000;
   var TITLE_MAX = 120, PAGE_TITLE = "Fluck", HELLO_TIMEOUT_MS = 8000;
+  var THEME_RE = /^#[0-9a-f]{6}$/i, THEME_DEFAULTS = { "theme-light": "#ffffff", "theme-dark": "#1c1c1e" };
   var pollTimer = null, openTimer = null, csrf = "", opening = false, requestGeneration = 0;
   var viewing = null; // { url, label } while a Fluck is framed
   var helloTimer = null; // pending top-level fallback until the frame says fluck-hello
@@ -300,6 +330,9 @@ const SCRIPT = `
     if (opening) return;
     opening = true; cancelOpenTimer(); stopPolling();
     $("opening-name").textContent = title(i);
+    // The launch splash names the Fluck it is opening, as its web chat's splash will.
+    $("launch-name").textContent = i.agent_name;
+    $("launch-status").textContent = "Opening on " + i.label + ".";
     show("opening");
     try {
       var r = await api("/api/open", { method: "POST", headers: { "X-Fluck-Web-CSRF": csrf }, body: { instance_id: i.instance_id } });
@@ -366,6 +399,18 @@ const SCRIPT = `
     } catch (_) {}
     helloTimer = setTimeout(function () { helloTimer = null; navigateTopLevel(url); }, HELLO_TIMEOUT_MS);
   }
+  // Safari paints its status bar and toolbar from the TOP document's theme-color, which a framed
+  // chat cannot set, so the chat posts its background (fluck-theme) and the page mirrors it on both
+  // metas and on --boot-bg. null restores the defaults (the web chat's --surface per scheme).
+  function applyTheme(color) {
+    Object.keys(THEME_DEFAULTS).forEach(function (id) {
+      var m = $(id);
+      if (m) m.setAttribute("content", color || THEME_DEFAULTS[id]);
+    });
+    var root = document.documentElement.style;
+    if (color) root.setProperty("--boot-bg", color);
+    else root.removeProperty("--boot-bg");
+  }
   function cancelHelloTimer() { if (helloTimer) { clearTimeout(helloTimer); helloTimer = null; } }
   // An older Fluck refused the frame and never redeemed the ticket: open it the pre-iframe way.
   function navigateTopLevel(url) {
@@ -384,6 +429,7 @@ const SCRIPT = `
     $("fluckframe").setAttribute("src", "about:blank");
     document.body.classList.remove("viewing");
     document.title = PAGE_TITLE;
+    applyTheme(null);
     fitViewport();
     autoOpenDone = true; // do not bounce straight back into a Fluck that was just closed
     if (reload === "quiet") { show("list"); loadInstances(true).catch(function () {}); }
@@ -402,6 +448,7 @@ const SCRIPT = `
     else if (d.type === "fluck-signed-out") { dropInstanceFromUrl(); closeFrame(true); }
     else if (d.type === "fluck-switch") { dropInstanceFromUrl(); closeFrame("quiet"); }
     else if (d.type === "fluck-title" && typeof d.title === "string") document.title = frameTitle(d.title);
+    else if (d.type === "fluck-theme" && typeof d.color === "string" && THEME_RE.test(d.color)) applyTheme(d.color);
   }
   window.addEventListener("message", onFrameMessage);
   window.addEventListener("popstate", function () { if (viewing) closeFrame(true); });
@@ -468,7 +515,9 @@ export function fluckPage(model: PageModel, nonce: string): string {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta id="theme-light" name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta id="theme-dark" name="theme-color" content="#1c1c1e" media="(prefers-color-scheme: dark)">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
 <title>Fluck</title>
@@ -506,7 +555,7 @@ export function fluckPage(model: PageModel, nonce: string): string {
     <div class="row"><button id="sent-back" class="secondary" type="button">Use a different email</button></div>
   </section>
 
-  <div id="launch" role="status" aria-label="Opening your Fluck"><span>Fluck</span></div>
+  <div id="launch" class="splash boot" role="status" aria-busy="true" aria-label="Opening your Fluck"><div class="splash-main"><img class="splash-logo" src="${esc(FAVICON)}" width="64" height="64" alt="" /><p id="launch-name" class="splash-name"></p><span class="splash-dots" aria-hidden="true"><span></span><span></span><span></span></span><p id="launch-status" class="splash-status"></p></div><div class="splash-foot"></div></div>
 
   <section id="loading" class="card hidden"><div class="sub">Loading your Flucks…</div></section>
 
