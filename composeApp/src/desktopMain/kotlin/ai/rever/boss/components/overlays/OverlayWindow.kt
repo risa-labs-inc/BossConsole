@@ -27,6 +27,7 @@ internal fun OverlayWindow(
     state: WindowState,
     focusable: Boolean,
     onKeyEvent: (KeyEvent) -> Boolean = { false },
+    boundsManagedExternally: Boolean = false,
     content: @Composable (java.awt.Window) -> Unit,
 ) {
     val parent = LocalAwtWindow.current
@@ -59,20 +60,14 @@ internal fun OverlayWindow(
                         focusableWindowState = focusable
                         isAutoRequestFocus = focusable
                         background = java.awt.Color(0, 0, 0, 0)
+                        if (boundsManagedExternally) applyOverlayBounds(this, state)
                     }
                 },
                 dispose = ComposeDialog::dispose,
                 update = { dialog ->
                     dialog.focusableWindowState = focusable
                     dialog.isAutoRequestFocus = focusable
-                    val at = state.position
-                    if (at is WindowPosition.Absolute) dialog.setLocation(at.x.value.toInt(), at.y.value.toInt())
-                    dialog.setSize(
-                        state.size.width.value
-                            .roundToInt(),
-                        state.size.height.value
-                            .roundToInt(),
-                    )
+                    if (!boundsManagedExternally) applyOverlayBounds(dialog, state)
                 },
                 onKeyEvent = onKeyEvent,
             ) {
@@ -84,6 +79,20 @@ internal fun OverlayWindow(
             }
         }
     }
+}
+
+private fun applyOverlayBounds(
+    dialog: ComposeDialog,
+    state: WindowState,
+) {
+    val at = state.position
+    if (at is WindowPosition.Absolute) dialog.setLocation(at.x.value.toInt(), at.y.value.toInt())
+    dialog.setSize(
+        state.size.width.value
+            .roundToInt(),
+        state.size.height.value
+            .roundToInt(),
+    )
 }
 
 @Composable
