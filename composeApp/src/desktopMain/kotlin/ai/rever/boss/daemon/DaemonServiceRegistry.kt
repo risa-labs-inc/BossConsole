@@ -15,6 +15,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.MessageDigest
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
@@ -87,16 +88,24 @@ internal class DaemonServiceRegistry(
         try {
             service =
                 withContext(WorkerClassLoader(loader)) {
-                    loader.loadClass(request.entryPoint).getDeclaredConstructor().newInstance() as DaemonService
+                    val type = loader.loadClass(request.entryPoint)
+                    require(type.classLoader === loader && DaemonService::class.java.isAssignableFrom(type)) {
+                        "Worker entry point must belong to the plugin artifact and implement DaemonService"
+                    }
+                    type.getDeclaredConstructor().newInstance() as DaemonService
                 }
             val context = serviceContext(key, scope)
+            val instanceId = UUID.randomUUID().toString()
             val endpoints =
                 withContext(WorkerClassLoader(loader)) {
-                    service.start(context, request.configuration).toMap()
+                    service.start(context, request.configuration).toMap() + ("boss.service.instanceId" to instanceId)
                 }
+            val response = DaemonResponse(endpoints = endpoints)
+            val metadataSize = daemonJson.encodeToString(DaemonResponse.serializer(), response).toByteArray().size
+            require(metadataSize <= MAX_MESSAGE_BYTES) { "Worker metadata exceeds daemon message limit" }
             storage.saveRegistration(key, request.copy(secret = "", jar = snapshot.absolutePath))
             workers[key] = Worker(service, scope, loader, endpoints)
-            return DaemonResponse(endpoints = endpoints)
+            return response
         } catch (failure: Throwable) {
             cleanupFailedStart(key, service, scope, loader, failure)
             throw failure

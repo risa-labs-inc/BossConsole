@@ -8,6 +8,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class DaemonServiceRegistryTest {
@@ -87,6 +88,13 @@ class DaemonServiceRegistryTest {
     }
 
     @Test
+    fun `entry point cannot resolve from host or bootstrap classes`() {
+        val descriptor = connect().copy(entryPoint = "java.lang.StringBuilder")
+        assertFailsWith<IllegalArgumentException> { registry.dispatch(descriptor) }
+        assertEquals(0, registry.count())
+    }
+
+    @Test
     fun `tampered plugin artifact is refused before starting service`() {
         val jar = artifact()
         val descriptor = connect(jar = jar)
@@ -115,7 +123,9 @@ class DaemonServiceRegistryTest {
         try {
             restored.restore()
             assertEquals(1, restored.count())
-            assertEquals(response.endpoints, restored.dispatch(connect()).endpoints)
+            val next = restored.dispatch(connect()).endpoints
+            assertEquals(response.endpoints["data"], next["data"])
+            assertNotEquals(response.endpoints["boss.service.instanceId"], next["boss.service.instanceId"])
             restored.stopPlugin("plugin.one")
         } finally {
             restored.close()
