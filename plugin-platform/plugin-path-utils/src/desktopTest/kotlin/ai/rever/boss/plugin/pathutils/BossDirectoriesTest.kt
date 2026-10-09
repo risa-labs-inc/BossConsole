@@ -2,7 +2,9 @@ package ai.rever.boss.plugin.pathutils
 
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import java.io.File
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -104,6 +106,20 @@ class BossDirectoriesTest {
             assertTrue(resolved.absolutePath.startsWith(BossDirectories.rootDir.absolutePath))
             val expected = "cache" + java.io.File.separator + "favicons"
             assertTrue(resolved.absolutePath.endsWith(expected))
+        }
+
+        @Test
+        fun `resolve refuses absolute and traversal paths`() {
+            assertFailsWith<IllegalArgumentException> { BossDirectories.resolve("/tmp/outside") }
+            assertFailsWith<IllegalArgumentException> { BossDirectories.resolve("../outside") }
+            assertFailsWith<IllegalArgumentException> { BossDirectories.resolve("nested/../../outside") }
+            assertFailsWith<IllegalArgumentException> { BossDirectories.resolve(" ") }
+        }
+
+        @Test
+        fun `contains distinguishes state from external files`() {
+            assertTrue(BossDirectories.contains(BossDirectories.resolve("plugin-data/probe/state.json")))
+            assertFalse(BossDirectories.contains(File(BossDirectories.rootDir.parentFile, "outside.json")))
         }
     }
 

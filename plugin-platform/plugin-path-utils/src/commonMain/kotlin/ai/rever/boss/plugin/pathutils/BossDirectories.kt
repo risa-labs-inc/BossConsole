@@ -38,7 +38,33 @@ object BossDirectories {
         }
     }
 
-    fun resolve(relativePath: String): File = File(rootDir, relativePath)
+    /**
+     * Resolve a durable BOSS path below [rootDir].
+     *
+     * This is an enforcement boundary, not a convenience join. A plugin id, record name or
+     * future configuration value must never turn a state path into an absolute path or escape
+     * through `..` or an existing symlink. User-selected project files are deliberately handled
+     * by the file-access APIs instead of this durable-state API.
+     */
+    fun resolve(relativePath: String): File {
+        require(relativePath.isNotBlank()) { "BOSS state paths must not be blank" }
+
+        val relative = File(relativePath)
+        require(!relative.isAbsolute) { "BOSS state paths must be relative to ${rootDir.absolutePath}" }
+
+        val root = rootDir.canonicalFile
+        val target = File(root, relativePath).canonicalFile
+        require(target != root && target.toPath().startsWith(root.toPath())) {
+            "BOSS state paths must remain under ${root.absolutePath}"
+        }
+        return target
+    }
+
+    /** Whether [file] is contained by the durable BOSS state root. */
+    fun contains(file: File): Boolean {
+        val root = rootDir.canonicalFile.toPath()
+        return file.canonicalFile.toPath().startsWith(root)
+    }
 
     /**
      * Accepts "true" (case-insensitive), "1", and "yes" as truthy.

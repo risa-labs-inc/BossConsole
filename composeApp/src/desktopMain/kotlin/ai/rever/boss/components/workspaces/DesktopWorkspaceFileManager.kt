@@ -1,5 +1,6 @@
 package ai.rever.boss.components.workspaces
 
+import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
@@ -10,7 +11,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import java.io.File
 import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Paths
+import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 
 /**
@@ -22,9 +25,22 @@ actual class WorkspaceFileManager actual constructor(
     private val logger = BossLogger.forComponent("WorkspaceFileManager")
     private val workspaceDirectory: String by lazy {
         directoryOverride ?: run {
-            val userHome = SystemUtils.getUserHome()
-            val documentsPath = Paths.get(userHome, "Documents", WorkspaceFileManagerCommon.getDefaultWorkspaceDirectoryName())
-            documentsPath.toString()
+            val stateDirectory = BossDirectories.resolve("workspaces")
+            runCatching {
+                migrateLegacyWorkspaceDirectory(
+                    legacyDirectory =
+                        Paths
+                            .get(
+                                SystemUtils.getUserHome(),
+                                "Documents",
+                                WorkspaceFileManagerCommon.LEGACY_WORKSPACE_DIRECTORY_NAME,
+                            ).toFile(),
+                    stateDirectory = stateDirectory,
+                )
+            }.onFailure { error ->
+                logger.warn(LogCategory.WORKSPACE, "Failed to import legacy workspace records", error = error)
+            }
+            stateDirectory.absolutePath
         }
     }
 
@@ -236,6 +252,33 @@ actual class WorkspaceFileManager actual constructor(
                     error = e,
                 )
                 null
+            }
+        }
+}
+
+/**
+ * Copy legacy Space records into the portable BOSS state root without overwriting either side.
+ *
+ * The old directory is retained as a rollback copy. From this release onward only [stateDirectory]
+ * is read and maintained. A later cleanup can remove the legacy copy after operators have verified
+ * their migration.
+ */
+internal fun migrateLegacyWorkspaceDirectory(
+    legacyDirectory: File,
+    stateDirectory: File,
+) {
+    if (!legacyDirectory.isDirectory || legacyDirectory.canonicalFile == stateDirectory.canonicalFile) return
+    if (!stateDirectory.exists() && !stateDirectory.mkdirs()) return
+
+    legacyDirectory
+        .listFiles()
+        .orEmpty()
+        .filter { file ->
+            file.name.endsWith(".json") && Files.isRegularFile(file.toPath(), NOFOLLOW_LINKS)
+        }.forEach { source ->
+            val target = File(stateDirectory, source.name)
+            if (!target.exists()) {
+                Files.copy(source.toPath(), target.toPath(), StandardCopyOption.COPY_ATTRIBUTES)
             }
         }
 }
