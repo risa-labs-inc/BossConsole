@@ -93,6 +93,7 @@ import ai.rever.boss.plugin.sandbox.PluginSandboxManagerImpl
 import ai.rever.boss.plugin.sandbox.SandboxConfig
 import ai.rever.boss.plugin.sandbox.context.SandboxedPanelRegistry
 import ai.rever.boss.plugin.sandbox.context.SandboxedPluginContext
+import ai.rever.boss.plugin.sandbox.context.PluginApiRegistryLifecycle
 import ai.rever.boss.plugin.sandbox.context.SandboxedTabRegistry
 import ai.rever.boss.plugin.sandbox.health.PluginHealthSummary
 import ai.rever.boss.plugin.sandbox.notification.BossPluginNotificationService
@@ -172,7 +173,7 @@ class DefaultPlugin(
     // Constructor-visible rather than a field initializer so tests can substitute a sandbox
     // manager that records where teardown runs.
     private val sandboxManager: PluginSandboxManager = PluginSandboxManagerImpl(),
-) : PluginContext {
+) : PluginContext, PluginApiRegistryLifecycle {
     private val registrationOwner = WindowRegistrations.Owner()
 
     companion object {
@@ -443,6 +444,15 @@ class DefaultPlugin(
 
         // Also register under the concrete class for direct lookups
         apiRegistry[api::class.java] = api
+    }
+
+    /** Remove only entries still owned by this exact registration. */
+    override fun unregisterPluginAPI(api: Any) {
+        var changed = false
+        (api::class.java.interfaces.asList() + api::class.java).forEach { key ->
+            changed = apiRegistry.remove(key, api) || changed
+        }
+        if (changed) _apiRegistryVersion.value += 1
     }
 
     /**

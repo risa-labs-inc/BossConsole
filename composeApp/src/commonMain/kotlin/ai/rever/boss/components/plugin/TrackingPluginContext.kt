@@ -60,6 +60,8 @@ import ai.rever.boss.plugin.api.UrlHistoryProvider
 import ai.rever.boss.plugin.api.UserManagementProvider
 import ai.rever.boss.plugin.api.WorkspaceDataProvider
 import ai.rever.boss.plugin.api.ZoomSettingsProvider
+import ai.rever.boss.plugin.sandbox.context.PluginApiRegistryLifecycle
+import java.util.concurrent.CopyOnWriteArrayList
 import ai.rever.boss.plugin.browser.BrowserService
 import com.arkivanov.decompose.ComponentContext
 import kotlinx.coroutines.CoroutineScope
@@ -305,6 +307,7 @@ class TrackingPluginContext(
     private val tracker: PluginRegistrationTracker,
     private val pluginManifest: PluginManifest? = null,
 ) : PluginContext {
+    private val pluginApis = CopyOnWriteArrayList<Any>()
     private val _panelRegistry = TrackingPanelRegistry(pluginId, delegate.panelRegistry, tracker)
     private val _tabRegistry = TrackingTabRegistry(pluginId, delegate.tabRegistry, tracker)
 
@@ -539,7 +542,10 @@ class TrackingPluginContext(
     // Plugin-to-plugin API access - delegate to underlying context
     override fun <T : Any> getPluginAPI(apiClass: Class<T>): T? = delegate.getPluginAPI(apiClass)
 
-    override fun registerPluginAPI(api: Any) = delegate.registerPluginAPI(api)
+    override fun registerPluginAPI(api: Any) {
+        pluginApis += api
+        delegate.registerPluginAPI(api)
+    }
 
     /**
      * Get the panels registered by this plugin.
@@ -586,6 +592,12 @@ class TrackingPluginContext(
         // guarantee as MCP tools: gone the moment the plugin is disabled. One
         // loop over the recorded undo callbacks; new kinds need no edit here.
         tracker.unregisterUiExtensions(pluginId)
+
+        // A provider object belongs to the plugin scope that just stopped. Leaving it in the
+        // shared registry exposes a cancelled object to consumers until the next successful load.
+        val lifecycle = delegate as? PluginApiRegistryLifecycle
+        pluginApis.forEach { lifecycle?.unregisterPluginAPI(it) }
+        pluginApis.clear()
 
         // Clear tracking records
         tracker.clearPlugin(pluginId)

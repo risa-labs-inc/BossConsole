@@ -54,6 +54,11 @@ import ai.rever.boss.plugin.browser.BrowserService
 import ai.rever.boss.plugin.sandbox.PluginSandbox
 import kotlinx.coroutines.CoroutineScope
 
+/** Host-only lifecycle hook for APIs registered by a dynamic plugin. */
+interface PluginApiRegistryLifecycle {
+    fun unregisterPluginAPI(api: Any)
+}
+
 /**
  * A PluginContext wrapper that provides sandboxed registries.
  *
@@ -65,7 +70,7 @@ class SandboxedPluginContext(
     private val delegate: PluginContext,
     private val sandboxedPanelRegistry: SandboxedPanelRegistry,
     private val sandboxedTabRegistry: SandboxedTabRegistry,
-) : PluginContext {
+) : PluginContext, PluginApiRegistryLifecycle {
     override val panelRegistry: PanelRegistry
         get() = sandboxedPanelRegistry
 
@@ -316,6 +321,10 @@ class SandboxedPluginContext(
     override fun <T : Any> getPluginAPI(apiClass: Class<T>): T? = delegate.getPluginAPI(apiClass)
 
     override fun registerPluginAPI(api: Any) = delegate.registerPluginAPI(api)
+
+    override fun unregisterPluginAPI(api: Any) {
+        (delegate as? PluginApiRegistryLifecycle)?.unregisterPluginAPI(api)
+    }
 
     /**
      * Get the underlying sandbox for this context.

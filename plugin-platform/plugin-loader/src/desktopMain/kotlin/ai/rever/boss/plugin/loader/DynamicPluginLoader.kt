@@ -564,7 +564,10 @@ class DynamicPluginLoaderImpl(
 
     /**
      * Check if the current BOSS version meets the plugin's minimum version requirement.
-     * Uses semantic versioning comparison with proper prerelease handling.
+     * Compares the numeric release components and ignores build qualifiers, matching the Toolbox
+     * compatibility gate. Local and CI builds append qualifiers to the release they implement;
+     * treating `9.5.41-local1833` as older than `9.5.41` lets the Toolbox unload a working plugin
+     * for an update this loader will then reject.
      *
      * Note: If version parsing fails, the plugin is allowed to load with a warning logged.
      * This "fail-open" approach prevents blocking plugins due to malformed version strings,
@@ -574,7 +577,7 @@ class DynamicPluginLoaderImpl(
         requiredVersion: String,
         currentVersion: String,
     ): Boolean {
-        val required = Version.parse(requiredVersion)
+        val required = Version.parse(requiredVersion.substringBefore('-').substringBefore('+'))
         if (required == null) {
             logger.warn(
                 LogCategory.SYSTEM,
@@ -586,7 +589,7 @@ class DynamicPluginLoaderImpl(
             return true
         }
 
-        val current = Version.parse(currentVersion)
+        val current = Version.parse(currentVersion.substringBefore('-').substringBefore('+'))
         if (current == null) {
             logger.warn(
                 LogCategory.SYSTEM,
