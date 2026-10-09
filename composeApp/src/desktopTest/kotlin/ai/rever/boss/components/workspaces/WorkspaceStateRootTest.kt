@@ -24,6 +24,11 @@ class WorkspaceStateRootTest {
     }
 
     @Test
+    fun `all reserved workspace documents use the migrated json record format`() {
+        assertTrue(WorkspaceFileManagerCommon.reservedDocumentFileNames.all { it.endsWith(".json") })
+    }
+
+    @Test
     fun `legacy migration copies records without overwriting state-root data`() {
         val legacy = temporaryDirectory.resolve("legacy").toFile().apply { mkdirs() }
         val state = temporaryDirectory.resolve("state").toFile()
@@ -178,5 +183,6 @@ class WorkspaceStateRootTest {
 
         assertFalse(File(state, "linked.json").exists())
         assertEquals(listOf("linked.json"), skipped)
+        assertFalse(File(state, ".legacy-documents-import-complete").exists())
     }
 }

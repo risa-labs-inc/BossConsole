@@ -338,7 +338,7 @@ private const val LEGACY_IMPORT_RECEIPTS = ".legacy-documents-imported"
  * is read and maintained. A later cleanup can remove the legacy copy after operators have verified
  * their migration.
  */
-@Suppress("LongParameterList", "ReturnCount", "TooGenericExceptionCaught")
+@Suppress("CyclomaticComplexMethod", "LongParameterList", "ReturnCount", "TooGenericExceptionCaught")
 internal fun migrateLegacyWorkspaceDirectory(
     legacyDirectory: File,
     stateDirectory: File,
@@ -367,9 +367,8 @@ internal fun migrateLegacyWorkspaceDirectory(
         legacyDirectory.listFiles()
             ?: error("Could not list legacy workspace directory: ${legacyDirectory.absolutePath}")
     val candidates = legacyRecords.filter { file -> file.name.endsWith(".json") }
-    candidates
-        .filterNot { file -> Files.isRegularFile(file.toPath(), NOFOLLOW_LINKS) }
-        .forEach(onSkippedRecord)
+    val skippedCandidates = candidates.filterNot { file -> Files.isRegularFile(file.toPath(), NOFOLLOW_LINKS) }
+    skippedCandidates.forEach(onSkippedRecord)
     val receiptsDirectory = File(stateDirectory, LEGACY_IMPORT_RECEIPTS)
     val failures =
         candidates
@@ -397,7 +396,7 @@ internal fun migrateLegacyWorkspaceDirectory(
                 }
             }
 
-    if (failures.isNotEmpty()) {
+    if (failures.isNotEmpty() || skippedCandidates.isNotEmpty()) {
         return
     }
 
@@ -437,7 +436,7 @@ private fun createLegacyImportReceipt(
             false
         }
     if (created) {
-        FileChannel.open(receipt.toPath(), WRITE, NOFOLLOW_LINKS).use { channel -> channel.force(true) }
+        forceFileMetadataBestEffort(receipt.toPath())
         forceDirectoryBestEffort(receiptsDirectory.toPath(), forceDirectory)
     }
 }
@@ -467,7 +466,7 @@ private fun deletePathBestEffort(path: Path) {
  * the second property because providers are allowed to replace the target when that option is set.
  * The temporary and target paths are siblings, so a supported hard link never crosses a file
  * system. Providers without hard-link support fail safely: the target remains absent, the marker
- * is not written, workspace access stays unavailable for this process, and the next launch retries.
+ * is not written, current state remains usable, and the next launch retries the retained source.
  */
 internal fun copyLegacyRecordAtomically(
     source: File,
@@ -551,6 +550,18 @@ private fun forceMarkerBestEffort(marker: Path) {
         // The marker is an empty existence flag; some providers reject explicit forcing.
     } catch (_: UnsupportedOperationException) {
         // Keep the successfully completed one-shot migration on limited providers.
+    }
+}
+
+private fun forceFileMetadataBestEffort(file: Path) {
+    try {
+        FileChannel.open(file, WRITE, NOFOLLOW_LINKS).use { channel -> channel.force(true) }
+    } catch (_: IOException) {
+        // The target itself remains authoritative if a provider rejects explicit forcing.
+    } catch (_: UnsupportedOperationException) {
+        // The target itself remains authoritative if a provider rejects explicit forcing.
+    } catch (_: SecurityException) {
+        // A sandbox may permit normal state I/O while refusing an explicit force channel.
     }
 }
 

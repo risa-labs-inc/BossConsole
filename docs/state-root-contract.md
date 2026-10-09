@@ -32,7 +32,8 @@ already has a current-state counterpart, then reads and writes only the state-ro
 never replaces an existing target, including one created concurrently. The marker prevents a later
 deletion from being resurrected from the legacy directory. Per-record receipts protect that rule
 during a partial import: failed records retry on the next launch, while successfully handled records
-are never re-imported after deletion. The current state root remains usable throughout.
+are never re-imported after deletion. Unsafe non-regular JSON entries are warned about and also keep
+the migration incomplete. The current state root remains usable throughout.
 Published directory entries are forced before the marker where the filesystem supports directory
 forcing; rejection of that optional durability operation does not prevent the marker. The legacy
 directory remains untouched as a rollback copy. Migration runs on the first storage operation, not

@@ -84,12 +84,16 @@ object BossDirectories {
     }
 
     /** Whether [file] is contained by the durable BOSS state root. */
-    fun contains(file: File): Boolean = containsUnderRealRoot(realRootDir, file)
+    fun contains(file: File): Boolean =
+        runCatching { containsUnderRealRoot(realRootDir, file) }
+            .getOrDefault(false)
 
     internal fun containsUnderRoot(
         rootDirectory: File,
         file: File,
-    ): Boolean = containsUnderRealRoot(realRoot(rootDirectory), file)
+    ): Boolean =
+        runCatching { containsUnderRealRoot(realRoot(rootDirectory), file) }
+            .getOrDefault(false)
 
     private fun containsUnderRealRoot(
         root: Path,
