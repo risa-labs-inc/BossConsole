@@ -1,6 +1,5 @@
 package ai.rever.boss.components.workspaces
 
-import ai.rever.boss.plugin.pathutils.BossDirectories
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Files
@@ -17,10 +16,10 @@ class WorkspaceStateRootTest {
 
     @Test
     fun `default workspace storage is inside the portable state root`() {
-        val directory = workspaceStateDirectory().canonicalFile
+        val stateRoot = temporaryDirectory.resolve("portable-root")
+        val directory = workspaceStateDirectory { relative -> stateRoot.resolve(relative).toFile() }.canonicalFile
 
-        assertEquals(BossDirectories.resolve("workspaces"), directory)
-        assertTrue(BossDirectories.contains(directory))
+        assertEquals(stateRoot.resolve("workspaces").toFile().canonicalFile, directory)
     }
 
     @Test

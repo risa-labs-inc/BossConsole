@@ -113,6 +113,10 @@ object WorkspaceFileManagerCommon {
     /** Legacy desktop location, read only for migration into the state root. */
     const val LEGACY_WORKSPACE_DIRECTORY_NAME = "BOSS/workspaces"
 
+    /** Kept for already-compiled callers; new code should use [LEGACY_WORKSPACE_DIRECTORY_NAME]. */
+    @Deprecated("Legacy path only; durable workspace state now lives under BossDirectories")
+    fun getDefaultWorkspaceDirectoryName(): String = LEGACY_WORKSPACE_DIRECTORY_NAME
+
     /**
      * The file a Space is written to: its ID.
      *

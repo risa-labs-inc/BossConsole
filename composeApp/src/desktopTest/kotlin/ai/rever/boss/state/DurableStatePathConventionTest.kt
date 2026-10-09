@@ -14,22 +14,12 @@ import kotlin.test.assertEquals
 class DurableStatePathConventionTest {
     @Test
     fun `durable home paths are centralized or explicitly isolated`() {
-        val roots =
-            listOf(
-                "composeApp/src/commonMain",
-                "composeApp/src/desktopMain",
-                "modules",
-                "plugin-platform",
-            )
+        val stateRootLiteral = Regex(""""\.boss(?:_debug)?(?:"|[/\\])""")
         val stateRootLiterals =
-            roots
-                .flatMap { root -> kotlinSourcesUnder(repoRoot(), root).toList() }
+            productionKotlinSources()
                 .filter { source ->
-                    val path = source.invariantSeparatorsPath
                     val text = source.readText()
-                    val productionSource =
-                        "/src/commonMain/" in path || "/src/desktopMain/" in path || "/src/main/" in path
-                    productionSource && ("\".boss\"" in text || "\".boss_debug\"" in text)
+                    stateRootLiteral.containsMatchIn(text)
                 }.map { source -> source.relativeTo(repoRoot()).invariantSeparatorsPath }
                 .toSet()
 
@@ -45,14 +35,12 @@ class DurableStatePathConventionTest {
 
     @Test
     fun `documents is legacy input and never the active workspace root`() {
-        val productionSources =
-            listOf("composeApp/src/commonMain", "composeApp/src/desktopMain")
-                .flatMap { root -> kotlinSourcesUnder(repoRoot(), root).toList() }
+        val documentsPathSegment = Regex(""""Documents"\s*[,)]""")
         val documentsReferences =
-            productionSources
+            productionKotlinSources()
                 .filter { source ->
                     val text = source.readText()
-                    "\"Documents\"" in text || "LEGACY_WORKSPACE_DIRECTORY_NAME" in text
+                    documentsPathSegment.containsMatchIn(text) || "LEGACY_WORKSPACE_DIRECTORY_NAME" in text
                 }.map { source -> source.relativeTo(repoRoot()).invariantSeparatorsPath }
 
         assertEquals(
@@ -65,4 +53,10 @@ class DurableStatePathConventionTest {
             documentsReferences,
         )
     }
+
+    private fun productionKotlinSources() =
+        kotlinSourcesUnder(repoRoot(), ".").filter { source ->
+            val path = source.invariantSeparatorsPath
+            "/src/commonMain/" in path || "/src/desktopMain/" in path || "/src/main/" in path
+        }
 }

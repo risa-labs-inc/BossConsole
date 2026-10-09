@@ -16,6 +16,7 @@ import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.StandardOpenOption.READ
 import java.nio.file.StandardOpenOption.TRUNCATE_EXISTING
 import java.nio.file.StandardOpenOption.WRITE
 import java.nio.file.attribute.PosixFilePermission.OWNER_READ
@@ -29,31 +30,34 @@ actual class WorkspaceFileManager actual constructor(
 ) {
     private val logger = BossLogger.forComponent("WorkspaceFileManager")
     private val workspaceDirectory: String by lazy {
-        directoryOverride ?: run {
-            val stateDirectory = workspaceStateDirectory()
-            runCatching {
-                migrateLegacyWorkspaceDirectory(
-                    legacyDirectory =
-                        Paths
-                            .get(
-                                SystemUtils.getUserHome(),
-                                "Documents",
-                                WorkspaceFileManagerCommon.LEGACY_WORKSPACE_DIRECTORY_NAME,
-                            ).toFile(),
-                    stateDirectory = stateDirectory,
-                )
-            }.onFailure { error ->
-                logger.warn(LogCategory.WORKSPACE, "Failed to import legacy workspace records", error = error)
-            }
-            stateDirectory.absolutePath
-        }
+        directoryOverride ?: workspaceStateDirectory().absolutePath
     }
+    private val legacyMigration: Lazy<Unit> =
+        lazy {
+            if (directoryOverride == null) {
+                runCatching {
+                    migrateLegacyWorkspaceDirectory(
+                        legacyDirectory =
+                            Paths
+                                .get(
+                                    SystemUtils.getUserHome(),
+                                    "Documents",
+                                    WorkspaceFileManagerCommon.LEGACY_WORKSPACE_DIRECTORY_NAME,
+                                ).toFile(),
+                        stateDirectory = File(workspaceDirectory),
+                    )
+                }.onFailure { error ->
+                    logger.warn(LogCategory.WORKSPACE, "Failed to import legacy workspace records", error = error)
+                }
+            }
+        }
 
     actual fun getDefaultWorkspaceDirectory(): String = workspaceDirectory
 
     actual suspend fun ensureWorkspaceDirectory(): Boolean =
         withContext(Dispatchers.IO) {
             try {
+                legacyMigration.ensureInitialized()
                 val dir = File(workspaceDirectory)
                 if (!dir.exists()) {
                     dir.mkdirs()
@@ -78,6 +82,7 @@ actual class WorkspaceFileManager actual constructor(
         fileName: String?,
     ): String? =
         try {
+            legacyMigration.ensureInitialized()
             val dir = File(workspaceDirectory)
             if (!dir.exists()) {
                 dir.mkdirs()
@@ -124,6 +129,7 @@ actual class WorkspaceFileManager actual constructor(
     actual suspend fun loadWorkspace(fileName: String): LayoutWorkspace? =
         withContext(Dispatchers.IO) {
             try {
+                legacyMigration.ensureInitialized()
                 val filePath = getWorkspaceFilePath(fileName)
                 val file = File(filePath)
 
@@ -156,6 +162,7 @@ actual class WorkspaceFileManager actual constructor(
     actual suspend fun listWorkspaces(): List<WorkspaceFileInfo> =
         withContext(Dispatchers.IO) {
             try {
+                legacyMigration.ensureInitialized()
                 val dir = File(workspaceDirectory)
                 if (!dir.exists() || !dir.isDirectory) {
                     return@withContext emptyList()
@@ -186,6 +193,7 @@ actual class WorkspaceFileManager actual constructor(
     actual suspend fun deleteWorkspace(fileName: String): Boolean =
         withContext(Dispatchers.IO) {
             try {
+                legacyMigration.ensureInitialized()
                 val filePath = getWorkspaceFilePath(fileName)
                 val file = File(filePath)
 
@@ -220,6 +228,7 @@ actual class WorkspaceFileManager actual constructor(
         content: String?,
     ): Boolean =
         try {
+            legacyMigration.ensureInitialized()
             val file = File(getWorkspaceFilePath(fileName))
             if (content == null) {
                 // Absent is success: the caller wants it gone, and it is.
@@ -247,6 +256,7 @@ actual class WorkspaceFileManager actual constructor(
     actual suspend fun loadDocument(fileName: String): String? =
         withContext(Dispatchers.IO) {
             try {
+                legacyMigration.ensureInitialized()
                 val file = File(getWorkspaceFilePath(fileName))
                 if (file.exists()) file.readText() else null
             } catch (e: Exception) {
@@ -261,7 +271,11 @@ actual class WorkspaceFileManager actual constructor(
         }
 }
 
-internal fun workspaceStateDirectory(): File = BossDirectories.resolve("workspaces")
+private fun Lazy<Unit>.ensureInitialized() {
+    value
+}
+
+internal fun workspaceStateDirectory(resolve: (String) -> File = BossDirectories::resolve): File = resolve("workspaces")
 
 private const val LEGACY_IMPORT_MARKER = ".legacy-documents-import-complete"
 
@@ -311,11 +325,17 @@ internal fun migrateLegacyWorkspaceDirectory(
         )
     }
 
+    // Persist every published record name before a durable marker can suppress retries. On
+    // providers that expose POSIX directory channels this orders the directory metadata too.
+    forceDirectoryMetadata(stateDirectory.toPath())
+
     try {
         Files.createFile(marker.toPath())
     } catch (_: FileAlreadyExistsException) {
         // Another BOSS process completed the same one-shot migration.
     }
+    FileChannel.open(marker.toPath(), WRITE).use { channel -> channel.force(true) }
+    forceDirectoryMetadata(stateDirectory.toPath())
 }
 
 /**
@@ -351,5 +371,11 @@ internal fun copyLegacyRecordAtomically(
         Files.createLink(target.toPath(), temporary)
     } finally {
         Files.deleteIfExists(temporary)
+    }
+}
+
+private fun forceDirectoryMetadata(directory: Path) {
+    if ("posix" in directory.fileSystem.supportedFileAttributeViews()) {
+        FileChannel.open(directory, READ).use { channel -> channel.force(true) }
     }
 }

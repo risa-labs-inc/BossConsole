@@ -602,7 +602,9 @@ temporary files are not durable BOSS state. Space records from the legacy
 `~/Documents/BOSS/workspaces` location are copied once into `~/.boss/workspaces` through
 owner-only temporary files and atomic create-new hard-link publication, without deleting or
 overwriting either side. A concurrent current-state writer always wins; a failed migration leaves
-the one-shot marker absent and retries later. Only the state-root copy is maintained afterwards. See
+the one-shot marker absent and retries later. Durable directory metadata is ordered before that
+marker where the filesystem exposes directory channels. Migration runs on the first storage
+operation, not on a path-only lookup. Only the state-root copy is maintained afterwards. See
 `docs/state-root-contract.md` and `DurableStatePathConventionTest`.
 
 ### Shared managed AI providers

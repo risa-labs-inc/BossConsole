@@ -126,11 +126,25 @@ class BossDirectoriesTest {
 
         @Test
         fun `resolve refuses absolute and traversal paths`() {
-            val absoluteOutside = File(BossDirectories.rootDir.parentFile, "outside").absolutePath
-            assertFailsWith<IllegalArgumentException> { BossDirectories.resolve(absoluteOutside) }
-            assertFailsWith<IllegalArgumentException> { BossDirectories.resolve("../outside") }
-            assertFailsWith<IllegalArgumentException> { BossDirectories.resolve("nested/../../outside") }
-            assertFailsWith<IllegalArgumentException> { BossDirectories.resolve(" ") }
+            val parent = Files.createTempDirectory("boss-path-validation")
+            try {
+                val root = parent.resolve("root").also { Files.createDirectories(it) }
+                val absoluteOutside = parent.resolve("outside").toString()
+                assertFailsWith<IllegalArgumentException> {
+                    BossDirectories.resolveUnderRoot(root.toFile(), absoluteOutside)
+                }
+                assertFailsWith<IllegalArgumentException> {
+                    BossDirectories.resolveUnderRoot(root.toFile(), "../outside")
+                }
+                assertFailsWith<IllegalArgumentException> {
+                    BossDirectories.resolveUnderRoot(root.toFile(), "nested/../../outside")
+                }
+                assertFailsWith<IllegalArgumentException> {
+                    BossDirectories.resolveUnderRoot(root.toFile(), " ")
+                }
+            } finally {
+                parent.toFile().deleteRecursively()
+            }
         }
 
         @Test
@@ -159,8 +173,35 @@ class BossDirectoriesTest {
 
         @Test
         fun `contains distinguishes state from external files`() {
-            assertTrue(BossDirectories.contains(BossDirectories.resolve("plugin-data/probe/state.json")))
-            assertFalse(BossDirectories.contains(File(BossDirectories.rootDir.parentFile, "outside.json")))
+            val parent = Files.createTempDirectory("boss-contained-path")
+            try {
+                val root = parent.resolve("root").also { Files.createDirectories(it) }
+                val contained = BossDirectories.resolveUnderRoot(root.toFile(), "plugin-data/probe/state.json")
+
+                assertTrue(BossDirectories.containsUnderRoot(root.toFile(), contained))
+                assertFalse(BossDirectories.containsUnderRoot(root.toFile(), parent.resolve("outside.json").toFile()))
+            } finally {
+                parent.toFile().deleteRecursively()
+            }
+        }
+
+        @Test
+        fun `resolve rejects a dangling symlink leaf`() {
+            val parent = Files.createTempDirectory("boss-dangling-link")
+            try {
+                val root = parent.resolve("root").also { Files.createDirectories(it) }
+                val link = root.resolve("settings.json")
+                val linkFailure =
+                    runCatching { Files.createSymbolicLink(link, parent.resolve("missing")) }
+                        .exceptionOrNull()
+                if (linkFailure != null) return
+
+                assertFailsWith<IllegalArgumentException> {
+                    BossDirectories.resolveUnderRoot(root.toFile(), "settings.json")
+                }
+            } finally {
+                parent.toFile().deleteRecursively()
+            }
         }
     }
 

@@ -3,6 +3,7 @@ package ai.rever.boss.plugin.pathutils
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.util.logging.Logger
 
@@ -41,7 +42,7 @@ object BossDirectories {
         }
     }
 
-    private val canonicalRootDir: File by lazy { rootDir.canonicalFile }
+    private val realRootDir: Path by lazy { realRoot(rootDir) }
 
     /**
      * Resolve a durable BOSS path below [rootDir].
@@ -49,20 +50,26 @@ object BossDirectories {
      * This is an enforcement boundary, not a convenience join. A plugin id, record name or
      * future configuration value must never turn a state path into an absolute path or escape
      * through `..` or an existing symlink. User-selected project files are deliberately handled
-     * by the file-access APIs instead of this durable-state API.
+     * by the file-access APIs instead of this durable-state API. First use creates and resolves
+     * the root once for the process. An unusable or unresolvable root fails closed instead of
+     * returning a path that later writers could interpret differently.
      */
-    fun resolve(relativePath: String): File = resolveUnderRoot(canonicalRootDir, relativePath)
+    fun resolve(relativePath: String): File = resolveUnderRealRoot(realRootDir, relativePath)
 
     internal fun resolveUnderRoot(
         rootDirectory: File,
+        relativePath: String,
+    ): File = resolveUnderRealRoot(realRoot(rootDirectory), relativePath)
+
+    private fun resolveUnderRealRoot(
+        root: Path,
         relativePath: String,
     ): File {
         require(relativePath.isNotBlank()) { "BOSS state paths must not be blank" }
 
         val relative = File(relativePath)
-        require(!relative.isAbsolute) { "BOSS state paths must be relative to ${rootDirectory.absolutePath}" }
+        require(!relative.isAbsolute) { "BOSS state paths must be relative to $root" }
 
-        val root = realRoot(rootDirectory)
         val lexicalTarget = root.resolve(relativePath).normalize()
         require(lexicalTarget != root && lexicalTarget.startsWith(root)) {
             "BOSS state paths must remain under $root"
@@ -79,16 +86,20 @@ object BossDirectories {
     }
 
     /** Whether [file] is contained by the durable BOSS state root. */
-    fun contains(file: File): Boolean = containsUnderRoot(canonicalRootDir, file)
+    fun contains(file: File): Boolean = containsUnderRealRoot(realRootDir, file)
 
     internal fun containsUnderRoot(
         rootDirectory: File,
         file: File,
+    ): Boolean = containsUnderRealRoot(realRoot(rootDirectory), file)
+
+    private fun containsUnderRealRoot(
+        root: Path,
+        file: File,
     ): Boolean =
         runCatching {
-            val root = realRoot(rootDirectory)
             val lexicalTarget = file.toPath().toAbsolutePath().normalize()
-            lexicalTarget.startsWith(root) && resolveThroughExistingAncestor(lexicalTarget).startsWith(root)
+            resolveThroughExistingAncestor(lexicalTarget).startsWith(root)
         }.getOrDefault(false)
 
     private fun realRoot(rootDirectory: File): Path {
@@ -103,10 +114,13 @@ object BossDirectories {
             existingAncestor = existingAncestor.parent
                 ?: error("BOSS state path has no existing ancestor: $lexicalTarget")
         }
-        return existingAncestor
-            .toRealPath()
-            .resolve(existingAncestor.relativize(lexicalTarget))
-            .normalize()
+        val realAncestor =
+            try {
+                existingAncestor.toRealPath()
+            } catch (error: NoSuchFileException) {
+                throw IllegalArgumentException("BOSS state path contains a dangling symlink: $lexicalTarget", error)
+            }
+        return realAncestor.resolve(existingAncestor.relativize(lexicalTarget)).normalize()
     }
 
     /**
