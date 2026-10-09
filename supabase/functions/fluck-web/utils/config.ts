@@ -8,9 +8,22 @@
 
 const DEFAULT_BASE_PATH = "/functions/v1/fluck-web"
 
+// Deployment-local configuration, set once by an alternative entrypoint. This
+// stays inside that function's isolate and never accepts request headers.
+let portalDeployment: { origin: string; basePath: string } | null = null
+
+export function configurePortalDeployment(origin: string, basePath: string): void {
+  const url = new URL(origin)
+  if (url.protocol !== "https:" || url.origin !== origin || url.username || url.password ||
+      (basePath !== "/" && !/^\/[A-Za-z0-9/_-]+$/.test(basePath))) {
+    throw new Error("Invalid portal deployment origin or path")
+  }
+  portalDeployment = { origin, basePath }
+}
+
 /** Browser-facing path prefix, without a trailing slash. "/" (the vanity host) maps to "". */
 export function publicBasePath(): string {
-  const configured = Deno.env.get("FLUCK_WEB_PUBLIC_BASE_PATH")?.trim()
+  const configured = portalDeployment?.basePath ?? Deno.env.get("FLUCK_WEB_PUBLIC_BASE_PATH")?.trim()
   const raw = configured && configured.length > 0 ? configured : DEFAULT_BASE_PATH
   if (raw === "/") return ""
   const withSlash = raw.startsWith("/") ? raw : `/${raw}`
@@ -23,7 +36,7 @@ export function publicBasePath(): string {
  * miss, and X-Forwarded-Host is caller-controlled. Unset => null, and sign-in answers 503.
  */
 export function publicBaseUrl(): string | null {
-  const configured = Deno.env.get("FLUCK_WEB_PUBLIC_BASE_URL")?.trim()
+  const configured = portalDeployment?.origin ?? Deno.env.get("FLUCK_WEB_PUBLIC_BASE_URL")?.trim()
   if (!configured) return null
   return configured.replace(/\/+$/, "") + publicBasePath()
 }
