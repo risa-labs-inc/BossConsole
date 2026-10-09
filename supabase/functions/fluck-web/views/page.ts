@@ -310,8 +310,14 @@ const SCRIPT = `
 
   async function signOut() {
     stopPolling(); cancelOpenTimer(); requestGeneration++;
+    forgetWanted(); dropInstanceFromUrl(); autoOpenDone = true;
     if (viewing) closeFrame(false);
-    try { await api("/api/logout", { method: "POST", body: {} }); } catch (_) {}
+    try {
+      var r = await api("/api/logout", { method: "POST", body: {} });
+      if (!r.ok) throw new Error("logout_failed");
+    } catch (_) {
+      show("list"); notice("Could not sign out. Please try again.", "error"); return;
+    }
     notice(""); show("signin");
   }
 
@@ -496,7 +502,7 @@ const SCRIPT = `
     var d = ev.data;
     if (!d || typeof d !== "object") return;
     if (d.type === "fluck-hello") cancelHelloTimer();
-    else if (d.type === "fluck-signed-out") { dropInstanceFromUrl(); closeFrame(true); }
+    else if (d.type === "fluck-signed-out") { signOut(); }
     else if (d.type === "fluck-switch") { dropInstanceFromUrl(); closeFrame("quiet"); }
     else if (d.type === "fluck-title" && typeof d.title === "string") document.title = frameTitle(d.title);
     else if (d.type === "fluck-theme" && typeof d.color === "string" && THEME_RE.test(d.color)) applyTheme(d.color);

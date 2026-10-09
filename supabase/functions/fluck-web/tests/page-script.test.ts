@@ -44,7 +44,7 @@ class FakeElement {
   appendChild(child: FakeElement) { this.children.push(child) }
 }
 
-function harness(search: string, initialState: unknown = null) {
+function harness(search: string, initialState: unknown = null, logoutStatus = 200) {
   const elements = new Map<string, FakeElement>()
   const get = (id: string) => {
     if (!elements.has(id)) elements.set(id, new FakeElement())
@@ -123,6 +123,7 @@ function harness(search: string, initialState: unknown = null) {
       }))
     }
     if (url === "/api/open") return Promise.resolve(Response.json({ url: OPEN_URL }))
+    if (url === "/api/logout") return Promise.resolve(Response.json({ ok: logoutStatus === 200 }, { status: logoutStatus }))
     return Promise.resolve(new Response("{}", { status: 404 }))
   }
   const script = /<script nonce="test">([\s\S]*?)<\/script>/.exec(html)![1]
@@ -209,9 +210,10 @@ Deno.test("messages from another origin or window, or of unknown type, do not cl
   h.message(null)
   assertEquals(h.get("fluckframe").getAttribute("src"), OPEN_URL)
   assert(h.body.classList.contains("viewing"))
+  assert(!h.calls.includes("/api/logout"), "untrusted messages cannot sign out")
 })
 
-Deno.test("fluck-signed-out closes the frame and reloads the list without reopening", async () => {
+Deno.test("fluck-signed-out clears the portal session and shows sign-in without reopening", async () => {
   const h = await opened()
   h.document.title = "Chat"
   const before = h.calls.filter((c) => c === "/api/instances").length
@@ -220,9 +222,10 @@ Deno.test("fluck-signed-out closes the frame and reloads the list without reopen
   assert(!h.body.classList.contains("viewing"))
   assertEquals(h.document.title, "Fluck")
   await h.settle()
-  assertEquals(h.calls.filter((c) => c === "/api/instances").length, before + 1)
+  assertEquals(h.calls.filter((c) => c === "/api/logout").length, 1)
+  assertEquals(h.calls.filter((c) => c === "/api/instances").length, before)
   assertEquals(h.calls.filter((c) => c === "/api/open").length, 1, "no auto-reopen")
-  assert(!h.get("list").classList.contains("hidden"), "the list is shown")
+  assert(!h.get("signin").classList.contains("hidden"), "sign-in is shown")
 })
 
 Deno.test("fluck-switch closes the frame and shows the list", async () => {
@@ -346,4 +349,14 @@ Deno.test("the list: each Fluck is one row button (name, status, machine); the a
   assertEquals(h.get("fluckframe").getAttribute("src"), OPEN_URL)
   assert(h.body.classList.contains("viewing"), "the Fluck is framed (body.viewing hides the account row)")
   assert(h.get("account").classList.contains("hidden"), "show(\"opening\") hid the account row")
+})
+
+Deno.test("portal logout failure reports the error and does not claim sign-out", async () => {
+  const h = harness("?instance=i1", null, 503)
+  await h.settle()
+  h.message({ type: "fluck-signed-out" })
+  await h.settle()
+  assert(h.get("signin").classList.contains("hidden"))
+  assertEquals(h.get("notice").textContent, "Could not sign out. Please try again.")
+  assertEquals(h.calls.filter((c) => c === "/api/open").length, 1)
 })
