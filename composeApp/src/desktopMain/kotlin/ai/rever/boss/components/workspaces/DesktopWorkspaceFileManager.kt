@@ -1,3 +1,5 @@
+@file:Suppress("TooManyFunctions")
+
 package ai.rever.boss.components.workspaces
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
@@ -7,6 +9,7 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.decodeFailure
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
@@ -24,6 +27,7 @@ import java.nio.file.StandardOpenOption.TRUNCATE_EXISTING
 import java.nio.file.StandardOpenOption.WRITE
 import java.nio.file.attribute.PosixFilePermission.OWNER_READ
 import java.nio.file.attribute.PosixFilePermission.OWNER_WRITE
+import java.security.MessageDigest
 
 /**
  * Desktop implementation of WorkspaceFileManager
@@ -37,7 +41,7 @@ actual class WorkspaceFileManager actual constructor(
     }
     private val legacyMigration: Lazy<Unit> =
         lazy {
-            if (directoryOverride == null) {
+            if (directoryOverride == null && !BossDirectories.isDevMode) {
                 try {
                     migrateLegacyWorkspaceDirectory(
                         legacyDirectory =
@@ -52,7 +56,23 @@ actual class WorkspaceFileManager actual constructor(
                             logger.warn(
                                 LogCategory.WORKSPACE,
                                 "Skipped unsafe legacy workspace entry",
-                                mapOf("fileName" to skipped.name),
+                                mapOf(
+                                    "fileName" to skipped.name,
+                                    "legacyPath" to skipped.absolutePath,
+                                    "stateDirectory" to workspaceDirectory,
+                                ),
+                            )
+                        },
+                        onFailedRecord = { source, error ->
+                            logger.warn(
+                                LogCategory.WORKSPACE,
+                                "Failed to import legacy workspace record; retained for retry",
+                                mapOf(
+                                    "fileName" to source.name,
+                                    "legacyPath" to source.absolutePath,
+                                    "stateDirectory" to workspaceDirectory,
+                                ),
+                                error = error,
                             )
                         },
                     )
@@ -62,6 +82,8 @@ actual class WorkspaceFileManager actual constructor(
                     reportMigrationFailure(logger, error)
                 } catch (error: IllegalArgumentException) {
                     reportMigrationFailure(logger, error)
+                } catch (error: CancellationException) {
+                    throw error
                 } catch (error: IllegalStateException) {
                     reportMigrationFailure(logger, error)
                 } catch (error: SecurityException) {
@@ -294,12 +316,10 @@ actual class WorkspaceFileManager actual constructor(
 private fun reportMigrationFailure(
     logger: ComponentLogger,
     error: Exception,
-): Nothing {
+) {
     logger.warn(LogCategory.WORKSPACE, "Failed to import legacy workspace records", error = error)
-    // Do not expose a partial import to normal reads or writes. This storage operation fails, and
-    // the absent marker requires a clean retry before a later operation can access workspaces. The
-    // legacy directory remains untouched throughout.
-    throw error
+    // The current state root remains usable. The absent marker causes a clean retry next launch,
+    // while per-record receipts prevent already-imported records from being resurrected.
 }
 
 private fun Lazy<Unit>.ensureInitialized() {
@@ -309,6 +329,7 @@ private fun Lazy<Unit>.ensureInitialized() {
 internal fun workspaceStateDirectory(resolve: (String) -> File = BossDirectories::resolve): File = resolve("workspaces")
 
 private const val LEGACY_IMPORT_MARKER = ".legacy-documents-import-complete"
+private const val LEGACY_IMPORT_RECEIPTS = ".legacy-documents-imported"
 
 /**
  * Copy legacy Space records into the portable BOSS state root without overwriting either side.
@@ -317,11 +338,13 @@ private const val LEGACY_IMPORT_MARKER = ".legacy-documents-import-complete"
  * is read and maintained. A later cleanup can remove the legacy copy after operators have verified
  * their migration.
  */
+@Suppress("LongParameterList", "ReturnCount", "TooGenericExceptionCaught")
 internal fun migrateLegacyWorkspaceDirectory(
     legacyDirectory: File,
     stateDirectory: File,
     forceDirectory: (Path) -> Unit = ::forceDirectoryMetadata,
     onSkippedRecord: (File) -> Unit = {},
+    onFailedRecord: (File, Exception) -> Unit = { _, _ -> },
     copyRecord: (source: File, target: File) -> Unit = ::copyLegacyRecordAtomically,
 ) {
     val marker = File(stateDirectory, LEGACY_IMPORT_MARKER)
@@ -343,28 +366,97 @@ internal fun migrateLegacyWorkspaceDirectory(
     val legacyRecords =
         legacyDirectory.listFiles()
             ?: error("Could not list legacy workspace directory: ${legacyDirectory.absolutePath}")
-    legacyRecords
+    val candidates = legacyRecords.filter { file -> file.name.endsWith(".json") }
+    candidates
         .filterNot { file -> Files.isRegularFile(file.toPath(), NOFOLLOW_LINKS) }
         .forEach(onSkippedRecord)
+    val receiptsDirectory = File(stateDirectory, LEGACY_IMPORT_RECEIPTS)
     val failures =
-        legacyRecords
+        candidates
             .filter { file -> Files.isRegularFile(file.toPath(), NOFOLLOW_LINKS) }
             .mapNotNull { source ->
                 val target = File(stateDirectory, source.name)
-                if (Files.exists(target.toPath(), NOFOLLOW_LINKS)) return@mapNotNull null
-                runCatching { copyRecord(source, target) }
-                    .exceptionOrNull()
-                    ?.takeUnless { it is FileAlreadyExistsException }
+                val receipt = legacyImportReceipt(receiptsDirectory, source.name)
+                if (Files.exists(receipt.toPath(), NOFOLLOW_LINKS)) return@mapNotNull null
+                try {
+                    if (!Files.exists(target.toPath(), NOFOLLOW_LINKS)) {
+                        copyRecord(source, target)
+                    }
+                    forceDirectoryBestEffort(stateDirectory.toPath(), forceDirectory)
+                    createLegacyImportReceipt(receiptsDirectory, receipt, forceDirectory)
+                    null
+                } catch (_: FileAlreadyExistsException) {
+                    forceDirectoryBestEffort(stateDirectory.toPath(), forceDirectory)
+                    createLegacyImportReceipt(receiptsDirectory, receipt, forceDirectory)
+                    null
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    onFailedRecord(source, error)
+                    error
+                }
             }
 
     if (failures.isNotEmpty()) {
-        throw IllegalStateException(
-            "Failed to import ${failures.size} legacy workspace record(s)",
-            failures.first(),
-        )
+        return
     }
 
     finishLegacyMigration(stateDirectory.toPath(), marker.toPath(), forceDirectory)
+    deleteReceiptDirectoryBestEffort(receiptsDirectory)
+}
+
+private fun legacyImportReceipt(
+    receiptsDirectory: File,
+    fileName: String,
+): File {
+    val digest =
+        MessageDigest
+            .getInstance("SHA-256")
+            .digest(fileName.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    return File(receiptsDirectory, "$digest.done")
+}
+
+private fun createLegacyImportReceipt(
+    receiptsDirectory: File,
+    receipt: File,
+    forceDirectory: (Path) -> Unit,
+) {
+    if (!receiptsDirectory.isDirectory &&
+        !receiptsDirectory.mkdirs() &&
+        !receiptsDirectory.isDirectory
+    ) {
+        error("Could not create legacy workspace receipt directory: ${receiptsDirectory.absolutePath}")
+    }
+    val created =
+        try {
+            Files.createFile(receipt.toPath())
+            true
+        } catch (_: FileAlreadyExistsException) {
+            // A concurrent process already recorded this source as handled.
+            false
+        }
+    if (created) {
+        FileChannel.open(receipt.toPath(), WRITE, NOFOLLOW_LINKS).use { channel -> channel.force(true) }
+        forceDirectoryBestEffort(receiptsDirectory.toPath(), forceDirectory)
+    }
+}
+
+private fun deleteReceiptDirectoryBestEffort(receiptsDirectory: File) {
+    receiptsDirectory.listFiles()?.forEach { receipt ->
+        deletePathBestEffort(receipt.toPath())
+    }
+    deletePathBestEffort(receiptsDirectory.toPath())
+}
+
+private fun deletePathBestEffort(path: Path) {
+    try {
+        Files.deleteIfExists(path)
+    } catch (_: IOException) {
+        // The completion marker makes stale receipts inert.
+    } catch (_: SecurityException) {
+        // The completion marker makes stale receipts inert.
+    }
 }
 
 /**

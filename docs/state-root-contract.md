@@ -25,14 +25,14 @@ The following are not durable BOSS state:
 - build and test outputs.
 
 Older desktop builds stored Space records and related workspace documents under
-`~/Documents/BOSS/workspaces`. On first use, BOSS copies missing regular files into
-`~/.boss/workspaces` using private temporary siblings (owner-only on POSIX) and atomic create-new
+`~/Documents/BOSS/workspaces`. On first use outside developer mode, BOSS copies missing JSON records
+into `~/.boss/workspaces` using private temporary siblings (owner-only on POSIX) and atomic create-new
 hard-link publication. BOSS writes a one-shot migration marker only after every record succeeds or
 already has a current-state counterpart, then reads and writes only the state-root copy. Publication
 never replaces an existing target, including one created concurrently. The marker prevents a later
-deletion from being resurrected from the legacy directory. An interrupted or unsupported migration
-leaves the marker absent, blocks workspace access while the failure persists, and retries before
-later access.
+deletion from being resurrected from the legacy directory. Per-record receipts protect that rule
+during a partial import: failed records retry on the next launch, while successfully handled records
+are never re-imported after deletion. The current state root remains usable throughout.
 Published directory entries are forced before the marker where the filesystem supports directory
 forcing; rejection of that optional durability operation does not prevent the marker. The legacy
 directory remains untouched as a rollback copy. Migration runs on the first storage operation, not

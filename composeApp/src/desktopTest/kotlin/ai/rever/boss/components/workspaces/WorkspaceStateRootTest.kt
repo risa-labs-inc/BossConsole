@@ -29,7 +29,7 @@ class WorkspaceStateRootTest {
         val state = temporaryDirectory.resolve("state").toFile()
         File(legacy, "existing.json").writeText("legacy")
         File(legacy, "missing.json").writeText("copy me")
-        File(legacy, "note.txt").writeText("durable workspace document")
+        File(legacy, "note.txt").writeText("unrelated document")
         state.mkdirs()
         File(state, "existing.json").writeText("current")
 
@@ -37,7 +37,7 @@ class WorkspaceStateRootTest {
 
         assertEquals("current", File(state, "existing.json").readText())
         assertEquals("copy me", File(state, "missing.json").readText())
-        assertEquals("durable workspace document", File(state, "note.txt").readText())
+        assertFalse(File(state, "note.txt").exists())
         assertEquals("legacy", File(legacy, "existing.json").readText())
     }
 
@@ -62,17 +62,42 @@ class WorkspaceStateRootTest {
         val state = temporaryDirectory.resolve("state-interrupted").toFile()
         val source = File(legacy, "space.json").apply { writeText("complete legacy record") }
 
-        assertFailsWith<IllegalStateException> {
-            migrateLegacyWorkspaceDirectory(legacy, state) { from, target ->
-                copyLegacyRecordAtomically(from, target) { error("simulated interruption") }
-            }
+        var failure: Exception? = null
+        migrateLegacyWorkspaceDirectory(
+            legacy,
+            state,
+            onFailedRecord = { _, error -> failure = error },
+        ) { from, target ->
+            copyLegacyRecordAtomically(from, target) { error("simulated interruption") }
         }
 
+        assertEquals("simulated interruption", failure?.message)
         assertFalse(File(state, source.name).exists())
         assertFalse(File(state, ".legacy-documents-import-complete").exists())
 
         migrateLegacyWorkspaceDirectory(legacy, state)
         assertEquals("complete legacy record", File(state, source.name).readText())
+        assertTrue(File(state, ".legacy-documents-import-complete").isFile)
+    }
+
+    @Test
+    fun `partial migration receipts prevent deleted records from being resurrected on retry`() {
+        val legacy = temporaryDirectory.resolve("legacy-partial").toFile().apply { mkdirs() }
+        val state = temporaryDirectory.resolve("state-partial").toFile()
+        File(legacy, "copied.json").writeText("copied")
+        File(legacy, "failed.json").writeText("retry me")
+
+        migrateLegacyWorkspaceDirectory(legacy, state) { source, target ->
+            if (source.name == "failed.json") throw IOException("simulated failure")
+            copyLegacyRecordAtomically(source, target)
+        }
+        assertTrue(File(state, "copied.json").delete())
+        assertFalse(File(state, ".legacy-documents-import-complete").exists())
+
+        migrateLegacyWorkspaceDirectory(legacy, state)
+
+        assertFalse(File(state, "copied.json").exists())
+        assertEquals("retry me", File(state, "failed.json").readText())
         assertTrue(File(state, ".legacy-documents-import-complete").isFile)
     }
 
