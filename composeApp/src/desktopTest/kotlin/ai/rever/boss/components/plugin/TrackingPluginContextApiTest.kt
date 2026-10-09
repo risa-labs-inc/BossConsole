@@ -114,6 +114,15 @@ class TrackingPluginContextApiTest {
     }
 
     @Test
+    fun `a delegate without lifecycle support can teardown when no plugin API was registered`() {
+        val tracking = TrackingPluginContext("test.plugin", PlainContext(), PluginRegistrationTracker())
+
+        tracking.unregisterAll()
+
+        assertFailsWith<IllegalStateException> { tracking.registerPluginAPI(ExampleImpl()) }
+    }
+
+    @Test
     fun `registration racing teardown cannot escape cleanup`() =
         runBlocking<Unit> {
             val delegate = BlockingRecordingContext()

@@ -606,15 +606,17 @@ class TrackingPluginContext(
         // shared registry exposes a cancelled object to consumers until the next successful load.
         synchronized(pluginApiLifecycleLock) {
             acceptingPluginApis = false
-            val lifecycle =
-                checkNotNull(delegate as? PluginApiRegistryLifecycle) {
-                    "Plugin context for $pluginId cannot unregister plugin APIs; " +
-                        "the host delegate does not implement PluginApiRegistryLifecycle"
-                }
-            // Keep the complete list when one removal fails. A later teardown can retry safely:
-            // host removal is identity-guarded and already-removed objects are harmless no-ops.
-            pluginApis.forEach(lifecycle::unregisterPluginAPI)
-            pluginApis.clear()
+            if (pluginApis.isNotEmpty()) {
+                val lifecycle =
+                    checkNotNull(delegate as? PluginApiRegistryLifecycle) {
+                        "Plugin context for $pluginId cannot unregister plugin APIs; " +
+                            "the host delegate does not implement PluginApiRegistryLifecycle"
+                    }
+                // Keep the complete list when one removal fails. A later teardown can retry safely:
+                // host removal is identity-guarded and already-removed objects are harmless no-ops.
+                pluginApis.forEach(lifecycle::unregisterPluginAPI)
+                pluginApis.clear()
+            }
         }
 
         // Clear tracking records
