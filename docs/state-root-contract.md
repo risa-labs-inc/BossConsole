@@ -1,8 +1,10 @@
 # BOSS state-root contract
 
-BOSS treats `~/.boss` as the complete durable state boundary. A deployment may checkpoint,
-restore or move that directory as one unit. Restarting BOSS against the restored directory must
-recover the user's BOSS-owned state.
+BOSS treats `~/.boss` as the complete durable state boundary in normal operation. A deployment may
+checkpoint, restore or move that directory as one unit. Restarting BOSS against the restored
+directory must recover the user's BOSS-owned state. Explicit developer mode remains isolated in
+`~/.boss_debug`; it is not production user state and is deliberately excluded from deployment
+backup and hot-swap flows.
 
 Durable host data includes authentication state, settings, Spaces, browser profiles, installed
 plugins, plugin-owned storage, MCP policy and audit records, update state and crash reports. Host

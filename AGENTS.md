@@ -579,8 +579,9 @@ taking `first().replacementDisplayName` told the user their panel moved somewher
 
 ### Durable state is one portable root
 
-All BOSS-owned durable state lives under `~/.boss`. Host and in-repository plugin code resolves
-durable paths through `BossDirectories.resolve`, which rejects absolute paths, traversal and
+All production BOSS-owned durable state lives under `~/.boss`. Explicit developer mode remains
+isolated under `~/.boss_debug` and is not part of deployment backup or hot-swap flows. Host and
+in-repository plugin code resolves durable paths through `BossDirectories.resolve`, which rejects absolute paths, traversal and
 existing symlink escapes. Plugin persistence uses the host-scoped
 `~/.boss/plugin-data/<plugin-id>` store. Do not introduce another settings, cache, database,
 session or workspace root.
