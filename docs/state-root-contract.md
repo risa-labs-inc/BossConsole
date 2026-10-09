@@ -24,16 +24,19 @@ The following are not durable BOSS state:
 - temporary files that are safe to discard and are recreated after restart;
 - build and test outputs.
 
-Older desktop builds stored Space records under `~/Documents/BOSS/workspaces`. On first use, BOSS
-copies missing JSON records into `~/.boss/workspaces` using owner-only temporary siblings and
-atomic create-new hard-link publication, writes a one-shot migration marker only after every record
-succeeds or already has a current-state counterpart, then reads and writes only the state-root copy.
-Publication never replaces an existing target, including one created concurrently. The marker
-prevents a later deletion from being resurrected from the legacy directory. An interrupted or
-unsupported migration leaves the marker absent and retries on a later launch. Published directory
-entries are forced before the marker on filesystems that expose durable directory channels. The
-legacy directory remains untouched as a rollback copy. Migration runs on the first storage
-operation, not while a caller merely asks for the directory path.
+Older desktop builds stored Space records and related workspace documents under
+`~/Documents/BOSS/workspaces`. On first use, BOSS copies missing regular files into
+`~/.boss/workspaces` using private temporary siblings (owner-only on POSIX) and atomic create-new
+hard-link publication. Filesystems without hard links use a same-directory move without
+replacement. BOSS
+writes a one-shot migration marker only after every record succeeds or already has a current-state
+counterpart, then reads and writes only the state-root copy. Publication never replaces an existing
+target, including one created concurrently. The marker prevents a later deletion from being
+resurrected from the legacy directory. An interrupted migration leaves the marker absent and
+retries on a later launch. Published directory entries are forced before the marker where the
+filesystem supports directory forcing; rejection of that optional durability operation does not
+prevent the marker. The legacy directory remains untouched as a rollback copy. Migration runs on
+the first storage operation, not while a caller merely asks for the directory path.
 
 New persistence code must satisfy both rules:
 

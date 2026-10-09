@@ -104,7 +104,12 @@ object BossDirectories {
 
     private fun realRoot(rootDirectory: File): Path {
         val root = rootDirectory.toPath().toAbsolutePath().normalize()
-        Files.createDirectories(root)
+        // createDirectories rejects an existing symlink even when it resolves to a directory on
+        // some JDK providers. A symlinked state root is useful when users relocate ~/.boss to a
+        // larger volume, so accept it while still resolving the real containment boundary below.
+        if (!Files.isDirectory(root)) {
+            Files.createDirectories(root)
+        }
         return root.toRealPath()
     }
 

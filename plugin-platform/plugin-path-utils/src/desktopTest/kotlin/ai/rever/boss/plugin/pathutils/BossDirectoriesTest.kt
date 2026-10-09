@@ -125,6 +125,37 @@ class BossDirectoriesTest {
         }
 
         @Test
+        fun `resolve accepts a state root symlinked to a directory`() {
+            val parent = Files.createTempDirectory("boss-symlinked-root")
+            try {
+                val target = parent.resolve("relocated-root").also { Files.createDirectories(it) }
+                val root = parent.resolve("root-link")
+                val linkFailure = runCatching { Files.createSymbolicLink(root, target) }.exceptionOrNull()
+                if (linkFailure != null) return
+
+                val resolved = BossDirectories.resolveUnderRoot(root.toFile(), "nested/state.json")
+
+                assertEquals(target.toRealPath().resolve("nested/state.json").toFile(), resolved)
+            } finally {
+                parent.toFile().deleteRecursively()
+            }
+        }
+
+        @Test
+        fun `resolve fails closed when state root is a regular file`() {
+            val parent = Files.createTempDirectory("boss-file-root")
+            try {
+                val root = parent.resolve("root").also { Files.writeString(it, "not a directory") }
+
+                assertFailsWith<java.nio.file.FileAlreadyExistsException> {
+                    BossDirectories.resolveUnderRoot(root.toFile(), "state.json")
+                }
+            } finally {
+                parent.toFile().deleteRecursively()
+            }
+        }
+
+        @Test
         fun `resolve refuses absolute and traversal paths`() {
             val parent = Files.createTempDirectory("boss-path-validation")
             try {

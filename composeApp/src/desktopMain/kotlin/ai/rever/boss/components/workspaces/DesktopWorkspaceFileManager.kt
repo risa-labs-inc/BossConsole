@@ -10,8 +10,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import java.io.File
+import java.io.IOException
 import java.nio.channels.FileChannel
 import java.nio.file.FileAlreadyExistsException
+import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
@@ -289,6 +291,7 @@ private const val LEGACY_IMPORT_MARKER = ".legacy-documents-import-complete"
 internal fun migrateLegacyWorkspaceDirectory(
     legacyDirectory: File,
     stateDirectory: File,
+    forceDirectory: (Path) -> Unit = ::forceDirectoryMetadata,
     copyRecord: (source: File, target: File) -> Unit = ::copyLegacyRecordAtomically,
 ) {
     val marker = File(stateDirectory, LEGACY_IMPORT_MARKER)
@@ -308,9 +311,8 @@ internal fun migrateLegacyWorkspaceDirectory(
             ?: error("Could not list legacy workspace directory: ${legacyDirectory.absolutePath}")
     val failures =
         legacyRecords
-            .filter { file ->
-                file.name.endsWith(".json") && Files.isRegularFile(file.toPath(), NOFOLLOW_LINKS)
-            }.mapNotNull { source ->
+            .filter { file -> Files.isRegularFile(file.toPath(), NOFOLLOW_LINKS) }
+            .mapNotNull { source ->
                 val target = File(stateDirectory, source.name)
                 if (Files.exists(target.toPath(), NOFOLLOW_LINKS)) return@mapNotNull null
                 runCatching { copyRecord(source, target) }
@@ -325,17 +327,7 @@ internal fun migrateLegacyWorkspaceDirectory(
         )
     }
 
-    // Persist every published record name before a durable marker can suppress retries. On
-    // providers that expose POSIX directory channels this orders the directory metadata too.
-    forceDirectoryMetadata(stateDirectory.toPath())
-
-    try {
-        Files.createFile(marker.toPath())
-    } catch (_: FileAlreadyExistsException) {
-        // Another BOSS process completed the same one-shot migration.
-    }
-    FileChannel.open(marker.toPath(), WRITE).use { channel -> channel.force(true) }
-    forceDirectoryMetadata(stateDirectory.toPath())
+    finishLegacyMigration(stateDirectory.toPath(), marker.toPath(), forceDirectory)
 }
 
 /**
@@ -345,8 +337,9 @@ internal fun migrateLegacyWorkspaceDirectory(
  * publication is atomic, and an existing [target] is never replaced. `ATOMIC_MOVE` cannot provide
  * the second property because providers are allowed to replace the target when that option is set.
  * The temporary and target paths are siblings, so a supported hard link never crosses a file
- * system. A provider without hard-link support fails the record and leaves the one-shot marker
- * absent, allowing a later launch to retry without exposing a partial target.
+ * system. Providers without hard-link support fall back to a sibling move without replacement.
+ * The JDK guarantees that move fails when [target] exists unless REPLACE_EXISTING is requested,
+ * so a current-state writer remains authoritative on both publication paths.
  */
 internal fun copyLegacyRecordAtomically(
     source: File,
@@ -366,16 +359,94 @@ internal fun copyLegacyRecordAtomically(
         }
         FileChannel.open(temporary, WRITE).use { channel -> channel.force(true) }
         beforePublish(temporary)
-        // createLink is an atomic create-new publication: a current-state writer that wins the
-        // race leaves FileAlreadyExistsException here and its bytes remain authoritative.
-        Files.createLink(target.toPath(), temporary)
+        publishTemporaryNoOverwrite(temporary, target.toPath())
     } finally {
         Files.deleteIfExists(temporary)
     }
 }
 
+internal fun publishTemporaryNoOverwrite(
+    temporary: Path,
+    target: Path,
+    createLink: (Path, Path) -> Unit = { link, existing -> Files.createLink(link, existing) },
+) {
+    try {
+        // createLink is an atomic create-new publication: a current-state writer that wins the
+        // race leaves FileAlreadyExistsException here and its bytes remain authoritative.
+        createLink(target, temporary)
+    } catch (error: FileAlreadyExistsException) {
+        throw error
+    } catch (_: UnsupportedOperationException) {
+        moveTemporaryNoOverwrite(temporary, target)
+    } catch (_: FileSystemException) {
+        moveTemporaryNoOverwrite(temporary, target)
+    }
+}
+
+private fun moveTemporaryNoOverwrite(
+    temporary: Path,
+    target: Path,
+) {
+    // Some otherwise usable state volumes do not support hard links. A same-directory move
+    // without REPLACE_EXISTING retains the no-overwrite contract and makes those users' legacy
+    // data visible. Mainstream providers implement this as a rename; providers that cannot
+    // move the sibling safely fail here and leave the marker absent for a later retry.
+    Files.move(temporary, target)
+}
+
 private fun forceDirectoryMetadata(directory: Path) {
     if ("posix" in directory.fileSystem.supportedFileAttributeViews()) {
         FileChannel.open(directory, READ).use { channel -> channel.force(true) }
+    }
+}
+
+private fun finishLegacyMigration(
+    stateDirectory: Path,
+    marker: Path,
+    forceDirectory: (Path) -> Unit,
+) {
+    // Persist every published record name before a durable marker can suppress retries. Directory
+    // forcing is a durability improvement, but several POSIX-looking network and FUSE providers
+    // reject directory channels. Do not let that cause later-deleted records to be resurrected.
+    forceDirectoryBestEffort(stateDirectory, forceDirectory)
+
+    val markerCreated =
+        try {
+            Files.createFile(marker)
+            true
+        } catch (_: FileAlreadyExistsException) {
+            // Another BOSS process completed the same one-shot migration.
+            false
+        }
+    if (markerCreated) {
+        forceMarkerBestEffort(marker)
+    }
+    forceDirectoryBestEffort(stateDirectory, forceDirectory)
+}
+
+private fun forceMarkerBestEffort(marker: Path) {
+    // Only the process that created the marker opens it. This avoids following a marker path that
+    // another local process could replace with a symlink during the create race.
+    try {
+        FileChannel.open(marker, WRITE, NOFOLLOW_LINKS).use { channel -> channel.force(true) }
+    } catch (_: IOException) {
+        // The marker is an empty existence flag; some providers reject explicit forcing.
+    } catch (_: UnsupportedOperationException) {
+        // Keep the successfully completed one-shot migration on limited providers.
+    }
+}
+
+private fun forceDirectoryBestEffort(
+    directory: Path,
+    forceDirectory: (Path) -> Unit,
+) {
+    try {
+        forceDirectory(directory)
+    } catch (_: IOException) {
+        // POSIX attribute support does not guarantee that the provider accepts directory fsync.
+    } catch (_: UnsupportedOperationException) {
+        // The migration remains logically complete without this additional durability barrier.
+    } catch (_: SecurityException) {
+        // A sandbox may permit normal state I/O while refusing a directory channel.
     }
 }

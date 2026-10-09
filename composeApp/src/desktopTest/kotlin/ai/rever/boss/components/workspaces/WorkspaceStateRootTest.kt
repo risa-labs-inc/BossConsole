@@ -2,6 +2,7 @@ package ai.rever.boss.components.workspaces
 
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
@@ -28,7 +29,7 @@ class WorkspaceStateRootTest {
         val state = temporaryDirectory.resolve("state").toFile()
         File(legacy, "existing.json").writeText("legacy")
         File(legacy, "missing.json").writeText("copy me")
-        File(legacy, "note.txt").writeText("not durable workspace data")
+        File(legacy, "note.txt").writeText("durable workspace document")
         state.mkdirs()
         File(state, "existing.json").writeText("current")
 
@@ -36,7 +37,7 @@ class WorkspaceStateRootTest {
 
         assertEquals("current", File(state, "existing.json").readText())
         assertEquals("copy me", File(state, "missing.json").readText())
-        assertFalse(File(state, "note.txt").exists())
+        assertEquals("durable workspace document", File(state, "note.txt").readText())
         assertEquals("legacy", File(legacy, "existing.json").readText())
     }
 
@@ -90,6 +91,51 @@ class WorkspaceStateRootTest {
         }
 
         assertEquals("current record", File(state, "space.json").readText())
+        assertTrue(File(state, ".legacy-documents-import-complete").isFile)
+    }
+
+    @Test
+    fun `unsupported hard links fall back without replacing a concurrent target`() {
+        val state = temporaryDirectory.resolve("fallback-publish").also { Files.createDirectories(it) }
+        val temporary = state.resolve("record.tmp").also { Files.writeString(it, "legacy record") }
+        val target = state.resolve("record.json").also { Files.writeString(it, "current record") }
+
+        assertFailsWith<java.nio.file.FileAlreadyExistsException> {
+            publishTemporaryNoOverwrite(temporary, target) { _, _ ->
+                throw UnsupportedOperationException("simulated no hard-link support")
+            }
+        }
+
+        assertEquals("current record", Files.readString(target))
+        assertTrue(Files.exists(temporary))
+    }
+
+    @Test
+    fun `unsupported hard links publish a missing target through no-replace move`() {
+        val state = temporaryDirectory.resolve("fallback-success").also { Files.createDirectories(it) }
+        val temporary = state.resolve("record.tmp").also { Files.writeString(it, "legacy record") }
+        val target = state.resolve("record.json")
+
+        publishTemporaryNoOverwrite(temporary, target) { _, _ ->
+            throw UnsupportedOperationException("simulated no hard-link support")
+        }
+
+        assertEquals("legacy record", Files.readString(target))
+        assertFalse(Files.exists(temporary))
+    }
+
+    @Test
+    fun `directory force failure does not cause deleted records to be resurrected`() {
+        val legacy = temporaryDirectory.resolve("legacy-force").toFile().apply { mkdirs() }
+        val state = temporaryDirectory.resolve("state-force").toFile()
+        File(legacy, "deleted.json").writeText("legacy")
+
+        migrateLegacyWorkspaceDirectory(legacy, state, forceDirectory = { throw IOException("unsupported") })
+        assertTrue(File(state, "deleted.json").delete())
+
+        migrateLegacyWorkspaceDirectory(legacy, state)
+
+        assertFalse(File(state, "deleted.json").exists())
         assertTrue(File(state, ".legacy-documents-import-complete").isFile)
     }
 

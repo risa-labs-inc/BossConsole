@@ -42,9 +42,10 @@ class DurableStatePathConventionTest {
                     val text = source.readText()
                     documentsPathSegment.containsMatchIn(text) || "LEGACY_WORKSPACE_DIRECTORY_NAME" in text
                 }.map { source -> source.relativeTo(repoRoot()).invariantSeparatorsPath }
+                .toSet()
 
         assertEquals(
-            listOf(
+            setOf(
                 "composeApp/src/commonMain/kotlin/ai/rever/boss/components/workspaces/" +
                     "WorkspaceFileManager.kt",
                 "composeApp/src/desktopMain/kotlin/ai/rever/boss/components/workspaces/" +
