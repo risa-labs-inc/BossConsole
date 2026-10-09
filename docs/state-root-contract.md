@@ -10,9 +10,11 @@ Durable host data includes authentication state, settings, Spaces, browser profi
 plugins, plugin-owned storage, MCP policy and audit records, update state and crash reports. Host
 and in-repository plugin code must resolve these paths through `BossDirectories.resolve`.
 
-`BossDirectories.resolve` rejects blank paths, absolute paths, traversal outside the root and
-escapes through existing symlinks. Plugins receive host-scoped storage under
-`~/.boss/plugin-data/<plugin-id>` and must not invent another durable location.
+`BossDirectories.resolve` creates a missing state root, then rejects blank paths, absolute paths,
+traversal outside the root and escapes through symlinks that exist at resolution time. This is a
+path-construction guard; sensitive writers must still use no-follow and atomic publication at the
+actual I/O boundary. Plugins receive host-scoped storage under `~/.boss/plugin-data/<plugin-id>` and
+must not invent another durable location.
 
 The following are not durable BOSS state:
 
@@ -22,9 +24,10 @@ The following are not durable BOSS state:
 - build and test outputs.
 
 Older desktop builds stored Space records under `~/Documents/BOSS/workspaces`. On first use, BOSS
-copies missing JSON records into `~/.boss/workspaces`, writes a one-shot migration marker, then
-reads and writes only the state-root copy. The marker prevents a later deletion from being
-resurrected from the legacy directory. The legacy directory remains untouched as a rollback copy.
+copies missing JSON records into `~/.boss/workspaces` using owner-only temporary siblings and
+atomic publication, writes a one-shot migration marker only after every record succeeds, then reads
+and writes only the state-root copy. The marker prevents a later deletion from being resurrected
+from the legacy directory. The legacy directory remains untouched as a rollback copy.
 
 New persistence code must satisfy both rules:
 

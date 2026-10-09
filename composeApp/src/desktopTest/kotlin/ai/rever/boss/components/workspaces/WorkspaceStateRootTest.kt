@@ -7,6 +7,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -52,6 +53,26 @@ class WorkspaceStateRootTest {
         migrateLegacyWorkspaceDirectory(legacy, state)
 
         assertFalse(File(state, "deleted.json").exists())
+        assertTrue(File(state, ".legacy-documents-import-complete").isFile)
+    }
+
+    @Test
+    fun `interrupted legacy copy never publishes a partial record or completion marker`() {
+        val legacy = temporaryDirectory.resolve("legacy-interrupted").toFile().apply { mkdirs() }
+        val state = temporaryDirectory.resolve("state-interrupted").toFile()
+        val source = File(legacy, "space.json").apply { writeText("complete legacy record") }
+
+        assertFailsWith<IllegalStateException> {
+            migrateLegacyWorkspaceDirectory(legacy, state) { from, target ->
+                copyLegacyRecordAtomically(from, target) { error("simulated interruption") }
+            }
+        }
+
+        assertFalse(File(state, source.name).exists())
+        assertFalse(File(state, ".legacy-documents-import-complete").exists())
+
+        migrateLegacyWorkspaceDirectory(legacy, state)
+        assertEquals("complete legacy record", File(state, source.name).readText())
         assertTrue(File(state, ".legacy-documents-import-complete").isFile)
     }
 

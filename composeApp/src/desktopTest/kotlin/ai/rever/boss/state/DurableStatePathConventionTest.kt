@@ -8,21 +8,12 @@ import kotlin.test.assertEquals
 /**
  * Prevents host and in-repository plugin code from adding a second durable state root.
  *
- * The three allowlisted microkernel/library defaults cannot depend on plugin-path-utils without
- * introducing a published dependency or a module cycle. They spell the same `~/.boss` contract
- * directly. User-selected files and operating-system integration paths do not match these durable
- * state signatures.
+ * User-selected files and operating-system integration paths do not match these durable state
+ * signatures.
  */
 class DurableStatePathConventionTest {
     @Test
     fun `durable home paths are centralized or explicitly isolated`() {
-        val allowedDirectDefaults =
-            setOf(
-                "modules/boss-service-settings/src/main/kotlin/ai/rever/boss/service/settings/SettingsServiceImpl.kt",
-                "modules/boss-service-workspace/src/main/kotlin/ai/rever/boss/service/workspace/" +
-                    "WorkspaceServiceImpl.kt",
-                "plugin-platform/plugin-logging/src/desktopMain/kotlin/ai/rever/boss/plugin/logging/BossLogger.kt",
-            )
         val roots = listOf("composeApp/src", "modules", "plugin-platform")
         val directDefaults =
             roots
@@ -33,7 +24,7 @@ class DurableStatePathConventionTest {
                 }.map { source -> source.relativeTo(repoRoot()).invariantSeparatorsPath }
                 .toSet()
 
-        assertEquals(allowedDirectDefaults, directDefaults)
+        assertEquals(emptySet(), directDefaults)
     }
 
     @Test

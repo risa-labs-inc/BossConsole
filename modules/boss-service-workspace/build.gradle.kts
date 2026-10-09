@@ -34,6 +34,7 @@ graalvmNative {
 
 dependencies {
     implementation(project(":boss-ipc"))
+    implementation(project(":plugin-platform:plugin-path-utils"))
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.slf4j.api)

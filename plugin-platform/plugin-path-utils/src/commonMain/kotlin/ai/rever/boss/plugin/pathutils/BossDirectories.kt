@@ -62,7 +62,7 @@ object BossDirectories {
         val relative = File(relativePath)
         require(!relative.isAbsolute) { "BOSS state paths must be relative to ${rootDirectory.absolutePath}" }
 
-        val root = rootDirectory.toPath().toRealPath()
+        val root = realRoot(rootDirectory)
         val lexicalTarget = root.resolve(relativePath).normalize()
         require(lexicalTarget != root && lexicalTarget.startsWith(root)) {
             "BOSS state paths must remain under $root"
@@ -86,10 +86,16 @@ object BossDirectories {
         file: File,
     ): Boolean =
         runCatching {
-            val root = rootDirectory.toPath().toRealPath()
+            val root = realRoot(rootDirectory)
             val lexicalTarget = file.toPath().toAbsolutePath().normalize()
             lexicalTarget.startsWith(root) && resolveThroughExistingAncestor(lexicalTarget).startsWith(root)
         }.getOrDefault(false)
+
+    private fun realRoot(rootDirectory: File): Path {
+        val root = rootDirectory.toPath().toAbsolutePath().normalize()
+        Files.createDirectories(root)
+        return root.toRealPath()
+    }
 
     private fun resolveThroughExistingAncestor(lexicalTarget: Path): Path {
         var existingAncestor = lexicalTarget

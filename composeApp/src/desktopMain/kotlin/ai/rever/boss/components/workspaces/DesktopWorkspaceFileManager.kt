@@ -10,11 +10,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import java.io.File
+import java.nio.channels.FileChannel
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.Path
 import java.nio.file.Paths
-import java.nio.file.StandardOpenOption
+import java.nio.file.StandardCopyOption.ATOMIC_MOVE
+import java.nio.file.StandardOpenOption.TRUNCATE_EXISTING
+import java.nio.file.StandardOpenOption.WRITE
+import java.nio.file.attribute.PosixFilePermission.OWNER_READ
+import java.nio.file.attribute.PosixFilePermission.OWNER_WRITE
 
 /**
  * Desktop implementation of WorkspaceFileManager
@@ -270,6 +276,7 @@ private const val LEGACY_IMPORT_MARKER = ".legacy-documents-import-complete"
 internal fun migrateLegacyWorkspaceDirectory(
     legacyDirectory: File,
     stateDirectory: File,
+    copyRecord: (source: File, target: File) -> Unit = ::copyLegacyRecordAtomically,
 ) {
     val marker = File(stateDirectory, LEGACY_IMPORT_MARKER)
     if (
@@ -293,7 +300,7 @@ internal fun migrateLegacyWorkspaceDirectory(
             }.mapNotNull { source ->
                 val target = File(stateDirectory, source.name)
                 if (Files.exists(target.toPath(), NOFOLLOW_LINKS)) return@mapNotNull null
-                runCatching { Files.copy(source.toPath(), target.toPath()) }
+                runCatching { copyRecord(source, target) }
                     .exceptionOrNull()
                     ?.takeUnless { it is FileAlreadyExistsException }
             }
@@ -309,5 +316,31 @@ internal fun migrateLegacyWorkspaceDirectory(
         Files.createFile(marker.toPath())
     } catch (_: FileAlreadyExistsException) {
         // Another BOSS process completed the same one-shot migration.
+    }
+}
+
+/** Publish a legacy record only after its complete contents are durable in a private sibling. */
+internal fun copyLegacyRecordAtomically(
+    source: File,
+    target: File,
+    beforePublish: (Path) -> Unit = {},
+) {
+    val parent = target.parentFile.toPath()
+    val temporary = Files.createTempFile(parent, ".${target.name}-", ".tmp")
+    try {
+        if ("posix" in temporary.fileSystem.supportedFileAttributeViews()) {
+            Files.setPosixFilePermissions(temporary, setOf(OWNER_READ, OWNER_WRITE))
+        }
+        Files.newInputStream(source.toPath(), NOFOLLOW_LINKS).use { input ->
+            Files.newOutputStream(temporary, WRITE, TRUNCATE_EXISTING).use { output ->
+                input.copyTo(output)
+            }
+        }
+        FileChannel.open(temporary, WRITE).use { channel -> channel.force(true) }
+        beforePublish(temporary)
+        // No REPLACE_EXISTING: a concurrent current-state writer always wins over legacy data.
+        Files.move(temporary, target.toPath(), ATOMIC_MOVE)
+    } finally {
+        Files.deleteIfExists(temporary)
     }
 }

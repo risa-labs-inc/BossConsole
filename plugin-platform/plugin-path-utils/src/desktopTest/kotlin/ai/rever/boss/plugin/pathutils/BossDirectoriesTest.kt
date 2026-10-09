@@ -110,6 +110,21 @@ class BossDirectoriesTest {
         }
 
         @Test
+        fun `resolve creates a missing state root`() {
+            val parent = Files.createTempDirectory("boss-missing-root")
+            try {
+                val root = parent.resolve("missing-root")
+
+                val resolved = BossDirectories.resolveUnderRoot(root.toFile(), "nested/state.json")
+
+                assertTrue(Files.isDirectory(root))
+                assertEquals(root.toRealPath().resolve("nested/state.json").toFile(), resolved)
+            } finally {
+                parent.toFile().deleteRecursively()
+            }
+        }
+
+        @Test
         fun `resolve refuses absolute and traversal paths`() {
             val absoluteOutside = File(BossDirectories.rootDir.parentFile, "outside").absolutePath
             assertFailsWith<IllegalArgumentException> { BossDirectories.resolve(absoluteOutside) }
