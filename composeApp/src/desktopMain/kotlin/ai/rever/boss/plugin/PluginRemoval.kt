@@ -85,18 +85,11 @@ object PluginRemoval {
             // about. With no dependents this is the unchanged non-forced path, so the manifest
             // gate and the unload-aware checks still apply as they always did.
             val unloadFailures = unloadAcrossWindows(pluginId, dependentsByManager)
-            val remaining = DynamicPluginManager.activeManagers().filter { it.hasEntry(pluginId) }
-            if (remaining.isNotEmpty()) {
-                val reasons = unloadFailures.mapNotNull { it.message }.distinct()
-                val explanation = if (reasons.isEmpty()) "" else " (${reasons.joinToString("; ")})"
-                val failure =
-                    IllegalStateException(
-                        "Plugin removal failed; ${remaining.size} window(s) still report it installed: " +
-                            "$pluginId$explanation",
-                    )
-                unloadFailures.forEach { failure.addSuppressed(it) }
-                return@run Result.failure(failure)
-            }
+            remainingRemovalFailure(pluginId, unloadFailures)?.let { return@run Result.failure(it) }
+            // Reload/update use the same UI unload path; only explicit removal stops workers.
+            ai.rever.boss.daemon.BossDaemonClient
+                .stopPlugin(pluginId)
+
             // Only once the plugin is unloaded: deleting a jar out from under a live classloader is
             // how you get NoClassDefFoundError from code that is still running.
             PluginArtifactCleanup.remove(
@@ -110,6 +103,19 @@ object PluginRemoval {
             DependentRestartCoordinator.restartNowAcrossWindows(dependentsByManager)
             Result.success(Unit)
         }
+
+    private fun remainingRemovalFailure(
+        pluginId: String,
+        unloadFailures: List<Throwable>,
+    ): Throwable? {
+        val remaining = DynamicPluginManager.activeManagers().filter { it.hasEntry(pluginId) }
+        if (remaining.isEmpty()) return null
+        val reasons = unloadFailures.mapNotNull { it.message }.distinct()
+        val explanation = if (reasons.isEmpty()) "" else " (${reasons.joinToString("; ")})"
+        return IllegalStateException(
+            "Plugin removal failed; ${remaining.size} window(s) still report it installed: $pluginId$explanation",
+        ).also { failure -> unloadFailures.forEach { failure.addSuppressed(it) } }
+    }
 
     /** Attempt every captured manager before deciding whether shared artifacts can be removed. */
     private suspend fun unloadAcrossWindows(

@@ -74,6 +74,7 @@ internal const val VERB_PING = "PING"
 
 /** Asks the running instance to process a URL. */
 internal const val VERB_OPEN = "OPEN"
+internal const val VERB_FOCUS = "FOCUS"
 
 /** Asks the signed-in BOSS process for a short-lived RISA LLM credential. */
 internal const val VERB_LLM_TOKEN = "LLM_TOKEN"
@@ -397,7 +398,7 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
 
     val token = parts[1]
     return when (parts[2]) {
-        VERB_PING, VERB_LLM_TOKEN, VERB_STATUS, VERB_MCP_LIST -> {
+        VERB_PING, VERB_LLM_TOKEN, VERB_STATUS, VERB_MCP_LIST, VERB_FOCUS -> {
             if (parts.size == 3) {
                 SingleInstanceRequest(token, parts[2], DeepLinkOrigin.EXTERNAL, null)
             } else {
@@ -1662,6 +1663,20 @@ private fun pluginActionResponse(verdict: kotlinx.coroutines.Deferred<Boolean>?)
  */
 @Suppress("TooManyFunctions", "LargeClass")
 object SingleInstanceManager {
+    @Volatile internal var activationHandler: (() -> Unit)? = null
+
+    /** Ask the existing host to reopen/focus a window without starting another JVM or navigating. */
+    @Suppress("ReturnCount") // Refuse absent or unverified endpoints before any connection.
+    internal fun activateExistingInstance(): Boolean {
+        val target = SingleInstanceFiles.read() ?: return false
+        if (descriptorTrust(target) != DescriptorTrust.VERIFIED) return false
+        return SingleInstanceWire.exchange(
+            target,
+            "$PROTOCOL_VERSION ${target.token} $VERB_FOCUS",
+            timeoutMs = 1500,
+        ) == RESPONSE_OK
+    }
+
     private val lifecycleLock = Any()
 
     @Volatile
@@ -2200,6 +2215,16 @@ object SingleInstanceManager {
         return when {
             request.verb == VERB_PING -> {
                 RESPONSE_PONG
+            }
+
+            request.verb == VERB_FOCUS -> {
+                val handler = activationHandler
+                if (handler == null) {
+                    RESPONSE_BUSY
+                } else {
+                    javax.swing.SwingUtilities.invokeLater(handler)
+                    RESPONSE_OK
+                }
             }
 
             request.verb == VERB_OPEN && isForwardableUrl(request.url) -> {

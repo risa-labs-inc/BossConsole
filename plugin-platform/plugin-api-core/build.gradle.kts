@@ -37,6 +37,9 @@ val fetchApiPluginJar =
         description = "Fetches the pinned boss-plugin-api release jar (store distribution channel)"
         val version = bossPluginApiVersion
         val targetPath = apiPluginJar.get().asFile.absolutePath
+        val explicitLocalJar = providers.gradleProperty("bossPluginApiJar").orNull
+        inputs.property("explicitLocalJar", explicitLocalJar.orEmpty())
+        if (explicitLocalJar != null) inputs.file(explicitLocalJar)
         val siblingPaths =
             listOf(
                 // Main checkout layout: Boss/BossConsole + Boss/boss_plugins
@@ -51,6 +54,13 @@ val fetchApiPluginJar =
         outputs.file(targetPath)
         doLast {
             val target = File(targetPath)
+            if (explicitLocalJar != null) {
+                val source = File(explicitLocalJar)
+                check(source.isFile) { "Local plugin API JAR is missing: $source" }
+                target.parentFile.mkdirs()
+                source.copyTo(target, overwrite = true)
+                return@doLast
+            }
             // Fetched once per pinned version. NOTE for SDK devs: rebuilding the
             // sibling checkout at the SAME pin does not refresh this copy —
             // delete build/api-contract/ (or bump the pin) to pick it up.

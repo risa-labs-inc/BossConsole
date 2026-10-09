@@ -184,7 +184,7 @@ intellij-platform = "243.21565.199"
 # 1.0.97 restores terminal-link destination requests. Release the API before merging this pin.
 # Organisation-secret access envelopes were published in 1.0.91; the host transports
 # their server management decisions and attribution through in-process and KERNEL paths.
-boss-plugin-api = "1.0.97"
+boss-plugin-api = "1.0.99"
 
 [libraries]
 bouncycastle-pkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bouncycastle" }

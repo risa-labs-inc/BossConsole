@@ -304,6 +304,7 @@ class TrackingPluginContext(
     private val delegate: PluginContext,
     private val tracker: PluginRegistrationTracker,
     private val pluginManifest: PluginManifest? = null,
+    override var daemonServiceProvider: ai.rever.boss.plugin.api.DaemonServiceProvider? = null,
 ) : PluginContext {
     private val _panelRegistry = TrackingPanelRegistry(pluginId, delegate.panelRegistry, tracker)
     private val _tabRegistry = TrackingTabRegistry(pluginId, delegate.tabRegistry, tracker)

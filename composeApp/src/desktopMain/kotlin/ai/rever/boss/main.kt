@@ -62,6 +62,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -203,6 +204,11 @@ private fun containRenderFault(
 private val startupScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
 fun main(rawArgs: Array<String>) {
+    if (ai.rever.boss.daemon.BossDaemon
+            .dispatch(rawArgs)
+    ) {
+        return
+    }
     val launchArguments = parseDesktopLaunchArguments(rawArgs)
     val args = launchArguments.cliArgs
     // -------------------------------------------------------------------------
@@ -590,6 +596,21 @@ fun main(rawArgs: Array<String>) {
                     mutableStateOf(ChromiumAutoDownloader.DownloadProgress(0, 0))
                 }
                 var restartingAfterDownload by remember { mutableStateOf(false) }
+
+                DisposableEffect(windowLifecycle) {
+                    val activate: () -> Unit = {
+                        if (!quitting) {
+                            windowRequested = true
+                            if (!isDownloadingChromium) windowLifecycle.reopen()
+                        }
+                    }
+                    SingleInstanceManager.activationHandler = activate
+                    onDispose {
+                        if (SingleInstanceManager.activationHandler === activate) {
+                            SingleInstanceManager.activationHandler = null
+                        }
+                    }
+                }
 
                 if (SystemUtils.isMacOS) {
                     MacOSApplicationLifecycle(

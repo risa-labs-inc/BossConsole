@@ -1075,6 +1075,7 @@ class DynamicPluginManager(
                                     delegate = baseContext,
                                     tracker = registrationTracker,
                                     pluginManifest = manifest,
+                                    daemonServiceProvider = daemonServiceProviderFor(manifest.pluginId, jarPath),
                                 )
                             trackingContexts[manifest.pluginId] = trackingContext
 
@@ -1199,6 +1200,7 @@ class DynamicPluginManager(
                             delegate = baseContext,
                             tracker = registrationTracker,
                             pluginManifest = manifest,
+                            daemonServiceProvider = daemonServiceProviderFor(manifest.pluginId, jarPath),
                         )
                     trackingContexts[manifest.pluginId] = trackingContext
 
@@ -1737,6 +1739,11 @@ class DynamicPluginManager(
                     // a branch the gate immediately re-blocks.
                     wasAlreadyEnabled = _pluginStates.value[pluginId]?.enabled == true
 
+                    // A prior disable revoked every UI provider; re-enable gets a fresh capability.
+                    _pluginStates.value[pluginId]?.jarPath?.let { path ->
+                        trackingContext.daemonServiceProvider = daemonServiceProviderFor(pluginId, path)
+                    }
+
                     // Attributed for the duration of register(), so a callback the
                     // plugin wires up and invokes synchronously from here is
                     // attributed to it. NOT because this escapes uncaught - the
@@ -2058,6 +2065,8 @@ class DynamicPluginManager(
                         oopChildStopped = true
                         outOfProcessSpawner?.terminate(pluginId)?.getOrThrow()
                     }
+
+                    stopPluginDaemonServices(pluginId)
 
                     // Unregister all panels and tabs
                     trackingContext.unregisterAll()
