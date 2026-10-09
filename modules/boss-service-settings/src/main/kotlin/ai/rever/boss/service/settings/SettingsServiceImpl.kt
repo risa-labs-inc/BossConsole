@@ -1,6 +1,7 @@
 package ai.rever.boss.service.settings
 
 import ai.rever.boss.ipc.proto.services.*
+import ai.rever.boss.plugin.pathutils.BossDirectories
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -33,7 +34,7 @@ class SettingsServiceImpl(
     private val logger = LoggerFactory.getLogger(SettingsServiceImpl::class.java)
 
     companion object {
-        private fun defaultStorageFile(): File = File(System.getProperty("user.home"), ".boss/settings.json")
+        private fun defaultStorageFile(): File = BossDirectories.resolve("settings.json")
     }
 
     @Serializable

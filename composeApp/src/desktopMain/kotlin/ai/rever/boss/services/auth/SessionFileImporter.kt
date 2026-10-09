@@ -234,7 +234,16 @@ internal class SessionFileImporter(
         } catch (e: Refused) {
             reject(e.reason)
         } catch (_: UnsupportedOperationException) {
-            reject("filesystem has no POSIX attributes")
+            // Some providers (notably Windows) reject the POSIX attribute view before checking
+            // whether the path exists. Absence is still a normal no-op; a present file on a
+            // non-POSIX filesystem remains refused because its owner and mode cannot be verified.
+            if (Files.notExists(path, LinkOption.NOFOLLOW_LINKS)) {
+                lastRejection = null
+                lastSeen = null
+                Read.Absent
+            } else {
+                reject("filesystem has no POSIX attributes")
+            }
         } catch (e: IOException) {
             reject("I/O error: ${e::class.simpleName}")
         }
