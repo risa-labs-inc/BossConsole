@@ -23,6 +23,7 @@ on:
       - 'scripts/app-sharing/**'
       - 'scripts/app-sharing-maintenance.mjs'
       - 'infra/cloudflare/terminal-relay/**'
+      - 'infra/cloudflare/fluck-web-alias/**'
       # The function's behaviour is coupled to the passkey migrations (columns,
       # the session_id index, the RPC grant), so schema edits run these too
       - 'supabase/migrations/**'
@@ -41,6 +42,7 @@ on:
       - 'scripts/app-sharing/**'
       - 'scripts/app-sharing-maintenance.mjs'
       - 'infra/cloudflare/terminal-relay/**'
+      - 'infra/cloudflare/fluck-web-alias/**'
       - 'supabase/migrations/**'
       # redirect tests keep its allow-list in lockstep with these
       - 'supabase/templates/email/**'
@@ -258,6 +260,26 @@ jobs:
 
       - name: 🧹 Lint
         run: deno lint
+
+  fluck-ai:
+    name: Fluck.ai portal and Worker - check and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Type check
+        run: deno check --config supabase/functions/fluck-ai/deno.json supabase/functions/fluck-ai/index.ts supabase/functions/fluck-ai/handler.test.ts
+      - name: Portal tests
+        run: deno test --allow-env --config supabase/functions/fluck-ai/deno.json supabase/functions/fluck-ai/handler.test.ts
+      - name: Worker migration tests
+        run: node --test infra/cloudflare/fluck-web-alias/domain.test.mjs
+      - name: Lint
+        run: deno lint supabase/functions/fluck-ai
 
   user-settings:
     name: User settings — check and test
