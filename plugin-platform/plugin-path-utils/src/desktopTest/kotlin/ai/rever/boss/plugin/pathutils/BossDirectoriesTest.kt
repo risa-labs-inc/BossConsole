@@ -170,9 +170,8 @@ class BossDirectoriesTest {
                 assertFailsWith<IllegalArgumentException> {
                     BossDirectories.resolveUnderRoot(root.toFile(), "nested/../../outside")
                 }
-                assertFailsWith<IllegalArgumentException> {
-                    BossDirectories.resolveUnderRoot(root.toFile(), " ")
-                }
+                assertEquals(root.toRealPath().toFile(), BossDirectories.resolveUnderRoot(root.toFile(), ""))
+                assertEquals(root.toRealPath().toFile(), BossDirectories.resolveUnderRoot(root.toFile(), "."))
             } finally {
                 parent.toFile().deleteRecursively()
             }

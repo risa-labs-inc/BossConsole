@@ -95,36 +95,6 @@ class WorkspaceStateRootTest {
     }
 
     @Test
-    fun `unsupported hard links fall back without replacing a concurrent target`() {
-        val state = temporaryDirectory.resolve("fallback-publish").also { Files.createDirectories(it) }
-        val temporary = state.resolve("record.tmp").also { Files.writeString(it, "legacy record") }
-        val target = state.resolve("record.json").also { Files.writeString(it, "current record") }
-
-        assertFailsWith<java.nio.file.FileAlreadyExistsException> {
-            publishTemporaryNoOverwrite(temporary, target) { _, _ ->
-                throw UnsupportedOperationException("simulated no hard-link support")
-            }
-        }
-
-        assertEquals("current record", Files.readString(target))
-        assertTrue(Files.exists(temporary))
-    }
-
-    @Test
-    fun `unsupported hard links publish a missing target through no-replace move`() {
-        val state = temporaryDirectory.resolve("fallback-success").also { Files.createDirectories(it) }
-        val temporary = state.resolve("record.tmp").also { Files.writeString(it, "legacy record") }
-        val target = state.resolve("record.json")
-
-        publishTemporaryNoOverwrite(temporary, target) { _, _ ->
-            throw UnsupportedOperationException("simulated no hard-link support")
-        }
-
-        assertEquals("legacy record", Files.readString(target))
-        assertFalse(Files.exists(temporary))
-    }
-
-    @Test
     fun `directory force failure does not cause deleted records to be resurrected`() {
         val legacy = temporaryDirectory.resolve("legacy-force").toFile().apply { mkdirs() }
         val state = temporaryDirectory.resolve("state-force").toFile()
@@ -140,6 +110,37 @@ class WorkspaceStateRootTest {
     }
 
     @Test
+    fun `temporary cleanup failure never invalidates a published record`() {
+        val state = temporaryDirectory.resolve("cleanup-published").toFile().apply { mkdirs() }
+        val source = temporaryDirectory.resolve("cleanup-source.json").toFile().apply { writeText("legacy") }
+        val target = File(state, "record.json")
+
+        copyLegacyRecordAtomically(source, target, deleteTemporary = { throw IOException("denied") })
+
+        assertEquals("legacy", target.readText())
+    }
+
+    @Test
+    fun `temporary cleanup failure never masks publication failure`() {
+        val state = temporaryDirectory.resolve("cleanup-failed").toFile().apply { mkdirs() }
+        val source = temporaryDirectory.resolve("cleanup-failed-source.json").toFile().apply { writeText("legacy") }
+        val target = File(state, "record.json")
+
+        val failure =
+            assertFailsWith<IllegalStateException> {
+                copyLegacyRecordAtomically(
+                    source,
+                    target,
+                    beforePublish = { error("publication failed") },
+                    deleteTemporary = { throw IOException("cleanup failed") },
+                )
+            }
+
+        assertEquals("publication failed", failure.message)
+        assertFalse(target.exists())
+    }
+
+    @Test
     fun `legacy migration does not follow a record symlink`() {
         val legacy = temporaryDirectory.resolve("legacy-links").toFile().apply { mkdirs() }
         val state = temporaryDirectory.resolve("state-links").toFile()
@@ -147,8 +148,10 @@ class WorkspaceStateRootTest {
         val link = legacy.toPath().resolve("linked.json")
 
         runCatching { Files.createSymbolicLink(link, outside.toPath()) }.getOrElse { return }
-        migrateLegacyWorkspaceDirectory(legacy, state)
+        val skipped = mutableListOf<String>()
+        migrateLegacyWorkspaceDirectory(legacy, state, onSkippedRecord = { skipped += it.name })
 
         assertFalse(File(state, "linked.json").exists())
+        assertEquals(listOf("linked.json"), skipped)
     }
 }

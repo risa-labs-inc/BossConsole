@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.ComponentLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
@@ -11,9 +12,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import java.io.File
 import java.io.IOException
+import java.io.UncheckedIOException
 import java.nio.channels.FileChannel
 import java.nio.file.FileAlreadyExistsException
-import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
@@ -37,7 +38,7 @@ actual class WorkspaceFileManager actual constructor(
     private val legacyMigration: Lazy<Unit> =
         lazy {
             if (directoryOverride == null) {
-                runCatching {
+                try {
                     migrateLegacyWorkspaceDirectory(
                         legacyDirectory =
                             Paths
@@ -47,9 +48,26 @@ actual class WorkspaceFileManager actual constructor(
                                     WorkspaceFileManagerCommon.LEGACY_WORKSPACE_DIRECTORY_NAME,
                                 ).toFile(),
                         stateDirectory = File(workspaceDirectory),
+                        onSkippedRecord = { skipped ->
+                            logger.warn(
+                                LogCategory.WORKSPACE,
+                                "Skipped unsafe legacy workspace entry",
+                                mapOf("fileName" to skipped.name),
+                            )
+                        },
                     )
-                }.onFailure { error ->
-                    logger.warn(LogCategory.WORKSPACE, "Failed to import legacy workspace records", error = error)
+                } catch (error: IOException) {
+                    reportMigrationFailure(logger, error)
+                } catch (error: UncheckedIOException) {
+                    reportMigrationFailure(logger, error)
+                } catch (error: IllegalArgumentException) {
+                    reportMigrationFailure(logger, error)
+                } catch (error: IllegalStateException) {
+                    reportMigrationFailure(logger, error)
+                } catch (error: SecurityException) {
+                    reportMigrationFailure(logger, error)
+                } catch (error: UnsupportedOperationException) {
+                    reportMigrationFailure(logger, error)
                 }
             }
         }
@@ -273,6 +291,17 @@ actual class WorkspaceFileManager actual constructor(
         }
 }
 
+private fun reportMigrationFailure(
+    logger: ComponentLogger,
+    error: Exception,
+): Nothing {
+    logger.warn(LogCategory.WORKSPACE, "Failed to import legacy workspace records", error = error)
+    // Do not expose a partial import to normal reads or writes. This storage operation fails, and
+    // the absent marker requires a clean retry before a later operation can access workspaces. The
+    // legacy directory remains untouched throughout.
+    throw error
+}
+
 private fun Lazy<Unit>.ensureInitialized() {
     value
 }
@@ -292,12 +321,17 @@ internal fun migrateLegacyWorkspaceDirectory(
     legacyDirectory: File,
     stateDirectory: File,
     forceDirectory: (Path) -> Unit = ::forceDirectoryMetadata,
+    onSkippedRecord: (File) -> Unit = {},
     copyRecord: (source: File, target: File) -> Unit = ::copyLegacyRecordAtomically,
 ) {
     val marker = File(stateDirectory, LEGACY_IMPORT_MARKER)
-    if (
-        Files.exists(marker.toPath(), NOFOLLOW_LINKS) ||
-        !Files.isDirectory(legacyDirectory.toPath(), NOFOLLOW_LINKS) ||
+    if (Files.exists(marker.toPath(), NOFOLLOW_LINKS)) {
+        require(Files.isRegularFile(marker.toPath(), NOFOLLOW_LINKS)) {
+            "Legacy workspace import marker must be a regular file: ${marker.absolutePath}"
+        }
+        return
+    }
+    if (!Files.isDirectory(legacyDirectory.toPath(), NOFOLLOW_LINKS) ||
         legacyDirectory.canonicalFile == stateDirectory.canonicalFile
     ) {
         return
@@ -309,6 +343,9 @@ internal fun migrateLegacyWorkspaceDirectory(
     val legacyRecords =
         legacyDirectory.listFiles()
             ?: error("Could not list legacy workspace directory: ${legacyDirectory.absolutePath}")
+    legacyRecords
+        .filterNot { file -> Files.isRegularFile(file.toPath(), NOFOLLOW_LINKS) }
+        .forEach(onSkippedRecord)
     val failures =
         legacyRecords
             .filter { file -> Files.isRegularFile(file.toPath(), NOFOLLOW_LINKS) }
@@ -337,13 +374,13 @@ internal fun migrateLegacyWorkspaceDirectory(
  * publication is atomic, and an existing [target] is never replaced. `ATOMIC_MOVE` cannot provide
  * the second property because providers are allowed to replace the target when that option is set.
  * The temporary and target paths are siblings, so a supported hard link never crosses a file
- * system. Providers without hard-link support fall back to a sibling move without replacement.
- * The JDK guarantees that move fails when [target] exists unless REPLACE_EXISTING is requested,
- * so a current-state writer remains authoritative on both publication paths.
+ * system. Providers without hard-link support fail safely: the target remains absent, the marker
+ * is not written, workspace access stays unavailable for this process, and the next launch retries.
  */
 internal fun copyLegacyRecordAtomically(
     source: File,
     target: File,
+    deleteTemporary: (Path) -> Unit = { temporary -> Files.deleteIfExists(temporary) },
     beforePublish: (Path) -> Unit = {},
 ) {
     val parent = target.parentFile.toPath()
@@ -359,39 +396,25 @@ internal fun copyLegacyRecordAtomically(
         }
         FileChannel.open(temporary, WRITE).use { channel -> channel.force(true) }
         beforePublish(temporary)
-        publishTemporaryNoOverwrite(temporary, target.toPath())
-    } finally {
-        Files.deleteIfExists(temporary)
-    }
-}
-
-internal fun publishTemporaryNoOverwrite(
-    temporary: Path,
-    target: Path,
-    createLink: (Path, Path) -> Unit = { link, existing -> Files.createLink(link, existing) },
-) {
-    try {
         // createLink is an atomic create-new publication: a current-state writer that wins the
         // race leaves FileAlreadyExistsException here and its bytes remain authoritative.
-        createLink(target, temporary)
-    } catch (error: FileAlreadyExistsException) {
-        throw error
-    } catch (_: UnsupportedOperationException) {
-        moveTemporaryNoOverwrite(temporary, target)
-    } catch (_: FileSystemException) {
-        moveTemporaryNoOverwrite(temporary, target)
+        Files.createLink(target.toPath(), temporary)
+    } finally {
+        cleanupMigrationTemporary(temporary, deleteTemporary)
     }
 }
 
-private fun moveTemporaryNoOverwrite(
+private fun cleanupMigrationTemporary(
     temporary: Path,
-    target: Path,
+    deleteTemporary: (Path) -> Unit,
 ) {
-    // Some otherwise usable state volumes do not support hard links. A same-directory move
-    // without REPLACE_EXISTING retains the no-overwrite contract and makes those users' legacy
-    // data visible. Mainstream providers implement this as a rename; providers that cannot
-    // move the sibling safely fail here and leave the marker absent for a later retry.
-    Files.move(temporary, target)
+    try {
+        deleteTemporary(temporary)
+    } catch (_: IOException) {
+        // Cleanup must not mask a publication failure or invalidate a published record.
+    } catch (_: SecurityException) {
+        // Leaving an ignored .tmp orphan is safer than failing an otherwise valid publication.
+    }
 }
 
 private fun forceDirectoryMetadata(directory: Path) {
@@ -416,6 +439,9 @@ private fun finishLegacyMigration(
             true
         } catch (_: FileAlreadyExistsException) {
             // Another BOSS process completed the same one-shot migration.
+            require(Files.isRegularFile(marker, NOFOLLOW_LINKS)) {
+                "Legacy workspace import marker must be a regular file: $marker"
+            }
             false
         }
     if (markerCreated) {

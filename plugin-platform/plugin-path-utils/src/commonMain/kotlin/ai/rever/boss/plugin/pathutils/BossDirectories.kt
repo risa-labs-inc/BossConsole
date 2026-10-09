@@ -65,13 +65,11 @@ object BossDirectories {
         root: Path,
         relativePath: String,
     ): File {
-        require(relativePath.isNotBlank()) { "BOSS state paths must not be blank" }
-
         val relative = File(relativePath)
         require(!relative.isAbsolute) { "BOSS state paths must be relative to $root" }
 
         val lexicalTarget = root.resolve(relativePath).normalize()
-        require(lexicalTarget != root && lexicalTarget.startsWith(root)) {
+        require(lexicalTarget.startsWith(root)) {
             "BOSS state paths must remain under $root"
         }
 
