@@ -133,7 +133,9 @@ additional_redirect_urls = ["boss://auth/verify", "boss://auth/callback", "bosst
   # live-sessions web page (functions/live-sessions): magic link lands the browser here with tokens in the fragment
   "https://api.risaboss.com/functions/v1/live-sessions/auth", "https://cli.risaboss.com/auth", "http://127.0.0.1:54321/functions/v1/live-sessions/auth",
   # Optimist chat web callback (redirect/app.ts OPTIMIST_REDIRECTS)
-  "https://askoptimist.com/auth/callback", "https://optimist.risalabs.ai/auth/callback", "http://127.0.0.1:8796/auth/callback"]
+  "https://askoptimist.com/auth/callback", "https://optimist.risalabs.ai/auth/callback", "http://127.0.0.1:8796/auth/callback",
+  # fluck-web page (functions/fluck-web, fluck.risaboss.com): same landing shape as live-sessions
+  "https://fluck.ai/auth", "https://fluck.risaboss.com/auth", "https://api.risaboss.com/functions/v1/fluck-web/auth", "http://127.0.0.1:54321/functions/v1/fluck-web/auth"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # Path to JWT signing key. DO NOT commit your signing keys file to git.
@@ -436,6 +438,20 @@ verify_jwt = false
 import_map = "./functions/live-sessions/deno.json"
 entrypoint = "./functions/live-sessions/index.ts"
 
+[functions.fluck-web]
+# MUST be false, for the same reasons as live-sessions: `/` and `/auth` are header-less page loads
+# and /api/otp is pre-authentication. Data routes forward the caller's own JWT (from the HttpOnly
+# cookie) to the fluck_web_* RPCs, where RLS and auth.uid() are the access model.
+verify_jwt = false
+import_map = "./functions/fluck-web/deno.json"
+entrypoint = "./functions/fluck-web/index.ts"
+
+[functions.fluck-ai]
+# Same portal and authentication rules, isolated to the new public origin.
+verify_jwt = false
+import_map = "./functions/fluck-ai/deno.json"
+entrypoint = "./functions/fluck-ai/index.ts"
+
 [functions.user-settings]
 # Browser navigations carry a one-use handoff or signed HttpOnly cookie, not a JWT header.
 # The handler authenticates both itself and checks Origin plus CSRF on every write.
@@ -458,13 +474,24 @@ entrypoint = "./functions/boss-ai/index.ts"
 enabled = true
 # MUST be false: this function is the redirect target of a Google consent screen - a
 # header-less browser GET that carries no Authorization header and no apikey. Its gate is the
-# `state` parameter, which is an HS256 token signed with a key shared only with the BOSS that
-# minted it, single use through `public.fluck_oauth_claim_nonce`, and valid for ten minutes.
+# `state` parameter, signed by a registered Fluck install's Ed25519 key (fluck_vault_instances),
+# single use through `public.fluck_oauth_claim_nonce`, and valid for at most fifteen minutes.
 # Everything the function writes (the BOSS user id and the secret key) is read out of that
-# signed token, never off the request.
+# signed token and checked against the install row, never off the request. `POST /refresh` is
+# authenticated by a signed install request, since installs hold no Supabase credential.
 verify_jwt = false
 import_map = "./functions/fluck-oauth/deno.json"
 entrypoint = "./functions/fluck-oauth/index.ts"
+
+[functions.fluck-vault]
+enabled = true
+# MUST be false: the caller is a phone browser opening a link that arrived by text, carrying no
+# Authorization header and no apikey. Its gate is the link itself, single use through
+# `public.fluck_vault_store` and bound to the device by a cookie the first GET sets. The function
+# holds no key that opens anything it stores: the page seals the value in the browser.
+verify_jwt = false
+import_map = "./functions/fluck-vault/deno.json"
+entrypoint = "./functions/fluck-vault/index.ts"
 
 [functions.relay-admission]
 enabled = true

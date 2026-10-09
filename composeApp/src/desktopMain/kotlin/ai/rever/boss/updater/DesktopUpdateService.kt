@@ -519,6 +519,8 @@ actual class UpdateService internal constructor(
 
     actual suspend fun scheduleUpdate(downloadPath: String): InstallOutcome = performInstall(downloadPath, false)
 
+    actual fun armIdleRelaunch(downloadPath: String): Boolean = UpdateInstaller.prepareWindowlessRelaunch(downloadPath)
+
     private suspend fun performInstall(
         downloadPath: String,
         restartAutomatically: Boolean,

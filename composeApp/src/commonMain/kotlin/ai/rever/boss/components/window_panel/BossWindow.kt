@@ -53,6 +53,7 @@ fun BossDraggableComponent.BossWindow(
     verticalBarTopInset: Dp = 0.dp,
     /** Reports whether the hover-revealed bar is on screen. See [SplitViewPanel]. */
     onDrawerVisibleChange: (Boolean) -> Unit = {},
+    onSidebarRevealProgressChange: (Float) -> Unit = {},
     /** See `SplitViewPanel.onBarRailedChange`. */
     onBarRailedChange: (Boolean) -> Unit = {},
     /** A header toggle replaces the collapsed rail when supplied. Scoped to this window. */
@@ -191,6 +192,7 @@ fun BossDraggableComponent.BossWindow(
                         verticalBarRailActions = verticalBarRailActions,
                         verticalBarTopInset = verticalBarTopInset,
                         onDrawerVisibleChange = onDrawerVisibleChange,
+                        onSidebarRevealProgressChange = onSidebarRevealProgressChange,
                         onBarRailedChange = onBarRailedChange,
                         sidebarToggleRequests = sidebarToggleRequests,
                         onSidebarLeadingChange = onSidebarLeadingChange,

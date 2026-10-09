@@ -1,5 +1,6 @@
 package ai.rever.boss.components.sidebar
 
+import ai.rever.boss.components.overlays.overlayCornerIsHeavyweight
 import ai.rever.boss.components.window_panel.components.main_window_panels.TabBarLayout
 import ai.rever.boss.components.window_panel.components.main_window_panels.TabBarRevealState
 import ai.rever.boss.components.window_panel.components.main_window_panels.overlayRegionInWindow
@@ -12,36 +13,52 @@ import ai.rever.boss.utils.SystemUtils
 import androidx.compose.foundation.background
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
+
+// Finite window-sized clearance avoids Skia's infinite-rectangle rejection while painting the header.
+private const val SIDEBAR_HEADER_PAINT_CLEARANCE = 10000f
 
 /** BossTerm's main-window panel: its background continues behind the native toolbar. */
 @Composable
 internal fun integratedSidebarSurface(
     enabled: Boolean,
     extendsIntoTitleBar: Boolean,
+    revealProgress: Float = 1f,
+    headerOnly: Boolean = false,
 ): Modifier {
     val colors = BossTheme.colors
     val glass = sidebarGlassEnabled
@@ -53,48 +70,50 @@ internal fun integratedSidebarSurface(
     if (!enabled) return Modifier.background(if (glass) Color.Transparent else colors.raised)
     val geometry = LocalGlassSidebarGeometry.current
     val density = LocalDensity.current
+    val direction = LocalLayoutDirection.current
     DisposableEffect(geometry) { onDispose { geometry.shape = null } }
     var top by remember { mutableFloatStateOf(0f) }
     val nativeFrame = SystemUtils.isMacOS && extendsIntoTitleBar
+    var measuredBounds by remember { mutableStateOf<Rect?>(null) }
+
+    fun updateGeometry(bounds: Rect?) {
+        geometry.shape =
+            bounds?.takeIf { glass }?.let {
+                sidebarSurfaceGeometry(it, nativeFrame, revealProgress, density, direction)
+            }
+    }
+    SideEffect { updateGeometry(measuredBounds) }
     return Modifier
         // Paint beneath the outer gap and clipped corners, before applying the panel inset.
-        .background(if (glass) Color.Transparent else colors.raised)
+        .background(if (glass || headerOnly) Color.Transparent else colors.raised)
         .padding(start = 4.dp, end = 4.dp, bottom = 4.dp, top = if (nativeFrame) 0.dp else 4.dp)
         .onGloballyPositioned {
             val position = it.positionInRoot()
             top = position.y
-            val headerTop = with(density) { 4.dp.toPx() }
-            val radius = with(density) { 22.dp.toPx() }
-            geometry.shape =
-                if (glass) {
-                    RoundRect(
-                        position.x,
-                        if (nativeFrame) headerTop else position.y,
-                        position.x + it.size.width,
-                        position.y + it.size.height,
-                        CornerRadius(radius),
-                    )
-                } else {
-                    null
-                }
+            val bounds = Rect(position.x, position.y, position.x + it.size.width, position.y + it.size.height)
+            measuredBounds = bounds
+            // Layout changes must update the glass cutout in this frame, not after recomposition.
+            updateGeometry(bounds)
         }.drawBehind {
             val extension = if (nativeFrame) (top - 4.dp.toPx()).coerceAtLeast(0f) else 0f
-            val origin = Offset(0f, -extension)
-            val bounds = Size(size.width, size.height + extension)
+            val bodyWidth = sidebarBodyWidth(size.width.toDp(), revealProgress).toPx()
+            val left = if (layoutDirection == LayoutDirection.Rtl) size.width - bodyWidth else 0f
+            val origin = Offset(left, -extension)
+            val bounds = Size(bodyWidth, size.height + extension)
             val radius = CornerRadius(22.dp.toPx())
-            drawRoundRect(panel, origin, bounds, radius)
-            drawRoundRect(
-                colors.textPrimary.copy(alpha = 0.18f),
-                origin,
-                bounds,
-                radius,
-                style = Stroke(0.75.dp.toPx()),
-            )
+            clipRect(top = origin.y, bottom = if (headerOnly) 0f else size.height) {
+                drawRoundRect(panel, origin, bounds, radius)
+                drawRoundRect(
+                    colors.textPrimary.copy(alpha = 0.18f),
+                    origin,
+                    bounds,
+                    radius,
+                    style = Stroke(0.75.dp.toPx()),
+                )
+            }
         }
         // Only the background extends upward; tab content stays below the toolbar controls.
-        .clip(
-            if (nativeFrame) RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp) else RoundedCornerShape(22.dp),
-        )
+        .clip(sidebarPanelShape(nativeFrame, density, revealProgress))
 }
 
 /** A revealed main-window panel closes locally; a pinned one still uses the saved preference. */
@@ -115,6 +134,8 @@ internal fun windowSidebarModifier(
     topInset: Dp,
     integrated: Boolean,
     extendsIntoTitleBar: Boolean = true,
+    revealProgress: Float = 1f,
+    headerOnly: Boolean = false,
 ): Modifier =
     Modifier
         // Keep the gap and clipped corners in the reveal's hover region. The hidden edge target
@@ -124,7 +145,12 @@ internal fun windowSidebarModifier(
             enabled = bar.hoverExpand,
         ).then(
             if (integrated) {
-                integratedSidebarSurface(enabled = !bar.railShown, extendsIntoTitleBar = extendsIntoTitleBar)
+                integratedSidebarSurface(
+                    enabled = !bar.railShown,
+                    extendsIntoTitleBar = extendsIntoTitleBar,
+                    revealProgress = revealProgress,
+                    headerOnly = headerOnly,
+                )
             } else {
                 Modifier
             },
@@ -140,3 +166,113 @@ internal fun sidebarRegion(
     region?.let { onLeadingChange(it.left.toFloat()) }
     return region
 }
+
+/** The same sidebar keeps its full size but reserves no row width during a temporary reveal. */
+internal fun sidebarOverlayLayout(
+    overlay: Boolean,
+    revealProgress: Float = 1f,
+): Modifier =
+    Modifier
+        .zIndex(if (overlay) 1f else 0f)
+        .layout { measurable, constraints ->
+            val sidebar = measurable.measure(constraints)
+            // placeRelative does not mirror children when their parent reports zero width.
+            val left = if (overlay && layoutDirection == LayoutDirection.Rtl) -sidebar.width else 0
+            layout(if (overlay) 0 else sidebar.width, sidebar.height) {
+                sidebar.place(left, 0)
+            }
+        }.drawWithContent {
+            if (revealProgress < 1f) {
+                val width = size.width * revealProgress.coerceIn(0f, 1f)
+                clipRect(
+                    // Leave room for the native header while keeping Skia clip bounds finite.
+                    top = -SIDEBAR_HEADER_PAINT_CLEARANCE,
+                    left = if (layoutDirection == LayoutDirection.Rtl) size.width - width else 0f,
+                    right = if (layoutDirection == LayoutDirection.Ltr) width else size.width,
+                ) { this@drawWithContent.drawContent() }
+            } else {
+                drawContent()
+            }
+        }
+
+/** Hide covered content without changing the main panel's measured size or viewport. */
+internal fun mainPanelSidebarClip(
+    overlay: Boolean,
+    sidebarWidth: Dp,
+): Modifier =
+    if (!overlay) {
+        Modifier
+    } else {
+        Modifier.drawWithContent {
+            val covered = sidebarWidth.toPx().coerceAtMost(size.width)
+            clipRect(
+                left = if (layoutDirection == LayoutDirection.Ltr) covered else 0f,
+                right = if (layoutDirection == LayoutDirection.Rtl) size.width - covered else size.width,
+            ) { this@drawWithContent.drawContent() }
+        }
+    }
+
+private fun sidebarPanelShape(
+    nativeFrame: Boolean,
+    density: Density,
+    progress: Float,
+): Shape =
+    GenericShape { size, direction ->
+        val radius = CornerRadius(with(density) { 22.dp.toPx() })
+        val width = with(density) { sidebarBodyWidth(size.width.toDp(), progress).toPx() }
+        val left = if (direction == LayoutDirection.Rtl) size.width - width else 0f
+        addRoundRect(
+            RoundRect(
+                left = left,
+                top = 0f,
+                right = left + width,
+                bottom = size.height,
+                topLeftCornerRadius = if (nativeFrame) CornerRadius.Zero else radius,
+                topRightCornerRadius = if (nativeFrame) CornerRadius.Zero else radius,
+                bottomLeftCornerRadius = radius,
+                bottomRightCornerRadius = radius,
+            ),
+        )
+    }
+
+internal fun sidebarSurfaceGeometry(
+    bounds: Rect,
+    nativeFrame: Boolean,
+    progress: Float,
+    density: Density,
+    direction: LayoutDirection = LayoutDirection.Ltr,
+): RoundRect =
+    with(density) {
+        val width = sidebarBodyWidth(bounds.width.toDp(), progress).toPx()
+        val left = if (direction == LayoutDirection.Rtl) bounds.right - width else bounds.left
+        RoundRect(
+            left,
+            if (nativeFrame) 4.dp.toPx() else bounds.top,
+            left + width,
+            bounds.bottom,
+            CornerRadius(22.dp.toPx()),
+        )
+    }
+
+/** Keep the owning surface and the native body on the same reveal geometry. */
+@Composable
+internal fun integratedSidebarLayout(
+    bar: TabBarLayout,
+    reveal: TabBarRevealState,
+    topInset: Dp,
+    integrated: Boolean,
+    extendsIntoTitleBar: Boolean,
+    overlay: Boolean,
+    progress: Float,
+): Modifier =
+    sidebarOverlayLayout(overlay, if (integrated) progress else 1f).then(
+        windowSidebarModifier(
+            bar,
+            reveal,
+            topInset,
+            integrated,
+            extendsIntoTitleBar,
+            revealProgress = if (integrated) progress else 1f,
+            headerOnly = overlay && overlayCornerIsHeavyweight(),
+        ),
+    )

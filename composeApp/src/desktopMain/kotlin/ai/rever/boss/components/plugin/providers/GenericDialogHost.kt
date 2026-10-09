@@ -382,8 +382,7 @@ private fun ProgressDialog(request: DialogRequest.Progress) {
     BossAlertDialog(
         onDismissRequest = {
             if (request.cancellable) {
-                request.handle.cancel()
-                request.handle.dismiss()
+                request.handle.cancelAndDismiss()
             }
         },
         title = { Text(request.title) },
@@ -404,8 +403,7 @@ private fun ProgressDialog(request: DialogRequest.Progress) {
         confirmButton = {
             if (request.cancellable) {
                 TextButton(onClick = {
-                    request.handle.cancel()
-                    request.handle.dismiss()
+                    request.handle.cancelAndDismiss()
                 }) {
                     Text("Cancel")
                 }

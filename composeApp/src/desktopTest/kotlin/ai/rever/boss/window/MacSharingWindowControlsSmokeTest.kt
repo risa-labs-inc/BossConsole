@@ -49,9 +49,10 @@ class MacSharingWindowControlsSmokeTest {
                     controllers.add(MacSidebarToolbar(window.windowHandle, {}, {}))
                 }
             }
+            val sidebar = NativeTitleBarAction("sidebar", "Sidebar", sidebarWidth = 240f, onClick = {})
             controllers.forEach {
                 it.remoteInput.enabled = true
-                it.update("Synthetic sharing controls", emptyList(), false, -1, emptyMap())
+                it.update("Synthetic sharing controls", listOf(sidebar), false, -1, emptyMap())
             }
             onAppKit {
                 controllers.forEach {
@@ -76,6 +77,22 @@ class MacSharingWindowControlsSmokeTest {
             val close = awaitTarget(windows[0], "sharing_window_close")
             val other = awaitTarget(windows[1], "sharing_window_close")
             val extras = MacSharingWindowControls.selectors.keys.map { awaitTarget(windows[0], it) }
+            listOf(120f, 40f, 240f).forEach { width ->
+                controllers[0].update(
+                    "Synthetic sharing controls",
+                    listOf(sidebar.copy(sidebarWidth = width)),
+                    false,
+                    -1,
+                    emptyMap(),
+                )
+                onAppKit {
+                    assertTrue(
+                        MacSharingWindowControls.GROUP in controllers[0].identifiers(),
+                        "Geometry-only updates must preserve the sharing controls",
+                    )
+                }
+                MacSharingWindowControls.selectors.keys.forEach { awaitTarget(windows[0], it) }
+            }
             onAppKit {
                 extras.forEachIndexed { index, target ->
                     val original =

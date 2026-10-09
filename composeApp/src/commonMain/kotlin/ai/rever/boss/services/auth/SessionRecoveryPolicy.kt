@@ -3,6 +3,7 @@ package ai.rever.boss.services.auth
 import io.github.jan.supabase.exceptions.RestException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 
 /**
  * Decides how to react when a Supabase session refresh keeps failing.
@@ -46,6 +47,20 @@ internal object SessionRecoveryPolicy {
             statusCode in 400..499 -> Action.ClearSession
             else -> Action.Retry
         }
+
+    /**
+     * True when the current session is no longer the one recovery diagnosed: a sign-in or a
+     * `BOSS_SESSION_IMPORT` handoff replaced it while recovery's refresh was in flight, so a
+     * rejection of the old token must not clear it.
+     */
+    fun replacedSince(
+        diagnosedRefreshToken: String?,
+        currentRefreshToken: String?,
+        currentExpiresAt: Instant?,
+        now: Instant,
+    ): Boolean =
+        currentRefreshToken != null &&
+            (currentRefreshToken != diagnosedRefreshToken || (currentExpiresAt != null && currentExpiresAt > now))
 
     fun nextBackoff(current: Duration): Duration = (current * 2).coerceAtMost(maxBackoff)
 }

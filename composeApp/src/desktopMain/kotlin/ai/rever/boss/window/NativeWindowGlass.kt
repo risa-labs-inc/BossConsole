@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.theme.AppThemeSettingsManager
 import ai.rever.boss.theme.WindowGlass
 import ai.rever.boss.theme.isGlassTheme
+import ai.rever.boss.utils.CleanupRunner
 import ai.rever.boss.utils.SystemUtils
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -69,9 +70,10 @@ internal fun rememberNativeWindowGlass(
         }
         onDispose {
             refresh = null
-            timer.stop()
-            window.removeComponentListener(listener)
-            controller?.close()
+            val cleanup = CleanupRunner("NativeWindowGlass")
+            cleanup.run("stop refresh timer") { timer.stop() }
+            cleanup.run("remove resize listener") { window.removeComponentListener(listener) }
+            cleanup.run("close native glass") { controller?.close() }
             installed = false
         }
     }

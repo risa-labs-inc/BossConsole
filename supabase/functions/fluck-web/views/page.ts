@@ -1,0 +1,653 @@
+/**
+ * The single page this function serves (structure copied from live-sessions/views/page.ts).
+ *
+ * States driven by the inline, nonce-stamped script: sign-in, "check your email", loading,
+ * "opening" (shown only for a click in the list), and the list. A load that may auto-open (exactly
+ * one Fluck online, or ?instance=<id>) starts in body.launching: the web chat's own boot splash
+ * (logo, the Fluck's agent name once known, pulsing dots) until the frame is up or the page has to
+ * ask (sign-in, several Flucks, offline, an error). No external asset (the splash logo is a data:
+ * URI, allowed by img-src data:) and no third-party script, so the CSP stays `default-src 'none'`.
+ *
+ * Opening a Fluck embeds the URL /api/open returns (`<endpoint>/#/t/<ticket>`) in a full-viewport
+ * iframe, as live-sessions does with its viewer, so the address bar stays on fluck.risaboss.com.
+ * Framing needs no cookie: the Fluck redeems the ticket and keeps its session token in the
+ * frame's own sessionStorage, and it allows framing only by https://fluck.risaboss.com. Opening
+ * from the list pushes `?instance=<id>`, so "back" closes the frame and shows the list, and a
+ * reload reopens that Fluck with a fresh ticket (the single-use ticket never enters the address
+ * bar). Switching Fluck or signing out drops `?instance`. The frame talks back with
+ * postMessage (onFrameMessage): hello, signed out, switch Fluck, its title, and its background
+ * (fluck-theme), which the page mirrors into theme-color so Safari's bars match the chat.
+ *
+ * Fallback for Flucks older than framing: a framing-capable Fluck posts `fluck-hello` as soon as
+ * its script starts, before redeeming the ticket. If none arrives within HELLO_TIMEOUT_MS the
+ * Fluck is assumed to refuse framing (frame-ancestors 'none'), so it never ran and the ticket is
+ * still unredeemed: the frame closes and the page navigates top-level to the same URL, first
+ * replacing its own history entry with `?list=1` so "back" shows the list instead of reopening.
+ *
+ * `?instance=<id>` (the Fluck's own "Sign in with BOSS" button) survives sign-in in
+ * localStorage for 15 minutes: the magic link opens in a new tab and the OAuth hop leaves
+ * the page. Storage may be unavailable; the list is the fallback.
+ *
+ * Token handling is live-sessions': the fragment is posted once to /api/session, becomes
+ * HttpOnly cookies, and leaves the address bar. The page never holds a token.
+ */
+
+import { esc, jsonForScript } from "../utils/html.ts"
+
+export interface PageModel {
+  basePath: string
+  liveWindowSeconds: number
+}
+
+/** The Fluck mark (chevron and caret), from fluck-agent-webchat webchat-brand/logo.svg. */
+export const FLUCK_MARK =
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Fluck"><rect width="32" height="32" rx="8" fill="#0f5bff"/><g transform="translate(4 4)" fill="#fff"><path d="M3.1 4.9 11.2 12 3.1 19.1V15.6L6.79 12 3.1 8.4Z"/><path d="M17.25 4.6h3.7l-1.5 14.8h-3.7Z"/></g></svg>`
+
+const FAVICON = `data:image/svg+xml,${encodeURIComponent(FLUCK_MARK)}`
+
+const STYLES = `
+  /* The Fluck web chat's tokens (tokens.css): surfaces, text and the one accent, so the page, Safari's
+     bars (theme-color) and a framed chat read as one app. */
+  :root {
+    --ink: #ffffff; --raised: #f2f2f7; --raised-2: #e5e5ea; --line: rgba(60, 60, 67, 0.16);
+    --text: #1b1d1f; --text-2: #464b51; --text-3: #62676d; --signal: #0f5bff; --signal-text: #0b45c2;
+    --fill: #0f5bff; --on-signal: #ffffff; --ok: #1f9d55; --off: #aeaeb2; --danger: #c4312a; --wash: rgba(15, 91, 255, 0.08);
+    --danger-wash: rgba(196, 49, 42, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #1c1c1e; --raised: #2c2c2e; --raised-2: #3a3a3c; --line: rgba(84, 84, 88, 0.6);
+      --text: #f2f2f7; --text-2: #c7c7cc; --text-3: #98989f; --signal: #5b8cff; --signal-text: #8aaeff;
+      --ok: #34c759; --off: #636366; --danger: #ff6961; --wash: rgba(91, 140, 255, 0.14);
+      --danger-wash: rgba(255, 105, 97, 0.12);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background-color: var(--boot-bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; -webkit-text-size-adjust: 100%; }
+  /* One centred column, inside the safe areas (viewport-fit=cover); the account row sits at the bottom. */
+  main { min-height: 100vh; min-height: 100dvh; max-width: 440px; margin: 0 auto; display: flex; flex-direction: column;
+    padding: max(40px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right))
+      max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); }
+  header { display: grid; justify-items: center; text-align: center; margin: 12px 0 28px; }
+  .brand-logo { display: block; width: 56px; height: 56px; }
+  h1 { margin: 14px 0 0; font-size: 26px; line-height: 1.15; font-weight: 700; letter-spacing: -0.02em; }
+  .lede { margin: 6px 0 0; color: var(--text-3); font-size: 15px; }
+  h2 { margin: 0; font-size: 20px; line-height: 1.25; font-weight: 600; letter-spacing: -0.01em; }
+  .sub { color: var(--text-3); font-size: 13px; line-height: 1.45; }
+  .hidden { display: none !important; }
+  section { width: 100%; }
+  /* Buttons: one accent fill for the main action (the Fluck tile's blue in both schemes, so white text
+     keeps its contrast), quiet text buttons for the rest. */
+  button, a.btn { -webkit-appearance: none; appearance: none; font: inherit; font-size: 16px; font-weight: 600; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 50px; padding: 0 18px;
+    border-radius: 12px; border: 0; background-color: var(--fill); color: var(--on-signal); text-decoration: none; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.quiet { width: auto; min-height: 44px; padding: 0 4px; background: none; color: var(--signal-text); font-size: 15px; font-weight: 500; }
+  button:focus-visible, a.btn:focus-visible, input:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+  .providers { display: grid; gap: 10px; }
+  a.btn.provider { background-color: var(--raised); color: var(--text); }
+  a.btn.provider.apple { background-color: var(--text); color: var(--ink); }
+  a.btn.provider svg { width: 18px; height: 18px; flex: none; }
+  .or { display: flex; align-items: center; gap: 12px; color: var(--text-3); font-size: 13px; margin: 22px 0; }
+  .or::before, .or::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+  label { display: block; font-size: 13px; font-weight: 500; color: var(--text-2); margin: 0 0 6px 2px; }
+  input[type=email] { width: 100%; height: 50px; font: inherit; font-size: 16px; color: var(--text); background-color: var(--raised);
+    border: 1px solid transparent; border-radius: 12px; padding: 0 14px; }
+  input[type=email]::placeholder { color: var(--text-3); }
+  input[type=email]:focus { border-color: var(--signal); outline: none; }
+  .stack { display: grid; gap: 12px; }
+  .hint { margin: 2px 2px 0; }
+  .notice { margin: 0 0 18px; padding: 12px 14px; border-radius: 12px; background-color: var(--wash); color: var(--text); font-size: 14px; }
+  .notice.error { background-color: var(--danger-wash); color: var(--danger); }
+  .center { display: grid; justify-items: center; text-align: center; gap: 8px; }
+  .center p { margin: 0; }
+  #sent .center { margin-top: 8px; }
+  #sent button.quiet { margin-top: 8px; }
+  /* The list: an inset grouped list, each Fluck one row and one tap target. */
+  .list-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 4px 8px; }
+  .list-head h2 { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--text-3); }
+  ul.instances { list-style: none; margin: 0; padding: 0; border-radius: 14px; overflow: hidden; background-color: var(--raised); }
+  ul.instances:empty { display: none; }
+  ul.instances li + li .inst { border-top: 1px solid var(--line); }
+  ul.instances li { margin: 0; }
+  button.inst { width: 100%; min-height: 64px; padding: 10px 14px; border-radius: 0; background: none; color: var(--text);
+    display: flex; align-items: center; justify-content: flex-start; gap: 12px; text-align: left; font-weight: 400; }
+  button.inst:not(:disabled):active { background-color: var(--raised-2); }
+  @media (hover: hover) { button.inst:not(:disabled):hover { background-color: var(--raised-2); } }
+  button.inst:disabled { opacity: 1; }
+  button.inst:disabled .inst-name, button.inst:disabled .inst-icon { opacity: 0.55; }
+  button.inst.on::after { content: ""; flex: none; width: 8px; height: 8px; margin-right: 4px; border-top: 2px solid var(--text-3);
+    border-right: 2px solid var(--text-3); transform: rotate(45deg); opacity: 0.7; }
+  .inst-icon { flex: none; width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center;
+    background-color: var(--fill); color: #ffffff; font-size: 18px; font-weight: 600; }
+  .inst-icon.fluck { background: url("${FAVICON}") center / 100% 100% no-repeat; color: transparent; }
+  .inst-text { flex: 1; min-width: 0; display: grid; gap: 1px; }
+  .inst-name { font-size: 16px; font-weight: 600; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .inst-meta { font-size: 13px; line-height: 1.35; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background-color: var(--off); }
+  .dot.on { background-color: var(--ok); }
+  #empty { padding: 28px 20px; border-radius: 14px; background-color: var(--raised); }
+  #empty p { margin: 0; }
+  .list-note { margin: 10px 4px 0; }
+  /* Loading: the splash's dots, so the wait looks like the rest of the app. */
+  .wait { display: grid; justify-items: center; gap: 14px; padding: 40px 0; color: var(--text-3); font-size: 15px; }
+  .wait p { margin: 0; }
+  /* Signed-in account and sign out, at the bottom like the splash's footer. */
+  .account { margin-top: auto; padding-top: 28px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .account .sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  footer { margin-top: 18px; color: var(--text-3); font-size: 12px; text-align: center; }
+  a { color: var(--signal-text); }
+  /* Embedded Fluck: the frame fills the page; the Fluck's own "Switch BOSS" and Back return to the list. */
+  body.viewing { overflow: hidden; }
+  /* Edge to edge, under the safe areas (viewport-fit=cover): the framed chat pads its own insets.
+     fitViewport() overrides the height and offset while the on-screen keyboard is up. */
+  body.viewing main { position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; margin: 0; padding: 0;
+    display: flex; flex-direction: column; overflow: hidden; }
+  body.viewing header, body.viewing #notice, body.viewing main > section, body.viewing footer { display: none; }
+  /* Launching: until the page knows it must ask (sign-in, several Flucks, offline) it shows nothing
+     but a quiet line, so opening a Fluck never flashes the portal. */
+  body.launching header, body.launching #notice, body.launching main > section, body.launching footer { display: none; }
+  /* The launch screen is the Fluck web chat's own boot splash (webchat .splash: logo, name, three
+     pulsing dots, status line, on --surface), so handing over to the frame changes no pixel. Its
+     tokens are scoped to #launch so they do not touch the portal's own. Keep in step with the web
+     chat's splash CSS and tokens.css. */
+  /* --boot-bg is the page background on every screen and matches the theme-color metas, so Safari's
+     bars and the page are one colour. A framed chat's fluck-theme overrides it inline on <html>
+     (applyTheme); closing the frame restores it. */
+  :root { --boot-bg: #ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --boot-bg: #1c1c1e; } }
+  #launch { display: none; --surface: #ffffff; --text: #1b1d1f; --text-3: #62676d; --accent: #0f5bff; }
+  @media (prefers-color-scheme: dark) { #launch { --surface: #1c1c1e; --text: #f2f2f7; --text-3: #98989f; --accent: #5b8cff; } }
+  body.launching:not(.viewing) #launch { display: grid; position: fixed; inset: 0; overflow: auto;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  .splash { min-height: 100%; display: grid; grid-template-rows: 1fr auto 1fr; justify-items: center;
+    padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); background: var(--surface); }
+  .splash-main { grid-row: 2; width: 100%; max-width: 340px; display: grid; justify-items: center; text-align: center; }
+  .splash-logo { display: block; width: 64px; height: 64px; }
+  /* min-height: the name is filled in once the portal knows which Fluck it is opening. */
+  .splash-name { min-height: 1.2em; margin: 18px 0 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 24px; line-height: 1.2; font-weight: 600; letter-spacing: -0.02em; color: var(--text); overflow-wrap: anywhere; }
+  .splash-dots, .wait-dots { display: flex; gap: 6px; height: 8px; margin-top: 28px; }
+  .splash-dots span, .wait-dots span { width: 6px; height: 6px; margin-top: 1px; border-radius: 50%; background: var(--accent); opacity: .3;
+    animation: splash-pulse 1.4s ease-in-out infinite; }
+  .splash-dots span:nth-child(2), .wait-dots span:nth-child(2) { animation-delay: .2s; }
+  .splash-dots span:nth-child(3), .wait-dots span:nth-child(3) { animation-delay: .4s; }
+  .wait-dots { margin-top: 0; }
+  .wait-dots span { background: var(--signal); }
+  @keyframes splash-pulse { 0%, 60%, 100% { opacity: .3; } 30% { opacity: 1; } }
+  .splash-status { min-height: 1.5em; margin: 14px 0 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 15px; line-height: 1.5; color: var(--text-3); overflow-wrap: anywhere; }
+  .splash-foot { grid-row: 3; align-self: end; padding-top: 24px; }
+  @media (prefers-reduced-motion: reduce) { .splash-dots span, .wait-dots span { animation: none; opacity: .55; } }
+  #viewer { display: none; flex: 1; flex-direction: column; min-height: 0; }
+  body.viewing #viewer { display: flex; }
+  #fluckframe { display: block; flex: 1; width: 100%; height: 100%; min-height: 0; margin: 0; border: 0; background-color: var(--boot-bg); }
+`
+
+/** Browser script. Plain ES2017, no build step; config comes from the #cfg JSON block. */
+const SCRIPT = `
+(function () {
+  "use strict";
+  var cfg = JSON.parse(document.getElementById("cfg").textContent);
+  var base = cfg.basePath;
+  var $ = function (id) { return document.getElementById(id); };
+  var INSTANCE_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+  var OPEN_URL_RE = /^https:\\/\\/[A-Za-z0-9.-]+(:[0-9]{1,5})?\\/#\\/t\\/[A-Za-z0-9_-]{43}$/;
+  var WANT_KEY = "fluck-web.instance", WANT_TTL_MS = 15 * 60 * 1000;
+  var TITLE_MAX = 120, PAGE_TITLE = "Fluck", HELLO_TIMEOUT_MS = 8000;
+  var THEME_RE = /^#[0-9a-f]{6}$/i, THEME_DEFAULTS = { "theme-light": "#ffffff", "theme-dark": "#1c1c1e" };
+  var pollTimer = null, openTimer = null, csrf = "", opening = false, requestGeneration = 0;
+  var viewing = null; // { url, label } while a Fluck is framed
+  var helloTimer = null; // pending top-level fallback until the frame says fluck-hello
+  var params = new URLSearchParams(location.search);
+  // ?list=1 (older Fluck builds link back with it): show the list, never auto-open on this load.
+  // A reload while a Fluck is open keeps its ?instance=<id> and reopens it with a fresh ticket.
+  var autoOpenDone = params.get("list") === "1";
+  var wanted = null;
+  // Starts true in the markup (body.launching) unless this load cannot auto-open.
+  var launching = true;
+  function stopLaunching() { launching = false; document.body.classList.remove("launching"); }
+  if (autoOpenDone) stopLaunching(); // ?list=1 asks for the list
+
+  function show(id) {
+    if (launching && id !== "loading" && id !== "opening") stopLaunching();
+    ["signin", "sent", "loading", "list", "opening"].forEach(function (s) {
+      $(s).classList.toggle("hidden", s !== id);
+    });
+    // Signed in (the list): the account row and Sign out at the bottom, as on the splash; always
+    // reachable there, even if the session came back without an email.
+    $("account").classList.toggle("hidden", id !== "list");
+  }
+  function notice(text, kind) {
+    if (text && launching) stopLaunching();
+    var n = $("notice");
+    n.textContent = text || "";
+    n.className = "notice" + (kind ? " " + kind : "");
+    n.setAttribute("role", kind === "error" ? "alert" : "status");
+    n.classList.toggle("hidden", !text);
+  }
+  function store(fn) { try { return fn(window.localStorage); } catch (_) { return null; } }
+
+  // ?instance=<id>: remember it across sign-in; it stays in the address bar so a reload reopens it.
+  (function readWanted() {
+    var id = params.get("instance");
+    if (id && INSTANCE_RE.test(id)) {
+      wanted = id;
+      autoOpenDone = false;
+      store(function (s) { s.setItem(WANT_KEY, JSON.stringify({ id: id, at: Date.now() })); });
+    } else {
+      var saved = store(function (s) { return JSON.parse(s.getItem(WANT_KEY) || "null"); });
+      if (saved && typeof saved.id === "string" && INSTANCE_RE.test(saved.id) && Date.now() - saved.at < WANT_TTL_MS) wanted = saved.id;
+    }
+    if (params.has("list")) {
+      params.delete("list");
+      var rest = params.toString();
+      history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
+    }
+  })();
+  function forgetWanted() { wanted = null; store(function (s) { s.removeItem(WANT_KEY); }); }
+  // The list's own address: no ?instance, so a reload shows the list.
+  function dropInstanceFromUrl() {
+    var p = new URLSearchParams(location.search);
+    if (!p.has("instance")) return;
+    p.delete("instance");
+    var rest = p.toString();
+    history.replaceState(null, "", location.pathname + (rest ? "?" + rest : ""));
+  }
+
+  var OAUTH_ERRORS = {
+    cancelled: "Sign-in was cancelled.",
+    expired: "That sign-in took too long or was opened in another browser. Please try again.",
+    failed: "Sign-in failed. Please try again.",
+    rate_limited: "Too many attempts. Try again in a few minutes."
+  };
+  function oauthErrorNotice() {
+    var p = new URLSearchParams(location.search);
+    var code = p.get("oauth_error");
+    if (!code) return;
+    p.delete("oauth_error");
+    var rest = p.toString();
+    history.replaceState(null, "", location.pathname + (rest ? "?" + rest : ""));
+    notice(Object.prototype.hasOwnProperty.call(OAUTH_ERRORS, code) ? OAUTH_ERRORS[code] : OAUTH_ERRORS.failed, "error");
+  }
+  async function harvestFragment() {
+    var h = (location.hash || "").replace(/^#/, "");
+    if (!h) return false;
+    var p = new URLSearchParams(h);
+    history.replaceState(null, "", location.pathname + location.search);
+    if (p.get("access_token")) {
+      try {
+        var r = await api("/api/session", { method: "POST", body: { access_token: p.get("access_token"), refresh_token: p.get("refresh_token") || "" } });
+        if (r.ok) return true;
+        notice("That sign-in link could not be verified. Request a new one.", "error");
+      } catch (_) { notice("Network error while signing in.", "error"); }
+    } else if (p.get("error_description") || p.get("error")) {
+      notice(p.get("error_description") || p.get("error"), "error");
+    }
+    return false;
+  }
+
+  function ago(iso) {
+    var s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+    if (s < 60) return s + " s ago";
+    var m = Math.round(s / 60); if (m < 60) return m + " min ago";
+    var h = Math.round(m / 60); if (h < 48) return h + " h ago";
+    return Math.round(h / 24) + " d ago";
+  }
+  function title(i) { return i.agent_name + " on " + i.label; }
+
+  async function api(path, opts) {
+    opts = opts || {};
+    var headers = Object.assign({ "Accept": "application/json" }, opts.headers || {});
+    if (opts.body) headers["Content-Type"] = "application/json";
+    return fetch(base + path, { method: opts.method || "GET", headers: headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined, credentials: "same-origin" });
+  }
+
+  function cancelOpenTimer() { if (openTimer) { clearTimeout(openTimer); openTimer = null; } }
+
+  async function signOut() {
+    stopPolling(); cancelOpenTimer(); requestGeneration++;
+    if (viewing) closeFrame(false);
+    try { await api("/api/logout", { method: "POST", body: {} }); } catch (_) {}
+    notice(""); show("signin");
+  }
+
+  async function loadInstances(isPoll) {
+    var gen = ++requestGeneration;
+    if (!isPoll) show("loading");
+    var r = await api("/api/instances");
+    if (gen !== requestGeneration) return;
+    if (r.status === 401) { stopPolling(); show("signin"); return; }
+    if (!r.ok) { notice("Could not load your Flucks. Retrying.", "error"); show("list"); startPolling(); return; }
+    var data = await r.json();
+    if (gen !== requestGeneration) return;
+    csrf = data.csrf || "";
+    $("who").textContent = data.email || "";
+    render(data.instances || []);
+  }
+
+  function render(instances) {
+    if (viewing || opening || openTimer) return; // closeFrame reloads the list
+    if (!autoOpenDone) {
+      autoOpenDone = true;
+      var online = instances.filter(function (i) { return i.online; });
+      if (wanted) {
+        var hit = instances.filter(function (i) { return i.instance_id === wanted; })[0];
+        forgetWanted();
+        if (hit && hit.online) { openInstance(hit); return; }
+        dropInstanceFromUrl();
+        if (hit) notice(title(hit) + " is offline. It will appear as online when its BOSS is running.", null);
+        else notice("That Fluck is not signed in with this account.", "error");
+      } else if (online.length === 1) {
+        openInstance(online[0]);
+        return;
+      }
+    }
+    var ul = $("instances");
+    ul.innerHTML = "";
+    $("empty").classList.toggle("hidden", instances.length > 0);
+    instances.forEach(function (i) {
+      var li = document.createElement("li");
+      // The whole row is the tap target; an offline Fluck stays listed but cannot be opened.
+      var btn = document.createElement("button");
+      btn.type = "button"; btn.disabled = !i.online;
+      btn.className = "inst" + (i.online ? " on" : "");
+      btn.setAttribute("aria-label", title(i) + (i.online ? ", online" : ", offline"));
+      var icon = document.createElement("span");
+      icon.className = "inst-icon" + (i.agent_name === "Fluck" ? " fluck" : "");
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = i.agent_name === "Fluck" ? "" : (i.agent_name || "?").charAt(0).toUpperCase();
+      var text = document.createElement("span"); text.className = "inst-text";
+      var name = document.createElement("span"); name.className = "inst-name"; name.textContent = i.agent_name;
+      var meta = document.createElement("span"); meta.className = "inst-meta";
+      var dot = document.createElement("span"); dot.className = "dot" + (i.online ? " on" : "");
+      meta.appendChild(dot);
+      // The machine first: it tells two Flucks apart, so it is the part that survives truncation.
+      meta.appendChild(document.createTextNode(i.label + " · " + (i.online ? "Online" : "Offline, last seen " + ago(i.last_seen_at))));
+      text.appendChild(name); text.appendChild(meta);
+      btn.appendChild(icon); btn.appendChild(text);
+      btn.addEventListener("click", function () { openInstance(i); });
+      li.appendChild(btn);
+      ul.appendChild(li);
+    });
+    show("list");
+    startPolling();
+  }
+
+  async function openInstance(i) {
+    if (opening) return;
+    opening = true; cancelOpenTimer(); stopPolling();
+    $("opening-name").textContent = title(i);
+    // The launch splash names the Fluck it is opening, as its web chat's splash will.
+    $("launch-name").textContent = i.agent_name;
+    $("launch-status").textContent = "Opening on " + i.label + ".";
+    show("opening");
+    try {
+      var r = await api("/api/open", { method: "POST", headers: { "X-Fluck-Web-CSRF": csrf }, body: { instance_id: i.instance_id } });
+      if (r.status === 401) { opening = false; show("signin"); return; }
+      var data = await r.json().catch(function () { return {}; });
+      if (r.ok && typeof data.url === "string" && OPEN_URL_RE.test(data.url)) {
+        opening = false;
+        openFrame(data.url, title(i), i.instance_id);
+        return;
+      }
+      opening = false;
+      dropInstanceFromUrl();
+      if (r.status === 409) notice(title(i) + " just went offline. Try again when it is back.", "error");
+      else if (r.status === 429) notice("Too many attempts. Wait a minute and try again.", "error");
+      else notice("Could not open " + title(i) + ". Try again.", "error");
+      await loadInstances(false);
+    } catch (_) {
+      opening = false;
+      notice("Network error while opening " + title(i) + ".", "error");
+      loadInstances(false).catch(function () {});
+    }
+  }
+
+  // The Fluck is embedded in an iframe rather than navigated to, so the address bar stays on
+  // this page and "back" is instant. The Fluck allows framing only by this origin; the frame
+  // tells us when it signs out, when the user wants another Fluck, and its title.
+  // The on-screen keyboard is only visible to the TOP document: on iOS the layout viewport never
+  // shrinks, only window.visualViewport does, and a cross-origin iframe sees neither. While a
+  // Fluck is framed the page sizes <main> to the visual viewport and follows its offset, so the
+  // chat's composer sits just above the keyboard. Android already shrinks the window (no-op).
+  function fitViewport() {
+    var m = document.querySelector("main");
+    if (!viewing) { m.style.height = ""; m.style.transform = ""; return; }
+    var vv = window.visualViewport;
+    if (!vv) { m.style.height = window.innerHeight + "px"; m.style.transform = ""; return; }
+    m.style.height = Math.round(vv.height) + "px";
+    m.style.transform = vv.offsetTop ? "translateY(" + Math.round(vv.offsetTop) + "px)" : "";
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", fitViewport);
+    window.visualViewport.addEventListener("scroll", fitViewport);
+  }
+  window.addEventListener("resize", fitViewport);
+
+  function openFrame(url, label, instanceId) {
+    if (viewing) return;
+    requestGeneration++;
+    viewing = { url: url, label: label };
+    stopPolling(); cancelOpenTimer();
+    notice("");
+    $("fluckframe").setAttribute("src", url);
+    document.body.classList.add("viewing");
+    if (launching) stopLaunching();
+    fitViewport();
+    // ?instance=<id>, never the ticket: a reload reopens this Fluck with a fresh one. Opened from
+    // the list it is a new entry, so Back returns to the list; a reload of it replaces in place.
+    try {
+      var p = new URLSearchParams(location.search);
+      var here = p.get("instance") === instanceId;
+      p.set("instance", instanceId);
+      var target = location.pathname + "?" + p.toString();
+      if (here) history.replaceState({ view: "fluck" }, "", target);
+      else history.pushState({ view: "fluck" }, "", target);
+    } catch (_) {}
+    helloTimer = setTimeout(function () { helloTimer = null; navigateTopLevel(url); }, HELLO_TIMEOUT_MS);
+  }
+  // Safari paints its status bar and toolbar from the TOP document's theme-color, which a framed
+  // chat cannot set, so the chat posts its background (fluck-theme) and the page mirrors it on both
+  // metas and on --boot-bg. null restores the defaults (the web chat's --surface per scheme).
+  function applyTheme(color) {
+    Object.keys(THEME_DEFAULTS).forEach(function (id) {
+      var m = $(id);
+      if (m) m.setAttribute("content", color || THEME_DEFAULTS[id]);
+    });
+    var root = document.documentElement.style;
+    if (color) root.setProperty("--boot-bg", color);
+    else root.removeProperty("--boot-bg");
+  }
+  function cancelHelloTimer() { if (helloTimer) { clearTimeout(helloTimer); helloTimer = null; } }
+  // An older Fluck refused the frame and never redeemed the ticket: open it the pre-iframe way.
+  function navigateTopLevel(url) {
+    closeFrame(false);
+    // Back from the Fluck lands on the list, not on another auto-open.
+    history.replaceState(null, "", location.pathname + "?list=1");
+    location.assign(url);
+  }
+  // reload: true refetches the list behind a loading state, "quiet" refetches it in place,
+  // false leaves it to the caller.
+  function closeFrame(reload) {
+    if (!viewing) return;
+    cancelHelloTimer();
+    requestGeneration++;
+    viewing = null;
+    $("fluckframe").setAttribute("src", "about:blank");
+    document.body.classList.remove("viewing");
+    document.title = PAGE_TITLE;
+    applyTheme(null);
+    fitViewport();
+    autoOpenDone = true; // do not bounce straight back into a Fluck that was just closed
+    if (reload === "quiet") { show("list"); loadInstances(true).catch(function () {}); }
+    else if (reload !== false) loadInstances(false).catch(function () {});
+  }
+  function frameTitle(t) {
+    var clean = String(t).replace(/[\\u0000-\\u001f\\u007f]/g, " ").replace(/\\s+/g, " ").trim().slice(0, TITLE_MAX);
+    return clean || PAGE_TITLE;
+  }
+  function onFrameMessage(ev) {
+    var frame = $("fluckframe");
+    if (!viewing || !frame.contentWindow || ev.source !== frame.contentWindow || ev.origin !== new URL(viewing.url).origin) return;
+    var d = ev.data;
+    if (!d || typeof d !== "object") return;
+    if (d.type === "fluck-hello") cancelHelloTimer();
+    else if (d.type === "fluck-signed-out") { dropInstanceFromUrl(); closeFrame(true); }
+    else if (d.type === "fluck-switch") { dropInstanceFromUrl(); closeFrame("quiet"); }
+    else if (d.type === "fluck-title" && typeof d.title === "string") document.title = frameTitle(d.title);
+    else if (d.type === "fluck-theme" && typeof d.color === "string" && THEME_RE.test(d.color)) applyTheme(d.color);
+  }
+  window.addEventListener("message", onFrameMessage);
+  window.addEventListener("popstate", function () { if (viewing) closeFrame(true); });
+
+  function startPolling() {
+    stopPolling();
+    pollTimer = setInterval(function () {
+      if (document.visibilityState === "visible") loadInstances(true).catch(function () {});
+    }, 10000);
+  }
+  function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+  $("signin-form").addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    var email = $("email").value.trim();
+    if (!email) return;
+    $("send").disabled = true;
+    try {
+      var r = await api("/api/otp", { method: "POST", body: { email: email } });
+      if (r.status === 429) { notice("Too many attempts. Try again in a few minutes.", "error"); return; }
+      if (!r.ok) { notice("Could not send the link. Try again.", "error"); return; }
+      $("sent-email").textContent = email;
+      notice("");
+      show("sent");
+    } catch (_) { notice("Network error.", "error"); } finally { $("send").disabled = false; }
+  });
+  $("sent-back").addEventListener("click", function () { show("signin"); });
+  $("refresh").addEventListener("click", function () { loadInstances(false).catch(function () {}); });
+  $("signout").addEventListener("click", function () { signOut(); });
+  $("opening-cancel").addEventListener("click", function () {
+    cancelOpenTimer();
+    loadInstances(false).catch(function () {});
+  });
+  // Restored from bfcache with no Fluck framed: refresh the list, do not reopen.
+  window.addEventListener("pageshow", function (ev) {
+    if (ev.persisted && !viewing) { opening = false; autoOpenDone = true; loadInstances(false).catch(function () {}); }
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible" && !$("list").classList.contains("hidden")) loadInstances(true).catch(function () {});
+  });
+
+  // Boot
+  oauthErrorNotice();
+  harvestFragment().then(function () {
+    return loadInstances(false);
+  }).catch(function () { notice("Network error.", "error"); show("signin"); });
+})();
+`
+
+const GOOGLE_MARK =
+  `<svg viewBox="0 0 18 18" aria-hidden="true">` +
+  `<path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.87 2.68-6.62z"/>` +
+  `<path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.83.86-3.04.86-2.34 0-4.33-1.58-5.04-3.71H.96v2.33A9 9 0 0 0 9 18z"/>` +
+  `<path fill="#FBBC05" d="M3.96 10.71A5.41 5.41 0 0 1 3.68 9c0-.59.1-1.17.28-1.71V4.96H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.04l3-2.33z"/>` +
+  `<path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.59A9 9 0 0 0 .96 4.96l3 2.33C4.67 5.16 6.66 3.58 9 3.58z"/>` +
+  `</svg>`
+
+const APPLE_MARK =
+  `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16.37 1.43c0 1.14-.49 2.27-1.18 3.08-.74.9-1.99 1.57-2.99 1.57-.12 0-.23-.02-.3-.03-.01-.06-.04-.22-.04-.39 0-1.15.57-2.27 1.21-2.98.8-.94 2.14-1.64 3.25-1.68.03.13.05.28.05.43zm4.34 15.59c-.03.07-.46 1.58-1.52 3.12-.95 1.34-1.94 2.71-3.43 2.71-1.52 0-1.9-.88-3.63-.88-1.7 0-2.3.91-3.67.91-1.38 0-2.33-1.26-3.43-2.8C3.74 18.26 2.7 15.45 2.7 12.8c0-4.28 2.8-6.55 5.55-6.55 1.45 0 2.68.95 3.6.95.87 0 2.22-1.01 3.9-1.01.61 0 2.89.06 4.37 2.19-.13.09-2.38 1.37-2.38 4.19 0 3.26 2.85 4.32 2.95 4.38z"/></svg>`
+
+export function fluckPage(model: PageModel, nonce: string): string {
+  const cfg = { basePath: model.basePath, liveWindowSeconds: model.liveWindowSeconds }
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta id="theme-light" name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta id="theme-dark" name="theme-color" content="#1c1c1e" media="(prefers-color-scheme: dark)">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>Fluck</title>
+<link rel="icon" type="image/svg+xml" href="${esc(FAVICON)}">
+<style nonce="${esc(nonce)}">${STYLES}</style>
+</head>
+<body class="launching">
+<!--email_off-->
+<main>
+  <header>
+    <img class="brand-logo" src="${esc(FAVICON)}" width="56" height="56" alt="">
+    <h1>Fluck</h1>
+    <p class="lede">Your Fluck, from any browser</p>
+  </header>
+  <div id="notice" class="notice hidden" role="status"></div>
+
+  <section id="signin" class="hidden">
+    <div class="providers">
+      <a id="oauth-google" class="btn provider" href="${esc(model.basePath)}/api/oauth/google">${GOOGLE_MARK}Continue with Google</a>
+      <a id="oauth-apple" class="btn provider apple" href="${esc(model.basePath)}/api/oauth/apple">${APPLE_MARK}Continue with Apple</a>
+    </div>
+    <div class="or">or</div>
+    <form id="signin-form" class="stack" autocomplete="on">
+      <div>
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required autocomplete="email" inputmode="email" placeholder="you@company.com">
+      </div>
+      <button id="send" type="submit">Email me a sign-in link</button>
+      <p class="sub hint">Use the account your BOSS is signed in with.</p>
+    </form>
+  </section>
+
+  <section id="sent" class="hidden">
+    <div class="center">
+      <h2>Check your email</h2>
+      <p class="sub">We sent a sign-in link to <strong id="sent-email"></strong>. Open it in this browser and your Flucks will appear here.</p>
+      <button id="sent-back" class="quiet" type="button">Use a different email</button>
+    </div>
+  </section>
+
+  <div id="launch" class="splash boot" role="status" aria-busy="true" aria-label="Opening your Fluck"><div class="splash-main"><img class="splash-logo" src="${esc(FAVICON)}" width="64" height="64" alt="" /><p id="launch-name" class="splash-name"></p><span class="splash-dots" aria-hidden="true"><span></span><span></span><span></span></span><p id="launch-status" class="splash-status"></p></div><div class="splash-foot"></div></div>
+
+  <section id="loading" class="hidden" aria-busy="true">
+    <div class="wait"><span class="wait-dots" aria-hidden="true"><span></span><span></span><span></span></span><p>Loading your Flucks</p></div>
+  </section>
+
+  <section id="opening" class="hidden" aria-busy="true">
+    <div class="wait">
+      <span class="wait-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+      <p>Opening <span id="opening-name"></span></p>
+      <button id="opening-cancel" class="quiet" type="button">Show the list instead</button>
+    </div>
+  </section>
+
+  <section id="list" class="hidden">
+    <div class="list-head">
+      <h2>Your Flucks</h2>
+      <button id="refresh" class="quiet" type="button">Refresh</button>
+    </div>
+    <div id="empty" class="center hidden">
+      <h2>No Flucks yet</h2>
+      <p class="sub">Turn on Web chat in Fluck → Settings, and choose a way to reach it. It appears here within half a minute.</p>
+    </div>
+    <ul id="instances" class="instances" aria-label="Your Flucks"></ul>
+    <p class="sub list-note">A Fluck shows as offline about ${esc(String(model.liveWindowSeconds))} seconds after its BOSS stops. Only you can see this list; each Fluck admits only the BOSS account it is signed in as.</p>
+  </section>
+
+  <div id="viewer">
+    <iframe id="fluckframe" title="Fluck" allow="clipboard-read; clipboard-write; fullscreen" allowfullscreen src="about:blank"></iframe>
+  </div>
+
+  <footer id="account" class="account hidden">
+    <span class="sub" id="who"></span>
+    <button id="signout" class="quiet" type="button">Sign out</button>
+  </footer>
+</main>
+<!--/email_off-->
+<script id="cfg" type="application/json">${jsonForScript(cfg)}</script>
+<script nonce="${esc(nonce)}">${SCRIPT}</script>
+</body>
+</html>`
+}

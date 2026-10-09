@@ -1,6 +1,7 @@
 package ai.rever.boss.components.registery
 
 import ai.rever.boss.plugin.sandbox.PanelSandboxRegistry
+import ai.rever.boss.utils.CleanupRunner
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.mutableStateMapOf
@@ -8,7 +9,6 @@ import androidx.compose.runtime.snapshots.SnapshotStateMap
 import com.arkivanov.decompose.DefaultComponentContext
 import com.arkivanov.essenty.lifecycle.Lifecycle
 import com.arkivanov.essenty.lifecycle.LifecycleRegistry
-import com.arkivanov.essenty.lifecycle.destroy
 import com.arkivanov.essenty.lifecycle.resume
 
 /**
@@ -95,10 +95,8 @@ class PanelComponentStore(
         // Cleanup hook on the OLD component, isolated so its failure can't keep
         // the stale instance cached: after a plugin hot reload this calls into a
         // closed classloader, where even class resolution throws an Error.
-        try {
+        CleanupRunner("PanelComponentStore", mapOf("panelId" to panelId.panelId)).run("Before reset") {
             currentComponent.onBeforeReset()
-        } catch (t: Throwable) {
-            logger.warn(LogCategory.UI, "onBeforeReset failed during panel reset (continuing)", mapOf("panelId" to panelId.panelId), t)
         }
 
         // Remove the old component and notify its lifecycle subscribers.
@@ -163,22 +161,7 @@ class PanelComponentStore(
     ) {
         if (lifecycle == null) return
 
-        // Essenty advances state before dispatching callbacks. A failing onPause/onStop
-        // interrupts destroy() before onDestroy, so continue from the advanced state.
-        // A failure in onDestroy itself is terminal; do not redeliver that event.
-        while (lifecycle.state != Lifecycle.State.DESTROYED) {
-            val previousState = lifecycle.state
-            try {
-                lifecycle.destroy()
-            } catch (t: Throwable) {
-                logger.warn(
-                    LogCategory.UI,
-                    "Panel lifecycle destroy failed (continuing)",
-                    mapOf("panelId" to panelId.panelId),
-                    t,
-                )
-            }
-            if (lifecycle.state == previousState) return
-        }
+        CleanupRunner("PanelComponentStore", mapOf("panelId" to panelId.panelId))
+            .destroyLifecycle("Panel lifecycle", lifecycle)
     }
 }

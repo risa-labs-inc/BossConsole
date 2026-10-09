@@ -34,6 +34,7 @@ import ai.rever.boss.plugin.sandbox.ui.PluginRecoveryQuarantine
 import ai.rever.boss.services.auth.AuthStateManager
 import ai.rever.boss.services.supabase.models.UserInfo
 import ai.rever.boss.utils.AppVersion
+import ai.rever.boss.utils.CleanupRunner
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CoroutineScope
@@ -2646,6 +2647,7 @@ class DynamicPluginManager(
         dispose(closeTabsAcrossWindows = false)
     }
 
+    @Suppress("TooGenericExceptionCaught") // shutdown must continue across independent plugin failures
     private suspend fun dispose(closeTabsAcrossWindows: Boolean) {
         logger.info(
             LogCategory.SYSTEM,
@@ -2656,17 +2658,29 @@ class DynamicPluginManager(
         )
 
         // Stop OOP supervision before teardown starts so a crash cannot race shutdown.
-        outOfProcessSpawner?.dispose()
+        val cleanup = CleanupRunner("DynamicPluginManager", category = LogCategory.SYSTEM)
+        cleanup.run("Out-of-process supervisor") { outOfProcessSpawner?.dispose() }
 
         try {
             // Uninstall all plugins
             for (pluginId in _pluginStates.value.keys.toList()) {
-                uninstallPlugin(
-                    pluginId = pluginId,
-                    force = true,
-                    waitForGC = false,
-                    closeTabsAcrossWindows = closeTabsAcrossWindows,
-                )
+                try {
+                    uninstallPlugin(
+                        pluginId = pluginId,
+                        force = true,
+                        waitForGC = false,
+                        closeTabsAcrossWindows = closeTabsAcrossWindows,
+                    )
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Plugin cleanup failed (continuing)",
+                        mapOf("pluginId" to pluginId),
+                        failure,
+                    )
+                }
             }
         } finally {
             // Deregister before cancelling, so nothing can pick this manager as a live one after
@@ -2677,11 +2691,11 @@ class DynamicPluginManager(
             // holder that resolves a manager lazily (HomeCatalogAccess's installer) would hand
             // it an install that lands nowhere. In `finally` because the window-teardown caller
             // bounds this with a timeout, and a timed-out uninstall must not skip deregistration.
-            liveManagers.removeIf { it.get() === this || it.get() == null }
+            cleanup.run("Live manager registration") { liveManagers.removeIf { it.get() === this || it.get() == null } }
             restartDependentPlugin = null
 
             // Cancel scope
-            managerScope.cancel()
+            cleanup.run("Manager coroutine scope") { managerScope.cancel() }
         }
     }
 

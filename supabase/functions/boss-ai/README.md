@@ -103,12 +103,35 @@ or `openai_responses`; the base URL includes the API version prefix, not `/chat/
 `/responses`. Modify mappings in a transaction; each admitted request keeps its captured routing
 configuration. Unpublish to stop new requests. In-flight requests are allowed to finish.
 
+`boss_ai_models.provider_routing` (NULL by default) is an operator-set OpenRouter `provider` object
+sent with every request for that model. Accepted keys: `order`, `only`, `ignore` (each a list of 1
+to 32 provider slugs matching `^[a-z0-9][a-z0-9._/-]{0,63}$`), `allow_fallbacks`,
+`require_parameters` (booleans) and `sort` (`price`, `throughput` or `latency`). The table check
+(`boss_ai_provider_routing_valid()`) and the function enforce the same rules. Non-empty routing on a
+connection whose base URL is not `https://openrouter.ai` is refused, so keep routed models on the
+OpenRouter connection. Either fault fails as a 503 configuration error before dispatch.
+
+```sql
+UPDATE public.boss_ai_models SET provider_routing =
+  '{"order":["cerebras","coreweave"],"allow_fallbacks":true,"ignore":["groq","amazon-bedrock"]}'
+WHERE id = 'optimist';
+```
+
 The Responses adapter translates client function calls, results, structured output and SSE events
 to/from Chat Completions. It requests `store=false` and disables Responses truncation. No
 upstream-hosted tools, conversation IDs, client-selected providers, redirects, or arbitrary request
 extensions are forwarded. Vision accepts inline PNG/JPEG/WebP images, not remote image URLs. The
 endpoint must enforce the configured context limit; this is part of the upstream contract, not an
 assertion inferred from a model name.
+
+## Restricting a model to an organisation
+
+An allowance names a permission, so a model can be limited to one group without code. Give the
+group's organisation user-kind role a dedicated permission (for example `ai.optimist`) and put the
+model's only allowance on it. Members see and use the model; everyone else gets neither the catalog
+entry nor admission. Platform admins hold every permission and see it too. Organisation admins
+cannot grant `ai.*` through `grant_organisation_role_permission`; only a platform admin or an
+operator write can, so holders cannot pass a model on to another organisation.
 
 ## Allowance semantics
 

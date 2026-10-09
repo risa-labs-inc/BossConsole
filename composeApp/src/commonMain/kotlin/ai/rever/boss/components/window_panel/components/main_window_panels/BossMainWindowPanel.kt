@@ -73,6 +73,7 @@ import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
 import ai.rever.boss.services.bookmarks.rememberBookmarkCollections
 import ai.rever.boss.theme.sidebarDividerColor
 import ai.rever.boss.theme.sidebarGlassEnabled
+import ai.rever.boss.utils.CleanupRunner
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -139,7 +140,6 @@ import com.arkivanov.decompose.DefaultComponentContext
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
 import com.arkivanov.decompose.value.Value
 import com.arkivanov.essenty.lifecycle.LifecycleRegistry
-import com.arkivanov.essenty.lifecycle.destroy
 import com.arkivanov.essenty.lifecycle.resume
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -2080,41 +2080,45 @@ class BossTabsComponent(
             if (recordForReopen && !it.id.startsWith(RUNNER_TERMINAL_PREFIX)) {
                 ClosedTabHistory.record(windowId, it)
             }
+            // Claim ownership and navigation before callbacks, which may synchronously
+            // close this tab again or close a sibling and shift its old index.
+            val component = tabComponents.remove(it.id)
+            val lifecycle = tabLifecycles.remove(it.id)
+            mruTabIds.remove(it.id)
+            tabCycleOrder = null
+            _pinnedCount.value = pinnedCountAfterRemove(pinnedCount, index)
+            tabsNavigation.removeTab(index)
+
             // Unregister tab from TabUpdateRegistry (ownership-checked: a no-op if a move
             // already re-registered this tab id to its destination component)
             TabUpdateRegistry.unregisterTab(it.id, componentId)
-            publishSystemEvent(TabEvent(tabId = it.id, tabType = TabEventType.CLOSED, windowId = windowId))
+            val cleanup = CleanupRunner("BossTabsComponent", mapOf("tabId" to it.id, "windowId" to windowId))
+            cleanup.run("Publish tab closed") {
+                publishSystemEvent(TabEvent(tabId = it.id, tabType = TabEventType.CLOSED, windowId = windowId))
+            }
 
             // Dispose the component if it has a dispose method
-            val component = tabComponents.remove(it.id)
             if (component is ai.rever.boss.components.plugin.tab_types.fluck.FluckTabComponent) {
-                component.dispose()
+                cleanup.run("Browser tab") { component.dispose() }
             }
             // Destroy the tab's own lifecycle so components that clean up in
             // lifecycle.onDestroy (dynamic plugin tabs like fluck-browser) release their
             // resources — without this a closed browser tab's Chromium process lives on.
-            tabLifecycles.remove(it.id)?.destroy()
+            if (lifecycle != null) destroyTabLifecycle(it.id, lifecycle)
             // Panel-host tabs keep an explicit close signal (the hosted panel component is
             // owned by PanelComponentStore, not the tab lifecycle — see PanelHostTab.kt):
             // decrements the hosted-as-tab count so the sidebar icon reopens the plugin
             // in its sidebar location once the last hosting tab is closed.
             if (component is ai.rever.boss.components.plugin.tab_types.PanelHostTabComponent) {
-                component.onClosed()
+                cleanup.run("Panel host tab") { component.onClosed() }
             }
 
             // If this is a runner terminal, notify the service to clean up tracking
             // This handles the case where user closes the tab directly (not via Stop button)
             if (it.id.startsWith(RUNNER_TERMINAL_PREFIX)) {
-                RunnerTerminalService.removeTerminal(windowId, it.id)
+                cleanup.run("Runner terminal") { RunnerTerminalService.removeTerminal(windowId, it.id) }
             }
-            // Drop the closed tab from MRU tracking and abandon any in-progress cycle.
-            mruTabIds.remove(it.id)
-            tabCycleOrder = null
         }
-        // Before the removal, while `index` still refers to the tab being closed. Every
-        // close-many helper funnels through here, so none of them has to know about pinning.
-        _pinnedCount.value = pinnedCountAfterRemove(pinnedCount, index)
-        tabsNavigation.removeTab(index)
     }
 
     // Remove a tab by ID - safer than index-based removal when state may have changed.
@@ -2147,9 +2151,20 @@ class BossTabsComponent(
         internal val component: TabComponentWithUI,
         internal val lifecycle: LifecycleRegistry?,
     ) {
+        private var destroyed = false
+
         /** Destroy the detached component instead of adopting it (fires its onDestroy cleanup). */
         fun destroy() {
-            lifecycle?.destroy()
+            if (destroyed) return
+            destroyed = true
+            val cleanup = CleanupRunner("DetachedTab", mapOf("tabId" to config.id))
+            if (component is ai.rever.boss.components.plugin.tab_types.fluck.FluckTabComponent) {
+                cleanup.run("Browser tab") { component.dispose() }
+            }
+            lifecycle?.let { cleanup.destroyLifecycle("Tab lifecycle", it) }
+            if (component is ai.rever.boss.components.plugin.tab_types.PanelHostTabComponent) {
+                cleanup.run("Panel host tab") { component.onClosed() }
+            }
         }
     }
 
@@ -2533,18 +2548,26 @@ class BossTabsComponent(
      * disposed AWT window handles during rendering.
      */
     fun disposeAllTabsBlocking() {
-        tabComponents.values.toList().forEach { component ->
+        val components = tabComponents.toMap()
+        val lifecycles = tabLifecycles.toMap()
+        tabComponents.clear()
+        tabLifecycles.clear()
+        components.forEach { (tabId, component) ->
             if (component is ai.rever.boss.components.plugin.tab_types.fluck.FluckTabComponent) {
-                component.disposeBlocking()
+                CleanupRunner("BossTabsComponent", mapOf("tabId" to tabId, "windowId" to windowId))
+                    .run("Browser tab") { component.disposeBlocking() }
             }
         }
-        tabComponents.clear()
-        // Destroy the per-tab lifecycles so plugin components that clean up in
-        // lifecycle.onDestroy release their resources on window close too — same
-        // contract as removeTab. SplitViewState performs the window-scoped
-        // BrowserService fallback after every panel lifecycle has been destroyed.
-        tabLifecycles.values.toList().forEach { it.destroy() }
-        tabLifecycles.clear()
+        // Window-scoped BrowserService fallback runs after all panel lifecycles.
+        lifecycles.forEach { (tabId, lifecycle) -> destroyTabLifecycle(tabId, lifecycle) }
+    }
+
+    private fun destroyTabLifecycle(
+        tabId: String,
+        lifecycle: LifecycleRegistry,
+    ) {
+        CleanupRunner("BossTabsComponent", mapOf("tabId" to tabId, "windowId" to windowId))
+            .destroyLifecycle("Tab lifecycle", lifecycle)
     }
 }
 

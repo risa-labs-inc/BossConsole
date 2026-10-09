@@ -1,5 +1,5 @@
 /**
- * `fluck-oauth` - the OAuth redirect target for Fluck's Google connector.
+ * `fluck-oauth` - the OAuth redirect target for Fluck's Google and Slack connectors.
  *
  * ## What this replaces
  *
@@ -11,7 +11,8 @@
  *
  * ## The flow, end to end
  *
- * 1. `connect_service google` on the plugin mints a signed `state` (see `state.ts`) and builds
+ * 1. `connect_service google` on the plugin mints a `state` signed with its install key (see
+ *    `state.ts`) and builds
  *    a Google authorization URL. The model texts the link. Nothing is stored yet.
  * 2. The user taps it and approves on Google's own page.
  * 3. Google redirects the phone browser HERE, with `code` and `state`.
@@ -27,14 +28,25 @@
  * caller is a browser following a redirect Google issued and carries no header we chose. The
  * `state` is therefore the entire authentication:
  *
- * - it is signed with a key shared ONLY with the BOSS that minted it, so nobody else can name
- *   a workspace or a user id;
+ * - it is signed with the Ed25519 key of an install registered in `fluck_vault_instances`, and
+ *   the row must be unrevoked and belong to the user the state names, so an install can only
+ *   ever write for its own owner;
  * - its nonce is claimed exactly once, in the database, so a link that leaks into a browser
  *   history or a shared screenshot is dead on its second use;
- * - it expires in ten minutes.
+ * - it expires within fifteen minutes.
  *
  * Nothing about the destination of the write is read off the request. `user_id` and the secret
  * key both come from inside the signed token.
+ *
+ * `GET /slack/callback` is the same flow for Slack: the same state and nonce checks, then
+ * Slack's `oauth.v2.access` for a non expiring `xoxp-` user token, stored under the `slack`
+ * connector. It has no grant binding and no refresh, because the token does not expire.
+ *
+ * `POST /refresh` is the other route: an install trades its refresh token for an access token
+ * through this function, because the web client secret lives only here. It is authenticated by
+ * a signed request (see `signed.ts`), never by the state, and it only redeems a token the
+ * callback bound (`fluck_oauth_grants`, by SHA-256) to the same BOSS user that owns the calling
+ * install. Without that, any BOSS user who registered an install could redeem a stolen token.
  *
  * ## What is never written down
  *
@@ -42,15 +54,34 @@
  * the route, the outcome, and the first eight characters of the workspace id, which is enough
  * to line two attempts up against each other and nothing else.
  */
-import { GOOGLE_CONNECTOR_ID, keyBytes, type StateClaims, verifyState } from "./state.ts"
-import { exchangeCode, type ExchangeFailure } from "./google.ts"
+import { INSTANCE_ID_PATTERN, parseState, type StateClaims, verifyState } from "./state.ts"
+import { exchangeCode, type ExchangeFailure, refreshAccessToken } from "./google.ts"
+import { exchangeSlackCode } from "./slack.ts"
+import {
+  bodyDigest,
+  INSTANCE_HEADER,
+  publicKeyBytes,
+  SIGNATURE_HEADER,
+  TIMESTAMP_HEADER,
+  verifySigned,
+} from "./signed.ts"
 
 /** The default public base URL. Overridden by `PUBLIC_BASE_URL` when the custom domain lands. */
 export const DEFAULT_PUBLIC_BASE_URL =
   "https://pcnwqamqdnsadranufjv.functions.supabase.co/fluck-oauth"
 
+/** The connector ids this function writes for; part of the secret's key. */
+const GOOGLE_CONNECTOR_ID = "google"
+const SLACK_CONNECTOR_ID = "slack"
+
+/** A refresh request is one small JSON object; anything bigger is not one. */
+const MAX_REFRESH_BODY_BYTES = 4096
+
 /** The env var a secret is keyed under, inside the Fluck key scheme. */
 const REFRESH_ENV_VAR = "GOOGLE_REFRESH_TOKEN"
+
+/** The env var the plugin's Slack MCP reads the user token from. */
+const SLACK_TOKEN_ENV_VAR = "SLACK_MCP_XOXP_TOKEN"
 
 /** Matches `HostSecretVault`'s own note, so a Fluck secret reads the same wherever it was made. */
 const SECRET_NOTE = "Created by Fluck when a service was connected. Do not edit by hand."
@@ -58,7 +89,22 @@ const SECRET_NOTE = "Created by Fluck when a service was connected. Do not edit 
 /** Shown as the secret's username when the id_token carried no email. */
 const UNKNOWN_ACCOUNT = "google account"
 
+/** Shown as the secret's username when Slack named neither the workspace nor the member. */
+const UNKNOWN_SLACK_ACCOUNT = "slack account"
+
 export type NonceClaim = "claimed" | "replay" | "invalid" | "unavailable"
+
+/** One live install: unknown and revoked are both null. */
+export interface Instance {
+  userId: string
+  linkPublicKey: string
+}
+
+/** Who a refresh token was issued to, by its SHA-256. */
+export type GrantOwner =
+  | { status: "bound"; userId: string }
+  | { status: "unbound" }
+  | { status: "unavailable" }
 
 export interface StoreRequest {
   userId: string
@@ -80,8 +126,16 @@ export interface Dependencies {
   fetch: typeof fetch
   /** Claim a nonce exactly once. `replay` means this state has already been spent. */
   claimNonce(nonce: string, expiresAtSeconds: number): Promise<NonceClaim>
+  /** A live install by id (`fluck_vault_instance`, which drops revoked rows), or null. */
+  instance(instanceId: string): Promise<Instance | null>
   /** Write the refresh token as the named BOSS user, replacing any earlier row for the key. */
   storeRefreshToken(request: StoreRequest): Promise<boolean>
+  /** Record that the token with this SHA-256 hex was issued to this user. */
+  bindGrant(tokenSha256: string, userId: string): Promise<boolean>
+  /** The user a token hash is bound to. */
+  grantOwner(tokenSha256: string): Promise<GrantOwner>
+  /** Drop a binding whose grant Google has declared dead. */
+  forgetGrant(tokenSha256: string): Promise<void>
   /** Milliseconds. Injected so the tests can sit on either side of an expiry. */
   now(): number
   log(line: string): void
@@ -96,12 +150,18 @@ const PAGE_NO_REFRESH =
   "Google did not hand over lasting access. Ask Fluck for a fresh link and approve everything it asks for."
 const PAGE_UNREACHABLE =
   "Google could not be reached to finish the sign in. Worth trying again in a minute."
+const PAGE_SLACK_NO_TOKEN =
+  "Slack did not hand over lasting access. Ask Fluck for a fresh link and approve everything it asks for."
+const PAGE_SLACK_UNREACHABLE =
+  "Slack could not be reached to finish the sign in. Worth trying again in a minute."
 const PAGE_STORE_FAILED =
   "The sign in worked, but the credential could not be saved. Ask Fluck to try again."
 const PAGE_UNCONFIGURED =
   "This sign in service is not set up yet. Whoever runs this BOSS has to finish setting it up."
 const PAGE_NOT_FOUND = "There is nothing at this address."
 const PAGE_NOT_A_BROWSER = "That link has to be opened in a browser."
+const PAGE_UPDATE_PLUGIN =
+  "That link came from an older version of Fluck. Update the Fluck plugin in BOSS, then ask Fluck for a fresh link."
 
 const FAILURE_PAGES: Record<ExchangeFailure, string> = {
   bad_code: PAGE_BAD_CODE,
@@ -109,11 +169,20 @@ const FAILURE_PAGES: Record<ExchangeFailure, string> = {
   unreachable: PAGE_UNREACHABLE,
 }
 
+const SLACK_FAILURE_PAGES: Record<ExchangeFailure, string> = {
+  bad_code: PAGE_BAD_CODE,
+  no_refresh_token: PAGE_SLACK_NO_TOKEN,
+  unreachable: PAGE_SLACK_UNREACHABLE,
+}
+
 export function createHandler(deps: Dependencies): (request: Request) => Promise<Response> {
   return async (request: Request) => {
     const path = routePath(new URL(request.url).pathname)
     if (path === "/health") return health(deps)
+    if (path === "/client") return await client(request, deps)
     if (path === "/callback") return await callback(request, deps)
+    if (path === "/slack/callback") return await slackCallback(request, deps)
+    if (path === "/refresh") return await refresh(request, deps)
     return page(404, "Not found", PAGE_NOT_FOUND)
   }
 }
@@ -133,24 +202,72 @@ export function routePath(pathname: string): string {
   return stripped === "" ? "/" : stripped.replace(/\/+$/, "") || "/"
 }
 
+/** The one definition of "configured", shared by /health, /client, /callback and /refresh. */
+function isSet(value: string | undefined): value is string {
+  return value !== undefined && value.trim().length > 0
+}
+
 function health(deps: Dependencies): Response {
   // Reports whether the function CAN work, not whether any particular secret is correct.
   // A boolean per variable, never a value, so this stays safe to curl from anywhere.
   const configured = {
-    clientId: Boolean(deps.env("GOOGLE_WEB_CLIENT_ID")),
-    clientSecret: Boolean(deps.env("GOOGLE_WEB_CLIENT_SECRET")),
-    stateKey: Boolean(deps.env("FLUCK_STATE_KEY")),
-    userId: Boolean(deps.env("FLUCK_USER_ID")),
+    clientId: isSet(deps.env("GOOGLE_WEB_CLIENT_ID")),
+    clientSecret: isSet(deps.env("GOOGLE_WEB_CLIENT_SECRET")),
+    githubClientId: isSet(deps.env("GITHUB_OAUTH_CLIENT_ID")),
+    slackClientId: isSet(deps.env("SLACK_CLIENT_ID")),
+    slackClientSecret: isSet(deps.env("SLACK_CLIENT_SECRET")),
   }
-  const ok = configured.clientId && configured.clientSecret && configured.stateKey &&
-    configured.userId
+  // GitHub and Slack are optional, so only the Google pair gates readiness.
+  const ok = configured.clientId && configured.clientSecret
   return new Response(JSON.stringify({ ok, configured }), {
     status: ok ? 200 : 503,
     headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
   })
 }
 
-async function callback(request: Request, deps: Dependencies): Promise<Response> {
+// The plugin builds the authorization URL with this id, so it must match the exchange's client.
+async function client(request: Request, deps: Dependencies): Promise<Response> {
+  if (request.method !== "GET") {
+    await request.body?.cancel().catch(() => {})
+    return json(405, { error: "method" })
+  }
+  // Untrimmed: the exchange sends the env value as is, and the two must be the same string.
+  // Slack's is untrimmed for the same reason.
+  const clientId = deps.env("GOOGLE_WEB_CLIENT_ID")
+  const slackClientId = deps.env("SLACK_CLIENT_ID")
+  // Trimmed: nothing here sends it to GitHub. A server-side GitHub exchange must reuse this value.
+  const githubClientId = deps.env("GITHUB_OAUTH_CLIENT_ID")?.trim()
+  // Each id is optional and omitted, not null, when unset; 503 only when none is configured.
+  const ids = {
+    ...(isSet(clientId) ? { client_id: clientId } : {}),
+    ...(isSet(githubClientId) ? { github_client_id: githubClientId } : {}),
+    ...(isSet(slackClientId) ? { slack_client_id: slackClientId } : {}),
+  }
+  if (Object.keys(ids).length === 0) {
+    deps.log("client unconfigured")
+    return json(503, { error: "unconfigured" })
+  }
+  return json(200, ids)
+}
+
+/** A callback whose state verified and whose nonce this request now owns. */
+interface AcceptedCallback {
+  claims: StateClaims
+  code: string
+  workspace: string
+}
+
+/**
+ * Everything a provider callback does before it talks to the provider, shared so every
+ * provider gets the same method, decline, configuration, state, ownership and nonce checks in
+ * the same order. A Response means the request was refused and that is the page to show.
+ */
+async function acceptCallback(
+  request: Request,
+  deps: Dependencies,
+  route: string,
+  configured: boolean,
+): Promise<AcceptedCallback | Response> {
   if (request.method !== "GET") {
     // Drained first: an unread body on a keep alive connection desyncs the next request on it.
     await request.body?.cancel().catch(() => {})
@@ -161,64 +278,97 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
   const code = query.get("code")
   const state = query.get("state")
 
-  // Google's own word for it is not shown. `access_denied` is not information on a phone, and
-  // the remedy is the same for every value it takes.
+  // The provider's own word for it is not shown. `access_denied` is not information on a phone,
+  // and the remedy is the same for every value it takes.
   if (error) {
-    deps.log("callback declined")
+    deps.log(`${route} declined`)
     return page(400, "Sign in problem", PAGE_DECLINED)
   }
 
-  let secret: Uint8Array
-  const clientId = deps.env("GOOGLE_WEB_CLIENT_ID")
-  const clientSecret = deps.env("GOOGLE_WEB_CLIENT_SECRET")
-  const allowedUserId = deps.env("FLUCK_USER_ID")
-  try {
-    secret = keyBytes(deps.env("FLUCK_STATE_KEY"))
-  } catch {
-    deps.log("callback unconfigured: state key")
+  if (!configured) {
+    deps.log(`${route} unconfigured: client`)
     return page(503, "Sign in problem", PAGE_UNCONFIGURED)
   }
-  if (!clientId || !clientSecret || !allowedUserId) {
-    deps.log("callback unconfigured: client")
-    return page(503, "Sign in problem", PAGE_UNCONFIGURED)
+
+  // The pre-1.0.120 plugin minted a three part HS256 JWT. Its holder needs an update, not a
+  // fresh link from the same old plugin.
+  if (state && isLegacyState(state)) {
+    deps.log(`${route} refused: legacy state`)
+    return page(400, "Sign in problem", PAGE_UPDATE_PLUGIN)
   }
 
   const nowSeconds = Math.floor(deps.now() / 1000)
-  const claims: StateClaims | null = state ? await verifyState(secret, state, nowSeconds) : null
-  // The signing key lives on the desktop. Its holder may mint arbitrary claims,
-  // so a valid signature alone must not authorize writes for every BOSS user.
-  if (!claims || claims.uid !== allowedUserId || claims.cid !== GOOGLE_CONNECTOR_ID || !code) {
-    deps.log("callback refused: state")
+  const parsed = state ? parseState(state) : null
+  const instance = parsed ? await deps.instance(parsed.claims.iid) : null
+  const publicKey = instance ? publicKeyBytes(instance.linkPublicKey) : null
+  // The key lives on the desktop and its holder may sign any claims, so the install row, not
+  // the token, decides whose secrets it may write.
+  const verified = parsed && instance && publicKey && instance.userId === parsed.claims.uid &&
+    await verifyState(publicKey, parsed, nowSeconds)
+  if (!parsed || !verified || !code) {
+    deps.log(`${route} refused: state`)
     return page(400, "Sign in problem", PAGE_STALE)
   }
+  const claims = parsed.claims
   const workspace = workspacePrefix(claims.ws)
 
-  // Claimed BEFORE the exchange, not after. A code is single use at Google anyway, but the
-  // nonce is what makes a REPLAYED link dead even when the first attempt failed, and claiming
-  // it only on success would leave a link that can be retried until one attempt lands.
-  const claim = await deps.claimNonce(claims.n, claims.exp)
+  // Claimed BEFORE the exchange, not after. A code is single use at the provider anyway, but
+  // the nonce is what makes a REPLAYED link dead even when the first attempt failed, and
+  // claiming it only on success would leave a link that can be retried until one attempt lands.
+  // Scoped by install so one install's nonces can never collide with another's.
+  const claim = await deps.claimNonce(`${claims.iid}.${claims.nonce}`, claims.exp)
   if (claim === "invalid") {
-    deps.log(`callback refused: nonce validity [${workspace}]`)
+    deps.log(`${route} refused: nonce validity [${workspace}]`)
     return page(400, "Sign in problem", PAGE_STALE)
   }
   if (claim === "replay") {
-    deps.log(`callback refused: replay [${workspace}]`)
+    deps.log(`${route} refused: replay [${workspace}]`)
     return page(400, "Sign in problem", PAGE_REPLAY)
   }
   if (claim === "unavailable") {
-    deps.log(`callback failed: nonce store [${workspace}]`)
+    deps.log(`${route} failed: nonce store [${workspace}]`)
     return page(503, "Sign in problem", PAGE_STORE_FAILED)
   }
+  return { claims, code, workspace }
+}
 
-  const redirectUri = (deps.env("PUBLIC_BASE_URL") || DEFAULT_PUBLIC_BASE_URL).replace(/\/+$/, "") +
-    "/callback"
+/** `<PUBLIC_BASE_URL>/<path>`; the provider compares it byte for byte with the authorize URL's. */
+function redirectUri(deps: Dependencies, path: string): string {
+  return (deps.env("PUBLIC_BASE_URL") || DEFAULT_PUBLIC_BASE_URL).replace(/\/+$/, "") + path
+}
+
+async function callback(request: Request, deps: Dependencies): Promise<Response> {
+  const clientId = deps.env("GOOGLE_WEB_CLIENT_ID")
+  const clientSecret = deps.env("GOOGLE_WEB_CLIENT_SECRET")
+  const accepted = await acceptCallback(
+    request,
+    deps,
+    "callback",
+    isSet(clientId) && isSet(clientSecret),
+  )
+  if (accepted instanceof Response) return accepted
+  const { claims, code, workspace } = accepted
+
   const exchanged = await exchangeCode(
-    { clientId, clientSecret, code, redirectUri },
+    {
+      clientId: clientId!,
+      clientSecret: clientSecret!,
+      code,
+      redirectUri: redirectUri(deps, "/callback"),
+    },
     deps.fetch,
   )
   if (!exchanged.ok) {
     deps.log(`callback failed: ${exchanged.reason} [${workspace}]`)
     return page(400, "Sign in problem", FAILURE_PAGES[exchanged.reason])
+  }
+
+  // Bound BEFORE the secret is written: a failed bind then leaves no secret behind for the
+  // plugin to find, whereas a failed store only leaves a hash nobody can redeem.
+  const bound = await deps.bindGrant(await bodyDigest(exchanged.refreshToken), claims.uid)
+  if (!bound) {
+    deps.log(`callback failed: bind [${workspace}]`)
+    return page(503, "Sign in problem", PAGE_STORE_FAILED)
   }
 
   const stored = await deps.storeRefreshToken({
@@ -234,6 +384,200 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
   }
   deps.log(`callback connected [${workspace}]`)
   return page(200, "Connected", PAGE_CONNECTED)
+}
+
+/** The shape of the retired HS256 state: `{"alg":"HS256",…}.<payload>.<mac>`. */
+function isLegacyState(state: string): boolean {
+  const parts = state.split(".")
+  if (parts.length !== 3) return false
+  try {
+    const header = JSON.parse(atob(parts[0].replaceAll("-", "+").replaceAll("_", "/")))
+    return header?.alg === "HS256"
+  } catch {
+    return false
+  }
+}
+
+/**
+ * `GET /slack/callback`: the same state and nonce checks as `/callback`, then Slack's
+ * `oauth.v2.access` for the authorizing user's `xoxp-` token, stored under the bare `slack`
+ * connector for the plugin to find.
+ *
+ * No grant is bound: there is no `/refresh` for Slack. Token rotation is off on the app, so the
+ * user token does not expire and the plugin uses the stored value directly.
+ */
+async function slackCallback(request: Request, deps: Dependencies): Promise<Response> {
+  const clientId = deps.env("SLACK_CLIENT_ID")
+  const clientSecret = deps.env("SLACK_CLIENT_SECRET")
+  const accepted = await acceptCallback(
+    request,
+    deps,
+    "slack callback",
+    // Trimmed like /client, so a blank id refuses here before the link is spent.
+    isSet(clientId) && isSet(clientSecret),
+  )
+  if (accepted instanceof Response) return accepted
+  const { claims, code, workspace } = accepted
+
+  const exchanged = await exchangeSlackCode(
+    {
+      clientId: clientId!,
+      clientSecret: clientSecret!,
+      code,
+      redirectUri: redirectUri(deps, "/slack/callback"),
+    },
+    deps.fetch,
+  )
+  if (!exchanged.ok) {
+    deps.log(`slack callback failed: ${exchanged.reason} [${workspace}]`)
+    return page(400, "Sign in problem", SLACK_FAILURE_PAGES[exchanged.reason])
+  }
+
+  const stored = await deps.storeRefreshToken({
+    userId: claims.uid,
+    website: `fluck/${claims.ws}/${SLACK_CONNECTOR_ID}/${SLACK_TOKEN_ENV_VAR}`,
+    username: slackAccountLabel(exchanged.teamName || exchanged.teamId, exchanged.userId),
+    refreshToken: exchanged.userToken,
+    notes: SECRET_NOTE,
+  })
+  if (!stored) {
+    deps.log(`slack callback failed: store [${workspace}]`)
+    return page(503, "Sign in problem", PAGE_STORE_FAILED)
+  }
+  deps.log(`slack callback connected [${workspace}]`)
+  return page(200, "Connected", PAGE_CONNECTED)
+}
+
+/** `<team> (<user id>)`: the Slack workspace name and an opaque member id, never a name. */
+function slackAccountLabel(team: string, userId: string): string {
+  if (team && userId) return `${team} (${userId})`
+  return team || userId || UNKNOWN_SLACK_ACCOUNT
+}
+
+/**
+ * `POST /refresh`: `{"refresh_token":"…"}` in, `{"access_token","expires_in","scope"}` out.
+ *
+ * Every auth failure is the same 401. `{"error":"invalid_grant"}` (400) is Google saying the
+ * grant is dead, the one answer the plugin acts on; any other Google refusal or outage is a
+ * 502 `unavailable`, which is ours to fix and not a reason to drop the grant. A token not bound
+ * to the install's owner is also `invalid_grant`, without asking Google, so the plugin's answer
+ * (ask the owner to reconnect) is the same.
+ *
+ * Neither token is logged or stored. The log line is the outcome and an install id prefix.
+ */
+async function refresh(request: Request, deps: Dependencies): Promise<Response> {
+  if (request.method !== "POST") {
+    await request.body?.cancel().catch(() => {})
+    return json(405, { error: "method" })
+  }
+  const body = await boundedText(request, MAX_REFRESH_BODY_BYTES)
+  if (body === null) {
+    deps.log("refresh refused: body size")
+    return json(413, { error: "body" })
+  }
+  const instanceId = request.headers.get(INSTANCE_HEADER)
+  const instance = instanceId && INSTANCE_ID_PATTERN.test(instanceId)
+    ? await deps.instance(instanceId)
+    : null
+  const ok = instance !== null && await verifySigned({
+    publicKey: instance.linkPublicKey,
+    method: "POST",
+    path: "/refresh",
+    body,
+    timestamp: request.headers.get(TIMESTAMP_HEADER),
+    signature: request.headers.get(SIGNATURE_HEADER),
+    nowSeconds: Math.floor(deps.now() / 1000),
+  })
+  if (!ok || !instance || !instanceId) {
+    deps.log("refresh refused: unauthorized")
+    return json(401, { error: "unauthorized" })
+  }
+  const tag = instanceId.slice(0, 8)
+
+  let refreshToken: unknown
+  try {
+    const parsed = JSON.parse(body)
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error()
+    refreshToken = parsed.refresh_token
+  } catch {
+    return json(400, { error: "body" })
+  }
+  if (typeof refreshToken !== "string" || refreshToken.length === 0) {
+    return json(400, { error: "body" })
+  }
+
+  const clientId = deps.env("GOOGLE_WEB_CLIENT_ID")
+  const clientSecret = deps.env("GOOGLE_WEB_CLIENT_SECRET")
+  if (!isSet(clientId) || !isSet(clientSecret)) {
+    deps.log("refresh unconfigured: client")
+    return json(503, { error: "unconfigured" })
+  }
+
+  const tokenSha256 = await bodyDigest(refreshToken)
+  const owner = await deps.grantOwner(tokenSha256)
+  if (owner.status === "unavailable") {
+    deps.log(`refresh failed: grant store [${tag}]`)
+    return json(502, { error: "unavailable" })
+  }
+  if (owner.status === "unbound" || owner.userId !== instance.userId) {
+    deps.log(`refresh refused: unbound [${tag}]`)
+    return json(400, { error: "invalid_grant" })
+  }
+
+  const result = await refreshAccessToken({ clientId, clientSecret, refreshToken }, deps.fetch)
+  if (!result.ok) {
+    deps.log(`refresh failed: ${result.reason} [${tag}]`)
+    if (result.reason === "invalid_grant") await deps.forgetGrant(tokenSha256).catch(() => {})
+    return result.reason === "invalid_grant"
+      ? json(400, { error: "invalid_grant" })
+      : json(502, { error: "unavailable" })
+  }
+  deps.log(`refresh ok [${tag}]`)
+  return json(200, {
+    access_token: result.accessToken,
+    expires_in: result.expiresIn,
+    scope: result.scope,
+  })
+}
+
+/**
+ * The body as text, or null past [maxBytes]. Read before authentication (the signature covers
+ * it), so an unauthenticated caller must not be able to make this buffer more than the cap.
+ */
+async function boundedText(request: Request, maxBytes: number): Promise<string | null> {
+  const declared = Number(request.headers.get("content-length") ?? "0")
+  if (!Number.isFinite(declared) || declared > maxBytes) {
+    await request.body?.cancel().catch(() => {})
+    return null
+  }
+  if (!request.body) return ""
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.length
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {})
+      return null
+    }
+    chunks.push(value)
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.length
+  }
+  return new TextDecoder().decode(bytes)
+}
+
+function json(status: number, value: unknown): Response {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+  })
 }
 
 /**
@@ -285,8 +629,11 @@ export const PAGES = {
   badCode: PAGE_BAD_CODE,
   noRefresh: PAGE_NO_REFRESH,
   unreachable: PAGE_UNREACHABLE,
+  slackNoToken: PAGE_SLACK_NO_TOKEN,
+  slackUnreachable: PAGE_SLACK_UNREACHABLE,
   storeFailed: PAGE_STORE_FAILED,
   unconfigured: PAGE_UNCONFIGURED,
   notFound: PAGE_NOT_FOUND,
   notABrowser: PAGE_NOT_A_BROWSER,
+  updatePlugin: PAGE_UPDATE_PLUGIN,
 }

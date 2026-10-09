@@ -293,6 +293,14 @@
       body.brand-hold .brand-orbit-label {
         animation-play-state: paused;
       }
+      /* Idle (set by brand.js once nobody is interacting): every animation stops where it is. On macOS
+         the panel renders off-screen, so each animated frame is copied through the CPU - looping while
+         unwatched kept the fans running on the sign-in screen. */
+      body.brand-idle *,
+      body.brand-idle *::before,
+      body.brand-idle *::after {
+        animation-play-state: paused !important;
+      }
       /* Counter-rotation: `translateX` first to reach the ray, then a rotation equal and opposite to the
          orbit's, about the label's own centre - so the chip travels but never tips. The angles mirror
          each orbit's exactly; a mismatch would make the text drift round over minutes. */

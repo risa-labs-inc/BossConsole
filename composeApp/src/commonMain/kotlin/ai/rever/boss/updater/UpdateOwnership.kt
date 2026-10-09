@@ -243,6 +243,16 @@ class UpdateCoordinator internal constructor(
     val updateState: StateFlow<UpdateState>
         get() = manager.updateState
 
+    /** The app root owns this collector; no per-window handle may start or stop it. */
+    suspend fun installAutomaticUpdatesWhenWindowless(
+        windowsOpen: kotlinx.coroutines.flow.Flow<Boolean>,
+        canRestart: () -> Boolean,
+        quitForUpdate: () -> Unit,
+    ) {
+        if (isShutDown) return
+        manager.installAutomaticUpdatesWhenWindowless(windowsOpen, { !isShutDown && canRestart() }, quitForUpdate)
+    }
+
     val lastCheckTime: StateFlow<kotlin.time.Instant?>
         get() = manager.lastCheckTime
 

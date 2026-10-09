@@ -59,7 +59,16 @@ interface Brand {
   copyright: string
 }
 
-const BRANDS: Record<"boss" | "bossterm" | "web" | "optimist", Brand> = {
+const BRANDS: Record<"boss" | "bossterm" | "web" | "optimist" | "fluck", Brand> = {
+  fluck: {
+    scheme: "https",
+    tokenParam: "token",
+    name: "Fluck",
+    tagline: "Your Fluck, from any browser",
+    appLabel: "Fluck",
+    footerLine: "Fluck - by Risa Labs",
+    copyright: "© 2026 Risa Labs. All rights reserved.",
+  },
   web: {
     scheme: "https",
     tokenParam: "token",
@@ -131,6 +140,20 @@ export const OPTIMIST_REDIRECTS: ReadonlySet<string> = new Set([
 
 export function isLiveSessionsRedirect(redirectTo: string | undefined): boolean {
   return !!redirectTo && LIVE_SESSIONS_REDIRECTS.has(redirectTo)
+}
+
+// The Fluck portals (fluck.ai and fluck.risaboss.com) use the same web arm under their own
+// brand. Same EXACT-match rule and lockstep set: config.toml additional_redirect_urls,
+// fluck-web/utils/config.ts (+ FLUCK_WEB_PUBLIC_BASE_URL), and both email templates' `$fluck`.
+export const FLUCK_WEB_REDIRECTS: ReadonlySet<string> = new Set([
+  "https://fluck.ai/auth",
+  "https://fluck.risaboss.com/auth", // vanity host: a Cloudflare Worker proxies it onto the function
+  "https://api.risaboss.com/functions/v1/fluck-web/auth",
+  "http://127.0.0.1:54321/functions/v1/fluck-web/auth", // local `supabase start` stack
+])
+
+export function isFluckWebRedirect(redirectTo: string | undefined): boolean {
+  return !!redirectTo && FLUCK_WEB_REDIRECTS.has(redirectTo)
 }
 
 export function isOptimistRedirect(redirectTo: string | undefined): boolean {
@@ -386,7 +409,10 @@ app.get("/", (c) => {
   // unencoded, so its &type=&redirect_to= landed as top-level params here; rebuild the URL from
   // them rather than trusting the truncated `url=` value. Only a first-party GoTrue host is ever
   // emitted: the origin comes from `url=` after an allow-list check, never from the caller freely.
-  const webBrand = isLiveSessionsRedirect(redirectTo) ? BRANDS.web : isOptimistRedirect(redirectTo) ? BRANDS.optimist : null
+  const webBrand = isLiveSessionsRedirect(redirectTo)
+    ? BRANDS.web
+    : isOptimistRedirect(redirectTo) ? BRANDS.optimist
+    : isFluckWebRedirect(redirectTo) ? BRANDS.fluck : null
   if (webBrand) {
     const origin = firstPartyGoTrueOrigin(confirmationUrl)
     if (!origin) return c.json({ error: "Unsupported confirmation URL host" }, 400)

@@ -1,0 +1,10 @@
+name = "fluck-web-alias"
+account_id = "804b4814a4615997b78ab1d30d12ff77"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+keep_vars = true
+routes = [
+  { pattern = "fluck.risaboss.com", custom_domain = true },
+  { pattern = "fluck.ai", custom_domain = true },
+  { pattern = "www.fluck.ai", custom_domain = true }
+]

@@ -79,6 +79,60 @@ class CrashRecoveryTest {
 
     private val recoverable = CrashDisposition.RecoverablePlugin(OFFENDER)
 
+    @Test
+    fun `failed dialog disposal still recovers once and releases the dialog slot`() {
+        val recovered = installRecovery(succeeds = true)
+        var attempts = 0
+        val controller =
+            CrashDialogController(
+                disposition = recoverable,
+                error = error,
+                disposeWindow = {
+                    attempts++
+                    error("native dialog disposal failed")
+                },
+            )
+        assertTrue(CrashHandler.tryClaimDialogSlot())
+
+        assertEquals(CrashOutcome.Recovered(OFFENDER), controller.dismiss())
+        assertEquals(CrashOutcome.Recovered(OFFENDER), controller.dismiss())
+
+        assertEquals(1, attempts)
+        assertEquals(listOf(OFFENDER), recovered)
+        assertTrue(exitCodes.isEmpty())
+        assertTrue(CrashHandler.tryClaimDialogSlot(), "failed disposal must not silence future crash dialogs")
+    }
+
+    @Test
+    fun `failed dialog disposal cannot block fatal termination`() {
+        val controller =
+            CrashDialogController(
+                disposition = CrashDisposition.FatalHost,
+                error = error,
+                disposeWindow = { error("native dialog disposal failed") },
+            )
+
+        assertEquals(CrashOutcome.Terminated, controller.dismiss())
+
+        assertEquals(listOf(1), exitCodes)
+    }
+
+    @Test
+    fun `failed dialog disposal cannot block clean and restart`() {
+        var restarts = 0
+        val controller =
+            CrashDialogController(
+                disposition = CrashDisposition.FatalHost,
+                error = error,
+                disposeWindow = { error("native dialog disposal failed") },
+            )
+
+        controller.cleanAndRestart { restarts++ }
+        controller.cleanAndRestart { restarts++ }
+
+        assertEquals(1, restarts)
+    }
+
     /** A recovery seam that reports success without needing a plugin manager. */
     private fun installRecovery(succeeds: Boolean): MutableList<String> {
         val recovered = mutableListOf<String>()

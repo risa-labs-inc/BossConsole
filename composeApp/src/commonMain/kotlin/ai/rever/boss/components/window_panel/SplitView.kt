@@ -12,10 +12,14 @@ import ai.rever.boss.components.plugin.disposePluginBrowsers
 import ai.rever.boss.components.plugin.tab_types.PanelHostTabInfo
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.sidebar.HiddenSidebarHoverEdge
+import ai.rever.boss.components.sidebar.SidebarContentHost
+import ai.rever.boss.components.sidebar.integratedSidebarLayout
 import ai.rever.boss.components.sidebar.integratedSidebarToggle
+import ai.rever.boss.components.sidebar.mainPanelSidebarClip
+import ai.rever.boss.components.sidebar.rememberSidebarRevealMotion
+import ai.rever.boss.components.sidebar.sidebarFrameWidth
 import ai.rever.boss.components.sidebar.sidebarRegion
 import ai.rever.boss.components.sidebar.sidebarResizeResult
-import ai.rever.boss.components.sidebar.windowSidebarModifier
 import ai.rever.boss.components.window_panel.components.BossResizablePanel
 import ai.rever.boss.components.window_panel.components.main_window_panels.BossMainPanel
 import ai.rever.boss.components.window_panel.components.main_window_panels.BossTabsComponent
@@ -58,10 +62,12 @@ import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.workspace.uniqueId
 import ai.rever.boss.project.DefaultWorkingDirectory
 import ai.rever.boss.topofmind.ActiveTab
+import ai.rever.boss.utils.CleanupRunner
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.LocalWindowFullscreen
+import ai.rever.boss.window.WindowAppearanceSettings
 import ai.rever.boss.window.WindowAppearanceSettingsManager
 import ai.rever.boss.window.WindowProjectStateRegistry
 import androidx.compose.foundation.background
@@ -248,8 +254,9 @@ class SplitViewState(
      * silently doing nothing.
      */
     internal fun dispose() {
-        openScope.cancel()
-        htmlFileOpens.close()
+        val cleanup = CleanupRunner("SplitViewState", mapOf("windowId" to windowId))
+        cleanup.run("Deferred tab opens") { openScope.cancel() }
+        cleanup.run("HTML file open queue") { htmlFileOpens.close() }
     }
 
     /**
@@ -1479,10 +1486,11 @@ class SplitViewState(
      * - Prevents EXC_BAD_ACCESS crashes in getWindowHandle native code
      */
     fun disposeAllBrowsersBlocking() {
+        val cleanup = CleanupRunner("SplitViewState", mapOf("windowId" to windowId))
         getAllPanels().forEach { panel ->
-            panel.tabsComponent.disposeAllTabsBlocking()
+            cleanup.run("Panel browser tabs ${panel.id}") { panel.tabsComponent.disposeAllTabsBlocking() }
         }
-        disposePluginBrowsers(windowId)
+        cleanup.run("Window plugin browsers") { disposePluginBrowsers(windowId) }
     }
 
     /**
@@ -2668,6 +2676,7 @@ fun SplitViewPanel(
      * state machine lives here. See `verticalBarHost`.
      */
     onDrawerVisibleChange: (Boolean) -> Unit = {},
+    onSidebarRevealProgressChange: (Float) -> Unit = {},
     /**
      * Reports whether the bar in the layout is the slim rail.
      *
@@ -2712,14 +2721,20 @@ fun SplitViewPanel(
         state = reveal,
         enabled = edgeRevealTracking(bar.railShown, bar.hoverExpand, LocalWindowFullscreen.current),
         region = contentRegion,
-        sidebarWidth = bar.width + if (sidebarToggleRequests != null) 0.dp else tabBarRailWidth,
+        sidebarWidth = if (sidebarToggleRequests != null) sidebarFrameWidth(bar.width) else bar.width + tabBarRailWidth,
     )
 
     // In an effect, not during composition: the window turns this into a placement decision that
     // feeds back into what this composable is given, and writing it inline would be a state write
     // during composition of the thing that reads it.
     HandleSidebarToggleRequests(sidebarToggleRequests, bar, reveal)
-    androidx.compose.runtime.SideEffect { onDrawerVisibleChange(bar.vertical && bar.railShown && reveal.drawerVisible) }
+    val sidebarMotion = rememberSidebarRevealMotion(reveal, bar.railShown, sidebarToggleRequests != null)
+    val revealProgress = sidebarMotion.progress
+    val drawerVisible = sidebarMotion.visible
+    androidx.compose.runtime.SideEffect {
+        onDrawerVisibleChange(bar.vertical && bar.railShown && drawerVisible)
+        onSidebarRevealProgressChange(revealProgress)
+    }
 
     // Same reasoning, same shape: reported in an effect because the window turns it into a
     // placement decision that feeds back into what this composable is handed.
@@ -2746,7 +2761,7 @@ fun SplitViewPanel(
         if (bar.vertical) {
             WindowBarRow(
                 splitViewState = splitViewState,
-                bar = if (sidebarToggleRequests != null && reveal.drawerVisible) bar.copy(railShown = false) else bar,
+                bar = if (sidebarToggleRequests != null && drawerVisible) bar.copy(railShown = false) else bar,
                 reveal = reveal,
                 tabDragComponent = tabDragComponent,
                 onTabDropResult = onTabDropResult,
@@ -2755,6 +2770,8 @@ fun SplitViewPanel(
                 belowTabs = verticalBarRailActions,
                 topInset = verticalBarTopInset,
                 hideCollapsedRail = sidebarToggleRequests != null,
+                overlaySidebar = sidebarMotion.overlay,
+                revealProgress = revealProgress,
                 extendsIntoTitleBar = sidebarExtendsIntoTitleBar,
                 splitTree = splitTree,
             )
@@ -2769,6 +2786,7 @@ fun SplitViewPanel(
                 reveal = reveal,
                 contentRegion = contentRegion,
                 railWidth = if (sidebarToggleRequests != null) 0.dp else tabBarRailWidth,
+                revealing = drawerVisible,
                 topInset = verticalBarTopInset,
                 footer = verticalBarFooter,
                 belowMap = verticalBarBelowMap,
@@ -2820,6 +2838,7 @@ private fun SplitOrZoomedPane(
  * is the rail's hover reveal - a decision the reveal state owns and the bar does not.
  */
 @Composable
+@Suppress("LongMethod") // Keep the bar, resize overlay, and split tree in one layout scope.
 private fun WindowBarRow(
     splitViewState: SplitViewState,
     bar: TabBarLayout,
@@ -2833,25 +2852,30 @@ private fun WindowBarRow(
     /** Clearance above the bar, for the macOS traffic lights. See [SplitViewPanel]. */
     topInset: Dp,
     hideCollapsedRail: Boolean,
+    overlaySidebar: Boolean,
+    revealProgress: Float,
     extendsIntoTitleBar: Boolean,
     splitTree: @Composable (Modifier) -> Unit,
 ) {
     val listState = rememberLazyListState()
+    // A collapse removes the resize handle before its settings write may finish.
+    val barWidthScope = rememberCoroutineScope()
     val expansion = rememberTabGroupExpansion()
     val groups =
         rememberWindowTabGroups(
             splitViewState = splitViewState,
             listState = listState,
             expansion = expansion,
-            tabDragComponent = tabDragComponent,
+            tabDragComponent = tabDragComponent.takeUnless { overlaySidebar },
             onTabDropResult = onTabDropResult,
+            onTabActivated = if (overlaySidebar) ({ reveal.dismiss(pointerInSidebar = true) }) else null,
+            onTransientInteraction = reveal::setBusy,
         )
 
     // The width being dragged, or null when nobody is dragging. Local for the length of the
     // gesture and written to settings once, on release - see VerticalTabBarResizeHandle for why
     // persisting each frame is the wrong shape.
     var draggedWidth by remember { mutableStateOf<Float?>(null) }
-    val barWidthScope = rememberCoroutineScope()
     val barWidth = draggedWidth?.dp ?: bar.width
 
     Row(modifier = Modifier.fillMaxSize()) {
@@ -2860,42 +2884,76 @@ private fun WindowBarRow(
         // the divider had cost 1, which read as a margin down the bar's right edge.
         if (!hideCollapsedRail || !bar.railShown) {
             Box(
-                modifier = windowSidebarModifier(bar, reveal, topInset, hideCollapsedRail, extendsIntoTitleBar),
+                modifier =
+                    integratedSidebarLayout(
+                        bar,
+                        reveal,
+                        topInset,
+                        hideCollapsedRail,
+                        extendsIntoTitleBar,
+                        overlaySidebar,
+                        revealProgress,
+                    ),
             ) {
-                WindowVerticalTabBar(
-                    groups = groups,
-                    listState = listState,
-                    expansion = expansion,
-                    width = barWidth,
-                    collapsed = bar.railShown,
-                    surfacePainted = hideCollapsedRail && !bar.railShown,
-                    onToggleCollapse = integratedSidebarToggle(bar, reveal).takeUnless { hideCollapsedRail },
-                    tabDragComponent = tabDragComponent,
-                    footer = footer,
-                    belowMap = belowMap,
-                    belowTabs = belowTabs,
-                    zoomed = splitViewState.zoomedPanelId != null,
-                    onExitZoom = splitViewState::exitZoom,
-                )
-                VerticalTabBarResizeHandle(
-                    // Not while the bar is a rail: the rail's width is a different number, and a drag
-                    // that appeared to work would be moving one nothing on screen was showing.
-                    enabled = !bar.railShown,
-                    currentWidth = barWidth.value,
-                    onPreview = { width -> draggedWidth = width },
-                    onCancel = { draggedWidth = null },
-                    onCommit = { width ->
-                        val resized = sidebarResizeResult(WindowAppearanceSettingsManager.currentSettings.value, width)
-                        if (resized.tabBarCollapsed) reveal.dismiss(pointerInSidebar = true)
-                        draggedWidth = null
-                        barWidthScope.launch { WindowAppearanceSettingsManager.updateSettings(resized) }
+                SidebarContentHost(overlaySidebar, barWidth, reveal, extendsIntoTitleBar, revealProgress) {
+                    WindowVerticalTabBar(
+                        groups = groups,
+                        listState = listState,
+                        expansion = expansion,
+                        width = barWidth,
+                        collapsed = bar.railShown,
+                        surfacePainted = hideCollapsedRail && !bar.railShown,
+                        onToggleCollapse = integratedSidebarToggle(bar, reveal).takeUnless { hideCollapsedRail },
+                        tabDragComponent = tabDragComponent.takeUnless { overlaySidebar },
+                        registerBounds = !overlaySidebar,
+                        footer = footer,
+                        belowMap = belowMap,
+                        belowTabs = belowTabs,
+                        zoomed = splitViewState.zoomedPanelId != null,
+                        onExitZoom = splitViewState::exitZoom,
+                    )
+                }
+                SidebarResizeHandle(
+                    enabled = !bar.railShown && !overlaySidebar,
+                    currentWidth = barWidth,
+                    reveal = reveal,
+                    onPreview = { draggedWidth = it },
+                    onSave = { settings ->
+                        barWidthScope.launch { WindowAppearanceSettingsManager.updateSettings(settings) }
                     },
                 )
             }
             if (!hideCollapsedRail) VDivider()
         }
-        splitTree(Modifier.weight(1f).fillMaxHeight())
+        splitTree(
+            Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .then(mainPanelSidebarClip(overlaySidebar, sidebarFrameWidth(barWidth, revealProgress))),
+        )
     }
+}
+
+@Composable
+private fun BoxScope.SidebarResizeHandle(
+    enabled: Boolean,
+    currentWidth: Dp,
+    reveal: TabBarRevealState,
+    onPreview: (Float?) -> Unit,
+    onSave: (WindowAppearanceSettings) -> Unit,
+) {
+    VerticalTabBarResizeHandle(
+        enabled = enabled,
+        currentWidth = currentWidth.value,
+        onPreview = { onPreview(it) },
+        onCancel = { onPreview(null) },
+        onCommit = { width ->
+            val resized = sidebarResizeResult(WindowAppearanceSettingsManager.currentSettings.value, width)
+            if (resized.tabBarCollapsed) reveal.dismiss(pointerInSidebar = true)
+            onPreview(null)
+            onSave(resized)
+        },
+    )
 }
 
 /**
@@ -2941,11 +2999,16 @@ private fun BoxScope.RevealedBar(
     reveal: TabBarRevealState,
     contentRegion: IntRect?,
     railWidth: Dp,
+    revealing: Boolean,
     topInset: Dp,
     footer: @Composable () -> Unit,
     belowMap: @Composable () -> Unit,
 ) {
-    HiddenSidebarHoverEdge(reveal, contentRegion.below(topInset), enabled = railWidth == 0.dp && bar.hoverExpand)
+    HiddenSidebarHoverEdge(
+        reveal,
+        enabled = railWidth == 0.dp && bar.hoverExpand,
+        revealing = revealing,
+    )
     if (railWidth == 0.dp) return // Header sidebar is part of the main window, including hover reveals.
     WindowRevealedTabBarDrawer(
         splitViewState = splitViewState,

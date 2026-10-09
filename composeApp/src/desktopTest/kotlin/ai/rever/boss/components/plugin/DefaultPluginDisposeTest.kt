@@ -12,11 +12,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertSame
@@ -145,6 +147,25 @@ class DefaultPluginDisposeTest {
             val job = plugin.dispose(timeoutMillis = 200)
             withTimeout(10_000) { job.join() }
             assertTrue(job.isCompleted, "bounded teardown must finish even when a plugin hangs")
+        }
+
+    @Test
+    fun `a sandbox teardown Error does not skip scope release or repeat cleanup`(): Unit =
+        runBlocking {
+            val calls = AtomicInteger(0)
+            val plugin =
+                windowPlugin(
+                    RecordingSandboxManager {
+                        calls.incrementAndGet()
+                        throw NoClassDefFoundError("plugin classloader already closed")
+                    },
+                )
+            val job = plugin.dispose(timeoutMillis = 5_000)
+            withTimeout(5_000) { job.join() }
+            assertFalse(job.isCancelled, "a teardown Error must be contained")
+            assertFalse(plugin.pluginScope.isActive, "independent cleanup must continue after sandbox failure")
+            assertSame(job, plugin.dispose())
+            assertEquals(1, calls.get())
         }
 
     @Test

@@ -1,0 +1,18 @@
+{
+  "_comment": "Wire contract for totalCents / total_cents / limit_minor: an integer in the currency's ISO 4217 minor unit. The minter (boss-plugin-fluck-agent VaultClient) must produce `minor` from `major` with the same exponent; fluck-vault renders `display`.",
+  "vectors": [
+    { "currency": "USD", "exponent": 2, "major": "487.32", "minor": 48732, "display": "$487.32" },
+    { "currency": "INR", "exponent": 2, "major": "290.69", "minor": 29069, "display": "₹290.69" },
+    { "currency": "JPY", "exponent": 0, "major": "1200", "minor": 1200, "display": "¥1,200" },
+    { "currency": "KRW", "exponent": 0, "major": "15000", "minor": 15000, "display": "₩15,000" },
+    { "currency": "KWD", "exponent": 3, "major": "1.250", "minor": 1250, "display": "KWD 1.250" },
+    {
+      "currency": "BHD",
+      "exponent": 3,
+      "major": "12.005",
+      "minor": 12005,
+      "display": "BHD 12.005"
+    },
+    { "currency": "CLF", "exponent": 4, "major": "1.2345", "minor": 12345, "display": "CLF 1.2345" }
+  ]
+}

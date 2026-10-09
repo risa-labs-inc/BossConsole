@@ -20,7 +20,7 @@ expect object UpdateSettings {
 
     fun isPluginAutomaticUpdateEnabled(pluginId: String): Boolean
 
-    /** Download and prepare application installation after manual quit, without relaunching. */
+    /** Install after Quit, or after all macOS windows close with a Dock-only relaunch. */
     var autoUpdateEnabled: Boolean
     val automaticUpdates: kotlinx.coroutines.flow.StateFlow<Boolean>
 

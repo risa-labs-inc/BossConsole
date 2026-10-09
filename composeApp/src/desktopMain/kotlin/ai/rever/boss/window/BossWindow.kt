@@ -36,6 +36,7 @@ import ai.rever.boss.settings.needsMicrokernelModeConfirmation
 import ai.rever.boss.theme.LocalWindowGlass
 import ai.rever.boss.updater.UpdateCoordinator
 import ai.rever.boss.utils.CLIInstaller
+import ai.rever.boss.utils.CleanupRunner
 import ai.rever.boss.utils.DisplayUtils
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.WindowFocusManager
@@ -131,6 +132,7 @@ internal fun computeFitSize(
 fun ApplicationScope.BossWindow(
     windowState: BossWindowState,
     onCloseRequest: () -> Unit,
+    onQuitRequest: () -> Unit = { exitApplication() },
 ) {
     // Calculate adaptive window size based on window type and screen dimensions
     val windowSize =
@@ -338,11 +340,14 @@ fun ApplicationScope.BossWindow(
                 .registerWindow(windowState.id, window, window.title)
             AWTKeyboardInterceptor.registerWindow(window, windowState.id)
             onDispose {
-                WindowFocusManager.unregisterWindow(windowState.id)
-                ai.rever.boss.sharing.AppSharingService
-                    .unregisterWindow(windowState.id)
-                AWTKeyboardInterceptor.unregisterWindow(window)
-                MenuActionsHandler.cleanupWindow(windowState.id)
+                val cleanup = CleanupRunner("BossWindow", mapOf("windowId" to windowState.id))
+                cleanup.run("unregister focus") { WindowFocusManager.unregisterWindow(windowState.id) }
+                cleanup.run("unregister sharing") {
+                    ai.rever.boss.sharing.AppSharingService
+                        .unregisterWindow(windowState.id)
+                }
+                cleanup.run("unregister keyboard") { AWTKeyboardInterceptor.unregisterWindow(window) }
+                cleanup.run("remove menu actions") { MenuActionsHandler.cleanupWindow(windowState.id) }
             }
         }
 
@@ -650,7 +655,7 @@ fun ApplicationScope.BossWindow(
                 )
                 Item(
                     "Quit BOSS",
-                    onClick = { exitApplication() },
+                    onClick = onQuitRequest,
                 )
             }
 
