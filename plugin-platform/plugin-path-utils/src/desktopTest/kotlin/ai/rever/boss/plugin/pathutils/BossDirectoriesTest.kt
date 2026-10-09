@@ -110,7 +110,8 @@ class BossDirectoriesTest {
 
         @Test
         fun `resolve refuses absolute and traversal paths`() {
-            assertFailsWith<IllegalArgumentException> { BossDirectories.resolve("/tmp/outside") }
+            val absoluteOutside = File(BossDirectories.rootDir.parentFile, "outside").absolutePath
+            assertFailsWith<IllegalArgumentException> { BossDirectories.resolve(absoluteOutside) }
             assertFailsWith<IllegalArgumentException> { BossDirectories.resolve("../outside") }
             assertFailsWith<IllegalArgumentException> { BossDirectories.resolve("nested/../../outside") }
             assertFailsWith<IllegalArgumentException> { BossDirectories.resolve(" ") }
