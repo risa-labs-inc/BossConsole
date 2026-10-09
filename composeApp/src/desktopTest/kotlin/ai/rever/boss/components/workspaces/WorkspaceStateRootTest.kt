@@ -77,6 +77,24 @@ class WorkspaceStateRootTest {
     }
 
     @Test
+    fun `current-state writer winning publish race is never overwritten by legacy data`() {
+        val legacy = temporaryDirectory.resolve("legacy-race").toFile().apply { mkdirs() }
+        val state = temporaryDirectory.resolve("state-race").toFile()
+        File(legacy, "space.json").writeText("legacy record")
+
+        migrateLegacyWorkspaceDirectory(legacy, state) { from, target ->
+            copyLegacyRecordAtomically(from, target) {
+                // Deterministically land a current-state write after the migration's pre-check
+                // and durable temp copy, at the exact boundary where publication races.
+                target.writeText("current record")
+            }
+        }
+
+        assertEquals("current record", File(state, "space.json").readText())
+        assertTrue(File(state, ".legacy-documents-import-complete").isFile)
+    }
+
+    @Test
     fun `legacy migration does not follow a record symlink`() {
         val legacy = temporaryDirectory.resolve("legacy-links").toFile().apply { mkdirs() }
         val state = temporaryDirectory.resolve("state-links").toFile()

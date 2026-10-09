@@ -600,8 +600,9 @@ session or workspace root.
 User-selected project/import/export paths, platform-required registration files and disposable
 temporary files are not durable BOSS state. Space records from the legacy
 `~/Documents/BOSS/workspaces` location are copied once into `~/.boss/workspaces` through
-owner-only temporary files and atomic publication, without deleting or overwriting either side;
-only the state-root copy is maintained afterwards. See
+owner-only temporary files and atomic create-new hard-link publication, without deleting or
+overwriting either side. A concurrent current-state writer always wins; a failed migration leaves
+the one-shot marker absent and retries later. Only the state-root copy is maintained afterwards. See
 `docs/state-root-contract.md` and `DurableStatePathConventionTest`.
 
 ### Shared managed AI providers

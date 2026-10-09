@@ -16,7 +16,6 @@ import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.Paths
-import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardOpenOption.TRUNCATE_EXISTING
 import java.nio.file.StandardOpenOption.WRITE
 import java.nio.file.attribute.PosixFilePermission.OWNER_READ
@@ -319,7 +318,16 @@ internal fun migrateLegacyWorkspaceDirectory(
     }
 }
 
-/** Publish a legacy record only after its complete contents are durable in a private sibling. */
+/**
+ * Publish a legacy record only after its complete contents are durable in a private sibling.
+ *
+ * A hard link is the portable JDK primitive that gives this migration both properties it needs:
+ * publication is atomic, and an existing [target] is never replaced. `ATOMIC_MOVE` cannot provide
+ * the second property because providers are allowed to replace the target when that option is set.
+ * The temporary and target paths are siblings, so a supported hard link never crosses a file
+ * system. A provider without hard-link support fails the record and leaves the one-shot marker
+ * absent, allowing a later launch to retry without exposing a partial target.
+ */
 internal fun copyLegacyRecordAtomically(
     source: File,
     target: File,
@@ -338,8 +346,9 @@ internal fun copyLegacyRecordAtomically(
         }
         FileChannel.open(temporary, WRITE).use { channel -> channel.force(true) }
         beforePublish(temporary)
-        // No REPLACE_EXISTING: a concurrent current-state writer always wins over legacy data.
-        Files.move(temporary, target.toPath(), ATOMIC_MOVE)
+        // createLink is an atomic create-new publication: a current-state writer that wins the
+        // race leaves FileAlreadyExistsException here and its bytes remain authoritative.
+        Files.createLink(target.toPath(), temporary)
     } finally {
         Files.deleteIfExists(temporary)
     }

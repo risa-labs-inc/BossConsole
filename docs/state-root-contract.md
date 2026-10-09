@@ -25,9 +25,12 @@ The following are not durable BOSS state:
 
 Older desktop builds stored Space records under `~/Documents/BOSS/workspaces`. On first use, BOSS
 copies missing JSON records into `~/.boss/workspaces` using owner-only temporary siblings and
-atomic publication, writes a one-shot migration marker only after every record succeeds, then reads
-and writes only the state-root copy. The marker prevents a later deletion from being resurrected
-from the legacy directory. The legacy directory remains untouched as a rollback copy.
+atomic create-new hard-link publication, writes a one-shot migration marker only after every record
+succeeds or already has a current-state counterpart, then reads and writes only the state-root copy.
+Publication never replaces an existing target, including one created concurrently. The marker
+prevents a later deletion from being resurrected from the legacy directory. An interrupted or
+unsupported migration leaves the marker absent and retries on a later launch. The legacy directory
+remains untouched as a rollback copy.
 
 New persistence code must satisfy both rules:
 

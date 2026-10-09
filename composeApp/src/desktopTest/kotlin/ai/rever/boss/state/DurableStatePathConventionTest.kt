@@ -14,17 +14,33 @@ import kotlin.test.assertEquals
 class DurableStatePathConventionTest {
     @Test
     fun `durable home paths are centralized or explicitly isolated`() {
-        val roots = listOf("composeApp/src", "modules", "plugin-platform")
-        val directDefaults =
+        val roots =
+            listOf(
+                "composeApp/src/commonMain",
+                "composeApp/src/desktopMain",
+                "modules",
+                "plugin-platform",
+            )
+        val stateRootLiterals =
             roots
                 .flatMap { root -> kotlinSourcesUnder(repoRoot(), root).toList() }
                 .filter { source ->
+                    val path = source.invariantSeparatorsPath
                     val text = source.readText()
-                    "System.getProperty(\"user.home\"), \".boss" in text
+                    val productionSource =
+                        "/src/commonMain/" in path || "/src/desktopMain/" in path || "/src/main/" in path
+                    productionSource && ("\".boss\"" in text || "\".boss_debug\"" in text)
                 }.map { source -> source.relativeTo(repoRoot()).invariantSeparatorsPath }
                 .toSet()
 
-        assertEquals(emptySet(), directDefaults)
+        assertEquals(
+            setOf(
+                "plugin-platform/plugin-logging/src/desktopMain/kotlin/ai/rever/boss/plugin/logging/BossLogger.kt",
+                "plugin-platform/plugin-path-utils/src/commonMain/kotlin/ai/rever/boss/plugin/pathutils/" +
+                    "BossDirectories.kt",
+            ),
+            stateRootLiterals,
+        )
     }
 
     @Test
@@ -36,11 +52,13 @@ class DurableStatePathConventionTest {
             productionSources
                 .filter { source ->
                     val text = source.readText()
-                    "WorkspaceFileManagerCommon.LEGACY_WORKSPACE_DIRECTORY_NAME" in text
+                    "\"Documents\"" in text || "LEGACY_WORKSPACE_DIRECTORY_NAME" in text
                 }.map { source -> source.relativeTo(repoRoot()).invariantSeparatorsPath }
 
         assertEquals(
             listOf(
+                "composeApp/src/commonMain/kotlin/ai/rever/boss/components/workspaces/" +
+                    "WorkspaceFileManager.kt",
                 "composeApp/src/desktopMain/kotlin/ai/rever/boss/components/workspaces/" +
                     "DesktopWorkspaceFileManager.kt",
             ),
