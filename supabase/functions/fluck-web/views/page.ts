@@ -637,7 +637,7 @@ export function fluckPage(model: PageModel, nonce: string): string {
   </section>
 
   <div id="viewer">
-    <iframe id="fluckframe" title="Fluck" allow="clipboard-read; clipboard-write; fullscreen" allowfullscreen src="about:blank"></iframe>
+    <iframe id="fluckframe" title="Fluck" allow="clipboard-read; clipboard-write; fullscreen; microphone" allowfullscreen src="about:blank"></iframe>
   </div>
 
   <footer id="account" class="account hidden">
