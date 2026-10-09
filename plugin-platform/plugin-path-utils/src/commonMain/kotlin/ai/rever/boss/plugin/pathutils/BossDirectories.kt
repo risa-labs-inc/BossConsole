@@ -1,6 +1,8 @@
 package ai.rever.boss.plugin.pathutils
 
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.util.logging.Logger
 
 /**
@@ -59,12 +61,27 @@ object BossDirectories {
         val relative = File(relativePath)
         require(!relative.isAbsolute) { "BOSS state paths must be relative to ${rootDirectory.absolutePath}" }
 
-        val root = rootDirectory.canonicalFile
-        val target = File(root, relativePath).canonicalFile
-        require(target != root && target.toPath().startsWith(root.toPath())) {
-            "BOSS state paths must remain under ${root.absolutePath}"
+        val root = rootDirectory.toPath().toRealPath()
+        val lexicalTarget = root.resolve(relativePath).normalize()
+        require(lexicalTarget != root && lexicalTarget.startsWith(root)) {
+            "BOSS state paths must remain under $root"
         }
-        return target
+
+        // File.getCanonicalFile does not reliably resolve a symlinked parent on Windows when the
+        // final child does not exist. Resolve the nearest existing ancestor instead, then append
+        // only the suffix that cannot contain another existing symlink.
+        var existingAncestor = lexicalTarget
+        while (!Files.exists(existingAncestor, NOFOLLOW_LINKS)) {
+            existingAncestor = existingAncestor.parent
+                ?: error("BOSS state path has no existing ancestor: $lexicalTarget")
+        }
+        val resolvedAncestor = existingAncestor.toRealPath()
+        require(resolvedAncestor.startsWith(root)) {
+            "BOSS state paths must remain under $root"
+        }
+        val target = resolvedAncestor.resolve(existingAncestor.relativize(lexicalTarget)).normalize()
+        require(target.startsWith(root)) { "BOSS state paths must remain under $root" }
+        return target.toFile()
     }
 
     /** Whether [file] is contained by the durable BOSS state root. */
