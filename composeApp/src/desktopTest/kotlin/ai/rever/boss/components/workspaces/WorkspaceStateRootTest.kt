@@ -16,7 +16,7 @@ class WorkspaceStateRootTest {
 
     @Test
     fun `default workspace storage is inside the portable state root`() {
-        val directory = File(WorkspaceFileManager().getDefaultWorkspaceDirectory()).canonicalFile
+        val directory = workspaceStateDirectory().canonicalFile
 
         assertEquals(BossDirectories.resolve("workspaces"), directory)
         assertTrue(BossDirectories.contains(directory))
@@ -38,6 +38,21 @@ class WorkspaceStateRootTest {
         assertEquals("copy me", File(state, "missing.json").readText())
         assertFalse(File(state, "note.txt").exists())
         assertEquals("legacy", File(legacy, "existing.json").readText())
+    }
+
+    @Test
+    fun `completed legacy migration never resurrects a deleted workspace`() {
+        val legacy = temporaryDirectory.resolve("legacy-once").toFile().apply { mkdirs() }
+        val state = temporaryDirectory.resolve("state-once").toFile()
+        File(legacy, "deleted.json").writeText("legacy")
+
+        migrateLegacyWorkspaceDirectory(legacy, state)
+        assertTrue(File(state, "deleted.json").delete())
+
+        migrateLegacyWorkspaceDirectory(legacy, state)
+
+        assertFalse(File(state, "deleted.json").exists())
+        assertTrue(File(state, ".legacy-documents-import-complete").isFile)
     }
 
     @Test

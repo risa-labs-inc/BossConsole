@@ -20,8 +20,9 @@ The following are not durable BOSS state:
 - build and test outputs.
 
 Older desktop builds stored Space records under `~/Documents/BOSS/workspaces`. On first use, BOSS
-copies missing JSON records into `~/.boss/workspaces`, then reads and writes only the state-root
-copy. The legacy directory remains untouched as a rollback copy.
+copies missing JSON records into `~/.boss/workspaces`, writes a one-shot migration marker, then
+reads and writes only the state-root copy. The marker prevents a later deletion from being
+resurrected from the legacy directory. The legacy directory remains untouched as a rollback copy.
 
 New persistence code must satisfy both rules:
 

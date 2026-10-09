@@ -3,6 +3,7 @@ package ai.rever.boss.plugin.pathutils
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import java.io.File
+import java.nio.file.Files
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -115,6 +116,28 @@ class BossDirectoriesTest {
             assertFailsWith<IllegalArgumentException> { BossDirectories.resolve("../outside") }
             assertFailsWith<IllegalArgumentException> { BossDirectories.resolve("nested/../../outside") }
             assertFailsWith<IllegalArgumentException> { BossDirectories.resolve(" ") }
+        }
+
+        @Test
+        fun `resolve refuses an existing symlink escape`() {
+            val parent = Files.createTempDirectory("boss-path-root")
+            try {
+                val root = parent.resolve("root").also { Files.createDirectories(it) }
+                val outside = parent.resolve("outside").also { Files.createDirectories(it) }
+                val link = root.resolve("escape")
+                try {
+                    Files.createSymbolicLink(link, outside)
+                } catch (error: Exception) {
+                    org.junit.jupiter.api.Assumptions
+                        .assumeTrue(false, "Symbolic links unavailable: ${error.message}")
+                }
+
+                assertFailsWith<IllegalArgumentException> {
+                    BossDirectories.resolveUnderRoot(root.toFile(), "escape/state.json")
+                }
+            } finally {
+                parent.toFile().deleteRecursively()
+            }
         }
 
         @Test

@@ -38,6 +38,8 @@ object BossDirectories {
         }
     }
 
+    private val canonicalRootDir: File by lazy { rootDir.canonicalFile }
+
     /**
      * Resolve a durable BOSS path below [rootDir].
      *
@@ -46,13 +48,18 @@ object BossDirectories {
      * through `..` or an existing symlink. User-selected project files are deliberately handled
      * by the file-access APIs instead of this durable-state API.
      */
-    fun resolve(relativePath: String): File {
+    fun resolve(relativePath: String): File = resolveUnderRoot(canonicalRootDir, relativePath)
+
+    internal fun resolveUnderRoot(
+        rootDirectory: File,
+        relativePath: String,
+    ): File {
         require(relativePath.isNotBlank()) { "BOSS state paths must not be blank" }
 
         val relative = File(relativePath)
-        require(!relative.isAbsolute) { "BOSS state paths must be relative to ${rootDir.absolutePath}" }
+        require(!relative.isAbsolute) { "BOSS state paths must be relative to ${rootDirectory.absolutePath}" }
 
-        val root = rootDir.canonicalFile
+        val root = rootDirectory.canonicalFile
         val target = File(root, relativePath).canonicalFile
         require(target != root && target.toPath().startsWith(root.toPath())) {
             "BOSS state paths must remain under ${root.absolutePath}"
@@ -62,7 +69,7 @@ object BossDirectories {
 
     /** Whether [file] is contained by the durable BOSS state root. */
     fun contains(file: File): Boolean {
-        val root = rootDir.canonicalFile.toPath()
+        val root = canonicalRootDir.toPath()
         return file.canonicalFile.toPath().startsWith(root)
     }
 

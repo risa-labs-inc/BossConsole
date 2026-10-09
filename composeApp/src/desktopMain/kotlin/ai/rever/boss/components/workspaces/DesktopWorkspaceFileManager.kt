@@ -10,10 +10,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import java.io.File
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Paths
-import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 
 /**
@@ -25,7 +25,7 @@ actual class WorkspaceFileManager actual constructor(
     private val logger = BossLogger.forComponent("WorkspaceFileManager")
     private val workspaceDirectory: String by lazy {
         directoryOverride ?: run {
-            val stateDirectory = BossDirectories.resolve("workspaces")
+            val stateDirectory = workspaceStateDirectory()
             runCatching {
                 migrateLegacyWorkspaceDirectory(
                     legacyDirectory =
@@ -256,6 +256,10 @@ actual class WorkspaceFileManager actual constructor(
         }
 }
 
+internal fun workspaceStateDirectory(): File = BossDirectories.resolve("workspaces")
+
+private const val LEGACY_IMPORT_MARKER = ".legacy-documents-import-complete"
+
 /**
  * Copy legacy Space records into the portable BOSS state root without overwriting either side.
  *
@@ -267,18 +271,39 @@ internal fun migrateLegacyWorkspaceDirectory(
     legacyDirectory: File,
     stateDirectory: File,
 ) {
-    if (!legacyDirectory.isDirectory || legacyDirectory.canonicalFile == stateDirectory.canonicalFile) return
-    if (!stateDirectory.exists() && !stateDirectory.mkdirs()) return
+    val marker = File(stateDirectory, LEGACY_IMPORT_MARKER)
+    if (Files.exists(marker.toPath(), NOFOLLOW_LINKS)) return
+    if (!Files.isDirectory(legacyDirectory.toPath(), NOFOLLOW_LINKS)) return
+    if (legacyDirectory.canonicalFile == stateDirectory.canonicalFile) return
+    if (!stateDirectory.isDirectory && !stateDirectory.mkdirs() && !stateDirectory.isDirectory) {
+        error("Could not create BOSS workspace state directory: ${stateDirectory.absolutePath}")
+    }
 
-    legacyDirectory
-        .listFiles()
-        .orEmpty()
-        .filter { file ->
-            file.name.endsWith(".json") && Files.isRegularFile(file.toPath(), NOFOLLOW_LINKS)
-        }.forEach { source ->
-            val target = File(stateDirectory, source.name)
-            if (!target.exists()) {
-                Files.copy(source.toPath(), target.toPath(), StandardCopyOption.COPY_ATTRIBUTES)
+    val legacyRecords =
+        legacyDirectory.listFiles()
+            ?: error("Could not list legacy workspace directory: ${legacyDirectory.absolutePath}")
+    val failures =
+        legacyRecords
+            .filter { file ->
+                file.name.endsWith(".json") && Files.isRegularFile(file.toPath(), NOFOLLOW_LINKS)
+            }.mapNotNull { source ->
+                val target = File(stateDirectory, source.name)
+                if (Files.exists(target.toPath(), NOFOLLOW_LINKS)) return@mapNotNull null
+                runCatching { Files.copy(source.toPath(), target.toPath()) }
+                    .exceptionOrNull()
+                    ?.takeUnless { it is FileAlreadyExistsException }
             }
-        }
+
+    if (failures.isNotEmpty()) {
+        throw IllegalStateException(
+            "Failed to import ${failures.size} legacy workspace record(s)",
+            failures.first(),
+        )
+    }
+
+    try {
+        Files.createFile(marker.toPath())
+    } catch (_: FileAlreadyExistsException) {
+        // Another BOSS process completed the same one-shot migration.
+    }
 }
