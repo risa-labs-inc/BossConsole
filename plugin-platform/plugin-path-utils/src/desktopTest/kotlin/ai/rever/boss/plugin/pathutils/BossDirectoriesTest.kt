@@ -125,12 +125,9 @@ class BossDirectoriesTest {
                 val root = parent.resolve("root").also { Files.createDirectories(it) }
                 val outside = parent.resolve("outside").also { Files.createDirectories(it) }
                 val link = root.resolve("escape")
-                try {
-                    Files.createSymbolicLink(link, outside)
-                } catch (error: Exception) {
-                    org.junit.jupiter.api.Assumptions
-                        .assumeTrue(false, "Symbolic links unavailable: ${error.message}")
-                }
+                val linkFailure = runCatching { Files.createSymbolicLink(link, outside) }.exceptionOrNull()
+                org.junit.jupiter.api.Assumptions
+                    .assumeTrue(linkFailure == null, "Symbolic links unavailable: ${linkFailure?.message}")
 
                 assertFailsWith<IllegalArgumentException> {
                     BossDirectories.resolveUnderRoot(root.toFile(), "escape/state.json")

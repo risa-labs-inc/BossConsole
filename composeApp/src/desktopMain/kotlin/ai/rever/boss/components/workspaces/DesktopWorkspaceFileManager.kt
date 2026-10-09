@@ -272,9 +272,13 @@ internal fun migrateLegacyWorkspaceDirectory(
     stateDirectory: File,
 ) {
     val marker = File(stateDirectory, LEGACY_IMPORT_MARKER)
-    if (Files.exists(marker.toPath(), NOFOLLOW_LINKS)) return
-    if (!Files.isDirectory(legacyDirectory.toPath(), NOFOLLOW_LINKS)) return
-    if (legacyDirectory.canonicalFile == stateDirectory.canonicalFile) return
+    if (
+        Files.exists(marker.toPath(), NOFOLLOW_LINKS) ||
+        !Files.isDirectory(legacyDirectory.toPath(), NOFOLLOW_LINKS) ||
+        legacyDirectory.canonicalFile == stateDirectory.canonicalFile
+    ) {
+        return
+    }
     if (!stateDirectory.isDirectory && !stateDirectory.mkdirs() && !stateDirectory.isDirectory) {
         error("Could not create BOSS workspace state directory: ${stateDirectory.absolutePath}")
     }
