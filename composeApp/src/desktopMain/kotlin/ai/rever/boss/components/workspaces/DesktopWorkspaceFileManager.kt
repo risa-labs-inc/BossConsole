@@ -354,7 +354,9 @@ internal fun migrateLegacyWorkspaceDirectory(
         }
         return
     }
-    if (!Files.isDirectory(legacyDirectory.toPath(), NOFOLLOW_LINKS) ||
+    // The old workspace root was commonly relocated with a directory symlink. Follow only that
+    // root link; candidate entries below are still checked with NOFOLLOW_LINKS before being read.
+    if (!Files.isDirectory(legacyDirectory.toPath()) ||
         legacyDirectory.canonicalFile == stateDirectory.canonicalFile
     ) {
         return
@@ -550,6 +552,8 @@ private fun forceMarkerBestEffort(marker: Path) {
         // The marker is an empty existence flag; some providers reject explicit forcing.
     } catch (_: UnsupportedOperationException) {
         // Keep the successfully completed one-shot migration on limited providers.
+    } catch (_: SecurityException) {
+        // A sandbox may permit marker creation while refusing an explicit force channel.
     }
 }
 

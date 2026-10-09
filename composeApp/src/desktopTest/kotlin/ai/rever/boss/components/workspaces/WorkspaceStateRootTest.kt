@@ -185,4 +185,19 @@ class WorkspaceStateRootTest {
         assertEquals(listOf("linked.json"), skipped)
         assertFalse(File(state, ".legacy-documents-import-complete").exists())
     }
+
+    @Test
+    fun `legacy migration follows a relocated legacy directory`() {
+        val relocated = temporaryDirectory.resolve("relocated-legacy").toFile().apply { mkdirs() }
+        File(relocated, "space.json").writeText("relocated record")
+        val legacyLink = temporaryDirectory.resolve("legacy-link")
+        runCatching { Files.createSymbolicLink(legacyLink, relocated.toPath()) }.getOrElse { return }
+        val state = temporaryDirectory.resolve("state-from-link").toFile()
+
+        migrateLegacyWorkspaceDirectory(legacyLink.toFile(), state)
+
+        assertEquals("relocated record", File(state, "space.json").readText())
+        assertTrue(File(state, ".legacy-documents-import-complete").isFile)
+        assertEquals("relocated record", File(relocated, "space.json").readText())
+    }
 }
