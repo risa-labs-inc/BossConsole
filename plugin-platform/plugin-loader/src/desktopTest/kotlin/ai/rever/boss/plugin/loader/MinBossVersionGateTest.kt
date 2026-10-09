@@ -40,20 +40,22 @@ class MinBossVersionGateTest {
     }
 
     @Test
-    fun `a local build of the required release satisfies the floor`() = runBlocking<Unit> {
-        val loader = DynamicPluginLoaderImpl().apply { currentBossVersion = "9.5.41-local1833" }
+    fun `a local build of the required release satisfies the floor`() =
+        runBlocking<Unit> {
+            val loader = DynamicPluginLoaderImpl().apply { currentBossVersion = "9.5.41-local1833" }
 
-        val result = loader.loadPlugin(manifestOnlyJar("9.5.41"))
+            val result = loader.loadPlugin(manifestOnlyJar("9.5.41"))
 
-        assertIs<PluginClassException>(result.exceptionOrNull())
-    }
+            assertIs<PluginClassException>(result.exceptionOrNull())
+        }
 
     @Test
-    fun `a numerically older local build remains below the floor`() = runBlocking<Unit> {
-        val loader = DynamicPluginLoaderImpl().apply { currentBossVersion = "9.5.40-local9999" }
+    fun `a numerically older local build remains below the floor`() =
+        runBlocking<Unit> {
+            val loader = DynamicPluginLoaderImpl().apply { currentBossVersion = "9.5.40-local9999" }
 
-        val result = loader.loadPlugin(manifestOnlyJar("9.5.41"))
+            val result = loader.loadPlugin(manifestOnlyJar("9.5.41"))
 
-        assertIs<PluginBossVersionException>(result.exceptionOrNull())
-    }
+            assertIs<PluginBossVersionException>(result.exceptionOrNull())
+        }
 }

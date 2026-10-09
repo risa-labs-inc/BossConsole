@@ -60,12 +60,12 @@ import ai.rever.boss.plugin.api.UrlHistoryProvider
 import ai.rever.boss.plugin.api.UserManagementProvider
 import ai.rever.boss.plugin.api.WorkspaceDataProvider
 import ai.rever.boss.plugin.api.ZoomSettingsProvider
-import ai.rever.boss.plugin.sandbox.context.PluginApiRegistryLifecycle
-import java.util.concurrent.CopyOnWriteArrayList
 import ai.rever.boss.plugin.browser.BrowserService
+import ai.rever.boss.plugin.sandbox.context.PluginApiRegistryLifecycle
 import com.arkivanov.decompose.ComponentContext
 import kotlinx.coroutines.CoroutineScope
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Registry of all registrations made by dynamic plugins.

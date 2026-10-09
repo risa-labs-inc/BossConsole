@@ -91,9 +91,9 @@ import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.sandbox.PluginSandboxManager
 import ai.rever.boss.plugin.sandbox.PluginSandboxManagerImpl
 import ai.rever.boss.plugin.sandbox.SandboxConfig
+import ai.rever.boss.plugin.sandbox.context.PluginApiRegistryLifecycle
 import ai.rever.boss.plugin.sandbox.context.SandboxedPanelRegistry
 import ai.rever.boss.plugin.sandbox.context.SandboxedPluginContext
-import ai.rever.boss.plugin.sandbox.context.PluginApiRegistryLifecycle
 import ai.rever.boss.plugin.sandbox.context.SandboxedTabRegistry
 import ai.rever.boss.plugin.sandbox.health.PluginHealthSummary
 import ai.rever.boss.plugin.sandbox.notification.BossPluginNotificationService
@@ -161,7 +161,11 @@ import ai.rever.boss.plugin.api.BrowserIntegration as ApiBrowserIntegration
  * contexts must provide it so plugin-created browsers participate in window-scoped
  * cleanup. The null default is reserved for non-window/test contexts.
  */
-@Suppress("LongParameterList") // window-scoped dependencies; the test seam needs the sandbox manager
+@Suppress(
+    "LargeClass",
+    "LongParameterList",
+    "TooManyFunctions",
+) // PluginContext is intentionally a wide host boundary with window-scoped dependencies.
 class DefaultPlugin(
     override val panelRegistry: PanelRegistry,
     override val tabRegistry: TabRegistry,
@@ -173,7 +177,8 @@ class DefaultPlugin(
     // Constructor-visible rather than a field initializer so tests can substitute a sandbox
     // manager that records where teardown runs.
     private val sandboxManager: PluginSandboxManager = PluginSandboxManagerImpl(),
-) : PluginContext, PluginApiRegistryLifecycle {
+) : PluginContext,
+    PluginApiRegistryLifecycle {
     private val registrationOwner = WindowRegistrations.Owner()
 
     companion object {

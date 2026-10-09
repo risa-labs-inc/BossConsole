@@ -13,9 +13,12 @@ import kotlin.test.assertSame
 
 class TrackingPluginContextApiTest {
     private interface ExampleApi
+
     private class ExampleImpl : ExampleApi
 
-    private class RecordingContext : PluginContext, PluginApiRegistryLifecycle {
+    private class RecordingContext :
+        PluginContext,
+        PluginApiRegistryLifecycle {
         override val panelRegistry = PanelRegistry()
         override val tabRegistry = TabRegistry()
         override val pluginScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
