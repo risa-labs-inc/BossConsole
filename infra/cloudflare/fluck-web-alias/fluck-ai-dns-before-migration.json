@@ -1,0 +1,34 @@
+{
+  "domain": "fluck.ai",
+  "previousNameservers": [
+    "curitiba.ns.porkbun.com",
+    "fortaleza.ns.porkbun.com",
+    "maceio.ns.porkbun.com",
+    "salvador.ns.porkbun.com"
+  ],
+  "previousRecords": [
+    {
+      "type": "A",
+      "name": "fluck.ai",
+      "content": "31.43.160.6",
+      "ttl": 600
+    },
+    {
+      "type": "A",
+      "name": "fluck.ai",
+      "content": "31.43.161.6",
+      "ttl": 600
+    },
+    {
+      "type": "CNAME",
+      "name": "www.fluck.ai",
+      "content": "sites.framer.app",
+      "ttl": 600
+    }
+  ],
+  "targetNameservers": [
+    "ligia.ns.cloudflare.com",
+    "toby.ns.cloudflare.com"
+  ],
+  "cloudflareZoneId": "9e0fc0110f0be0f757d8c06f4aa54f94"
+}
