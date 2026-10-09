@@ -573,7 +573,7 @@ class DynamicPluginLoaderImpl(
      * This "fail-open" approach prevents blocking plugins due to malformed version strings,
      * while still logging the issue for investigation.
      */
-    private fun isBossVersionCompatible(
+    internal fun isBossVersionCompatible(
         requiredVersion: String,
         currentVersion: String,
     ): Boolean {
@@ -586,7 +586,6 @@ class DynamicPluginLoaderImpl(
                     "requiredVersion" to requiredVersion,
                 ),
             )
-            return true
         }
 
         val current = Version.parse(currentVersion.substringBefore('-').substringBefore('+'))
@@ -598,10 +597,9 @@ class DynamicPluginLoaderImpl(
                     "currentVersion" to currentVersion,
                 ),
             )
-            return true
         }
 
-        return current >= required
+        return required == null || current == null || current >= required
     }
 
     /**

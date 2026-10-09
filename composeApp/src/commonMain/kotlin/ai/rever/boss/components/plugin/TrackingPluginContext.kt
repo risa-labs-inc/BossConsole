@@ -308,6 +308,8 @@ class TrackingPluginContext(
     private val pluginManifest: PluginManifest? = null,
 ) : PluginContext {
     private val pluginApis = CopyOnWriteArrayList<Any>()
+    private val pluginApiLifecycleLock = Any()
+    private var acceptingPluginApis = true
     private val _panelRegistry = TrackingPanelRegistry(pluginId, delegate.panelRegistry, tracker)
     private val _tabRegistry = TrackingTabRegistry(pluginId, delegate.tabRegistry, tracker)
 
@@ -543,8 +545,15 @@ class TrackingPluginContext(
     override fun <T : Any> getPluginAPI(apiClass: Class<T>): T? = delegate.getPluginAPI(apiClass)
 
     override fun registerPluginAPI(api: Any) {
-        pluginApis += api
-        delegate.registerPluginAPI(api)
+        synchronized(pluginApiLifecycleLock) {
+            check(acceptingPluginApis) {
+                "Plugin $pluginId cannot register an API after teardown has started"
+            }
+            delegate.registerPluginAPI(api)
+            // A plugin may defensively publish the same object twice. One identity-owned registry
+            // entry needs one teardown, regardless of how many times it was announced.
+            if (pluginApis.none { it === api }) pluginApis += api
+        }
     }
 
     /**
@@ -595,9 +604,18 @@ class TrackingPluginContext(
 
         // A provider object belongs to the plugin scope that just stopped. Leaving it in the
         // shared registry exposes a cancelled object to consumers until the next successful load.
-        val lifecycle = delegate as? PluginApiRegistryLifecycle
-        pluginApis.forEach { lifecycle?.unregisterPluginAPI(it) }
-        pluginApis.clear()
+        synchronized(pluginApiLifecycleLock) {
+            acceptingPluginApis = false
+            val lifecycle =
+                checkNotNull(delegate as? PluginApiRegistryLifecycle) {
+                    "Plugin context for $pluginId cannot unregister plugin APIs; " +
+                        "the host delegate does not implement PluginApiRegistryLifecycle"
+                }
+            // Keep the complete list when one removal fails. A later teardown can retry safely:
+            // host removal is identity-guarded and already-removed objects are harmless no-ops.
+            pluginApis.forEach(lifecycle::unregisterPluginAPI)
+            pluginApis.clear()
+        }
 
         // Clear tracking records
         tracker.clearPlugin(pluginId)

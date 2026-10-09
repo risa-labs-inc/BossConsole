@@ -6,7 +6,9 @@ import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class MinBossVersionGateTest {
     private val tempJars = mutableListOf<File>()
@@ -58,4 +60,16 @@ class MinBossVersionGateTest {
 
             assertIs<PluginBossVersionException>(result.exceptionOrNull())
         }
+
+    @Test
+    fun `qualifiers follow the same numeric release rule as Toolbox`() {
+        val loader = DynamicPluginLoaderImpl()
+
+        assertTrue(loader.isBossVersionCompatible("9.5.41", "9.5.41-local1833"))
+        assertTrue(loader.isBossVersionCompatible("9.5.41", "9.5.41+ci.1833"))
+        assertTrue(loader.isBossVersionCompatible("9.5.41+plugin.7", "9.5.41"))
+        assertTrue(loader.isBossVersionCompatible("9.5.41-rc1", "9.5.41"))
+        assertTrue(loader.isBossVersionCompatible("9.5.41-rc1", "9.5.41-local1833"))
+        assertFalse(loader.isBossVersionCompatible("9.5.42-rc1", "9.5.41-local1833"))
+    }
 }

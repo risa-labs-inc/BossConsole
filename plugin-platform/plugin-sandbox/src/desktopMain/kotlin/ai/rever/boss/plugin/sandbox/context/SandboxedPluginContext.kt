@@ -325,7 +325,10 @@ class SandboxedPluginContext(
     override fun registerPluginAPI(api: Any) = delegate.registerPluginAPI(api)
 
     override fun unregisterPluginAPI(api: Any) {
-        (delegate as? PluginApiRegistryLifecycle)?.unregisterPluginAPI(api)
+        checkNotNull(delegate as? PluginApiRegistryLifecycle) {
+            "Sandboxed plugin context cannot unregister plugin APIs; " +
+                "the host delegate does not implement PluginApiRegistryLifecycle"
+        }.unregisterPluginAPI(api)
     }
 
     /**

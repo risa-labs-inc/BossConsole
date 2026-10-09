@@ -140,6 +140,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -442,22 +443,29 @@ class DefaultPlugin(
                 ),
             )
         }
-        // Registration happens asynchronously during plugin startup; bump the
-        // observable version so Compose readers (EditorAPIAccess.rememberProvider)
-        // re-check availability instead of staying on their "not loaded" branch.
-        _apiRegistryVersion.value += 1
-
         // Also register under the concrete class for direct lookups
         apiRegistry[api::class.java] = api
+
+        // Registration happens asynchronously during plugin startup; bump the
+        // observable version after the complete mutation so Compose readers
+        // (EditorAPIAccess.rememberProvider) see every new lookup key.
+        _apiRegistryVersion.update { it + 1 }
     }
 
-    /** Remove only entries still owned by this exact registration. */
+    /** Remove only entries still owned by this exact object instance. */
     override fun unregisterPluginAPI(api: Any) {
         var changed = false
         (api::class.java.interfaces.asList() + api::class.java).forEach { key ->
-            changed = apiRegistry.remove(key, api) || changed
+            apiRegistry.computeIfPresent(key) { _, registered ->
+                if (registered === api) {
+                    changed = true
+                    null
+                } else {
+                    registered
+                }
+            }
         }
-        if (changed) _apiRegistryVersion.value += 1
+        if (changed) _apiRegistryVersion.update { it + 1 }
     }
 
     /**
