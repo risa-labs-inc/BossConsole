@@ -134,6 +134,9 @@ additional_redirect_urls = ["boss://auth/verify", "boss://auth/callback", "bosst
   "https://api.risaboss.com/functions/v1/live-sessions/auth", "https://cli.risaboss.com/auth", "http://127.0.0.1:54321/functions/v1/live-sessions/auth",
   # Optimist chat web callback (redirect/app.ts OPTIMIST_REDIRECTS)
   "https://askoptimist.com/auth/callback", "https://optimist.risalabs.ai/auth/callback", "http://127.0.0.1:8796/auth/callback",
+  # Optimist native PKCE fallback when iOS cannot verify the HTTPS webcredentials association.
+  # OAuth only; email links keep the HTTPS callback above. PRODUCTION: add this exact URI too.
+  "optimist://auth/ask-callback",
   # fluck-web page (functions/fluck-web, fluck.risaboss.com): same landing shape as live-sessions
   "https://fluck.ai/auth", "https://fluck.risaboss.com/auth", "https://api.risaboss.com/functions/v1/fluck-web/auth", "http://127.0.0.1:54321/functions/v1/fluck-web/auth"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
