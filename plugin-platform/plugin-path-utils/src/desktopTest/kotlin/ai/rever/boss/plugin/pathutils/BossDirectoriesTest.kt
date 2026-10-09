@@ -134,6 +134,9 @@ class BossDirectoriesTest {
                 assertFailsWith<IllegalArgumentException> {
                     BossDirectories.resolveUnderRoot(root.toFile(), "escape/state.json")
                 }
+                assertFalse(
+                    BossDirectories.containsUnderRoot(root.toFile(), link.resolve("state.json").toFile()),
+                )
             } finally {
                 parent.toFile().deleteRecursively()
             }

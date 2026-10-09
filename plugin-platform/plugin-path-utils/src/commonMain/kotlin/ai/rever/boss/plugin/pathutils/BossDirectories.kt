@@ -3,6 +3,7 @@ package ai.rever.boss.plugin.pathutils
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.Path
 import java.util.logging.Logger
 
 /**
@@ -70,24 +71,36 @@ object BossDirectories {
         // File.getCanonicalFile does not reliably resolve a symlinked parent on Windows when the
         // final child does not exist. Resolve the nearest existing ancestor instead, then append
         // only the suffix that cannot contain another existing symlink.
+        val target = resolveThroughExistingAncestor(lexicalTarget)
+        require(target.startsWith(root)) {
+            "BOSS state paths must remain under $root"
+        }
+        return target.toFile()
+    }
+
+    /** Whether [file] is contained by the durable BOSS state root. */
+    fun contains(file: File): Boolean = containsUnderRoot(canonicalRootDir, file)
+
+    internal fun containsUnderRoot(
+        rootDirectory: File,
+        file: File,
+    ): Boolean =
+        runCatching {
+            val root = rootDirectory.toPath().toRealPath()
+            val lexicalTarget = file.toPath().toAbsolutePath().normalize()
+            lexicalTarget.startsWith(root) && resolveThroughExistingAncestor(lexicalTarget).startsWith(root)
+        }.getOrDefault(false)
+
+    private fun resolveThroughExistingAncestor(lexicalTarget: Path): Path {
         var existingAncestor = lexicalTarget
         while (!Files.exists(existingAncestor, NOFOLLOW_LINKS)) {
             existingAncestor = existingAncestor.parent
                 ?: error("BOSS state path has no existing ancestor: $lexicalTarget")
         }
-        val resolvedAncestor = existingAncestor.toRealPath()
-        require(resolvedAncestor.startsWith(root)) {
-            "BOSS state paths must remain under $root"
-        }
-        val target = resolvedAncestor.resolve(existingAncestor.relativize(lexicalTarget)).normalize()
-        require(target.startsWith(root)) { "BOSS state paths must remain under $root" }
-        return target.toFile()
-    }
-
-    /** Whether [file] is contained by the durable BOSS state root. */
-    fun contains(file: File): Boolean {
-        val root = canonicalRootDir.toPath()
-        return file.canonicalFile.toPath().startsWith(root)
+        return existingAncestor
+            .toRealPath()
+            .resolve(existingAncestor.relativize(lexicalTarget))
+            .normalize()
     }
 
     /**
