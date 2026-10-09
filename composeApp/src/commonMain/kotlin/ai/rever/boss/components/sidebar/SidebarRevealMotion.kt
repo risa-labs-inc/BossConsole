@@ -46,10 +46,12 @@ private fun rememberSidebarWidthReservation(
     railShown: Boolean,
 ): Boolean {
     var explicitlyOpened by remember(reveal) { mutableStateOf(reveal.drawerOpen) }
-    val reservesWidth = reveal.drawerOpen || (explicitlyOpened && visible)
+    val transientReveal = reveal.isTransientReveal
+    val reservesWidth = reveal.drawerOpen || (explicitlyOpened && visible && !transientReveal)
     SideEffect {
         if (reveal.drawerOpen) explicitlyOpened = true
-        if (!visible || !railShown) explicitlyOpened = false
+        // A fresh hover can interrupt the close before visibility ever becomes false.
+        if (!visible || !railShown || transientReveal) explicitlyOpened = false
     }
     return reservesWidth
 }

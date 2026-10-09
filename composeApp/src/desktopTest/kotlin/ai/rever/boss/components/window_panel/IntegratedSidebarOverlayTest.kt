@@ -154,6 +154,56 @@ class IntegratedSidebarOverlayTest {
     }
 
     @Test
+    fun `hover interrupting a button opened close releases the viewport reservation`() {
+        val reveal = TabBarRevealState(MutableInteractionSource(), MutableInteractionSource())
+        var progress = 1f
+        var overlay = false
+        rule.mainClock.autoAdvance = false
+        rule.setContent {
+            val motion = rememberSidebarRevealMotion(reveal, railShown = true, integrated = true)
+            progress = motion.progress
+            overlay = motion.overlay
+            Row(Modifier.size(300.dp, 180.dp)) {
+                if (motion.visible) {
+                    val bar = TabBarLayout(true, 100.dp, false, false, false)
+                    Box(integratedSidebarLayout(bar, reveal, 0.dp, true, false, motion.overlay, motion.progress)) {
+                        Box(Modifier.width(100.dp).fillMaxHeight())
+                    }
+                }
+                Box(Modifier.weight(1f).fillMaxHeight().testTag("interrupted-main"))
+            }
+        }
+
+        fun mainWidth() = rule.onNodeWithTag("interrupted-main").getUnclippedBoundsInRoot().let { it.right - it.left }
+        rule.runOnIdle { reveal.openDrawer() }
+        rule.mainClock.advanceTimeByFrame()
+        assertFalse(overlay)
+        assertEquals(192.dp, mainWidth())
+        rule.runOnIdle { reveal.dismiss(pointerInSidebar = false) }
+        repeat(3) { rule.mainClock.advanceTimeByFrame() }
+        assertTrue(progress > 0f && progress < 1f, "hover must interrupt the closing animation")
+        assertFalse(overlay)
+        assertEquals(192.dp, mainWidth(), "the button close must retain width until interrupted")
+
+        rule.runOnIdle { reveal.revealed = true }
+        rule.mainClock.advanceTimeByFrame()
+        assertTrue(overlay, "a fresh hover reveal must immediately release the explicit width reservation")
+        assertEquals(300.dp, mainWidth())
+        rule.mainClock.advanceTimeBy(200)
+        assertEquals(1f, progress)
+        assertTrue(overlay)
+        assertEquals(300.dp, mainWidth())
+
+        rule.runOnIdle { reveal.revealed = false }
+        repeat(3) { rule.mainClock.advanceTimeByFrame() }
+        assertTrue(progress > 0f && progress < 1f)
+        assertTrue(overlay, "closing the hover reveal must not restore the old explicit width reservation")
+        assertEquals(300.dp, mainWidth())
+        rule.mainClock.advanceTimeBy(200)
+        assertEquals(300.dp, mainWidth())
+    }
+
+    @Test
     fun `pinned sidebar stays fully painted without a visible drawer`() {
         val reveal = TabBarRevealState(MutableInteractionSource(), MutableInteractionSource())
         rule.setContent {
