@@ -126,8 +126,10 @@ class BossDirectoriesTest {
                 val outside = parent.resolve("outside").also { Files.createDirectories(it) }
                 val link = root.resolve("escape")
                 val linkFailure = runCatching { Files.createSymbolicLink(link, outside) }.exceptionOrNull()
-                org.junit.jupiter.api.Assumptions
-                    .assumeTrue(linkFailure == null, "Symbolic links unavailable: ${linkFailure?.message}")
+                // A standard Windows runner cannot create symlinks without Developer Mode.
+                // Kotlin's multiplatform test adapter reports JUnit's aborted assumption as a
+                // failure here, so leave explicitly when the platform denied the setup.
+                if (linkFailure != null) return
 
                 assertFailsWith<IllegalArgumentException> {
                     BossDirectories.resolveUnderRoot(root.toFile(), "escape/state.json")
