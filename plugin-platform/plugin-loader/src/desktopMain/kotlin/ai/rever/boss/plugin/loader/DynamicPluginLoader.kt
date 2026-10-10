@@ -5,6 +5,7 @@ import ai.rever.boss.plugin.api.Plugin
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginManifestConstants
 import ai.rever.boss.plugin.api.PluginState
+import ai.rever.boss.plugin.api.PluginUnloadDeferredException
 import ai.rever.boss.plugin.api.Version
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
@@ -122,6 +123,7 @@ class DynamicPluginLoaderImpl(
      * plugin classloaders first.
      */
     fun swapApiLayer(pluginDir: java.io.File): ApiClassLoader {
+        check(loadedPlugins.isEmpty()) { "Plugins are still loaded; API swap is unsafe" }
         currentApiVersion = null // drop any stale override; getter follows the shared loader
         return classLoaderManager.swapApiLayer(pluginDir)
     }
@@ -469,6 +471,11 @@ class DynamicPluginLoaderImpl(
             @Suppress("TooGenericExceptionCaught")
             try {
                 loadedPlugin.instance.dispose()
+            } catch (e: PluginUnloadDeferredException) {
+                // No prepareUnload/close: plugin code may still be draining. Keep the original
+                // record and active loader so a retry cannot race a replacement instance.
+                loadedPlugins[pluginId] = loadedPlugin
+                return Result.failure(e)
             } catch (e: Throwable) {
                 logger.warn(
                     LogCategory.SYSTEM,
@@ -804,13 +811,15 @@ class DynamicPluginLoaderImpl(
             ),
         )
 
-        // Unload all plugins. force: disposeAll() closes every classloader
-        // below regardless, so refusing canUnload=false system plugins here
-        // would only skip their dispose() and log a misleading warning.
+        // Attempt every plugin, including system plugins. A deferred drain must keep its
+        // active loader: bulk shutdown cannot bypass the same safety fence as ordinary unload.
         for (pluginId in loadedPlugins.keys.toList()) {
             unloadPlugin(pluginId, waitForGC = false, force = true)
         }
 
+        if (loadedPlugins.isNotEmpty()) {
+            throw PluginUnloadDeferredException("Plugin cleanup is incomplete; retry shutdown")
+        }
         classLoaderManager.disposeAll()
     }
 }

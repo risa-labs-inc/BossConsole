@@ -660,6 +660,20 @@ class DynamicPluginManager(
                     }
                 }
 
+                // A deferred drain retains plugin code and its API parent. Abort the swap,
+                // restoring only plugins that actually unloaded against the unchanged API layer.
+                if (managers.any { it.pluginLoader.getLoadedPlugins().isNotEmpty() }) {
+                    for ((manager, snapshot) in snapshots) {
+                        for (info in snapshot) {
+                            val alreadyLoaded = manager.pluginLoader.isLoaded(info.manifest.pluginId)
+                            if (!alreadyLoaded && java.io.File(info.jarPath).isFile) {
+                                manager.installPlugin(info.jarPath, enabled = info.enabled)
+                            }
+                        }
+                    }
+                    return Result.failure(IllegalStateException("Plugin cleanup is incomplete; retry API update"))
+                }
+
                 // All plugin classloaders are closed: swap the shared layer.
                 // If the swap itself throws, DON'T leave the app pluginless —
                 // reload the snapshots against whatever layer is installed and
@@ -1075,6 +1089,7 @@ class DynamicPluginManager(
                                     delegate = baseContext,
                                     tracker = registrationTracker,
                                     pluginManifest = manifest,
+                                    daemonServiceProvider = daemonServiceProviderFor(manifest.pluginId, jarPath),
                                 )
                             trackingContexts[manifest.pluginId] = trackingContext
 
@@ -1199,6 +1214,7 @@ class DynamicPluginManager(
                             delegate = baseContext,
                             tracker = registrationTracker,
                             pluginManifest = manifest,
+                            daemonServiceProvider = daemonServiceProviderFor(manifest.pluginId, jarPath),
                         )
                     trackingContexts[manifest.pluginId] = trackingContext
 
@@ -1737,6 +1753,11 @@ class DynamicPluginManager(
                     // a branch the gate immediately re-blocks.
                     wasAlreadyEnabled = _pluginStates.value[pluginId]?.enabled == true
 
+                    // A prior disable revoked every UI provider; re-enable gets a fresh capability.
+                    _pluginStates.value[pluginId]?.jarPath?.let { path ->
+                        trackingContext.daemonServiceProvider = daemonServiceProviderFor(pluginId, path)
+                    }
+
                     // Attributed for the duration of register(), so a callback the
                     // plugin wires up and invokes synchronously from here is
                     // attributed to it. NOT because this escapes uncaught - the
@@ -2058,6 +2079,8 @@ class DynamicPluginManager(
                         oopChildStopped = true
                         outOfProcessSpawner?.terminate(pluginId)?.getOrThrow()
                     }
+
+                    stopPluginDaemonServices(pluginId)
 
                     // Unregister all panels and tabs
                     trackingContext.unregisterAll()
