@@ -62,7 +62,11 @@ internal class DaemonServiceRegistry(
                         }
 
                         "stop" -> {
-                            stop(key, removeRegistration = true)
+                            require(request.instanceId.isNotBlank()) { "Worker instance is required" }
+                            // A repeated/stale stop must not remove a replacement's registration.
+                            if (workers[key]?.endpoints?.get("boss.service.instanceId") == request.instanceId) {
+                                stop(key, removeRegistration = true)
+                            }
                             DaemonResponse()
                         }
 
@@ -150,6 +154,9 @@ internal class DaemonServiceRegistry(
     ): DaemonResponse {
         val worker = checkNotNull(workers[key]) { "Service is not running" }
         check(worker.startupFailure == null) { "Service startup failed" }
+        check(request.instanceId.isNotBlank() && worker.endpoints["boss.service.instanceId"] == request.instanceId) {
+            "Service connection is stale; reconnect"
+        }
         val payload =
             withContext(WorkerClassLoader(worker.loader)) {
                 worker.service.request(request.method, request.payload)

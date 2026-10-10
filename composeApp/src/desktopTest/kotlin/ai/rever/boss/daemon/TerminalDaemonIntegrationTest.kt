@@ -18,6 +18,8 @@ import kotlin.test.assertEquals
 
 /** Optional installable-JAR fixture. Exercises the actual plugin in the host's worker classloader. */
 class TerminalDaemonIntegrationTest {
+    private lateinit var instanceId: String
+
     @Test
     fun `real terminal plugin keeps PTY output across detached clients and drains on disable`() {
         val jarPath = System.getenv("BOSS_TERMINAL_DAEMON_TEST_JAR")
@@ -55,24 +57,35 @@ class TerminalDaemonIntegrationTest {
         jar: File,
         directory: File,
     ) {
-        registry.dispatch(
-            DaemonRequest(
-                "",
-                "connect",
-                "terminal.fixture",
-                "terminals",
-                jar.absolutePath,
-                sha256(jar),
-                "ai.rever.boss.plugin.dynamic.terminaltab.HostedTerminalDaemonService",
-                mapOf("settingsDirectory" to File(directory, "settings").absolutePath),
-            ),
-        )
+        instanceId =
+            registry
+                .dispatch(
+                    DaemonRequest(
+                        "",
+                        "connect",
+                        "terminal.fixture",
+                        "terminals",
+                        jar.absolutePath,
+                        sha256(jar),
+                        "ai.rever.boss.plugin.dynamic.terminaltab.HostedTerminalDaemonService",
+                        mapOf("settingsDirectory" to File(directory, "settings").absolutePath),
+                    ),
+                ).endpoints
+                .getValue("boss.service.instanceId")
     }
 
     private fun request(
         method: String,
         payload: String,
-    ) = DaemonRequest("", "request", "terminal.fixture", "terminals", method = method, payload = payload)
+    ) = DaemonRequest(
+        "",
+        "request",
+        "terminal.fixture",
+        "terminals",
+        method = method,
+        payload = payload,
+        instanceId = instanceId,
+    )
 
     private fun attach(endpoint: String): Pair<WebSocket, CompletableFuture<Unit>> {
         val json = daemonJson.parseToJsonElement(endpoint).jsonObject

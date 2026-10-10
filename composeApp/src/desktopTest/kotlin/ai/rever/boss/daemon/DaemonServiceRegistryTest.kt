@@ -62,7 +62,18 @@ class DaemonServiceRegistryTest {
         plugin: String,
         method: String,
         payload: String = "",
-    ) = registry.dispatch(DaemonRequest("", "request", plugin, "worker", method = method, payload = payload)).payload
+    ) = registry
+        .dispatch(
+            DaemonRequest(
+                "",
+                "request",
+                plugin,
+                "worker",
+                method = method,
+                payload = payload,
+                instanceId = registry.dispatch(connect(plugin = plugin)).endpoints.getValue("boss.service.instanceId"),
+            ),
+        ).payload
 
     @Test
     fun `same service id is isolated by plugin and dropping a connection does not stop it`() {
@@ -74,6 +85,50 @@ class DaemonServiceRegistryTest {
         assertEquals("one", request("plugin.one", "read"))
         assertEquals(2, registry.count())
         assertEquals(first.endpoints, registry.dispatch(connect()).endpoints)
+    }
+
+    @Test
+    fun `stale handles cannot request or stop a replacement worker`() {
+        val descriptor = connect()
+        val old = registry.dispatch(descriptor).endpoints.getValue("boss.service.instanceId")
+        val stop = DaemonRequest("", "stop", "plugin.one", "worker", instanceId = old)
+        registry.dispatch(stop)
+        registry.dispatch(stop) // Idempotent after the original worker is gone.
+        val fresh = registry.dispatch(descriptor).endpoints.getValue("boss.service.instanceId")
+        assertNotEquals(old, fresh)
+        assertFailsWith<IllegalStateException> {
+            registry.dispatch(
+                DaemonRequest(
+                    "",
+                    "request",
+                    "plugin.one",
+                    "worker",
+                    method = "write",
+                    payload = "stale",
+                    instanceId = old,
+                ),
+            )
+        }
+        registry.dispatch(stop)
+        assertEquals(1, registry.count())
+        assertEquals(fresh, registry.dispatch(descriptor).endpoints.getValue("boss.service.instanceId"))
+        assertEquals("fresh", request("plugin.one", "write", "fresh"))
+        registry.close()
+        val restored = DaemonServiceRegistry(File(directory, "daemon"))
+        try {
+            restored.restore()
+            assertEquals(1, restored.count(), "Stale stop must preserve the replacement registration")
+        } finally {
+            restored.close()
+        }
+    }
+
+    @Test
+    fun `requests without an instance are refused`() {
+        registry.dispatch(connect())
+        assertFailsWith<IllegalStateException> {
+            registry.dispatch(DaemonRequest("", "request", "plugin.one", "worker", method = "read"))
+        }
     }
 
     @Test

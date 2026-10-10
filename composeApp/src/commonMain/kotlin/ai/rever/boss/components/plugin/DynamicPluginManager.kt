@@ -660,6 +660,20 @@ class DynamicPluginManager(
                     }
                 }
 
+                // A deferred drain retains plugin code and its API parent. Abort the swap,
+                // restoring only plugins that actually unloaded against the unchanged API layer.
+                if (managers.any { it.pluginLoader.getLoadedPlugins().isNotEmpty() }) {
+                    for ((manager, snapshot) in snapshots) {
+                        for (info in snapshot) {
+                            val alreadyLoaded = manager.pluginLoader.isLoaded(info.manifest.pluginId)
+                            if (!alreadyLoaded && java.io.File(info.jarPath).isFile) {
+                                manager.installPlugin(info.jarPath, enabled = info.enabled)
+                            }
+                        }
+                    }
+                    return Result.failure(IllegalStateException("Plugin cleanup is incomplete; retry API update"))
+                }
+
                 // All plugin classloaders are closed: swap the shared layer.
                 // If the swap itself throws, DON'T leave the app pluginless —
                 // reload the snapshots against whatever layer is installed and

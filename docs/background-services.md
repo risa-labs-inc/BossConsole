@@ -7,6 +7,17 @@ worker and API JARs are copied to immutable content-addressed snapshots. UI unlo
 closure and plugin update do not close those loaders. Disable/removal revoke old UI
 providers, drain workers and remove their restart registrations.
 
+Control handles carry the host-owned worker instance ID. Requests through a stale handle reject;
+repeated or stale stop calls never stop or unregister a replacement. Control protocol 2 requires
+an explicit restart of an older development daemon; the host refuses to kill running work during
+protocol upgrades. Connect is creating, retains a live worker's original configuration/code, and
+requires the plugin to negotiate its effective protocol/configuration.
+
+For UI plugin unload, `PluginUnloadDeferredException` reports an incomplete drain. The host
+retains the plugin and active loader for retry, including during bulk shutdown. API hot swap
+aborts if a plugin remains loaded and restores successfully unloaded plugins on the current API
+layer. Ordinary disposal exceptions preserve their prior best-effort behavior.
+
 The first background connection registers login startup for its BOSS profile. macOS uses
 a LaunchAgent, Linux an XDG autostart entry, and Windows the current user's Run key.
 BOSS and BOSS Debug use separate directories/registrations. An update refreshes the launch

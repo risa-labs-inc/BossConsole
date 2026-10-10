@@ -46,6 +46,7 @@ internal class BossDaemonClient(
                             configuration,
                         ),
                     )
+                val instanceId = response.endpoints.getValue("boss.service.instanceId")
                 object : DaemonServiceConnection {
                     override val endpoints: Map<String, String>
                         get() = response.endpoints
@@ -66,6 +67,7 @@ internal class BossDaemonClient(
                                         serviceId,
                                         method = method,
                                         payload = payload,
+                                        instanceId = instanceId,
                                     ),
                                 ).payload
                             }
@@ -75,7 +77,10 @@ internal class BossDaemonClient(
                         withContext(Dispatchers.IO) {
                             synchronized(lockFor(pluginId)) {
                                 checkAdmission()
-                                daemonRequest(endpoint, DaemonRequest("", "stop", pluginId, serviceId))
+                                daemonRequest(
+                                    endpoint,
+                                    DaemonRequest("", "stop", pluginId, serviceId, instanceId = instanceId),
+                                )
                                 Unit
                             }
                         }

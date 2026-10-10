@@ -14,7 +14,7 @@ internal val daemonJson =
         ignoreUnknownKeys = true
         encodeDefaults = true
     }
-internal const val DAEMON_PROTOCOL = 1
+internal const val DAEMON_PROTOCOL = 2
 internal const val MAX_MESSAGE_BYTES = 1024 * 1024
 
 @Serializable
@@ -36,6 +36,7 @@ internal data class DaemonRequest(
     val configuration: Map<String, String> = emptyMap(),
     val method: String = "",
     val payload: String = "",
+    val instanceId: String = "",
 )
 
 @Serializable
