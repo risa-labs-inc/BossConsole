@@ -1,7 +1,7 @@
 -- The broker schemas are operated outside this repository. Model their exact
 -- encrypted-column contract locally; no production keys or rows are used.
 begin;
-select plan(20);
+select plan(24);
 set local datestyle = 'ISO, YMD';
 create table public.qbo_token_state (
     id integer primary key, client_id_enc text, client_secret_enc text,
@@ -39,15 +39,16 @@ select public.create_secret('rotation.example', 'fixture', 'core-fixture',
     p_recovery_codes => array['recovery-one', 'recovery-two']);
 update public.secret_metadata sm set twofa_secret = 'JBSWY3DPEHPK3PXP'
   from public.secrets sec where sec.id = sm.secret_id and sec.website = 'rotation.example';
--- Existing broker rows remain legacy while new writes use v2. Exercise both
--- paths in the same rotation, independently constructing the old format.
+-- Existing broker rows remain legacy while new writes use v3 (authenticated
+-- PGP since 20260923171000). Exercise both paths in the same rotation,
+-- independently constructing the old format.
 insert into public.qbo_token_state values (1, encode(extensions.encrypt(
     convert_to('client', 'utf8'), public.get_encryption_key()::bytea, 'aes'), 'base64'),
     public.encrypt_text('secret'), public.encrypt_text('refresh'), public.encrypt_text('access'));
 insert into public.google_token_state values (1, public.encrypt_text('pem'), public.encrypt_text('token'));
 create view public.pgtap_broker_view as select client_id_enc from public.qbo_token_state;
-create temp table rotation_initial_iv as
-select substring(decode(substr(client_secret_enc, 4), 'base64') from 1 for 16) as iv
+create temp table rotation_initial_ct as
+select client_secret_enc as ct
 from public.qbo_token_state;
 create temp table rotation_initial_key as
 select public.get_encryption_key() as value, clock_timestamp() as started_at,
@@ -55,13 +56,14 @@ select public.get_encryption_key() as value, clock_timestamp() as started_at,
 \ir ../ops/rotate_master_encryption_key.sql
 select is((select public.decrypt_text(client_id_enc) from public.qbo_token_state),
     'client', 'legacy zero-IV broker value survives a mixed-format rotation');
-select ok((select client_id_enc not like 'v2:%' from public.qbo_token_state),
+select ok((select client_id_enc not like 'v2:%' and client_id_enc not like 'v3:%'
+    from public.qbo_token_state),
     'rotation preserves the legacy broker format');
-select ok((select client_secret_enc like 'v2:%' from public.qbo_token_state),
-    'rotation preserves the new v2 broker format');
-select isnt((select substring(decode(substr(client_secret_enc,4),'base64') from 1 for 16)
-    from public.qbo_token_state), (select iv from rotation_initial_iv),
-    'rotation assigns a fresh IV to a v2 value');
+select ok((select client_secret_enc like 'v3:%' from public.qbo_token_state),
+    'rotation preserves the new v3 broker format');
+select isnt((select client_secret_enc from public.qbo_token_state),
+    (select ct from rotation_initial_ct),
+    'rotation re-encrypts a v3 value under a fresh session key and S2K salt');
 select isnt(public.get_encryption_key(), (select value from rotation_initial_key),
     'rotation replaces the master key');
 select is((select public.decrypt_text(client_secret_enc) from public.qbo_token_state where id=1),
@@ -131,6 +133,33 @@ $rot$, 'P0001',
     'No rotation adapter for public.safe_decrypt_pgtap_unmapped; extend rotation coverage before running',
     'a new safe_decrypt_* wrapper with no adapter refuses to rotate');
 drop function public.safe_decrypt_pgtap_unmapped(text);
+
+-- All-or-nothing: a row that cannot be read aborts the rotation before
+-- ANYTHING is mutated. The master key is unchanged, no key is retained for
+-- the aborted attempt, and untouched rows still decrypt under the existing
+-- key. This pins the atomicity half of the rotation contract: a broken
+-- rotation cannot commit a half-rotated database.
+create temp table rotation_abort_key as select public.get_encryption_key() as value;
+update public.secrets set password_encrypted = 'v3:' || encode(set_byte(
+    decode(substr(password_encrypted, 4), 'base64'),
+    octet_length(decode(substr(password_encrypted, 4), 'base64')) - 1,
+    255 - get_byte(decode(substr(password_encrypted, 4), 'base64'),
+                   octet_length(decode(substr(password_encrypted, 4), 'base64')) - 1)),
+    'base64')
+  where website = 'rotation.example';
+select throws_ok($rot$
+\ir ../ops/rotate_master_encryption_key.sql
+$rot$, '39000', NULL,
+    'a value that fails to decrypt refuses to rotate');
+select is(public.get_encryption_key(), (select value from rotation_abort_key),
+    'a failed rotation leaves the master key unchanged');
+select is((select count(*) from vault.secrets where name like 'master\_encryption\_key\_retired\_%')
+    - (select retired_before from rotation_initial_key), 3::bigint,
+    'a failed rotation retains no extra key');
+select is(public.safe_decrypt_twofa_secret((select sm.twofa_secret from public.secret_metadata sm
+      join public.secrets sec on sec.id = sm.secret_id where sec.website = 'rotation.example')),
+    'JBSWY3DPEHPK3PXP',
+    'a failed rotation leaves untouched rows decryptable under the existing key');
 
 select * from finish();
 rollback;
