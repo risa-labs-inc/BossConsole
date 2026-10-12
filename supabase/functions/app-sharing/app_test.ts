@@ -67,6 +67,7 @@ function harness() {
   };
   const deps: Dependencies = {
     authenticate: async (jwt) => jwt === "valid" ? owner : null,
+    authorizeGrant: async (grant) => grant === "g".repeat(43) ? owner : null,
     preferences: async (_actor, args) => ({
       auto_admit: true,
       auto_control: true,
@@ -75,6 +76,15 @@ function harness() {
     rpc: async (op, body, actor) => {
       assertEquals(actor, owner);
       calls.push({ kind: "rpc", op, body });
+      if (op === "register") return { ...body };
+      if (op === "list") {
+        return {
+          sessions: [
+            { viewer_url: "https://bridge.invalid/#k=" + "A".repeat(43) },
+            { viewer_url: "https://native.example/#k=" + "B".repeat(43) },
+          ],
+        };
+      }
       if (body.window_id === "unshared") {
         throw new ApiError(403, "unauthorized");
       }
@@ -146,6 +156,68 @@ function harness() {
     clearMedia: () => media = null,
   };
 }
+Deno.test("Fluck grant reuses fixed actions without exposing native bearer auth", async () => {
+  const h = harness();
+  const request = (
+    action: string,
+    extra: Record<string, unknown> = {},
+    both = false,
+  ) =>
+    h.deps &&
+    createApp(h.deps)(
+      new Request("https://api.example/functions/v1/app-sharing", {
+        method: "POST",
+        headers: {
+          "X-Fluck-App-Sharing-Grant": "g".repeat(43),
+          ...(both ? { Authorization: "Bearer valid" } : {}),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action,
+          session_id: session,
+          generation,
+          peer_id: owner,
+          window_id: "selected",
+          ...extra,
+        }),
+      }),
+    );
+  assertEquals((await request("mediaCreate")).status, 409);
+  assertEquals((await request("list")).status, 401);
+  assertEquals((await request("mediaCreate", {}, true)).status, 401);
+  assertEquals(
+    (await request("mediaCreate", { session_id: "wrong" })).status,
+    400,
+  );
+  const registered = await request("register", {
+    instance_id: "44444444-4444-4444-8444-444444444444",
+    device_id: "55555555-5555-4555-8555-555555555555",
+    name: "Fluck",
+    windows: [{ id: "boss", title: "BOSS" }],
+    key_epoch: "66666666-6666-4666-8666-666666666666",
+    host_public_key: "A".repeat(43),
+  });
+  assertEquals(registered.status, 200);
+  assertEquals((await registered.json()).viewer_url, null);
+  assertEquals(
+    h.calls.at(-1)?.body.viewer_url,
+    "https://bridge.invalid/#k=" + "A".repeat(43),
+  );
+  assertEquals(
+    (await request("register", {
+      viewer_url: "https://native.example/#k=" + "B".repeat(43),
+    })).status,
+    400,
+  );
+});
+Deno.test("native discovery omits keyless bridge sessions", async () => {
+  const h = harness();
+  const response = await h.request("list");
+  assertEquals(response.status, 200);
+  assertEquals((await response.json()).sessions, [
+    { viewer_url: "https://native.example/#k=" + "B".repeat(43) },
+  ]);
+});
 Deno.test("authentication and fixed action allowlist reject arbitrary SFU proxying", async () => {
   const h = harness();
   assertEquals((await h.request("list", {}, "forged")).status, 401);

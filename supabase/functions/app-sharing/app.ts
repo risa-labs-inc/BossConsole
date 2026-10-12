@@ -14,6 +14,13 @@ export type Rpc = (
 ) => Promise<unknown>;
 export interface Dependencies {
   authenticate: (jwt: string) => Promise<string | null>;
+  authorizeGrant: (
+    grant: string,
+    session: string,
+    generation: string,
+    action: string,
+    instance?: string,
+  ) => Promise<string | null>;
   rpc: Rpc;
   preferences: (actor: string, body?: ObjectValue) => Promise<unknown>;
   sfu: (
@@ -120,6 +127,32 @@ const actions = new Set([
   "dataSubscribe",
   "dataRevoke",
 ]);
+const grantActions = new Set([
+  "register",
+  "heartbeat",
+  "stop",
+  "admit",
+  "consume",
+  "peerHeartbeat",
+  "revoke",
+  "mediaDemand",
+  "mediaCreate",
+  "mediaPublish",
+  "mediaSubscribe",
+  "mediaRenegotiate",
+  "mediaClose",
+  "dataEstablish",
+  "dataPublish",
+  "dataSubscribe",
+  "dataRevoke",
+  "controlAcquire",
+  "controlRenew",
+  "controlRelease",
+  "controlPoll",
+]);
+// Satisfies the legacy non-null descriptor shape without carrying a media root.
+// It is never returned to either bridge clients or native session discovery.
+const BRIDGE_VIEWER_URL = "https://bridge.invalid/#k=" + "A".repeat(43);
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {
     status,
@@ -163,18 +196,49 @@ export function createApp(deps: Dependencies) {
       if (request.method !== "POST") {
         return json({ error: "method_not_allowed" }, 405);
       }
-      const auth = request.headers.get("authorization");
-      if (!auth?.startsWith("Bearer ") || auth.length > 16384) {
-        throw new ApiError(401, "unauthorized");
-      }
-      const actor = await deps.authenticate(auth.slice(7));
-      if (!actor || !uuid.test(actor)) throw new ApiError(401, "unauthorized");
       const input = await body(request);
       const action = input.action;
       if (typeof action !== "string" || !actions.has(action)) {
         throw new ApiError(400, "invalid_request");
       }
       const { action: _action, ...args } = input;
+      const auth = request.headers.get("authorization");
+      const grant = request.headers.get("x-fluck-app-sharing-grant");
+      if ((auth !== null) === (grant !== null)) {
+        throw new ApiError(401, "unauthorized");
+      }
+      let actor: string | null;
+      if (grant !== null) {
+        if (!/^[A-Za-z0-9_-]{43}$/.test(grant) || !grantActions.has(action)) {
+          throw new ApiError(401, "unauthorized");
+        }
+        const session = args.session_id, generation = args.generation;
+        if (
+          typeof session !== "string" || !uuid.test(session) ||
+          typeof generation !== "string" || !uuid.test(generation)
+        ) {
+          throw new ApiError(400, "invalid_request");
+        }
+        actor = await deps.authorizeGrant(
+          grant,
+          session,
+          generation,
+          action,
+          typeof args.instance_id === "string" ? args.instance_id : undefined,
+        );
+      } else {
+        if (!auth?.startsWith("Bearer ") || auth.length > 16384) {
+          throw new ApiError(401, "unauthorized");
+        }
+        actor = await deps.authenticate(auth.slice(7));
+      }
+      if (!actor || !uuid.test(actor)) throw new ApiError(401, "unauthorized");
+      if (grant !== null && action === "register") {
+        if (args.viewer_url !== undefined && args.viewer_url !== null) {
+          throw new ApiError(400, "invalid_request");
+        }
+        args.viewer_url = BRIDGE_VIEWER_URL;
+      }
       if (action === "preferencesGet") {
         return json(await deps.preferences(actor));
       }
@@ -201,6 +265,9 @@ export function createApp(deps: Dependencies) {
         const result = action === "cleanup" ? {} : object(await call(action));
         if (result.generation_revoked) {
           throw new ApiError(409, "session_retired");
+        }
+        if (grant !== null && result.viewer_url === BRIDGE_VIEWER_URL) {
+          result.viewer_url = null;
         }
         if (["stop", "register", "revoke", "cleanup"].includes(action)) {
           let pending = false;
@@ -234,6 +301,13 @@ export function createApp(deps: Dependencies) {
             );
           }
           return json({ ...result, cleanup_pending: pending });
+        }
+        if (
+          grant === null && action === "list" && Array.isArray(result.sessions)
+        ) {
+          result.sessions = result.sessions.filter((session) =>
+            object(session).viewer_url !== BRIDGE_VIEWER_URL
+          );
         }
         return json(result);
       }
@@ -498,6 +572,16 @@ export function productionDependencies(): Dependencies {
       if (!response.ok) return null;
       const user = await response.json();
       return typeof user.id === "string" ? user.id : null;
+    },
+    authorizeGrant: async (grant, session, generation, action, instance) => {
+      const value = await rpc("fluck_web_authorize_app_sharing", {
+        p_grant: grant,
+        p_session_id: session,
+        p_generation: generation,
+        p_action: action,
+        p_instance_id: instance ?? null,
+      });
+      return typeof value === "string" ? value : null;
     },
     rpc: (action, body, actor) =>
       rpc("app_sharing_command", {
