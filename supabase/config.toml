@@ -498,3 +498,10 @@ verify_jwt = false
 
 [functions.app-sharing-maintenance]
 verify_jwt = false
+
+[functions.watch-boss-turn-credentials]
+# The opaque 60-second, one-use ticket is the authorization. The browser and Fluck never hold a
+# Supabase access token for this exchange, so gateway JWT verification cannot authorize it.
+verify_jwt = false
+import_map = "./functions/watch-boss-turn-credentials/deno.json"
+entrypoint = "./functions/watch-boss-turn-credentials/index.ts"

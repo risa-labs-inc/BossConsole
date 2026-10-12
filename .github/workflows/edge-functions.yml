@@ -289,6 +289,21 @@ jobs:
       - run: deno lint
       - run: deno test --allow-all
 
+  watch-boss-turn-credentials:
+    name: Watch Boss TURN credentials - check and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/watch-boss-turn-credentials
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno task check
+      - run: deno lint
+      - run: deno task test
+
   app-sharing:
     name: 'Application sharing: authorization and signaling'
     runs-on: ubuntu-latest

@@ -1,0 +1,8 @@
+{
+  "imports": { "@std/assert": "jsr:@std/assert@^1.0.0" },
+  "compilerOptions": { "lib": ["deno.window"], "strict": true },
+  "tasks": {
+    "check": "deno check app.ts index.ts tests/*.ts",
+    "test": "deno test tests/"
+  }
+}
