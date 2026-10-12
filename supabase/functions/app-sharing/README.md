@@ -51,6 +51,37 @@ POST `/functions/v1/app-sharing` with an authenticated Bearer JWT and a JSON
 object containing `action`. Errors are `{error:code}` and do not include
 provider responses or secrets.
 
+Watch Boss may instead attach `X-Fluck-App-Sharing-Grant` from the host-side
+Fluck bridge. The opaque grant comes from
+`fluck_web_request_app_sharing(p_instance_id,p_attempt_id,p_session_id,p_generation)` through the
+signed-in host's existing BossRpc. It lasts ten minutes and refresh rotates the
+single active value for that attempt, so the previous value stops authorizing
+immediately. The grant stays in the host service and is never given to viewer
+JavaScript. It is bound to the live owned Fluck instance, application-sharing
+session and generation; account-wide list/preferences and internal actions are
+not available through it. Bearer and grant authentication cannot be combined.
+
+Bridge registration keeps the existing payload except that `viewer_url` must
+be absent or JSON null. Edge stores a fixed nonsecret internal placeholder to
+satisfy the legacy descriptor column, returns `viewer_url:null` to the bridge,
+and removes bridge-only sessions from native JWT `list` results. `key_epoch`
+and `host_public_key` remain real. The media root travels through Watch Boss's
+authenticated chat channel and the existing `boss-app-share/1` VP8 encoded
+transform; the SFU bridge does not introduce another key or crypto format.
+The bridge registration request therefore uses the existing `session_id`
+field, never a `session` alias.
+
+For startup, a grant may use `bootstrap` with exactly
+`{session_id,generation,instance_id,device_id,name,windows,key_epoch,host_public_key,role}`.
+It validates the grant once and atomically runs the existing register, admit and
+consume commands, returning exactly `{host_peer_id,viewer_peer_id}`. The
+single-use admission ticket is created and spent inside that transaction. Any
+other field is rejected, including `viewer_url`, media roots, private keys,
+tickets, peer IDs and provider locators. A successful bootstrap is deliberately
+not idempotent: a duplicate sees the now-existing session and is denied; retry
+with a fresh attempt/session/generation and grant. This action is grant-only and
+does not change the native Bearer/JWT actions below.
+
 - `register`:
   `{session_id,generation,device_id,instance_id,name,windows:[{id,title}],viewer_url,key_epoch,host_public_key}`.
   UUID identifiers, 1–16 explicit windows, name <=120 characters, window ID

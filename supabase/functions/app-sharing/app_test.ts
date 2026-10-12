@@ -67,6 +67,41 @@ function harness() {
   };
   const deps: Dependencies = {
     authenticate: async (jwt) => jwt === "valid" ? owner : null,
+    authorizeGrant: async (grant) => grant === "g".repeat(43) ? owner : null,
+    bootstrapGrant: async (grant, body) => {
+      assertEquals(grant, "g".repeat(43));
+      calls.push({ kind: "bootstrap", op: "bootstrap", body });
+      return { host_peer_id: owner, viewer_peer_id: session };
+    },
+    beginMediaSubscribe: async (grant, body, operation) => {
+      assertEquals(grant, "g".repeat(43));
+      calls.push({ kind: "begin", op: operation, body });
+      return {
+        actor: owner,
+        state: {
+          publisher: false,
+          media: null,
+          publication: {
+            sfu_id: "bound-host",
+            track_name: "window-selected",
+          },
+        },
+      };
+    },
+    commitMediaSubscribe: async (actor, body, operation, sfuId, mid) => {
+      assertEquals(actor, owner);
+      calls.push({
+        kind: "commit",
+        op: operation,
+        body: { ...body, sfu_id: sfuId, mid },
+      });
+      return { committed: true };
+    },
+    unlockMediaSubscribe: async (actor, body, operation) => {
+      assertEquals(actor, owner);
+      calls.push({ kind: "unlock", op: operation, body });
+      return { unlocked: true };
+    },
     preferences: async (_actor, args) => ({
       auto_admit: true,
       auto_control: true,
@@ -75,6 +110,15 @@ function harness() {
     rpc: async (op, body, actor) => {
       assertEquals(actor, owner);
       calls.push({ kind: "rpc", op, body });
+      if (op === "register") return { ...body };
+      if (op === "list") {
+        return {
+          sessions: [
+            { viewer_url: "https://bridge.invalid/#k=" + "A".repeat(43) },
+            { viewer_url: "https://native.example/#k=" + "B".repeat(43) },
+          ],
+        };
+      }
       if (body.window_id === "unshared") {
         throw new ApiError(403, "unauthorized");
       }
@@ -146,6 +190,214 @@ function harness() {
     clearMedia: () => media = null,
   };
 }
+Deno.test("Fluck grant reuses fixed actions without exposing native bearer auth", async () => {
+  const h = harness();
+  const request = (
+    action: string,
+    extra: Record<string, unknown> = {},
+    both = false,
+  ) =>
+    h.deps &&
+    createApp(h.deps)(
+      new Request("https://api.example/functions/v1/app-sharing", {
+        method: "POST",
+        headers: {
+          "X-Fluck-App-Sharing-Grant": "g".repeat(43),
+          ...(both ? { Authorization: "Bearer valid" } : {}),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action,
+          session_id: session,
+          generation,
+          peer_id: owner,
+          window_id: "selected",
+          ...extra,
+        }),
+      }),
+    );
+  assertEquals((await request("mediaCreate")).status, 409);
+  assertEquals((await request("list")).status, 401);
+  assertEquals((await request("mediaCreate", {}, true)).status, 401);
+  assertEquals(
+    (await request("mediaCreate", { session_id: "wrong" })).status,
+    400,
+  );
+  const registered = await request("register", {
+    instance_id: "44444444-4444-4444-8444-444444444444",
+    device_id: "55555555-5555-4555-8555-555555555555",
+    name: "Fluck",
+    windows: [{ id: "boss", title: "BOSS" }],
+    key_epoch: "66666666-6666-4666-8666-666666666666",
+    host_public_key: "A".repeat(43),
+  });
+  assertEquals(registered.status, 200);
+  assertEquals((await registered.json()).viewer_url, null);
+  assertEquals(
+    h.calls.at(-1)?.body.viewer_url,
+    "https://bridge.invalid/#k=" + "A".repeat(43),
+  );
+  assertEquals(
+    (await request("register", {
+      viewer_url: "https://native.example/#k=" + "B".repeat(43),
+    })).status,
+    400,
+  );
+});
+Deno.test("Fluck bootstrap is grant-only and uses one bounded backend call", async () => {
+  const h = harness();
+  const descriptor = {
+    action: "bootstrap",
+    session_id: session,
+    generation,
+    instance_id: "44444444-4444-4444-8444-444444444444",
+    device_id: "55555555-5555-4555-8555-555555555555",
+    name: "Fluck",
+    windows: [{ id: "boss", title: "BOSS" }],
+    key_epoch: "66666666-6666-4666-8666-666666666666",
+    host_public_key: "A".repeat(43),
+    role: "control",
+  };
+  const grantResponse = await createApp(h.deps)(
+    new Request("https://api.example/functions/v1/app-sharing", {
+      method: "POST",
+      headers: {
+        "X-Fluck-App-Sharing-Grant": "g".repeat(43),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(descriptor),
+    }),
+  );
+  assertEquals(grantResponse.status, 200);
+  assertEquals(await grantResponse.json(), {
+    host_peer_id: owner,
+    viewer_peer_id: session,
+  });
+  assertEquals(h.calls, [{
+    kind: "bootstrap",
+    op: "bootstrap",
+    body: Object.fromEntries(
+      Object.entries(descriptor).filter(([key]) => key !== "action"),
+    ),
+  }]);
+
+  assertEquals(
+    (await createApp(h.deps)(
+      new Request("https://api.example/functions/v1/app-sharing", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer valid",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(descriptor),
+      }),
+    )).status,
+    401,
+  );
+  assertEquals(h.calls.length, 1);
+
+  for (
+    const forbidden of [
+      "viewer_url",
+      "media_root_key",
+      "private_key",
+      "ticket",
+      "peer_id",
+      "sfu_id",
+    ]
+  ) {
+    const response = await createApp(h.deps)(
+      new Request("https://api.example/functions/v1/app-sharing", {
+        method: "POST",
+        headers: {
+          "X-Fluck-App-Sharing-Grant": "g".repeat(43),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ...descriptor, [forbidden]: "secret" }),
+      }),
+    );
+    assertEquals(response.status, 400, forbidden);
+    assertEquals(await response.json(), { error: "invalid_request" });
+  }
+  for (
+    const invalid of [
+      { ...descriptor, session_id: "not-a-uuid" },
+      { ...descriptor, role: "owner" },
+      { ...descriptor, windows: [] },
+      {
+        ...descriptor,
+        windows: [{ id: "boss" }, { id: "boss" }],
+      },
+      {
+        ...descriptor,
+        windows: [{ id: "boss", private_key: "secret" }],
+      },
+    ]
+  ) {
+    const response = await createApp(h.deps)(
+      new Request("https://api.example/functions/v1/app-sharing", {
+        method: "POST",
+        headers: {
+          "X-Fluck-App-Sharing-Grant": "g".repeat(43),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(invalid),
+      }),
+    );
+    assertEquals(response.status, 400);
+  }
+  assertEquals(h.calls.length, 1);
+});
+Deno.test("Fluck media subscribe bootstrap batches allocation and preserves cleanup", async () => {
+  const h = harness();
+  const request = (extra: Record<string, unknown> = {}, bearer = false) =>
+    createApp(h.deps)(
+      new Request("https://api.example/functions/v1/app-sharing", {
+        method: "POST",
+        headers: {
+          ...(bearer
+            ? { Authorization: "Bearer valid" }
+            : { "X-Fluck-App-Sharing-Grant": "g".repeat(43) }),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "mediaSubscribeBootstrap",
+          session_id: session,
+          generation,
+          peer_id: owner,
+          window_id: "selected",
+          ...extra,
+        }),
+      }),
+    );
+  const response = await request();
+  assertEquals(response.status, 200);
+  assertEquals(await response.json(), {
+    peer_id: owner,
+    window_id: "selected",
+    ice_servers: [],
+    session_description: { type: "offer", sdp: "v=0" },
+    mid: "0",
+    track: { window_id: "selected", track_name: "window-selected" },
+  });
+  assertEquals(h.calls.map((call) => call.kind), [
+    "begin",
+    "sfu",
+    "sfu",
+    "commit",
+    "unlock",
+  ]);
+  assertEquals((await request({}, true)).status, 401);
+  assertEquals((await request({ viewer_url: "secret" })).status, 400);
+});
+Deno.test("native discovery omits keyless bridge sessions", async () => {
+  const h = harness();
+  const response = await h.request("list");
+  assertEquals(response.status, 200);
+  assertEquals((await response.json()).sessions, [
+    { viewer_url: "https://native.example/#k=" + "B".repeat(43) },
+  ]);
+});
 Deno.test("authentication and fixed action allowlist reject arbitrary SFU proxying", async () => {
   const h = harness();
   assertEquals((await h.request("list", {}, "forged")).status, 401);
