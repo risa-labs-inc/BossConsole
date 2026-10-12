@@ -4,7 +4,8 @@ The OAuth redirect target for Fluck's Google and Slack connectors. It verifies a
 Fluck install's registered Ed25519 key, exchanges the authorization code with Google, and writes the
 resulting refresh token into BOSS Secret Manager as the BOSS user who owns that install. It is also
 where installs refresh access tokens, since the Google web client secret lives only here. Slack uses
-the same state and nonce checks at `GET /slack/callback` (see [Slack](#slack)).
+the same state and nonce checks at `GET /slack/callback` (see [Slack](#slack)), and hosted remote
+MCP servers use them at `GET /mcp/callback` (see [Hosted MCP servers](#hosted-mcp-servers)).
 
 It replaces a callback Fluck used to serve from the machine it runs on, behind a Tailscale Funnel
 hostname. A redirect URI registered with Google has to keep resolving forever; a tailnet hostname
@@ -31,13 +32,15 @@ that crosses between them is the secret, through the Secret Manager.
 
 ## Routes
 
-| Route                 | Auth                | What it does                                                                                                      |
-| --------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `GET /callback`       | the signed `state`  | Google: verifies, exchanges, binds, stores, renders one sentence                                                  |
-| `GET /slack/callback` | the signed `state`  | Slack: verifies, exchanges, stores the `xoxp-` user token, renders one sentence                                   |
-| `POST /refresh`       | signed install call | Google refresh token in, access token out; nothing stored or logged                                               |
-| `GET /health`         | none                | `{ ok, configured: { clientId, clientSecret, githubClientId, slackClientId, slackClientSecret } }`, booleans only |
-| `GET /client`         | none                | `{ client_id?, github_client_id?, slack_client_id? }`, the public ids set; 503 only if none                       |
+| Route                  | Auth                | What it does                                                                                                      |
+| ---------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `GET /callback`        | the signed `state`  | Google: verifies, exchanges, binds, stores, renders one sentence                                                  |
+| `GET /slack/callback`  | the signed `state`  | Slack: verifies, exchanges, stores the `xoxp-` user token, renders one sentence                                   |
+| `GET /mcp/callback`    | the signed `state`  | Hosted MCP: verifies, relays the code (no exchange) to `MCP_OAUTH_CODE`, renders one sentence                     |
+| `GET /mcp/client.json` | none                | The OAuth Client ID Metadata Document hosted MCP servers fetch; cacheable                                         |
+| `POST /refresh`        | signed install call | Google refresh token in, access token out; nothing stored or logged                                               |
+| `GET /health`          | none                | `{ ok, configured: { clientId, clientSecret, githubClientId, slackClientId, slackClientSecret } }`, booleans only |
+| `GET /client`          | none                | `{ client_id?, github_client_id?, slack_client_id? }`, the public ids set; 503 only if none                       |
 
 `ok` is the Google pair only; GitHub and Slack are optional and never make `/health` a 503.
 
@@ -182,14 +185,38 @@ At api.slack.com/apps, on the Fluck app:
    `token_rotation_enabled: false`.
 4. Copy the Client ID and Client Secret into `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`.
 
+## Hosted MCP servers
+
+Remote MCP servers (Notion, Linear, Todoist, Granola, …) are PUBLIC OAuth clients using PKCE. The
+plugin generates and keeps the `code_verifier`, so this function never exchanges the code: it only
+relays it.
+
+- The state carries the optional signed claim `connector`, which `/mcp/callback` requires and
+  `/callback` and `/slack/callback` refuse, so a state handed to an MCP server cannot be replayed on
+  the Google or Slack exchange. It must match `^(catalog:)?[a-z0-9-]{1,32}$`; a state with any other
+  value is refused at parse on every route. The plugin adds it to the compact payload after `cid`
+  and before `nonce`:
+  `{"v":1,"iid":"…","uid":"…","ws":"…","cid":"…","connector":"notion","nonce":"…","iat":<s>,"exp":<s>}`.
+  The verifier parses JSON, so the order only matters for the fixture, which has no `connector`.
+- `GET /mcp/callback?code&state[&iss]` runs the same checks as `/callback` (an `error` param, a bad
+  or connectorless state, an unknown or revoked install, a replayed nonce all write nothing), then
+  stores `{"code":"…","iss":"…"}` (`iss` only when the server sent one, RFC 9207) at
+  `fluck/<workspaceId>/<connector>/MCP_OAUTH_CODE`, username `<connector>`. The plugin polls for
+  that key, checks `iss`, and exchanges the code with its verifier at the server's token endpoint.
+- A `code` or `iss` over 2048 characters is refused after the nonce is claimed.
+- `GET /mcp/client.json` is the Client ID Metadata Document (draft-ietf-oauth-client-id-metadata-
+  document). `client_id` is its own URL, `<PUBLIC_BASE_URL>/mcp/client.json`, and `redirect_uris` is
+  `[<PUBLIC_BASE_URL>/mcp/callback]`; the plugin passes that same URL as `client_id` in the
+  authorization request. `token_endpoint_auth_method` is `none`.
+
 ## No PKCE
 
-Deliberate. The party that exchanges the code is this function, which is a confidential client
-holding `GOOGLE_WEB_CLIENT_SECRET` in its own environment, and that is precisely what PKCE
-substitutes for in a public client. A verifier would have had to travel here inside the same signed
-state that already accompanies the request, adding a second secret to keep and no binding the
-signature does not already provide. The CSRF property is covered by the state being signed, single
-use and short lived.
+For Google and Slack, deliberately. The party that exchanges the code is this function, which is a
+confidential client holding `GOOGLE_WEB_CLIENT_SECRET` in its own environment, and that is precisely
+what PKCE substitutes for in a public client. A verifier would have had to travel here inside the
+same signed state that already accompanies the request, adding a second secret to keep and no
+binding the signature does not already provide. The CSRF property is covered by the state being
+signed, single use and short lived.
 
 ## Deployment
 

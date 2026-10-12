@@ -148,6 +148,8 @@ Deno.test("malformed tokens and claims are refused at parse", async () => {
       JSON.stringify({ ...fixture.claims, nonce: "x".repeat(129) }),
       JSON.stringify({ ...fixture.claims, exp: "1750000600" }),
       JSON.stringify({ ...fixture.claims, cid: 7 }),
+      JSON.stringify({ ...fixture.claims, connector: "Notion" }),
+      JSON.stringify({ ...fixture.claims, connector: 7 }),
     ]
   ) {
     assertEquals(parseState(seg(payload) + "." + sig), null, payload)
@@ -155,4 +157,16 @@ Deno.test("malformed tokens and claims are refused at parse", async () => {
   // A well formed payload with a short signature is refused before any key is looked up.
   assertEquals(parseState(fixture.token.split(".")[0] + ".AAAA"), null)
   assertEquals(await verify("a.b"), false)
+})
+
+Deno.test("the optional connector claim round trips and is signed", async () => {
+  const now = fixture.claims.iat!
+  const claims: StateClaims = { ...fixture.claims, connector: "catalog:notion" }
+  const token = await mintState(privateKey, claims)
+  assertEquals(parseState(token)!.claims.connector, "catalog:notion")
+  assert(await verify(token, now))
+  // Swapping the connector without re-signing breaks the signature.
+  const swapped = btoa(statePayload({ ...claims, connector: "notion" }))
+    .replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")
+  assertEquals(await verify(swapped + "." + token.split(".")[1], now), false)
 })

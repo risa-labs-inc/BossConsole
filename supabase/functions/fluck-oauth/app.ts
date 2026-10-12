@@ -42,6 +42,11 @@
  * Slack's `oauth.v2.access` for a non expiring `xoxp-` user token, stored under the `slack`
  * connector. It has no grant binding and no refresh, because the token does not expire.
  *
+ * `GET /mcp/callback` is the same flow for hosted remote MCP servers, which are public PKCE
+ * clients: the plugin holds the `code_verifier`, so the code is NOT exchanged here. It is relayed
+ * as is to `fluck/<ws>/<connector>/MCP_OAUTH_CODE`, with the connector taken from the signed
+ * state. `GET /mcp/client.json` is the Client ID Metadata Document those servers fetch.
+ *
  * `POST /refresh` is the other route: an install trades its refresh token for an access token
  * through this function, because the web client secret lives only here. It is authenticated by
  * a signed request (see `signed.ts`), never by the state, and it only redeems a token the
@@ -73,6 +78,12 @@ export const DEFAULT_PUBLIC_BASE_URL =
 /** The connector ids this function writes for; part of the secret's key. */
 const GOOGLE_CONNECTOR_ID = "google"
 const SLACK_CONNECTOR_ID = "slack"
+
+/** The env var an MCP authorization code is relayed under, for the plugin to exchange. */
+const MCP_CODE_ENV_VAR = "MCP_OAUTH_CODE"
+
+/** Far past any real authorization code or issuer URL; a bigger value is not one. */
+const MAX_MCP_PARAM_LENGTH = 2048
 
 /** A refresh request is one small JSON object; anything bigger is not one. */
 const MAX_REFRESH_BODY_BYTES = 4096
@@ -183,6 +194,8 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
     if (path === "/callback") return await callback(request, deps)
     if (path === "/slack/callback") return await slackCallback(request, deps)
     if (path === "/refresh") return await refresh(request, deps)
+    if (path === "/mcp/callback") return await mcpCallback(request, deps)
+    if (path === "/mcp/client.json") return await mcpClientMetadata(request, deps)
     return page(404, "Not found", PAGE_NOT_FOUND)
   }
 }
@@ -267,6 +280,8 @@ async function acceptCallback(
   deps: Dependencies,
   route: string,
   configured: boolean,
+  /** An MCP state carries a connector and every other state does not: a state works on one route. */
+  mcp = false,
 ): Promise<AcceptedCallback | Response> {
   if (request.method !== "GET") {
     // Drained first: an unread body on a keep alive connection desyncs the next request on it.
@@ -304,6 +319,7 @@ async function acceptCallback(
   // The key lives on the desktop and its holder may sign any claims, so the install row, not
   // the token, decides whose secrets it may write.
   const verified = parsed && instance && publicKey && instance.userId === parsed.claims.uid &&
+    (parsed.claims.connector !== undefined) === mcp &&
     await verifyState(publicKey, parsed, nowSeconds)
   if (!parsed || !verified || !code) {
     deps.log(`${route} refused: state`)
@@ -446,6 +462,65 @@ async function slackCallback(request: Request, deps: Dependencies): Promise<Resp
   }
   deps.log(`slack callback connected [${workspace}]`)
   return page(200, "Connected", PAGE_CONNECTED)
+}
+
+/**
+ * `GET /mcp/callback`: the same state and nonce checks, then the code is relayed, not exchanged.
+ *
+ * The MCP server's client is public and PKCE bound, and the verifier never leaves the plugin, so
+ * the code is useless to anyone holding only this secret. `iss` (RFC 9207) is passed through for
+ * the plugin to check against the server it started with.
+ */
+async function mcpCallback(request: Request, deps: Dependencies): Promise<Response> {
+  const accepted = await acceptCallback(request, deps, "mcp callback", true, true)
+  if (accepted instanceof Response) return accepted
+  const { claims, code, workspace } = accepted
+  const connector = claims.connector!
+
+  const iss = new URL(request.url).searchParams.get("iss")
+  if (code.length > MAX_MCP_PARAM_LENGTH || (iss !== null && iss.length > MAX_MCP_PARAM_LENGTH)) {
+    deps.log(`mcp callback refused: params [${workspace}]`)
+    return page(400, "Sign in problem", PAGE_BAD_CODE)
+  }
+
+  const stored = await deps.storeRefreshToken({
+    userId: claims.uid,
+    website: `fluck/${claims.ws}/${connector}/${MCP_CODE_ENV_VAR}`,
+    username: connector,
+    refreshToken: JSON.stringify(iss ? { code, iss } : { code }),
+    notes: SECRET_NOTE,
+  })
+  if (!stored) {
+    deps.log(`mcp callback failed: store [${workspace}]`)
+    return page(503, "Sign in problem", PAGE_STORE_FAILED)
+  }
+  deps.log(`mcp callback connected [${workspace}]`)
+  return page(200, "Connected", PAGE_CONNECTED)
+}
+
+/**
+ * `GET /mcp/client.json`: the OAuth Client ID Metadata Document (draft-ietf-oauth-client-id-
+ * metadata-document). Its own URL is the `client_id`, so it must be derived from the same base
+ * as the redirect URI and served at exactly that address.
+ */
+async function mcpClientMetadata(request: Request, deps: Dependencies): Promise<Response> {
+  if (request.method !== "GET") {
+    await request.body?.cancel().catch(() => {})
+    return json(405, { error: "method" })
+  }
+  const document = {
+    client_id: redirectUri(deps, "/mcp/client.json"),
+    client_name: "Optimist",
+    client_uri: "https://askoptimist.com",
+    redirect_uris: [redirectUri(deps, "/mcp/callback")],
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none",
+  }
+  return new Response(JSON.stringify(document), {
+    status: 200,
+    headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=3600" },
+  })
 }
 
 /** `<team> (<user id>)`: the Slack workspace name and an opaque member id, never a name. */

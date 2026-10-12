@@ -17,9 +17,9 @@
  *
  * Format: `<b64url(payload)>.<b64url(signature)>`, both unpadded.
  * - payload, compact JSON:
- *   `{"v":1,"iid":"…","uid":"…","ws":"…","cid":"…","nonce":"…","iat":<s>,"exp":<s>}`
- *   (`cid`, the conversation, and `iat` are optional; the verifier parses, so key order is only
- *   fixed for the fixture)
+ *   `{"v":1,"iid":"…","uid":"…","ws":"…","cid":"…","connector":"…","nonce":"…","iat":<s>,"exp":<s>}`
+ *   (`cid`, the conversation, `connector` and `iat` are optional; the verifier parses, so key
+ *   order is only fixed for the fixture)
  * - signature: Ed25519 over the ASCII bytes `fluck-oauth-state-v1.` + the payload segment
  */
 
@@ -31,6 +31,9 @@ export const STATE_SIGNING_PREFIX = "fluck-oauth-state-v1."
 
 /** Same shape `fluck-vault` accepts for an install id. */
 export const INSTANCE_ID_PATTERN = /^[A-Za-z0-9_-]{16,64}$/
+
+/** A connector id as it appears in the secret key; `catalog:` marks a hosted MCP catalog entry. */
+export const CONNECTOR_ID_PATTERN = /^(catalog:)?[a-z0-9-]{1,32}$/
 
 /** The nonce is claimed as `<iid>.<nonce>`; the claim RPC caps the whole at 256 characters. */
 const MAX_NONCE_LENGTH = 128
@@ -45,6 +48,8 @@ export interface StateClaims {
   ws: string
   /** The conversation that asked, if any. Opaque here. */
   cid?: string
+  /** The connector the secret is written for. Required by `/mcp/callback`, refused elsewhere. */
+  connector?: string
   /** Single use, claimed server side so a replayed link is dead. */
   nonce: string
   iat?: number
@@ -108,6 +113,12 @@ export function parseState(token: string): ParsedState | null {
     return null
   }
   if (raw.cid !== undefined && !nonEmpty(raw.cid)) return null
+  if (
+    raw.connector !== undefined &&
+    (typeof raw.connector !== "string" || !CONNECTOR_ID_PATTERN.test(raw.connector))
+  ) {
+    return null
+  }
   if (typeof raw.exp !== "number" || !Number.isSafeInteger(raw.exp)) return null
   if (raw.iat !== undefined && (typeof raw.iat !== "number" || !Number.isSafeInteger(raw.iat))) {
     return null
@@ -121,6 +132,7 @@ export function parseState(token: string): ParsedState | null {
     exp: raw.exp,
   }
   if (raw.cid !== undefined) claims.cid = raw.cid as string
+  if (raw.connector !== undefined) claims.connector = raw.connector as string
   if (raw.iat !== undefined) claims.iat = raw.iat as number
   return { claims, payloadSegment, signature }
 }
@@ -176,6 +188,7 @@ export function statePayload(claims: StateClaims): string {
     ',"uid":' + JSON.stringify(claims.uid) +
     ',"ws":' + JSON.stringify(claims.ws) +
     (claims.cid !== undefined ? ',"cid":' + JSON.stringify(claims.cid) : "") +
+    (claims.connector !== undefined ? ',"connector":' + JSON.stringify(claims.connector) : "") +
     ',"nonce":' + JSON.stringify(claims.nonce) +
     (claims.iat !== undefined ? ',"iat":' + String(Math.trunc(claims.iat)) : "") +
     ',"exp":' + String(Math.trunc(claims.exp)) + "}"
