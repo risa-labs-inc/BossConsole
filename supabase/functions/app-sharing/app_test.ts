@@ -73,6 +73,35 @@ function harness() {
       calls.push({ kind: "bootstrap", op: "bootstrap", body });
       return { host_peer_id: owner, viewer_peer_id: session };
     },
+    beginMediaSubscribe: async (grant, body, operation) => {
+      assertEquals(grant, "g".repeat(43));
+      calls.push({ kind: "begin", op: operation, body });
+      return {
+        actor: owner,
+        state: {
+          publisher: false,
+          media: null,
+          publication: {
+            sfu_id: "bound-host",
+            track_name: "window-selected",
+          },
+        },
+      };
+    },
+    commitMediaSubscribe: async (actor, body, operation, sfuId, mid) => {
+      assertEquals(actor, owner);
+      calls.push({
+        kind: "commit",
+        op: operation,
+        body: { ...body, sfu_id: sfuId, mid },
+      });
+      return { committed: true };
+    },
+    unlockMediaSubscribe: async (actor, body, operation) => {
+      assertEquals(actor, owner);
+      calls.push({ kind: "unlock", op: operation, body });
+      return { unlocked: true };
+    },
     preferences: async (_actor, args) => ({
       auto_admit: true,
       auto_control: true,
@@ -318,6 +347,48 @@ Deno.test("Fluck bootstrap is grant-only and uses one bounded backend call", asy
     assertEquals(response.status, 400);
   }
   assertEquals(h.calls.length, 1);
+});
+Deno.test("Fluck media subscribe bootstrap batches allocation and preserves cleanup", async () => {
+  const h = harness();
+  const request = (extra: Record<string, unknown> = {}, bearer = false) =>
+    createApp(h.deps)(
+      new Request("https://api.example/functions/v1/app-sharing", {
+        method: "POST",
+        headers: {
+          ...(bearer
+            ? { Authorization: "Bearer valid" }
+            : { "X-Fluck-App-Sharing-Grant": "g".repeat(43) }),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "mediaSubscribeBootstrap",
+          session_id: session,
+          generation,
+          peer_id: owner,
+          window_id: "selected",
+          ...extra,
+        }),
+      }),
+    );
+  const response = await request();
+  assertEquals(response.status, 200);
+  assertEquals(await response.json(), {
+    peer_id: owner,
+    window_id: "selected",
+    ice_servers: [],
+    session_description: { type: "offer", sdp: "v=0" },
+    mid: "0",
+    track: { window_id: "selected", track_name: "window-selected" },
+  });
+  assertEquals(h.calls.map((call) => call.kind), [
+    "begin",
+    "sfu",
+    "sfu",
+    "commit",
+    "unlock",
+  ]);
+  assertEquals((await request({}, true)).status, 401);
+  assertEquals((await request({ viewer_url: "secret" })).status, 400);
 });
 Deno.test("native discovery omits keyless bridge sessions", async () => {
   const h = harness();

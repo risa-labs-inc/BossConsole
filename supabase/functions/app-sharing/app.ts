@@ -25,6 +25,23 @@ export interface Dependencies {
     grant: string,
     body: ObjectValue,
   ) => Promise<unknown>;
+  beginMediaSubscribe: (
+    grant: string,
+    body: ObjectValue,
+    operation: string,
+  ) => Promise<unknown>;
+  commitMediaSubscribe: (
+    actor: string,
+    body: ObjectValue,
+    operation: string,
+    sfuId: string,
+    mid: string,
+  ) => Promise<unknown>;
+  unlockMediaSubscribe: (
+    actor: string,
+    body: ObjectValue,
+    operation: string,
+  ) => Promise<unknown>;
   rpc: Rpc;
   preferences: (actor: string, body?: ObjectValue) => Promise<unknown>;
   sfu: (
@@ -106,6 +123,7 @@ async function body(request: Request): Promise<ObjectValue> {
 }
 const actions = new Set([
   "bootstrap",
+  "mediaSubscribeBootstrap",
   "register",
   "revoke",
   "cleanup",
@@ -166,6 +184,23 @@ const bootstrapFields = new Set([
   "host_public_key",
   "role",
 ]);
+const mediaSubscribeBootstrapFields = new Set([
+  "session_id",
+  "generation",
+  "peer_id",
+  "window_id",
+]);
+function validateMediaSubscribeBootstrap(args: ObjectValue) {
+  if (
+    Object.keys(args).some((field) =>
+      !mediaSubscribeBootstrapFields.has(field)
+    ) ||
+    !uuid.test(String(args.session_id ?? "")) ||
+    !uuid.test(String(args.generation ?? "")) ||
+    !uuid.test(String(args.peer_id ?? "")) ||
+    typeof args.window_id !== "string" || !id.test(args.window_id)
+  ) throw new ApiError(400, "invalid_request");
+}
 function validateBootstrap(args: ObjectValue) {
   if (
     Object.keys(args).some((field) => !bootstrapFields.has(field)) ||
@@ -270,6 +305,78 @@ export function createApp(deps: Dependencies) {
           host_peer_id: result.host_peer_id,
           viewer_peer_id: result.viewer_peer_id,
         });
+      }
+      if (action === "mediaSubscribeBootstrap") {
+        if (grant === null || !/^[A-Za-z0-9_-]{43}$/.test(grant)) {
+          throw new ApiError(401, "unauthorized");
+        }
+        validateMediaSubscribeBootstrap(args);
+        const operation = crypto.randomUUID();
+        let actor: string | null = null;
+        let sfuId: string | null = null;
+        let mid: string | null = null;
+        try {
+          const begun = object(
+            await deps.beginMediaSubscribe(grant, args, operation),
+          );
+          actor = typeof begun.actor === "string" && uuid.test(begun.actor)
+            ? begun.actor
+            : null;
+          const state = object(begun.state);
+          if (!actor || state.publisher === true || state.media !== null) {
+            throw new ApiError(409, "conflict");
+          }
+          const publication = object(state.publication);
+          const trackName = validTrackName(publication.track_name);
+          const sourceSfuId = validId(publication.sfu_id);
+          sfuId = validId((await deps.sfu("/sessions/new", "POST")).sessionId);
+          const result = await deps.sfu(
+            `/sessions/${sfuId}/tracks/new`,
+            "POST",
+            {
+              tracks: [{
+                location: "remote",
+                sessionId: sourceSfuId,
+                trackName,
+              }],
+            },
+          );
+          const tracks = result.tracks;
+          if (
+            !Array.isArray(tracks) || tracks.length !== 1 ||
+            object(tracks[0]).errorCode
+          ) throw new ApiError(502, "upstream_unavailable");
+          mid = validId(object(tracks[0]).mid);
+          await deps.commitMediaSubscribe(
+            actor,
+            args,
+            operation,
+            sfuId,
+            mid,
+          );
+          return json({
+            peer_id: args.peer_id,
+            window_id: args.window_id,
+            ice_servers: [],
+            session_description: result.sessionDescription,
+            mid,
+            track: { window_id: args.window_id, track_name: trackName },
+          });
+        } catch (error) {
+          if (sfuId && mid) {
+            await deps.sfu(`/sessions/${sfuId}/tracks/close`, "PUT", {
+              tracks: [{ mid }],
+              force: true,
+            }).catch(() => {});
+          }
+          throw error;
+        } finally {
+          if (actor) {
+            await deps.unlockMediaSubscribe(actor, args, operation).catch(
+              () => {},
+            );
+          }
+        }
       }
       let actor: string | null;
       if (grant !== null) {
@@ -659,6 +766,32 @@ export function productionDependencies(): Dependencies {
         p_key_epoch: body.key_epoch,
         p_host_public_key: body.host_public_key,
         p_role: body.role,
+      }),
+    beginMediaSubscribe: (grant, body, operation) =>
+      rpc("fluck_web_begin_media_subscribe", {
+        p_grant: grant,
+        p_session_id: body.session_id,
+        p_generation: body.generation,
+        p_peer_id: body.peer_id,
+        p_window_id: body.window_id,
+        p_operation: operation,
+      }),
+    commitMediaSubscribe: (actor, body, operation, sfuId, mid) =>
+      rpc("fluck_web_commit_media_subscribe", {
+        p_actor: actor,
+        p_session_id: body.session_id,
+        p_generation: body.generation,
+        p_peer_id: body.peer_id,
+        p_window_id: body.window_id,
+        p_operation: operation,
+        p_sfu_id: sfuId,
+        p_mid: mid,
+      }),
+    unlockMediaSubscribe: (actor, body, operation) =>
+      rpc("app_sharing_command", {
+        p_action: "_mediaUnlock",
+        p_body: { ...body, operation },
+        p_actor_id: actor,
       }),
     rpc: (action, body, actor) =>
       rpc("app_sharing_command", {
