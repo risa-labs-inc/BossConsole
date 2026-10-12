@@ -975,6 +975,30 @@ Deno.test("an oversized MCP code is refused and the link is spent", async () => 
   assertEquals(h.stored, [])
 })
 
+Deno.test("an oversized MCP issuer is refused and the link is spent", async () => {
+  const h = harness()
+  const response = await mcpCallback(
+    h,
+    `code=abc&iss=${"a".repeat(2049)}&state=${await state({ connector: "notion" })}`,
+  )
+  assertEquals(response.status, 400)
+  assertStringIncludes(await response.text(), PAGES.badCode)
+  assertEquals(h.claimed.length, 1)
+  assertEquals(h.stored, [])
+})
+
+Deno.test("MCP code and issuer parameters at the size limit are preserved", async () => {
+  const h = harness()
+  const code = "c".repeat(2048)
+  const iss = "i".repeat(2048)
+  const response = await mcpCallback(
+    h,
+    `code=${code}&iss=${iss}&state=${await state({ connector: "notion" })}`,
+  )
+  assertEquals(response.status, 200)
+  assertEquals(JSON.parse(h.stored[0].refreshToken), { code, iss })
+})
+
 Deno.test("a failed MCP store is a 503", async () => {
   const h = harness({ storeOk: false })
   const response = await mcpCallback(h, `code=abc&state=${await state({ connector: "notion" })}`)
