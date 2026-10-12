@@ -71,6 +71,17 @@ transform; the SFU bridge does not introduce another key or crypto format.
 The bridge registration request therefore uses the existing `session_id`
 field, never a `session` alias.
 
+For startup, a grant may use `bootstrap` with exactly
+`{session_id,generation,instance_id,device_id,name,windows,key_epoch,host_public_key,role}`.
+It validates the grant once and atomically runs the existing register, admit and
+consume commands, returning exactly `{host_peer_id,viewer_peer_id}`. The
+single-use admission ticket is created and spent inside that transaction. Any
+other field is rejected, including `viewer_url`, media roots, private keys,
+tickets, peer IDs and provider locators. A successful bootstrap is deliberately
+not idempotent: a duplicate sees the now-existing session and is denied; retry
+with a fresh attempt/session/generation and grant. This action is grant-only and
+does not change the native Bearer/JWT actions below.
+
 - `register`:
   `{session_id,generation,device_id,instance_id,name,windows:[{id,title}],viewer_url,key_epoch,host_public_key}`.
   UUID identifiers, 1–16 explicit windows, name <=120 characters, window ID

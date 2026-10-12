@@ -68,6 +68,11 @@ function harness() {
   const deps: Dependencies = {
     authenticate: async (jwt) => jwt === "valid" ? owner : null,
     authorizeGrant: async (grant) => grant === "g".repeat(43) ? owner : null,
+    bootstrapGrant: async (grant, body) => {
+      assertEquals(grant, "g".repeat(43));
+      calls.push({ kind: "bootstrap", op: "bootstrap", body });
+      return { host_peer_id: owner, viewer_peer_id: session };
+    },
     preferences: async (_actor, args) => ({
       auto_admit: true,
       auto_control: true,
@@ -209,6 +214,110 @@ Deno.test("Fluck grant reuses fixed actions without exposing native bearer auth"
     })).status,
     400,
   );
+});
+Deno.test("Fluck bootstrap is grant-only and uses one bounded backend call", async () => {
+  const h = harness();
+  const descriptor = {
+    action: "bootstrap",
+    session_id: session,
+    generation,
+    instance_id: "44444444-4444-4444-8444-444444444444",
+    device_id: "55555555-5555-4555-8555-555555555555",
+    name: "Fluck",
+    windows: [{ id: "boss", title: "BOSS" }],
+    key_epoch: "66666666-6666-4666-8666-666666666666",
+    host_public_key: "A".repeat(43),
+    role: "control",
+  };
+  const grantResponse = await createApp(h.deps)(
+    new Request("https://api.example/functions/v1/app-sharing", {
+      method: "POST",
+      headers: {
+        "X-Fluck-App-Sharing-Grant": "g".repeat(43),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(descriptor),
+    }),
+  );
+  assertEquals(grantResponse.status, 200);
+  assertEquals(await grantResponse.json(), {
+    host_peer_id: owner,
+    viewer_peer_id: session,
+  });
+  assertEquals(h.calls, [{
+    kind: "bootstrap",
+    op: "bootstrap",
+    body: Object.fromEntries(
+      Object.entries(descriptor).filter(([key]) => key !== "action"),
+    ),
+  }]);
+
+  assertEquals(
+    (await createApp(h.deps)(
+      new Request("https://api.example/functions/v1/app-sharing", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer valid",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(descriptor),
+      }),
+    )).status,
+    401,
+  );
+  assertEquals(h.calls.length, 1);
+
+  for (
+    const forbidden of [
+      "viewer_url",
+      "media_root_key",
+      "private_key",
+      "ticket",
+      "peer_id",
+      "sfu_id",
+    ]
+  ) {
+    const response = await createApp(h.deps)(
+      new Request("https://api.example/functions/v1/app-sharing", {
+        method: "POST",
+        headers: {
+          "X-Fluck-App-Sharing-Grant": "g".repeat(43),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ...descriptor, [forbidden]: "secret" }),
+      }),
+    );
+    assertEquals(response.status, 400, forbidden);
+    assertEquals(await response.json(), { error: "invalid_request" });
+  }
+  for (
+    const invalid of [
+      { ...descriptor, session_id: "not-a-uuid" },
+      { ...descriptor, role: "owner" },
+      { ...descriptor, windows: [] },
+      {
+        ...descriptor,
+        windows: [{ id: "boss" }, { id: "boss" }],
+      },
+      {
+        ...descriptor,
+        windows: [{ id: "boss", private_key: "secret" }],
+      },
+    ]
+  ) {
+    const response = await createApp(h.deps)(
+      new Request("https://api.example/functions/v1/app-sharing", {
+        method: "POST",
+        headers: {
+          "X-Fluck-App-Sharing-Grant": "g".repeat(43),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(invalid),
+      }),
+    );
+    assertEquals(response.status, 400);
+  }
+  assertEquals(h.calls.length, 1);
 });
 Deno.test("native discovery omits keyless bridge sessions", async () => {
   const h = harness();

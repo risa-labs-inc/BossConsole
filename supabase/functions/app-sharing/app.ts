@@ -21,6 +21,10 @@ export interface Dependencies {
     action: string,
     instance?: string,
   ) => Promise<string | null>;
+  bootstrapGrant: (
+    grant: string,
+    body: ObjectValue,
+  ) => Promise<unknown>;
   rpc: Rpc;
   preferences: (actor: string, body?: ObjectValue) => Promise<unknown>;
   sfu: (
@@ -101,6 +105,7 @@ async function body(request: Request): Promise<ObjectValue> {
   }
 }
 const actions = new Set([
+  "bootstrap",
   "register",
   "revoke",
   "cleanup",
@@ -150,6 +155,48 @@ const grantActions = new Set([
   "controlRelease",
   "controlPoll",
 ]);
+const bootstrapFields = new Set([
+  "session_id",
+  "generation",
+  "instance_id",
+  "device_id",
+  "name",
+  "windows",
+  "key_epoch",
+  "host_public_key",
+  "role",
+]);
+function validateBootstrap(args: ObjectValue) {
+  if (
+    Object.keys(args).some((field) => !bootstrapFields.has(field)) ||
+    !uuid.test(String(args.session_id ?? "")) ||
+    !uuid.test(String(args.generation ?? "")) ||
+    !uuid.test(String(args.instance_id ?? "")) ||
+    !uuid.test(String(args.device_id ?? "")) ||
+    !uuid.test(String(args.key_epoch ?? "")) ||
+    typeof args.name !== "string" || args.name.length < 1 ||
+    args.name.length > 120 ||
+    typeof args.host_public_key !== "string" ||
+    !/^[A-Za-z0-9_-]{40,255}$/.test(args.host_public_key) ||
+    (args.role !== "view" && args.role !== "control") ||
+    !Array.isArray(args.windows) || args.windows.length < 1 ||
+    args.windows.length > 16
+  ) throw new ApiError(400, "invalid_request");
+  const seen = new Set<string>();
+  for (const entry of args.windows) {
+    const window = object(entry);
+    if (
+      Object.keys(window).some((field) =>
+        field !== "id" && field !== "title"
+      ) ||
+      typeof window.id !== "string" ||
+      !/^[A-Za-z0-9_.:-]{1,128}$/.test(window.id) || seen.has(window.id) ||
+      (window.title !== undefined &&
+        (typeof window.title !== "string" || window.title.length > 160))
+    ) throw new ApiError(400, "invalid_request");
+    seen.add(window.id);
+  }
+}
 // Satisfies the legacy non-null descriptor shape without carrying a media root.
 // It is never returned to either bridge clients or native session discovery.
 const BRIDGE_VIEWER_URL = "https://bridge.invalid/#k=" + "A".repeat(43);
@@ -206,6 +253,23 @@ export function createApp(deps: Dependencies) {
       const grant = request.headers.get("x-fluck-app-sharing-grant");
       if ((auth !== null) === (grant !== null)) {
         throw new ApiError(401, "unauthorized");
+      }
+      if (action === "bootstrap") {
+        if (grant === null || !/^[A-Za-z0-9_-]{43}$/.test(grant)) {
+          throw new ApiError(401, "unauthorized");
+        }
+        validateBootstrap(args);
+        const result = object(await deps.bootstrapGrant(grant, args));
+        if (
+          typeof result.host_peer_id !== "string" ||
+          !uuid.test(result.host_peer_id) ||
+          typeof result.viewer_peer_id !== "string" ||
+          !uuid.test(result.viewer_peer_id)
+        ) throw new ApiError(503, "upstream_unavailable");
+        return json({
+          host_peer_id: result.host_peer_id,
+          viewer_peer_id: result.viewer_peer_id,
+        });
       }
       let actor: string | null;
       if (grant !== null) {
@@ -583,6 +647,19 @@ export function productionDependencies(): Dependencies {
       });
       return typeof value === "string" ? value : null;
     },
+    bootstrapGrant: (grant, body) =>
+      rpc("fluck_web_bootstrap_app_sharing", {
+        p_grant: grant,
+        p_session_id: body.session_id,
+        p_generation: body.generation,
+        p_instance_id: body.instance_id,
+        p_device_id: body.device_id,
+        p_name: body.name,
+        p_windows: body.windows,
+        p_key_epoch: body.key_epoch,
+        p_host_public_key: body.host_public_key,
+        p_role: body.role,
+      }),
     rpc: (action, body, actor) =>
       rpc("app_sharing_command", {
         p_action: action,
