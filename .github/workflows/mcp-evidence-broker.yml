@@ -1,0 +1,50 @@
+name: mcp-evidence-broker
+
+# Scoped to this directory so it does not run on unrelated changes, and so it
+# is inert to the Gradle build.
+on:
+  push:
+    paths:
+      - "mcp-servers/evidence-broker/**"
+      - ".github/workflows/mcp-evidence-broker.yml"
+  pull_request:
+    paths:
+      - "mcp-servers/evidence-broker/**"
+      - ".github/workflows/mcp-evidence-broker.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ["22", "24"]
+    defaults:
+      run:
+        working-directory: mcp-servers/evidence-broker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: mcp-servers/evidence-broker/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      # Spawns the broker as a real MCP server over stdio, drives it with a real
+      # client, shells out to the real CLI as the operator, and asserts 18
+      # properties end to end. Exits non-zero on any of them.
+      - name: Demo (end-to-end, self-checking)
+        run: npm run demo
