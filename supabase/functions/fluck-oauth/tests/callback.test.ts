@@ -45,7 +45,7 @@ function idToken(email: string): string {
 }
 
 async function state(
-  overrides: Partial<Record<"ws" | "uid" | "cid" | "nonce" | "iid", string>> & {
+  overrides: Partial<Record<"ws" | "uid" | "cid" | "nonce" | "iid" | "connector", string>> & {
     signer?: CryptoKey
   } = {},
 ) {
@@ -55,6 +55,7 @@ async function state(
     uid: overrides.uid ?? USER_ID,
     ws: overrides.ws ?? WORKSPACE,
     cid: overrides.cid ?? "conversation-1",
+    connector: overrides.connector,
     nonce: overrides.nonce ?? "nonce-one",
     iat: NOW_SECONDS - 10,
     exp: NOW_SECONDS + 590,
@@ -862,4 +863,162 @@ Deno.test("a blank client id or secret is unconfigured on every route alike", as
     assertStringIncludes(await response.text(), PAGES.unconfigured)
     assertEquals(h.requests.length, 0)
   }
+})
+
+// ---------------------------------------------------------------------------------------------
+// Hosted MCP servers
+// ---------------------------------------------------------------------------------------------
+
+async function mcpCallback(h: Harness, query: string): Promise<Response> {
+  return await h.handler(
+    new Request(`https://example.test/functions/v1/fluck-oauth/mcp/callback?${query}`),
+  )
+}
+
+Deno.test("a good MCP callback relays the code and iss without exchanging it", async () => {
+  // No Google or Slack configuration: the MCP route needs none.
+  const h = harness({ env: { GOOGLE_WEB_CLIENT_ID: "", GOOGLE_WEB_CLIENT_SECRET: "" } })
+  const iss = encodeURIComponent("https://mcp.notion.com")
+  const response = await mcpCallback(
+    h,
+    `code=n%2Fcode-123&iss=${iss}&state=${await state({ connector: "notion" })}`,
+  )
+  assertEquals(response.status, 200)
+  const html = await response.text()
+  assertStringIncludes(html, PAGES.connected)
+  assertEquals(html.includes("n/code-123"), false)
+  assertEquals(h.requests, [])
+  assertEquals(h.bound, [])
+  assertEquals(h.claimed, [`${INSTANCE_ID}.nonce-one`])
+  assertEquals(h.stored.length, 1)
+  assertEquals(h.stored[0].userId, USER_ID)
+  assertEquals(h.stored[0].website, `fluck/${WORKSPACE}/notion/MCP_OAUTH_CODE`)
+  assertEquals(h.stored[0].username, "notion")
+  assertEquals(JSON.parse(h.stored[0].refreshToken), {
+    code: "n/code-123",
+    iss: "https://mcp.notion.com",
+  })
+  assertEquals(h.logs, ["mcp callback connected [ws-abcde]"])
+})
+
+Deno.test("an MCP callback without iss stores the code alone, under a catalog connector", async () => {
+  const h = harness()
+  const response = await mcpCallback(
+    h,
+    `code=abc&state=${await state({ connector: "catalog:linear" })}`,
+  )
+  assertEquals(response.status, 200)
+  assertEquals(h.stored[0].website, `fluck/${WORKSPACE}/catalog:linear/MCP_OAUTH_CODE`)
+  assertEquals(h.stored[0].refreshToken, '{"code":"abc"}')
+})
+
+Deno.test("a bad, revoked, crossed or connectorless state on the MCP callback spends nothing", async () => {
+  const other = await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
+    "sign",
+    "verify",
+  ]) as CryptoKeyPair
+  const cases: { query: string; instances?: Record<string, Instance> }[] = [
+    { query: "code=abc" },
+    { query: "code=abc&state=not.a.token" },
+    { query: `state=${await state({ connector: "notion" })}` },
+    { query: `code=abc&state=${await state()}` },
+    { query: `code=abc&state=${await state({ connector: "notion", signer: other.privateKey })}` },
+    { query: `code=abc&state=${await state({ connector: "notion", uid: "another-user" })}` },
+    { query: `code=abc&state=${await state({ connector: "notion" })}`, instances: {} },
+  ]
+  for (const connector of ["Notion", "../google", "catalog:", "x".repeat(33), "other:notion", ""]) {
+    cases.push({ query: `code=abc&state=${await state({ connector })}` })
+  }
+  for (const { query, instances } of cases) {
+    const h = harness({ instances })
+    const response = await mcpCallback(h, query)
+    assertEquals(response.status, 400, query)
+    assertStringIncludes(await response.text(), PAGES.stale)
+    assertEquals(h.claimed, [])
+    assertEquals(h.stored, [])
+    assertEquals(h.logs, ["mcp callback refused: state"])
+  }
+})
+
+Deno.test("a replayed MCP link writes nothing", async () => {
+  const h = harness({ claim: "replay" })
+  const response = await mcpCallback(h, `code=abc&state=${await state({ connector: "notion" })}`)
+  assertEquals(response.status, 400)
+  assertStringIncludes(await response.text(), PAGES.replay)
+  assertEquals(h.stored, [])
+  assertEquals(h.logs, ["mcp callback refused: replay [ws-abcde]"])
+})
+
+Deno.test("a declined MCP consent writes nothing and never echoes the error", async () => {
+  const h = harness()
+  const response = await mcpCallback(
+    h,
+    `error=access_denied&state=${await state({ connector: "notion" })}`,
+  )
+  assertEquals(response.status, 400)
+  const html = await response.text()
+  assertStringIncludes(html, PAGES.declined)
+  assertEquals(html.includes("access_denied"), false)
+  assertEquals(h.claimed, [])
+  assertEquals(h.stored, [])
+})
+
+Deno.test("an oversized MCP code is refused and the link is spent", async () => {
+  const h = harness()
+  const response = await mcpCallback(
+    h,
+    `code=${"a".repeat(2049)}&state=${await state({ connector: "notion" })}`,
+  )
+  assertEquals(response.status, 400)
+  assertStringIncludes(await response.text(), PAGES.badCode)
+  assertEquals(h.claimed.length, 1)
+  assertEquals(h.stored, [])
+})
+
+Deno.test("a failed MCP store is a 503", async () => {
+  const h = harness({ storeOk: false })
+  const response = await mcpCallback(h, `code=abc&state=${await state({ connector: "notion" })}`)
+  assertEquals(response.status, 503)
+  assertStringIncludes(await response.text(), PAGES.storeFailed)
+  assertEquals(h.logs, ["mcp callback failed: store [ws-abcde]"])
+})
+
+Deno.test("the MCP client metadata document names its own URL as the client id", async () => {
+  for (
+    const [env, base] of [
+      [{}, DEFAULT_PUBLIC_BASE_URL],
+      [
+        { PUBLIC_BASE_URL: "https://api.risaboss.com/functions/v1/fluck-oauth/" },
+        "https://api.risaboss.com/functions/v1/fluck-oauth",
+      ],
+    ] as [Record<string, string>, string][]
+  ) {
+    const h = harness({ env })
+    const response = await h.handler(
+      new Request("https://example.test/functions/v1/fluck-oauth/mcp/client.json"),
+    )
+    assertEquals(response.status, 200)
+    assertEquals(response.headers.get("content-type"), "application/json")
+    assertStringIncludes(response.headers.get("cache-control") ?? "", "max-age=")
+    assertEquals(await response.json(), {
+      client_id: `${base}/mcp/client.json`,
+      client_name: "Optimist",
+      client_uri: "https://askoptimist.com",
+      redirect_uris: [`${base}/mcp/callback`],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    })
+  }
+})
+
+Deno.test("a POST to the MCP client metadata is refused and its body drained", async () => {
+  const h = harness()
+  const request = new Request("https://example.test/fluck-oauth/mcp/client.json", {
+    method: "POST",
+    body: "x",
+  })
+  const response = await h.handler(request)
+  assertEquals(response.status, 405)
+  assertEquals(request.bodyUsed, true)
 })
