@@ -128,7 +128,24 @@ class SessionFileImporterTest {
     @Test
     fun `no file is a silent no-op`(): Unit =
         runBlocking {
-            assertEquals(Outcome.ABSENT, importer().importOnce())
+            val imp = importer()
+            repeat(2) {
+                assertEquals(Outcome.ABSENT, imp.importOnce())
+                assertNull(imp.lastRefusal)
+            }
+            assertTrue(adopted.isEmpty())
+        }
+
+    @Test
+    fun `an existing file without POSIX attributes is refused and left in place`(): Unit =
+        runBlocking {
+            Assumptions.assumeFalse(posix, "needs a filesystem without POSIX attributes")
+            val content = """{"refresh_token":"rt-123"}"""
+            file.writeText(content)
+            val imp = importer()
+            assertEquals(Outcome.REJECTED, imp.importOnce())
+            assertEquals("filesystem has no POSIX attributes", imp.lastRefusal)
+            assertEquals(content, Files.readString(file))
             assertTrue(adopted.isEmpty())
         }
 
