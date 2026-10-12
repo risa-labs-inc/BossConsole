@@ -280,7 +280,8 @@ async function acceptCallback(
   deps: Dependencies,
   route: string,
   configured: boolean,
-  requireConnector = false,
+  /** An MCP state carries a connector and every other state does not: a state works on one route. */
+  mcp = false,
 ): Promise<AcceptedCallback | Response> {
   if (request.method !== "GET") {
     // Drained first: an unread body on a keep alive connection desyncs the next request on it.
@@ -318,7 +319,7 @@ async function acceptCallback(
   // The key lives on the desktop and its holder may sign any claims, so the install row, not
   // the token, decides whose secrets it may write.
   const verified = parsed && instance && publicKey && instance.userId === parsed.claims.uid &&
-    (!requireConnector || parsed.claims.connector !== undefined) &&
+    (parsed.claims.connector !== undefined) === mcp &&
     await verifyState(publicKey, parsed, nowSeconds)
   if (!parsed || !verified || !code) {
     deps.log(`${route} refused: state`)

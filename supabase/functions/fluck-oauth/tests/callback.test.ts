@@ -1022,3 +1022,18 @@ Deno.test("a POST to the MCP client metadata is refused and its body drained", a
   assertEquals(response.status, 405)
   assertEquals(request.bodyUsed, true)
 })
+
+Deno.test("an MCP state is refused on the Google and Slack exchanges and spends nothing", async () => {
+  for (
+    const [route, call] of [["callback", callback], ["slack callback", slackCallback]] as const
+  ) {
+    const h = slackHarness()
+    const response = await call(h, `code=abc&state=${await state({ connector: "catalog:notion" })}`)
+    assertEquals(response.status, 400, route)
+    assertStringIncludes(await response.text(), PAGES.stale)
+    assertEquals(h.requests, [])
+    assertEquals(h.claimed, [])
+    assertEquals(h.stored, [])
+    assertEquals(h.logs, [`${route} refused: state`])
+  }
+})

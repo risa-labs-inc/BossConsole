@@ -191,9 +191,11 @@ Remote MCP servers (Notion, Linear, Todoist, Granola, …) are PUBLIC OAuth clie
 plugin generates and keeps the `code_verifier`, so this function never exchanges the code: it only
 relays it.
 
-- The state carries the optional signed claim `connector`, which `/mcp/callback` requires. It must
-  match `^(catalog:)?[a-z0-9-]{1,32}$`; a state with any other value is refused at parse on every
-  route. The plugin adds it to the compact payload after `cid` and before `nonce`:
+- The state carries the optional signed claim `connector`, which `/mcp/callback` requires and
+  `/callback` and `/slack/callback` refuse, so a state handed to an MCP server cannot be replayed on
+  the Google or Slack exchange. It must match `^(catalog:)?[a-z0-9-]{1,32}$`; a state with any other
+  value is refused at parse on every route. The plugin adds it to the compact payload after `cid`
+  and before `nonce`:
   `{"v":1,"iid":"…","uid":"…","ws":"…","cid":"…","connector":"notion","nonce":"…","iat":<s>,"exp":<s>}`.
   The verifier parses JSON, so the order only matters for the fixture, which has no `connector`.
 - `GET /mcp/callback?code&state[&iss]` runs the same checks as `/callback` (an `error` param, a bad

@@ -48,7 +48,7 @@ export interface StateClaims {
   ws: string
   /** The conversation that asked, if any. Opaque here. */
   cid?: string
-  /** The connector the secret is written for. Required by `/mcp/callback`, ignored elsewhere. */
+  /** The connector the secret is written for. Required by `/mcp/callback`, refused elsewhere. */
   connector?: string
   /** Single use, claimed server side so a replayed link is dead. */
   nonce: string
