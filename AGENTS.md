@@ -587,6 +587,26 @@ taking `first().replacementDisplayName` told the user their panel moved somewher
 
 ## Configuration
 
+### Durable state is one portable root
+
+All production BOSS-owned durable state lives under `~/.boss`. Explicit developer mode remains
+isolated under `~/.boss_debug` and is not part of deployment backup or hot-swap flows. Host and
+in-repository plugin code resolves durable paths through `BossDirectories.resolve`, which creates
+a missing root and rejects absolute paths, traversal and symlinks that escape at resolution time.
+Writers still enforce no-follow and atomic publication at the I/O boundary. Plugin persistence uses the host-scoped
+`~/.boss/plugin-data/<plugin-id>` store. Do not introduce another settings, cache, database,
+session or workspace root.
+
+User-selected project/import/export paths, platform-required registration files and disposable
+temporary files are not durable BOSS state. Space records from the legacy
+`~/Documents/BOSS/workspaces` location are copied once into `~/.boss/workspaces` through
+owner-only temporary files and atomic create-new hard-link publication, without deleting or
+overwriting either side. A concurrent current-state writer always wins; a failed migration leaves
+the one-shot marker absent and retries later. Durable directory metadata is ordered before that
+marker where the filesystem exposes directory channels. Migration runs on the first storage
+operation, not on a path-only lookup. Only the state-root copy is maintained afterwards. See
+`docs/state-root-contract.md` and `DurableStatePathConventionTest`.
+
 ### Shared managed AI providers
 
 `supabase/functions/boss-ai` serves multiple configured models through one
