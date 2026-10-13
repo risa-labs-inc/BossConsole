@@ -272,6 +272,26 @@ class NativeContextMenusTest {
     }
 
     @Test
+    fun `a live remote view turns native menus off`() {
+        assertFalse(shouldUseNativeMenus(settingEnabled = true, isMacOs = true, remotelyViewed = true))
+        assertTrue(shouldUseNativeMenus(settingEnabled = true, isMacOs = true, remotelyViewed = false))
+        assertFalse(shouldUseNativeMenus(settingEnabled = false, isMacOs = true, remotelyViewed = true))
+    }
+
+    @Test
+    fun `remote view count is shared and each handle closes once`() {
+        val base = RemoteViewState.count.value
+        val first = RemoteViewState.begin()
+        val second = RemoteViewState.begin()
+        assertEquals(base + 2, RemoteViewState.count.value)
+        first.close()
+        first.close()
+        assertEquals(base + 1, RemoteViewState.count.value)
+        second.close()
+        assertEquals(base, RemoteViewState.count.value)
+    }
+
+    @Test
     fun `show reports failure rather than throwing when unsupported or empty`() {
         // On a Linux CI runner isSupported() is false; on a mac dev box the empty plan is what
         // makes this false. Either way it must return, not throw, and not leave a menu behind.
