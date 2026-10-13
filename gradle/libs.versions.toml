@@ -187,7 +187,7 @@ intellij-platform = "243.21565.199"
 # their server management decisions and attribution through in-process and KERNEL paths.
 # 1.0.100 adds RemoteViewProvider (boss-plugin-api#71), implemented by DefaultPlugin on this branch.
 # Release the API before merging this pin.
-boss-plugin-api = "1.0.99"
+boss-plugin-api = "1.0.100"
 
 [libraries]
 bouncycastle-pkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bouncycastle" }
