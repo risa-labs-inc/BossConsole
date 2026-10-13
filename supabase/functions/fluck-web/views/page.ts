@@ -339,6 +339,8 @@ const SCRIPT = `
   async function signOut() {
     stopPolling(); cancelOpenTimer(); requestGeneration++;
     if (viewing) closeFrame(false);
+    // Before the cookies go: this browser must stop getting this account's notifications.
+    await dropPushSubscription();
     try { await api("/api/logout", { method: "POST", body: {} }); } catch (_) {}
     notice(""); show("signin");
   }
@@ -785,14 +787,18 @@ const SCRIPT = `
     }
     showSheet("ask");
   }
-  async function pushOff() {
-    if (!pushSupported()) { replyPush("unsupported"); return; }
+  async function dropPushSubscription() {
+    if (!pushSupported()) return;
     var endpoint = null;
     try {
       var sub = await currentSub();
       if (sub) { endpoint = sub.endpoint; await sub.unsubscribe(); }
     } catch (_) {}
     if (endpoint) { try { await postCsrf("/api/push/unsubscribe", { endpoint: endpoint }); } catch (_) {} }
+  }
+  async function pushOff() {
+    if (!pushSupported()) { replyPush("unsupported"); return; }
+    await dropPushSubscription();
     replyPush(await pushState());
   }
   async function onPushMessage(action) {

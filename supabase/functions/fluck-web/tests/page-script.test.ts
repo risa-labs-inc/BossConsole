@@ -855,6 +855,15 @@ Deno.test("off unsubscribes locally and tells the server the endpoint; the busy 
   assertEquals(p.pushStates(), ["busy", "busy"], "the second ask while the sheet is open is busy")
 })
 
+Deno.test("sign-out drops this browser's push subscription before the cookies go", async () => {
+  const h = await helloed({ push: { permission: "granted", subscribed: true } })
+  h.click("signout")
+  await h.settle()
+  assertEquals(h.pushLog.subscribed, false)
+  const order = h.requests.map((r) => r.url).filter((u) => u === "/api/push/unsubscribe" || u === "/api/logout")
+  assertEquals(order, ["/api/push/unsubscribe", "/api/logout"])
+})
+
 Deno.test("the page script has no wildcard postMessage target and no notification ask outside a tap", () => {
   const html = fluckPage({ basePath: "", liveWindowSeconds: 90 }, "test")
   const script = /<script nonce="test">([\s\S]*?)<\/script>/.exec(html)![1]
