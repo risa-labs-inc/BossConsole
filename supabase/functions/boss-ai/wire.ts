@@ -366,7 +366,10 @@ export function requestBody(
   if (type === "openai_chat") {
     if (tools) common.tools = tools
     if (common.stream) common.stream_options = { include_usage: true }
-    return { ...common, messages, max_completion_tokens: max }
+    const cached = takesCacheControl(model.upstream_model, baseUrl)
+      ? withPromptCache(messages)
+      : messages
+    return { ...common, messages: cached, max_completion_tokens: max }
   }
   const items: Obj[] = []
   for (const m of messages) {
@@ -401,6 +404,54 @@ export function requestBody(
   return { ...common, input: items, max_output_tokens: max, truncation: "disabled" }
 }
 
+// Upstreams that cache only where the request marks it. OpenRouter forwards `cache_control` to
+// them; every other upstream caches automatically or not at all, and gets the request unchanged.
+function takesCacheControl(upstreamModel: string, baseUrl: string): boolean {
+  const id = upstreamModel.toLowerCase()
+  return isOpenRouter(baseUrl) && (id.startsWith("anthropic/") || id.startsWith("google/gemini"))
+}
+
+const EPHEMERAL = { type: "ephemeral" }
+
+// Two breakpoints: the first system message (with the tools ahead of it, the stable prefix every
+// turn repeats) and the newest user message (the conversation so far). Messages are copied, never
+// edited in place, and only text parts carry the mark.
+export function withPromptCache(messages: Obj[]): Obj[] {
+  const system = messages.findIndex((m) => m.role === "system" || m.role === "developer")
+  let user = -1
+  messages.forEach((m, i) => {
+    if (m.role === "user") user = i
+  })
+  return messages.map((m, i) => (i === system || i === user) ? markLastText(m) : m)
+}
+
+function markLastText(m: Obj): Obj {
+  if (typeof m.content === "string") {
+    if (!m.content) return m
+    return { ...m, content: [{ type: "text", text: m.content, cache_control: EPHEMERAL }] }
+  }
+  if (!Array.isArray(m.content)) return m
+  const parts = m.content as Obj[]
+  let last = -1
+  parts.forEach((p, i) => {
+    if (p.type === "text" && typeof p.text === "string" && p.text) last = i
+  })
+  if (last < 0) return m
+  return { ...m, content: parts.map((p, i) => i === last ? { ...p, cache_control: EPHEMERAL } : p) }
+}
+
+// The cache and reasoning breakdowns the gateway prices with, passed through when the upstream
+// reports them as non-negative integers. Totals stay prompt + completion: accounting is unchanged.
+function details(source: unknown, keys: string[]): Obj | undefined {
+  if (!source || typeof source !== "object") return undefined
+  const out: Obj = {}
+  for (const key of keys) {
+    const v = (source as Obj)[key]
+    if (Number.isSafeInteger(v) && Number(v) >= 0) out[key] = v
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
 export function usage(value: unknown, responses = false): Obj | null {
   if (!value || typeof value !== "object") return null
   const u = value as Obj
@@ -410,10 +461,20 @@ export function usage(value: unknown, responses = false): Obj | null {
     !Number.isSafeInteger(prompt) || !Number.isSafeInteger(completion) || Number(prompt) < 0 ||
     Number(completion) < 0 || !Number.isSafeInteger(Number(prompt) + Number(completion))
   ) return null
+  const promptDetails = details(
+    u[responses ? "input_tokens_details" : "prompt_tokens_details"],
+    ["cached_tokens", "cache_write_tokens"],
+  )
+  const completionDetails = details(
+    u[responses ? "output_tokens_details" : "completion_tokens_details"],
+    ["reasoning_tokens"],
+  )
   return {
     prompt_tokens: prompt,
     completion_tokens: completion,
     total_tokens: Number(prompt) + Number(completion),
+    ...(promptDetails ? { prompt_tokens_details: promptDetails } : {}),
+    ...(completionDetails ? { completion_tokens_details: completionDetails } : {}),
   }
 }
 
