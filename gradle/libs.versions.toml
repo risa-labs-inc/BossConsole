@@ -66,7 +66,7 @@ bouncycastle = "1.86"
 # (Chromium "Login Data", Firefox places.sqlite / key4.db). Desktop-only.
 sqlite-jdbc = "3.53.4.0"
 # gRPC + Protobuf for IPC
-grpc = "1.84.0"
+grpc = "1.84.2"
 grpc-kotlin = "1.5.0"
 protobuf = "4.36.2"
 protobuf-gradle-plugin = "0.10.0"
