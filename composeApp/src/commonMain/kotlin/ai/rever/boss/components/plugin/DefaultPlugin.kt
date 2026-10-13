@@ -73,6 +73,7 @@ import ai.rever.boss.plugin.api.PluginStoreApiKeyProvider
 import ai.rever.boss.plugin.api.ProjectData
 import ai.rever.boss.plugin.api.ProjectSearchProvider
 import ai.rever.boss.plugin.api.RoleManagementProvider
+import ai.rever.boss.plugin.api.RemoteViewProvider
 import ai.rever.boss.plugin.api.ScreenCaptureProvider
 import ai.rever.boss.plugin.api.SearchProvider
 import ai.rever.boss.plugin.api.SemanticTokenProvider
@@ -100,6 +101,7 @@ import ai.rever.boss.plugin.sandbox.notification.PluginSandboxNotificationListen
 import ai.rever.boss.plugin.sandbox.notification.PluginToastState
 import ai.rever.boss.plugin.ui.BossThemes
 import ai.rever.boss.plugin.ui.ContextMenuItemData
+import ai.rever.boss.plugin.ui.menu.RemoteViewState
 import ai.rever.boss.plugin.workspace.uniqueId
 import ai.rever.boss.search.ContentSearchService
 import ai.rever.boss.search.SearchRegistryImpl
@@ -1003,6 +1005,12 @@ class DefaultPlugin(
     // Screen capture provider for browser plugins
     override val screenCaptureProvider: ScreenCaptureProvider by lazy {
         createScreenCaptureProvider()
+    }
+
+    override val remoteViewProvider: RemoteViewProvider by lazy {
+        object : RemoteViewProvider {
+            override fun beginRemoteView(reason: String): AutoCloseable = RemoteViewState.begin()
+        }
     }
 
     // WebRTC peer provider for low-latency co-browse transport (null if unsupported)

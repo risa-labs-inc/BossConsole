@@ -43,6 +43,7 @@ import ai.rever.boss.plugin.api.PluginStoreApiKeyProvider
 import ai.rever.boss.plugin.api.ProjectSearchProvider
 import ai.rever.boss.plugin.api.RoleManagementProvider
 import ai.rever.boss.plugin.api.RunConfigurationDataProvider
+import ai.rever.boss.plugin.api.RemoteViewProvider
 import ai.rever.boss.plugin.api.ScreenCaptureProvider
 import ai.rever.boss.plugin.api.SearchProvider
 import ai.rever.boss.plugin.api.SecretDataProvider
@@ -375,6 +376,23 @@ class TrackingPluginContext(
     // Screen capture provider - delegate to underlying context
     override val screenCaptureProvider: ScreenCaptureProvider? get() = delegate.screenCaptureProvider
 
+    // Handles are closed on unload, so a plugin that dies mid-view cannot leave native menus off.
+    private val remoteViewHandles = java.util.concurrent.ConcurrentHashMap.newKeySet<AutoCloseable>()
+    override val remoteViewProvider: RemoteViewProvider? by lazy {
+        delegate.remoteViewProvider?.let { inner ->
+            object : RemoteViewProvider {
+                override fun beginRemoteView(reason: String): AutoCloseable {
+                    val handle = inner.beginRemoteView(reason)
+                    remoteViewHandles.add(handle)
+                    return AutoCloseable {
+                        remoteViewHandles.remove(handle)
+                        handle.close()
+                    }
+                }
+            }
+        }
+    }
+
     // WebRTC peer provider for co-browse - delegate to underlying context
     override val coBrowseRtcProvider: ai.rever.boss.plugin.api.CoBrowseRtcProvider? get() = delegate.coBrowseRtcProvider
 
@@ -586,6 +604,9 @@ class TrackingPluginContext(
         // guarantee as MCP tools: gone the moment the plugin is disabled. One
         // loop over the recorded undo callbacks; new kinds need no edit here.
         tracker.unregisterUiExtensions(pluginId)
+
+        remoteViewHandles.toList().forEach { runCatching { it.close() } }
+        remoteViewHandles.clear()
 
         // Clear tracking records
         tracker.clearPlugin(pluginId)
