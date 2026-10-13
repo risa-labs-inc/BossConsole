@@ -437,7 +437,7 @@ Deno.test("POST /api/push/notify prunes subscriptions the push service reports g
     assertEquals(res.status, 202)
     assertEquals(await res.json(), { sent: 1, pruned: 1 })
     const prune = stub.calls.find((c) => c.url.endsWith("/rpc/fluck_web_push_prune"))!
-    assertEquals(JSON.parse(prune.init!.body as string), { p_ticket: TICKET, p_ids: [SUB_ID] })
+    assertEquals(JSON.parse(prune.init!.body as string), { p_ticket: TICKET, p_ids: [SUB_ID], p_device_ids: [] })
     assertEquals(new Headers(prune.init?.headers).get("Authorization"), "Bearer anon-key")
   } finally {
     stub.restore()

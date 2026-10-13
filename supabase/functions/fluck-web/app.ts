@@ -18,7 +18,7 @@
  *   GET  /sw.js, /manifest.webmanifest, /icon-512.png   the push service worker and the installable app
  *   GET  /api/push/config   {vapid_public_key}, 503 until the VAPID secrets are set
  *   POST /api/push/subscribe, /api/push/unsubscribe     the owner's browser subscription, as the user
- *   POST /api/push/notify   {ticket, message_id} from the Fluck plugin: no cookie; the single-use ticket
+ *   POST /api/push/notify   {ticket, message_id, sealed?} from the Fluck plugin: no cookie; the single-use ticket
  *                           (fluck_web_push_ticket) is the credential, redeemed with the ANON key
  *   GET  /health
  *
@@ -31,7 +31,8 @@
 import { OpenAPIHono } from "@hono/zod-openapi"
 import { authPublicUrl, LIVE_WINDOW_SECONDS, publicBasePath, publicBaseUrl, publicOrigin, readConfig, viaAlias } from "./utils/config.ts"
 import { assetResponse, htmlResponse, jsonResponse, redirectResponse } from "./utils/responses.ts"
-import { isPushSubscription, readVapid, sendWebPush, sha256Hex, type PushSubscription } from "./utils/webpush.ts"
+import { buildApnsPayload, isApnsDevice, isDeadDevice, readApns, sendApns } from "./utils/apns.ts"
+import { b64uDecode, isPushSubscription, readVapid, sendEncryptedWebPush, sendWebPush, sha256Hex, type PushSubscription } from "./utils/webpush.ts"
 import { clientKey, rateLimit } from "./utils/rate-limit.ts"
 import {
   accessCookieName,
@@ -87,6 +88,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const VAPID_PUBLIC_RE = /^[A-Za-z0-9_-]{87}$/
 const PORTAL_ORIGINS = new Set(["https://fluck.risaboss.com", "https://fluck.ai"])
 const PUSH_TIMEOUT_MS = 8000
+const NOTIFY_MAX_BODY = 131072
 const UPSTREAM_TIMEOUT_MS = 5000
 /** fluck_web_mint_ticket lifetime: pending tickets (the too_many_tickets cap) drain within it. */
 const TICKET_TTL_SECONDS = 60
@@ -401,6 +403,33 @@ interface RedeemedPush {
   instance_id: string
   agent_name: string
   subscriptions: { id: string; subscription: PushSubscription; portal_origin: string }[]
+  devices?: unknown[]
+}
+
+const SEALED_MAX_ENTRIES = 20
+const SEALED_MAX_CHARS = 5500
+const SEALED_MAX_BYTES = 4096
+
+/**
+ * `sealed` maps a target id (from fluck_web_push_keys) to ciphertext the user's own Fluck produced.
+ * Returns the validated map, undefined when absent, or null when malformed. Opaque to this function.
+ */
+function parseSealed(value: unknown): Record<string, string> | undefined | null {
+  if (value === undefined) return undefined
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const entries = Object.entries(value)
+  if (entries.length > SEALED_MAX_ENTRIES) return null
+  const out: Record<string, string> = {}
+  for (const [id, blob] of entries) {
+    if (!UUID_RE.test(id) || typeof blob !== "string" || blob.length < 1 || blob.length > SEALED_MAX_CHARS || !/^[A-Za-z0-9_-]+$/.test(blob)) return null
+    try {
+      if (b64uDecode(blob).length > SEALED_MAX_BYTES) return null
+    } catch {
+      return null
+    }
+    out[id] = blob
+  }
+  return out
 }
 
 function isRedeemedPush(value: unknown): value is RedeemedPush {
@@ -413,17 +442,20 @@ function isRedeemedPush(value: unknown): value is RedeemedPush {
 /**
  * The Fluck plugin's "a message arrived" ping. No cookie: the plugin minted a single-use ticket as
  * its signed-in user (fluck_web_push_ticket) and the ticket is the whole credential, redeemed here
- * with the ANON key. The push carries the agent's name and a fixed line, never message content.
+ * with the ANON key. The generic push carries the agent's name and a fixed line. A `sealed` entry is
+ * ciphertext made on the user's own Fluck for one target: it is forwarded as-is and never decrypted.
  * An unknown, spent or expired ticket is one 410 that says nothing more (404 stays "route missing" for the plugin).
  */
 app.post("/api/push/notify", async (ctx) => {
   if (!isJson(ctx.req)) return jsonResponse({ error: "invalid_request" }, 415)
   const limit = rateLimit(`push-notify:${clientKey(ctx.req.raw.headers)}`, NOTIFY_LIMIT, NOTIFY_WINDOW_SECONDS)
   if (!limit.allowed) return tooMany(limit.retryAfterSeconds)
-  const body = await readJson(ctx.req.raw)
+  // Room for 20 sealed entries of 5500 characters.
+  const body = await readJson(ctx.req.raw, NOTIFY_MAX_BODY)
   const ticket = typeof body?.ticket === "string" ? body.ticket : ""
   const messageId = typeof body?.message_id === "string" ? body.message_id : ""
-  if (!TICKET_RE.test(ticket) || !MESSAGE_ID_RE.test(messageId)) return jsonResponse({ error: "invalid_request" }, 400)
+  const sealed = parseSealed(body?.sealed)
+  if (!TICKET_RE.test(ticket) || !MESSAGE_ID_RE.test(messageId) || sealed === null) return jsonResponse({ error: "invalid_request" }, 400)
   const cfg = readConfig()
   const vapid = readVapid()
   // Checked before redeeming so a missing secret never burns the ticket.
@@ -445,27 +477,51 @@ app.post("/api/push/notify", async (ctx) => {
   const targets = data.subscriptions.filter((s) =>
     s && typeof s.id === "string" && UUID_RE.test(s.id) && PORTAL_ORIGINS.has(s.portal_origin) && isPushSubscription(s.subscription)
   )
+  const apns = readApns()
+  const devices = apns && Array.isArray(data.devices) ? data.devices.filter(isApnsDevice).filter((d) => UUID_RE.test(d.id)) : []
   const tag = `fluck-${data.instance_id}`
-  const outcomes = await Promise.allSettled(targets.map(async (t) => {
-    const payload = new TextEncoder().encode(JSON.stringify({
-      title: data.agent_name,
-      body: "New message",
-      tag,
-      url: `${t.portal_origin}/?instance=${encodeURIComponent(data.instance_id)}`,
-    }))
-    return await sendWebPush(t.subscription, payload, vapid, { fetch: deps.fetch, ttlSeconds: 86400, urgency: "normal", timeoutMs: PUSH_TIMEOUT_MS })
-  }))
+  const sendOpts = { fetch: deps.fetch, ttlSeconds: 86400, urgency: "normal" as const, timeoutMs: PUSH_TIMEOUT_MS }
+  type Outcome = { dead: boolean; ok: boolean; note?: number }
+  const jobs: { kind: "web" | "apns"; id: string; run: () => Promise<Outcome> }[] = [
+    ...targets.map((t) => ({
+      kind: "web" as const,
+      id: t.id,
+      run: async (): Promise<Outcome> => {
+        const sealedBlob = sealed?.[t.id]
+        const status = sealedBlob
+          ? await sendEncryptedWebPush(t.subscription, b64uDecode(sealedBlob), vapid, sendOpts)
+          : await sendWebPush(t.subscription, new TextEncoder().encode(JSON.stringify({
+            title: data.agent_name,
+            body: "New message",
+            tag,
+            url: `${t.portal_origin}/?instance=${encodeURIComponent(data.instance_id)}`,
+          })), vapid, sendOpts)
+        return { ok: status >= 200 && status < 300, dead: status === 404 || status === 410, note: status }
+      },
+    })),
+    ...devices.map((d) => ({
+      kind: "apns" as const,
+      id: d.id,
+      run: async (): Promise<Outcome> => {
+        const r = await sendApns(d, buildApnsPayload(data.agent_name, data.instance_id, messageId, sealed?.[d.id]), apns!, { fetch: deps.fetch, timeoutMs: PUSH_TIMEOUT_MS })
+        return { ok: r.status === 200, dead: isDeadDevice(r), note: r.status }
+      },
+    })),
+  ]
+  const outcomes = await Promise.allSettled(jobs.map((j) => j.run()))
   let sent = 0
   const dead: string[] = []
+  const deadDevices: string[] = []
   outcomes.forEach((o, i) => {
-    if (o.status === "rejected") console.error("push send failed", o.reason instanceof Error ? o.reason.name : "error")
-    else if (o.value >= 200 && o.value < 300) sent++
-    else if (o.value === 404 || o.value === 410) dead.push(targets[i].id)
-    else console.warn("push service answered", o.value)
+    const job = jobs[i]
+    if (o.status === "rejected") console.error(`${job.kind} send failed`, o.reason instanceof Error ? o.reason.name : "error")
+    else if (o.value.ok) sent++
+    else if (o.value.dead) (job.kind === "web" ? dead : deadDevices).push(job.id)
+    else console.warn(`${job.kind} push service answered`, o.value.note)
   })
   let pruned = 0
-  if (dead.length > 0) {
-    const resp = await rpc(cfg, cfg.anonKey, "fluck_web_push_prune", { p_ticket: ticket, p_ids: dead })
+  if (dead.length > 0 || deadDevices.length > 0) {
+    const resp = await rpc(cfg, cfg.anonKey, "fluck_web_push_prune", { p_ticket: ticket, p_ids: dead, p_device_ids: deadDevices })
     if (resp.ok) {
       const removed = await resp.json().catch(() => null)
       pruned = typeof removed === "number" ? removed : 0
@@ -727,12 +783,12 @@ async function gotrueRefresh(cfg: Cfg, refreshToken: string): Promise<{ accessTo
   }
 }
 
-async function readJson(req: Request): Promise<Record<string, unknown> | null> {
+async function readJson(req: Request, maxBytes = 8192): Promise<Record<string, unknown> | null> {
   try {
     const declared = Number(req.headers.get("content-length") ?? "0")
-    if (declared > 8192) return null
+    if (declared > maxBytes) return null
     const text = await req.text()
-    if (text.length > 8192) return null
+    if (text.length > maxBytes) return null
     const parsed = JSON.parse(text)
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null
   } catch {
