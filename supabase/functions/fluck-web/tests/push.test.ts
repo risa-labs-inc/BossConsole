@@ -478,11 +478,11 @@ Deno.test("POST /api/push/notify with no subscriptions is a quiet 202", withEnv(
   }
 }))
 
-Deno.test("POST /api/push/notify answers an unknown, spent or expired ticket with one bare 404", withEnv(async () => {
+Deno.test("POST /api/push/notify answers an unknown, spent or expired ticket with one bare 410", withEnv(async () => {
   const stub = stubFetch(() => json({ code: "P0001", message: "ticket_invalid", details: null, hint: null }, 400))
   try {
     const res = await notify({ ticket: TICKET, message_id: "m1" })
-    assertEquals(res.status, 404)
+    assertEquals(res.status, 410)
     assertEquals(await res.json(), { error: "unknown_ticket" })
     assertEquals(stub.calls.length, 1)
   } finally {

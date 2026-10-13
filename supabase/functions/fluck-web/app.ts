@@ -414,7 +414,7 @@ function isRedeemedPush(value: unknown): value is RedeemedPush {
  * The Fluck plugin's "a message arrived" ping. No cookie: the plugin minted a single-use ticket as
  * its signed-in user (fluck_web_push_ticket) and the ticket is the whole credential, redeemed here
  * with the ANON key. The push carries the agent's name and a fixed line, never message content.
- * An unknown, spent or expired ticket is one 404 that says nothing more.
+ * An unknown, spent or expired ticket is one 410 that says nothing more (404 stays "route missing" for the plugin).
  */
 app.post("/api/push/notify", async (ctx) => {
   if (!isJson(ctx.req)) return jsonResponse({ error: "invalid_request" }, 415)
@@ -432,7 +432,7 @@ app.post("/api/push/notify", async (ctx) => {
   const redeemed = await rpc(cfg, cfg.anonKey, "fluck_web_push_redeem", { p_ticket: ticket })
   if (!redeemed.ok) {
     const err = await redeemed.json().catch(() => null) as Record<string, unknown> | null
-    if (err?.message === "ticket_invalid") return jsonResponse({ error: "unknown_ticket" }, 404)
+    if (err?.message === "ticket_invalid") return jsonResponse({ error: "unknown_ticket" }, 410)
     console.error("push redeem upstream", redeemed.status)
     return jsonResponse({ error: "upstream" }, 502)
   }
