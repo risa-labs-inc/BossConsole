@@ -45,3 +45,23 @@ Deno.test("alias authentication and cross-site checks remain enforced", async ()
     headers: { "sec-fetch-site": "cross-site" },
   }))).status, 403)
 })
+
+Deno.test("fluck.ai serves the push worker, manifest and icon at the root, and push stays on the portal origin", async () => {
+  const sw = await handleRequest(request("/sw.js"))
+  assertEquals(sw.status, 200)
+  assertEquals(sw.headers.get("cache-control"), "no-cache")
+  assertEquals(sw.headers.get("service-worker-allowed"), "/")
+  assertStringIncludes(sw.headers.get("content-type")!, "application/javascript")
+  const manifest = await (await handleRequest(request("/manifest.webmanifest"))).json()
+  assertEquals(manifest.start_url, "/")
+  assertEquals(manifest.icons[0].src, "/icon-512.png")
+  assertEquals((await handleRequest(request("/icon-512.png"))).headers.get("content-type"), "image/png")
+  const page = await handleRequest(request("/"))
+  assertStringIncludes(page.headers.get("content-security-policy")!, "worker-src 'self'")
+  assertStringIncludes(await page.text(), '<link rel="manifest" href="/manifest.webmanifest">')
+  // Unconfigured VAPID: 503, and a bad body is refused before anything else.
+  const bad = await handleRequest(request("/api/push/notify", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }))
+  assertEquals(bad.status, 400)
+  const config = await handleRequest(request("/api/push/config"))
+  assertEquals(config.status, 503)
+})

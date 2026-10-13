@@ -40,8 +40,12 @@ function contentSecurityPolicy(nonce: string): string {
     "default-src 'none'",
     `script-src 'nonce-${nonce}'`,
     `style-src 'nonce-${nonce}'`,
-    "img-src data:",
+    // 'self': the apple-touch-icon and the manifest's icon.
+    "img-src data: 'self'",
     "connect-src 'self'",
+    // The push service worker (<base>/sw.js) and the web app manifest.
+    "worker-src 'self'",
+    "manifest-src 'self'",
     // The Fluck is embedded in an iframe so the address bar stays here. Its host is the
     // user's own endpoint (a different, unpredictable https origin per Fluck), so this is the one
     // directive that cannot be pinned to a host; the frame src is always one of the user's own
@@ -109,4 +113,22 @@ export function jsonResponse(body: unknown, status = 200, setCookies: string[] =
   })
   for (const c of setCookies) headers.append("Set-Cookie", c)
   return new Response(JSON.stringify(body), { status, headers })
+}
+
+/**
+ * A static, user-independent asset (service worker, manifest, icon). Unlike every other response
+ * these may be cached by the browser, so there is no Vary: Cookie; `cacheControl` is per asset.
+ */
+export function assetResponse(body: BodyInit, contentType: string, cacheControl: string, extra: Record<string, string> = {}): Response {
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": contentType,
+      "Cache-Control": cacheControl,
+      "X-Content-Type-Options": "nosniff",
+      "Referrer-Policy": "no-referrer",
+      "Content-Security-Policy": "default-src 'none'",
+      ...extra,
+    },
+  })
 }
