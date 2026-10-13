@@ -117,6 +117,13 @@ UPDATE public.boss_ai_models SET provider_routing =
 WHERE id = 'optimist';
 ```
 
+**Prompt caching.** For an OpenRouter connection whose upstream is `anthropic/*` or `google/gemini*`
+(the upstreams that cache only where the request marks it), the function marks two `cache_control`
+breakpoints itself: the first system message, which caches the tools and system prompt, and the
+newest user message. Other upstreams get the request unchanged. Usage passes the upstream's
+`prompt_tokens_details` (`cached_tokens`, `cache_write_tokens`) and `completion_tokens_details`
+(`reasoning_tokens`) through; `total_tokens` and accounting are unchanged.
+
 The Responses adapter translates client function calls, results, structured output and SSE events
 to/from Chat Completions. It requests `store=false` and disables Responses truncation. No
 upstream-hosted tools, conversation IDs, client-selected providers, redirects, or arbitrary request
