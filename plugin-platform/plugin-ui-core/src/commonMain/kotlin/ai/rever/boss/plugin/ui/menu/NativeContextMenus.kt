@@ -97,12 +97,16 @@ sealed interface NativeMenuAnchor {
  *
  * A live remote view also turns them off: an NSMenu is an OS-owned window, so a viewer painting
  * BOSS's own windows never receives it, cannot click it, and it opens at the host's cursor.
+ *
+ * [remotelyViewed] defaults to the live [RemoteViewState] so a caller that omits it still fails
+ * closed. `@JvmOverloads` stays only to keep the published two-argument JVM signature
+ * `(Boolean, Boolean)` that already-built plugins link against.
  */
 @JvmOverloads
 fun shouldUseNativeMenus(
     settingEnabled: Boolean,
     isMacOs: Boolean,
-    remotelyViewed: Boolean = false,
+    remotelyViewed: Boolean = RemoteViewState.count.value > 0,
 ): Boolean = settingEnabled && isMacOs && !remotelyViewed
 
 /**

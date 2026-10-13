@@ -279,16 +279,48 @@ class NativeContextMenusTest {
     }
 
     @Test
+    fun `an omitted remotelyViewed argument reads the live state and fails closed`() {
+        val base = RemoteViewState.count.value
+        val view = RemoteViewState.begin()
+        try {
+            assertFalse(shouldUseNativeMenus(settingEnabled = true, isMacOs = true))
+        } finally {
+            view.close()
+        }
+        assertEquals(base, RemoteViewState.count.value)
+    }
+
+    @Test
     fun `remote view count is shared and each handle closes once`() {
         val base = RemoteViewState.count.value
         val first = RemoteViewState.begin()
         val second = RemoteViewState.begin()
-        assertEquals(base + 2, RemoteViewState.count.value)
+        try {
+            assertEquals(base + 2, RemoteViewState.count.value)
+            first.close()
+            first.close()
+            assertEquals(base + 1, RemoteViewState.count.value)
+            second.close()
+            assertEquals(base, RemoteViewState.count.value)
+        } finally {
+            first.close()
+            second.close()
+        }
+    }
+
+    @Test
+    fun `native menus are hidden on the first view only`() {
+        var hides = 0
+        val counter = RemoteViewCounter { hides++ }
+        val first = counter.begin()
+        assertEquals(1, hides)
+        val second = counter.begin()
+        assertEquals(1, hides)
         first.close()
-        first.close()
-        assertEquals(base + 1, RemoteViewState.count.value)
         second.close()
-        assertEquals(base, RemoteViewState.count.value)
+        assertEquals(0, counter.count.value)
+        counter.begin().close()
+        assertEquals(2, hides)
     }
 
     @Test
