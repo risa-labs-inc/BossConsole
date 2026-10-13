@@ -72,8 +72,8 @@ import ai.rever.boss.plugin.api.PluginStorageFactory
 import ai.rever.boss.plugin.api.PluginStoreApiKeyProvider
 import ai.rever.boss.plugin.api.ProjectData
 import ai.rever.boss.plugin.api.ProjectSearchProvider
-import ai.rever.boss.plugin.api.RoleManagementProvider
 import ai.rever.boss.plugin.api.RemoteViewProvider
+import ai.rever.boss.plugin.api.RoleManagementProvider
 import ai.rever.boss.plugin.api.ScreenCaptureProvider
 import ai.rever.boss.plugin.api.SearchProvider
 import ai.rever.boss.plugin.api.SemanticTokenProvider

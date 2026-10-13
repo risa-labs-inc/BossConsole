@@ -41,9 +41,9 @@ import ai.rever.boss.plugin.api.PluginStorageFactory
 import ai.rever.boss.plugin.api.PluginStorageProvider
 import ai.rever.boss.plugin.api.PluginStoreApiKeyProvider
 import ai.rever.boss.plugin.api.ProjectSearchProvider
+import ai.rever.boss.plugin.api.RemoteViewProvider
 import ai.rever.boss.plugin.api.RoleManagementProvider
 import ai.rever.boss.plugin.api.RunConfigurationDataProvider
-import ai.rever.boss.plugin.api.RemoteViewProvider
 import ai.rever.boss.plugin.api.ScreenCaptureProvider
 import ai.rever.boss.plugin.api.SearchProvider
 import ai.rever.boss.plugin.api.SecretDataProvider
@@ -377,7 +377,9 @@ class TrackingPluginContext(
     override val screenCaptureProvider: ScreenCaptureProvider? get() = delegate.screenCaptureProvider
 
     // Handles are closed on unload, so a plugin that dies mid-view cannot leave native menus off.
-    private val remoteViewHandles = java.util.concurrent.ConcurrentHashMap.newKeySet<AutoCloseable>()
+    private val remoteViewHandles =
+        java.util.concurrent.ConcurrentHashMap
+            .newKeySet<AutoCloseable>()
     override val remoteViewProvider: RemoteViewProvider? by lazy {
         delegate.remoteViewProvider?.let { inner ->
             object : RemoteViewProvider {
