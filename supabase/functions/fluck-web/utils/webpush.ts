@@ -178,6 +178,15 @@ export interface SendOptions {
 export async function sendWebPush(sub: PushSubscription, payload: Uint8Array, vapid: VapidConfig, opts: SendOptions): Promise<number> {
   if (!isPushSubscription(sub)) throw new Error("subscription refused")
   const body = await encryptPayload(payload, { uaPublic: b64uDecode(sub.keys.p256dh), authSecret: b64uDecode(sub.keys.auth) })
+  return await sendEncryptedWebPush(sub, body, vapid, opts)
+}
+
+/**
+ * POST `body`, an aes128gcm body somebody else already encrypted for `sub`, unchanged. This
+ * function never sees the plaintext, so it cannot validate the bytes beyond their size.
+ */
+export async function sendEncryptedWebPush(sub: PushSubscription, body: Uint8Array, vapid: VapidConfig, opts: SendOptions): Promise<number> {
+  if (!isPushSubscription(sub)) throw new Error("subscription refused")
   const jwt = await vapidJwt(sub.endpoint, vapid)
   const resp = await opts.fetch(sub.endpoint, {
     method: "POST",
