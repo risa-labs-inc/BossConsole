@@ -9,6 +9,7 @@ import ai.rever.boss.plugin.api.BrokeredCredentialProvider
 import ai.rever.boss.plugin.api.CacheProvider
 import ai.rever.boss.plugin.api.ClipboardProvider
 import ai.rever.boss.plugin.api.ContextMenuProvider
+import ai.rever.boss.plugin.api.DaemonServiceProvider
 import ai.rever.boss.plugin.api.DashboardContentProvider
 import ai.rever.boss.plugin.api.DiagnosticProvider
 import ai.rever.boss.plugin.api.DownloadCenterProvider
@@ -98,6 +99,9 @@ class SandboxedPluginContext(
      */
     override val manifest: PluginManifest?
         get() = delegate.manifest
+
+    override val daemonServiceProvider: DaemonServiceProvider?
+        get() = delegate.daemonServiceProvider
 
     // Service providers - delegate to underlying context
     override val performanceDataProvider: PerformanceDataProvider?
