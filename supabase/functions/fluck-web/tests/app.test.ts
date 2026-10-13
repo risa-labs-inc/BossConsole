@@ -478,6 +478,9 @@ Deno.test("GET /api/instances calls fluck_web_list_instances as the user, filter
     assertEquals(body.instances.length, 1)
     assertEquals(body.instances[0].instance_id, "inst-a")
     assertEquals(body.instances[0].endpoint_url, undefined, "the page never sees an endpoint")
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("https://a.trycloudflare.com")))
+    assertEquals(body.instances[0].endpoint_rev, [...digest].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16),
+      "only a short hash of the origin, which the page compares with the origin it framed")
     assert(/^[a-f0-9]{64}$/.test(body.csrf))
     const csrfCookie = res.headers.getSetCookie().find((c) => c.startsWith("__Host-boss_fluck_csrf="))!
     assertStringIncludes(csrfCookie, `=${body.csrf};`)

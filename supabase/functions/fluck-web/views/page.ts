@@ -222,6 +222,8 @@ const SCRIPT = `
   var frame = $("fluckframe"); // the live frame; a swap replaces it
   // Seamless reconnect: all of this is background work on a frame the user is not looking at.
   var SWAP_HELLO_MS = 10000, ONLINE_GRACE_MS = 8000, RECON_GIVE_UP_MS = 10 * 60 * 1000;
+  var WATCH_MS = 20000; // an open Fluck's registry row is checked this often for a new tunnel URL
+  var watchTimer = null, watchBusy = false;
   var RECON_FIRST_MS = 3000, RECON_MAX_MS = 15000, LOST_RETRY_MS = 4000, LOST_MAX = 3, LOST_WINDOW_MS = 2 * 60 * 1000;
   var offline = false; // the live frame said fluck-offline and has not said fluck-online since
   var recon = null; // registry polling while offline: { started, delay, timer, graceTimer, onlineAt, polling, busy }
@@ -462,7 +464,7 @@ const SCRIPT = `
     if (viewing) return;
     requestGeneration++;
     viewing = { url: url, label: label, instanceId: instanceId, agent: agent || "Fluck" };
-    stopPolling(); cancelOpenTimer();
+    stopPolling(); cancelOpenTimer(); startWatch();
     notice("");
     frame.setAttribute("src", url);
     document.body.classList.add("viewing");
@@ -505,7 +507,7 @@ const SCRIPT = `
   function closeFrame(reload) {
     if (!viewing) return;
     cancelHelloTimer();
-    stopRecon(); offline = false; cancelLost(); hideSheet(); pushBusy = false;
+    stopRecon(); stopWatch(); offline = false; cancelLost(); hideSheet(); pushBusy = false;
     requestGeneration++;
     viewing = null;
     frame.setAttribute("src", "about:blank");
@@ -680,6 +682,38 @@ const SCRIPT = `
     lostBusy = false;
     if (!ok && viewing) lostTimer = setTimeout(attemptLost, LOST_RETRY_MS);
   }
+  // Independent of the frame (an older Fluck never posts fluck-offline): when the open Fluck's row
+  // names a different endpoint than the one framed, its tunnel URL rotated, so swap in a fresh ticket.
+  function startWatch() { stopWatch(); watchTimer = setTimeout(watchTick, WATCH_MS); }
+  function stopWatch() { if (watchTimer) { clearTimeout(watchTimer); watchTimer = null; } }
+  async function originRev(url) {
+    var digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(new URL(url).origin));
+    return Array.prototype.map.call(new Uint8Array(digest), function (b) { return (b < 16 ? "0" : "") + b.toString(16); }).join("").slice(0, 16);
+  }
+  async function watchTick() {
+    watchTimer = null;
+    if (!viewing) return;
+    if (document.visibilityState === "visible" && !recon && !swap && !lostBusy && !watchBusy) {
+      watchBusy = true;
+      try {
+        var resp = await api("/api/instances");
+        if (resp.ok && viewing) {
+          var data = await resp.json();
+          csrf = data.csrf || csrf;
+          var id = viewing.instanceId;
+          var row = (data.instances || []).filter(function (i) { return i.instance_id === id; })[0];
+          if (row && row.online && typeof row.endpoint_rev === "string" && viewing && viewing.instanceId === id &&
+              row.endpoint_rev !== await originRev(viewing.url) && !swap && !recon) {
+            await loadSwap(function () { return !!viewing && viewing.instanceId === id; });
+          }
+        }
+      } catch (_) {}
+      watchBusy = false;
+    }
+    if (viewing && !watchTimer) startWatch();
+  }
+  function watchNow() { if (viewing && !watchBusy) { stopWatch(); watchTick(); } }
+
   // Back in the foreground or back on the network while the frame is offline: look right away.
   function recheckRecon() {
     if (!offline || !viewing) return;
@@ -865,6 +899,7 @@ const SCRIPT = `
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState !== "visible") return;
     recheckRecon();
+    watchNow();
     if (!$("list").classList.contains("hidden")) loadInstances(true).catch(function () {});
   });
   window.addEventListener("online", recheckRecon);

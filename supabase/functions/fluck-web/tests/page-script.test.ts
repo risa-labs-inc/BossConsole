@@ -195,7 +195,7 @@ function harness(search: string, initialState: unknown = null, options: HarnessO
   }
   const calls: string[] = []
   const requests: { url: string; init?: RequestInit }[] = []
-  const state = { online: true, openStatus: 200, instancesStatus: 200, subscribeStatus: 200 }
+  const state = { online: true, openStatus: 200, instancesStatus: 200, subscribeStatus: 200, endpointRev: undefined as string | undefined }
   let opens = 0
   const fetch = (url: string, init?: RequestInit) => {
     calls.push(url)
@@ -204,7 +204,7 @@ function harness(search: string, initialState: unknown = null, options: HarnessO
       if (state.instancesStatus !== 200) return Promise.resolve(new Response("{}", { status: state.instancesStatus }))
       return Promise.resolve(Response.json({
         csrf: "c".repeat(64), email: "owner@example.com",
-        instances: [{ instance_id: "i1", agent_name: "Fluck", label: "Mac", online: state.online, last_seen_at: "2026-10-13T10:00:00Z" }],
+        instances: [{ instance_id: "i1", agent_name: "Fluck", label: "Mac", online: state.online, last_seen_at: "2026-10-13T10:00:00Z", endpoint_rev: state.endpointRev }],
       }))
     }
     if (url === "/api/open") {
@@ -591,25 +591,46 @@ Deno.test("while the Fluck is not online yet the poll backs off from 3 s to 15 s
   assert(h.body.classList.contains("viewing"), "the frame is left as it was")
 })
 
-Deno.test("becoming visible or the network returning while offline polls at once; online frames do not", async () => {
+Deno.test("becoming visible or the network returning while offline polls at once; online frames only run the endpoint watch", async () => {
   const h = await helloed()
   h.state.online = false
   const base = instanceCalls(h)
-  h.dispatchDoc("visibilitychange")
   h.dispatchWin("online")
   await h.settle()
   assertEquals(instanceCalls(h), base, "not marked offline: nothing to re-check")
+  h.dispatchDoc("visibilitychange")
+  await h.settle()
+  assertEquals(instanceCalls(h), base + 1, "visible: the endpoint watch looks once")
   h.message({ type: "fluck-offline" })
   h.dispatchDoc("visibilitychange")
   await h.settle()
-  assertEquals(instanceCalls(h), base + 1, "visible again")
+  assertEquals(instanceCalls(h), base + 2, "visible again while offline: the recon poll, not the watch")
   h.dispatchWin("online")
   await h.settle()
-  assertEquals(instanceCalls(h), base + 2, "network back")
-  h.message({ type: "fluck-online" })
-  h.dispatchDoc("visibilitychange")
+  assertEquals(instanceCalls(h), base + 3, "network back")
+})
+
+Deno.test("an open Fluck whose registry row names a new endpoint is swapped to a fresh ticket without any frame message", async () => {
+  const h = await helloed()
+  assertEquals(h.pending(20000), 1, "the endpoint watch runs every 20 s")
+  h.fire(20000)
   await h.settle()
-  assertEquals(instanceCalls(h), base + 2, "back online: nothing further")
+  assertEquals(openCalls(h), 1, "no endpoint reported: nothing to do")
+  // The server's rev: 16 hex of sha256 of the origin (app.ts publicInstance).
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(new URL(OPEN_URL).origin)))
+  h.state.endpointRev = [...digest].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16)
+  h.fire(20000)
+  await h.settle()
+  assertEquals(openCalls(h), 1, "the same endpoint: nothing to do")
+  h.state.endpointRev = "0123456789abcdef"
+  h.fire(20000)
+  await h.settle()
+  assertEquals(openCalls(h), 2, "a new endpoint mints a fresh ticket")
+  const next = h.frames[0]
+  assertEquals(next.getAttribute("src"), NEW_URL)
+  assert(next.classList.contains("pending"), "hidden until it says hello")
+  assertEquals(h.get("fluckframe").getAttribute("src"), OPEN_URL, "the live frame is untouched until then")
+  assertEquals(h.assigned, [])
 })
 
 Deno.test("a re-check after giving up starts a new 10 minute window", async () => {

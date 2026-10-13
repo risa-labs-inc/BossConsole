@@ -247,7 +247,7 @@ app.get("/api/instances", async (ctx) => {
     return jsonResponse({ error: "upstream" }, 502, result.setCookies)
   }
   const rows = await resp.json().catch(() => null)
-  const instances = Array.isArray(rows) ? rows.filter(isInstanceRow).map(publicInstance) : []
+  const instances = Array.isArray(rows) ? await Promise.all(rows.filter(isInstanceRow).map(publicInstance)) : []
 
   const existing = cookieToken(ctx.req.header("cookie") ?? null, csrfCookieName(secure))
   const csrf = existing && CSRF_RE.test(existing) ? existing : newCsrfToken()
@@ -581,10 +581,15 @@ export function isInstanceRow(row: unknown): row is InstanceRow {
     typeof r.last_seen_at === "string" && typeof r.online === "boolean"
 }
 
-/** What the page sees. The endpoint is withheld: the page only ever navigates to a minted URL. */
-function publicInstance(r: InstanceRow) {
+/**
+ * What the page sees. The endpoint is withheld: the page only ever navigates to a minted URL.
+ * `endpoint_rev` (16 hex of sha256 of the origin) lets an open page see that its Fluck moved to a new
+ * tunnel URL, by hashing the origin it framed, without learning the new one.
+ */
+async function publicInstance(r: InstanceRow) {
   return {
     instance_id: r.instance_id,
+    endpoint_rev: (await sha256Hex(httpsOrigin(r.endpoint_url) as string)).slice(0, 16),
     label: r.label,
     agent_name: r.agent_name,
     app_version: typeof r.app_version === "string" ? r.app_version : null,
