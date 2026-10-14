@@ -42,13 +42,18 @@ object PluginArtifactCleanup {
         pluginId: String,
         jarPath: String,
         hooks: Hooks = Hooks(),
+        additionalJarPaths: List<String> = emptyList(),
     ) {
         // A blank path is not a path: deleting on it would be a no-op at best, and the row still has
         // to go or the plugin comes back at the next launch.
-        val jarDeleted = if (jarPath.isBlank()) false else hooks.deleteJar(jarPath)
-        if (jarPath.isNotBlank()) {
-            hooks.deleteSidecar(jarPath)
-        }
+        val jarPaths = (listOf(jarPath) + additionalJarPaths).filter { it.isNotBlank() }.distinct()
+        val deletionResults =
+            jarPaths.map { path ->
+                val deleted = hooks.deleteJar(path)
+                hooks.deleteSidecar(path)
+                deleted
+            }
+        val jarDeleted = deletionResults.isNotEmpty() && deletionResults.all { it }
         runCatching { hooks.forgetRow(pluginId) }
             .onFailure { error ->
                 logger.warn(
@@ -60,7 +65,7 @@ object PluginArtifactCleanup {
         logger.info(
             LogCategory.SYSTEM,
             "Removed plugin artifacts",
-            mapOf("pluginId" to pluginId, "jarPath" to jarPath, "jarDeleted" to jarDeleted),
+            mapOf("pluginId" to pluginId, "jarPaths" to jarPaths.joinToString(", "), "jarDeleted" to jarDeleted),
         )
     }
 }

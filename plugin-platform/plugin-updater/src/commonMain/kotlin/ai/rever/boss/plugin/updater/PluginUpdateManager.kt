@@ -75,6 +75,9 @@ interface UpdateListener {
  * - Rollback on failure
  * - Periodic background checks
  */
+// Distinct host-awareness gates (IPC/boss/api compatibility floors, downloaded-jar identity
+// vet), each with its own lifecycle and wiring point; no natural grouping.
+@Suppress("LongParameterList")
 class PluginUpdateManager(
     private val repositoryManager: PluginRepositoryManager,
     private val config: UpdateCheckerConfig = UpdateCheckerConfig(),
@@ -114,6 +117,30 @@ class PluginUpdateManager(
      * keeps the fail-open answer it has always had.
      */
     private val hostApiVersion: () -> String? = { "" },
+    /**
+     * Host-supplied identity vet for a downloaded update jar (BossConsole#927).
+     *
+     * Called between the download and the swap, with the id of the plugin being updated
+     * and the path of the jar the store served for it. Nothing binds a store row to the
+     * plugin id its jar declares - the store signature anchor covers the row's bytes, not
+     * the manifest inside them - and the swap force-unloads the running plugin BEFORE the
+     * new jar's manifest is ever read. A jar declaring a different id would then register
+     * whatever its own manifest says: a normal id leaves the updated plugin uninstalled
+     * for the session (ALREADY_LOADED makes the rollback a no-op), and an api-id jar
+     * reaches DynamicPluginManager.hotSwapApiLayer - a process-wide unload/swap/reload.
+     *
+     * A failed result rejects the jar while the original plugin is still installed: fail
+     * closed, no partial uninstall.
+     *
+     * REQUIRED, with no default - deliberately unlike [isIpcCompatible], [hostBossVersion]
+     * and [hostApiVersion], whose defaults keep a manager constructed without host
+     * awareness failing open the way it always has. A silently absent identity vet is a
+     * different class of hazard: an absent floor gate still leaves the loader's own
+     * version checks as a backstop, while an absent identity gate leaves the swap
+     * unvetted entirely. A construction site that forgets the vet must break the build,
+     * not ship without the gate.
+     */
+    private val verifyDownloadedJar: (pluginId: String, downloadedJarPath: String) -> Result<Unit>,
 ) {
     private val logger = BossLogger.forComponent("PluginUpdateManager")
 
@@ -398,6 +425,15 @@ class PluginUpdateManager(
             _availableUpdates.value.find { it.pluginId == pluginId }
                 ?: return Result.failure(Exception("No update available for plugin: $pluginId"))
 
+        return downloadSnapshot(update, targetPath, onProgress)
+    }
+
+    private suspend fun downloadSnapshot(
+        update: UpdateInfo,
+        targetPath: String,
+        onProgress: ((Float) -> Unit)?,
+    ): Result<String> {
+        val pluginId = update.pluginId
         _state.value = UpdateState.Downloading(pluginId, 0f)
         listeners.forEach { it.onUpdateDownloading(pluginId, 0f) }
 
@@ -466,6 +502,19 @@ class PluginUpdateManager(
             _availableUpdates.value.find { it.pluginId == pluginId }
                 ?: return Result.failure(Exception("No update available for plugin: $pluginId"))
 
+        return updatePluginSnapshot(update, downloadPath, unloadPlugin, loadPlugin, onProgress, onInstalling)
+    }
+
+    /** Download and activate the same compatible candidate even if another check replaces the shared list. */
+    suspend fun updatePluginSnapshot(
+        update: UpdateInfo,
+        downloadPath: String,
+        unloadPlugin: suspend (String) -> Result<Unit>,
+        loadPlugin: suspend (String) -> Result<Unit>,
+        onProgress: ((Float) -> Unit)? = null,
+        onInstalling: (() -> Unit)? = null,
+    ): Result<Unit> {
+        val pluginId = update.pluginId
         logger.info(
             LogCategory.SYSTEM,
             "Starting plugin update",
@@ -477,12 +526,34 @@ class PluginUpdateManager(
         )
 
         // Download new version
-        val downloadResult = downloadUpdate(pluginId, downloadPath, onProgress)
-        if (downloadResult.isFailure) {
-            return Result.failure(downloadResult.exceptionOrNull() ?: Exception("Download failed"))
-        }
+        val downloadResult = downloadSnapshot(update, downloadPath, onProgress)
+        return downloadResult.fold(
+            onSuccess = { path -> activateDownloadedSnapshot(update, path, unloadPlugin, loadPlugin, onInstalling) },
+            onFailure = { Result.failure(it) },
+        )
+    }
 
-        val downloadedPath = downloadResult.getOrThrow()
+    private suspend fun activateDownloadedSnapshot(
+        update: UpdateInfo,
+        downloadedPath: String,
+        unloadPlugin: suspend (String) -> Result<Unit>,
+        loadPlugin: suspend (String) -> Result<Unit>,
+        onInstalling: (() -> Unit)?,
+    ): Result<Unit> {
+        val pluginId = update.pluginId
+
+        // Download-verify boundary (BossConsole#927): vet the jar's declared identity
+        // BEFORE the swap unloads anything, so a mismatched jar is refused while the
+        // running plugin is still installed. This is also the last point at which
+        // nothing destructive has begun - the Installing state below is where callers
+        // withdraw their Cancel.
+        val vetted = verifyDownloadedJar(pluginId, downloadedPath)
+        if (vetted.isFailure) {
+            val error = vetted.exceptionOrNull()?.message ?: "Downloaded update rejected"
+            _state.value = UpdateState.Failed(pluginId, error, vetted.exceptionOrNull())
+            listeners.forEach { it.onUpdateFailed(pluginId, error) }
+            return Result.failure(vetted.exceptionOrNull() ?: Exception(error))
+        }
 
         // Install
         _state.value = UpdateState.Installing(pluginId)
@@ -543,10 +614,18 @@ class PluginUpdateManager(
 
         // Success
         _state.value = UpdateState.Completed(pluginId, update.newVersion)
-        listeners.forEach { it.onUpdateCompleted(pluginId, update.newVersion) }
+        listeners.forEach { listener ->
+            runCatching { listener.onUpdateCompleted(pluginId, update.newVersion) }
+                .onFailure { error ->
+                    logger.warn(LogCategory.SYSTEM, "Plugin update completion listener failed", error = error)
+                }
+        }
 
         // Remove from available updates
-        _availableUpdates.value = _availableUpdates.value.filter { it.pluginId != pluginId }
+        _availableUpdates.value =
+            _availableUpdates.value.filter {
+                it.pluginId != pluginId || isNewerVersion(it.newVersion, update.newVersion)
+            }
 
         logger.info(
             LogCategory.SYSTEM,

@@ -96,7 +96,7 @@ class RoleManagementServiceBridgeTest {
                 assertFailsWith<StatusException> {
                     anonymousCaller().getAllRoles(Empty.getDefaultInstance())
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertEquals(0, provider.getAllRolesCalls.get())
         }
 
@@ -105,7 +105,7 @@ class RoleManagementServiceBridgeTest {
         runBlocking {
             val failure =
                 assertFailsWith<StatusException> { anonymousCaller().getAllPermissions(Empty.getDefaultInstance()) }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertEquals(0, provider.getAllPermissionsCalls.get())
         }
 
@@ -124,7 +124,7 @@ class RoleManagementServiceBridgeTest {
                 assertFailsWith<StatusException> {
                     anonymousCaller().createRole(CreateRoleRequest.newBuilder().setName("rogue-admin").build())
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertEquals(0, provider.createRoleCalls.get())
         }
 
@@ -137,7 +137,7 @@ class RoleManagementServiceBridgeTest {
                         CreatePermissionRequest.newBuilder().setName("secrets.read").build(),
                     )
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertEquals(0, provider.createPermissionCalls.get())
         }
 
@@ -154,8 +154,8 @@ class RoleManagementServiceBridgeTest {
                         PermissionNameRequest.newBuilder().setName("secrets.read").build(),
                     )
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, roleFailure.status.code)
-            assertEquals(Status.Code.PERMISSION_DENIED, permissionFailure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, roleFailure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, permissionFailure.status.code)
             assertEquals(0, provider.deleteRoleCalls.get())
             assertEquals(0, provider.deletePermissionCalls.get())
         }
@@ -173,7 +173,7 @@ class RoleManagementServiceBridgeTest {
                             .build(),
                     )
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertEquals(0, provider.assignPermissionToRoleCalls.get())
         }
 
@@ -190,7 +190,7 @@ class RoleManagementServiceBridgeTest {
                             .build(),
                     )
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertEquals(0, provider.removePermissionFromRoleCalls.get())
         }
 
@@ -211,9 +211,9 @@ class RoleManagementServiceBridgeTest {
                         PermissionNameRequest.newBuilder().setName("secrets.read").build(),
                     )
                 }
-            assertEquals(Status.Code.PERMISSION_DENIED, rolePermissionsFailure.status.code)
-            assertEquals(Status.Code.PERMISSION_DENIED, validateRoleFailure.status.code)
-            assertEquals(Status.Code.PERMISSION_DENIED, validatePermissionFailure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, rolePermissionsFailure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, validateRoleFailure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, validatePermissionFailure.status.code)
             assertEquals(0, provider.getRolePermissionsCalls.get())
             assertEquals(0, provider.validateRoleNameCalls.get())
             assertEquals(0, provider.validatePermissionNameCalls.get())
@@ -250,7 +250,7 @@ class RoleManagementServiceBridgeTest {
 
             val failure =
                 assertFailsWith<StatusException> { revocable.getAllRoles(Empty.getDefaultInstance()) }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertEquals(1, provider.getAllRolesCalls.get(), "the revoked call must not have reached the provider")
         }
 

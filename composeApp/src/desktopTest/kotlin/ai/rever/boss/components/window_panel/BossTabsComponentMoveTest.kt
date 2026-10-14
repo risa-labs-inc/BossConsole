@@ -119,6 +119,170 @@ class BossTabsComponentMoveTest {
     }
 
     @Test
+    fun `removeTab advances through failing pause and stop then removes navigation`() {
+        val panel = newPanel()
+        panel.addTab(TestTabInfo(id = "failing-tab"))
+        val component = panel.getComponentById("failing-tab") as TestTabComponent
+        component.lifecycle.subscribe(
+            object : Lifecycle.Callbacks {
+                override fun onPause(): Unit = throw NoClassDefFoundError("pause failed")
+
+                override fun onStop(): Unit = throw NoClassDefFoundError("stop failed")
+            },
+        )
+
+        assertTrue(panel.removeTabById("failing-tab", recordForReopen = false))
+        assertFalse(panel.removeTabById("failing-tab", recordForReopen = false))
+        assertEquals(Lifecycle.State.DESTROYED, component.lifecycle.state)
+        assertEquals(1, component.destroyCount)
+        assertTrue(
+            panel.tabsState.value.tabs
+                .isEmpty(),
+        )
+    }
+
+    @Test
+    fun `clearAllTabs continues to siblings after a destroy callback throws`() {
+        val panel = newPanel()
+        panel.addTab(TestTabInfo(id = "sibling-tab"))
+        panel.addTab(TestTabInfo(id = "failing-tab"))
+        val failing = panel.getComponentById("failing-tab") as TestTabComponent
+        val sibling = panel.getComponentById("sibling-tab") as TestTabComponent
+        var failingDestroyCalls = 0
+        failing.lifecycle.subscribe(
+            object : Lifecycle.Callbacks {
+                override fun onDestroy() {
+                    failingDestroyCalls++
+                    throw NoClassDefFoundError("destroy failed")
+                }
+            },
+        )
+
+        panel.clearAllTabs()
+        panel.clearAllTabs()
+        assertEquals(1, failingDestroyCalls)
+        assertEquals(Lifecycle.State.DESTROYED, failing.lifecycle.state)
+        assertEquals(1, sibling.destroyCount)
+        assertTrue(
+            panel.tabsState.value.tabs
+                .isEmpty(),
+        )
+        assertNull(panel.getComponentById("failing-tab"))
+        assertNull(panel.getComponentById("sibling-tab"))
+    }
+
+    @Test
+    fun `a failed close event subscriber does not strand a live tab`() {
+        val panel = newPanel()
+        panel.addTab(TestTabInfo(id = "event-failure"))
+        val component = panel.getComponentById("event-failure") as TestTabComponent
+        val previousPublisher = ApplicationEventBusRegistry.systemPublisher
+        ApplicationEventBusRegistry.systemPublisher = { throw NoClassDefFoundError("event subscriber failed") }
+        try {
+            assertTrue(panel.removeTabById("event-failure", recordForReopen = false))
+        } finally {
+            ApplicationEventBusRegistry.systemPublisher = previousPublisher
+        }
+        assertEquals(1, component.destroyCount)
+        assertTrue(
+            panel.tabsState.value.tabs
+                .isEmpty(),
+        )
+    }
+
+    @Test
+    fun `destroying an unadopted detached tab isolates lifecycle failures and runs once`() {
+        val panel = newPanel()
+        panel.addTab(TestTabInfo(id = "detached-failure"))
+        val component = panel.getComponentById("detached-failure") as TestTabComponent
+        var failingDestroyCalls = 0
+        component.lifecycle.subscribe(
+            object : Lifecycle.Callbacks {
+                override fun onPause(): Unit = throw NoClassDefFoundError("pause failed")
+
+                override fun onDestroy() {
+                    failingDestroyCalls++
+                    throw NoClassDefFoundError("destroy failed")
+                }
+            },
+        )
+        val detached = assertNotNull(panel.detachTab("detached-failure"))
+        detached.destroy()
+        detached.destroy()
+        assertEquals(Lifecycle.State.DESTROYED, component.lifecycle.state)
+        assertEquals(1, failingDestroyCalls)
+        assertTrue(
+            panel.tabsState.value.tabs
+                .isEmpty(),
+        )
+    }
+
+    @Test
+    fun `close event reentry cannot close the same tab or publish twice`() {
+        val panel = newPanel()
+        panel.addTab(TestTabInfo(id = "reentrant-close"))
+        val component = panel.getComponentById("reentrant-close") as TestTabComponent
+        val previousPublisher = ApplicationEventBusRegistry.systemPublisher
+        var closedEvents = 0
+        ApplicationEventBusRegistry.systemPublisher = { event ->
+            if (event is TabEvent && event.tabType == TabEventType.CLOSED) {
+                closedEvents++
+                assertFalse(panel.removeTabById(event.tabId, recordForReopen = false))
+            }
+        }
+        try {
+            assertTrue(panel.removeTabById("reentrant-close", recordForReopen = false))
+        } finally {
+            ApplicationEventBusRegistry.systemPublisher = previousPublisher
+        }
+        assertEquals(1, closedEvents)
+        assertEquals(1, component.destroyCount)
+        assertTrue(
+            panel.tabsState.value.tabs
+                .isEmpty(),
+        )
+    }
+
+    @Test
+    fun `destroy callback closing a preceding sibling preserves remaining tab and pins`() {
+        val panel = newPanel()
+        panel.addTab(TestTabInfo(id = "preceding"))
+        panel.addTab(TestTabInfo(id = "closing"))
+        panel.addTab(TestTabInfo(id = "survivor"))
+        panel.pinTab(0)
+        panel.pinTab(1)
+        val preceding = panel.getComponentById("preceding") as TestTabComponent
+        val closing = panel.getComponentById("closing") as TestTabComponent
+        val survivor = panel.getComponentById("survivor") as TestTabComponent
+        closing.lifecycle.subscribe(
+            object : Lifecycle.Callbacks {
+                override fun onDestroy() {
+                    panel.removeTabById("preceding", recordForReopen = false)
+                }
+            },
+        )
+
+        assertTrue(panel.removeTabById("closing", recordForReopen = false))
+        assertEquals(
+            listOf("survivor"),
+            panel.tabsState.value.tabs
+                .map { it.id },
+        )
+        assertEquals(0, panel.pinnedCount)
+        assertEquals(
+            "survivor",
+            panel.tabsState.value.activeTab
+                ?.id,
+        )
+        assertEquals(1, preceding.destroyCount)
+        assertEquals(1, closing.destroyCount)
+        assertEquals(0, survivor.destroyCount)
+        assertSame(survivor, panel.getComponentById("survivor"))
+        panel.clearAllTabs()
+        assertEquals(1, survivor.destroyCount)
+    }
+
+    @Test
     fun `addTab drives the tab lifecycle to RESUMED`() {
         // Load-bearing: Essenty's destroy() below CREATED is a silent no-op, so if addTab
         // ever stops resume()-ing the registry, onDestroy cleanup silently stops firing.

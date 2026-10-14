@@ -1,14 +1,17 @@
 package ai.rever.boss.components.sidebar
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
 /**
@@ -47,7 +50,7 @@ actual object SidebarVisibilitySettingsManager {
                         SidebarVisibilitySettings.serializer(),
                         _currentSettings.value,
                     )
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
             } catch (e: Exception) {
                 // Log the in-memory state's distinguishing fields so the
                 // user's report of "my preferences didn't stick" is
@@ -84,10 +87,17 @@ actual object SidebarVisibilitySettingsManager {
             } else {
                 _currentSettings.value = SidebarVisibilitySettings()
             }
+        } catch (e: SerializationException) {
+            logger.warn(LogCategory.SYSTEM, "Failed to load sidebar visibility, using defaults", decodeFailure(e))
+            _currentSettings.value = SidebarVisibilitySettings()
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load sidebar visibility, using defaults", error = e)
             _currentSettings.value = SidebarVisibilitySettings()
         }
+    }
+
+    internal fun reloadForTest() {
+        loadSettingsSync()
     }
 
     actual suspend fun setHidden(

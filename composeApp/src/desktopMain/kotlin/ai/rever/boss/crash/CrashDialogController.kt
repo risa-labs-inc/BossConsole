@@ -1,5 +1,6 @@
 package ai.rever.boss.crash
 
+import ai.rever.boss.utils.CleanupRunner
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import java.awt.event.WindowAdapter
@@ -32,9 +33,9 @@ sealed interface CrashOutcome {
  *
  * @param disposition decided once, at the point the dialog is built, so every
  *   exit agrees on whether this crash is survivable.
- * @param disposeWindow tears the crash window down. Always runs before the
- *   outcome is resolved: terminating leaves no chance to, and recovering must not
- *   leave a dead dialog floating over a working app.
+ * @param disposeWindow attempts to tear the crash window down before resolving
+ *   the outcome. A disposal failure is logged and cannot block recovery or
+ *   termination after the once-only exit has been claimed.
  * @param resolve injected for tests, which need to observe termination without
  *   ending the test JVM.
  */
@@ -45,6 +46,7 @@ internal class CrashDialogController(
     private val resolve: (CrashDisposition, Throwable) -> CrashOutcome = CrashHandler::resolveCrash,
 ) {
     private val logger = BossLogger.forComponent("CrashHandler")
+    private val cleanup = CleanupRunner("CrashDialog")
 
     /**
      * True while a report is being submitted.
@@ -132,7 +134,7 @@ internal class CrashDialogController(
             return
         }
         logger.info(LogCategory.SYSTEM, "User requested clean data and restart")
-        disposeWindow()
+        cleanup.run("dispose crash window", disposeWindow)
         action()
     }
 
@@ -141,9 +143,9 @@ internal class CrashDialogController(
             logger.debug(LogCategory.SYSTEM, "Ignoring a second exit from a crash dialog already closed")
             return lastOutcome
         }
-        disposeWindow()
+        cleanup.run("dispose crash window", disposeWindow)
         // Released AFTER resolve, not before. The slot is about the window, which is
-        // gone by now, but releasing first left a gap: resolve is what eventually
+        // normally gone by now, but releasing first left a gap: resolve is what eventually
         // marks the recovery quarantine, so between the release and the mark a
         // second crash from the same plugin passed both gates and opened a second
         // dialog for a plugin already being recovered. Marking earlier inside

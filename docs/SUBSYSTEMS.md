@@ -64,8 +64,9 @@ one flow here that requires an existing session:
 
 **Bootstrap - the first passkey.** There is no chicken-and-egg problem: passkey
 enrolment is reached from Settings → Security in an already-authenticated app.
-A new user signs in by email magic link / OTP (`EmailAuthService`), which
-establishes a normal Supabase session, and enrols their first passkey from it.
+A new user signs in by email magic link / OTP (`EmailAuthService`) or with Google or
+Apple (`OAuthSignInService`, see [OAUTH_SIGN_IN_SETUP.md](OAUTH_SIGN_IN_SETUP.md)),
+which establishes a normal Supabase session, and enrols their first passkey from it.
 Passkey *authentication* (`/auth/*`) stays unauthenticated by design - it is how a
 session is obtained in the first place.
 

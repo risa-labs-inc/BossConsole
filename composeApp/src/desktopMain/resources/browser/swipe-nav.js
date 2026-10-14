@@ -2,7 +2,8 @@
 //
 // Why in the page at all: on macOS the app runs Chromium in HARDWARE_ACCELERATED mode,
 // where the browser is a native surface layered over the window rather than a component
-// in the Compose scene. Neither Compose nor AWT sees the wheel there, and Chromium's own
+// in the Compose scene. Compose does not see the wheel there, and AWT discards macOS scroll
+// phases before forwarding it; Chromium's own
 // overscroll history navigation does nothing for a trackpad in EITHER rendering mode - measured,
 // see the note at its call site in BrowserServiceImpl; it is a touchscreen feature.
 // The renderer, however, always sees the wheel - that is how pages scroll - so the page is
@@ -26,9 +27,6 @@
 
     // Horizontal travel that commits the navigation, in CSS pixels.
     var COMMIT_PX = 90;
-    // No wheel event for this long ends the gesture. AWT does not surface NSEvent's scroll
-    // phases, so a time gap is the only segmentation signal available.
-    var GESTURE_GAP_MS = 120;
     // A trackpad emits a stream of small fractional deltas; a mouse wheel emits a few big
     // discrete ones. At the AWT layer a shift-modified mouse wheel is byte-identical to a
     // horizontal trackpad swipe, so these two bounds are the only thing separating them.
@@ -63,11 +61,23 @@
     var accumX = 0;
     var verticalPath = 0;
     var eventCount = 0;
-    var lastEventAt = 0;
+    // The host's CoreGraphics observer assigns one id while fingers remain on the trackpad.
+    // It becomes inactive before momentum begins, so momentum wheel events cannot join this.
+    var nativeGestureId = null;
+    var endedGestureId = null;
     // Set once the gesture has been ruled out; stays set until the gesture ends, so a
     // rejected swipe cannot become an accepted one halfway through.
     var rejected = false;
     var direction = 0;
+    // The scroll chain under the first event owns the whole gesture. Keeping the initial path
+    // matters when a vertical first delta turns horizontal after the pointer has moved.
+    var scrollPath = null;
+    // Retain only the latest event to observe cancellation by later window listeners.
+    var lastWheelEvent = null;
+    var sheetBoundary = null;
+    var sheetEdgeNavigation = false;
+    var capturedWheel = null;
+    var capturedSheetBoundary = null;
     // Latched the first time this gesture is past COMMIT_PX with enough events to be real.
     //
     // From that point the vertical tiers stop being asked. Vertical is a PATH LENGTH, so it only
@@ -78,14 +88,6 @@
     // easing back below COMMIT_PX, or reversing outright. That is also what a native swipe-back
     // does - once you are past the threshold, wobble no longer counts against you.
     var reachedCommit = false;
-    // Ends the gesture when the fingers lift.
-    //
-    // The gap check at the top of onWheel cannot do this on its own: it only runs when a NEXT
-    // event arrives, so a swipe abandoned halfway leaves the affordance parked in the page until
-    // the user happens to scroll again, which may be never. A timer is the only thing that
-    // observes a finger lifting, since AWT does not surface NSEvent's scroll phases.
-    var endTimer = 0;
-
     function state() {
         return w.__bossSwipeNavState || null;
     }
@@ -105,26 +107,28 @@
         return !!s && s.enabled === false;
     }
 
-    // Whether anything in the pointer's scroll chain can still move horizontally the way
-    // this gesture is pushing it. That is the carousel/map/spreadsheet guard, and it is the
-    // same question Chromium asks before treating an overscroll as a navigation.
+    // Whether the pointer's scroll chain owns horizontal gestures. A nested carousel, map, or
+    // spreadsheet keeps the whole gesture even at its current edge: the compositor may have
+    // reached that edge before this passive listener observes scrollLeft, and turning that last
+    // event into navigation is a surprising result. Only the document viewport yields at an edge.
     //
     // Asked once, at the start of a gesture, and then latched. Re-asking per event would
     // start navigating the moment a horizontally scrolled element reached its end, in the
     // middle of a swipe the user aimed at that element.
-    function chainCanScroll(event, dir) {
+    function eventPath(event) {
         var path;
         try {
             path = typeof event.composedPath === 'function' ? event.composedPath() : null;
         } catch (e) {
             path = null;
         }
-        if (!path) {
+        if (!path || typeof path.length !== 'number' || path.length === 0) {
             path = [];
             var node = event.target;
             while (node) {
                 path.push(node);
-                node = node.parentNode;
+                // parentNode reaches a ShadowRoot; host gets from that root back into the page.
+                node = node.parentNode || node.host || null;
             }
         }
         var doc = w.document;
@@ -132,20 +136,70 @@
         if (scroller && path.indexOf(scroller) === -1) {
             path = path.concat([scroller]);
         }
+        return path;
+    }
+
+    // Sheets renders cells on a canvas, with a sibling native scrollbar. Read only geometry,
+    // never cells. Its document overscroll policy and cancelled wheels also cover the canvas
+    // at its boundary, so this explicit adapter allows a NEW outward gesture there.
+    function isSheetsDocument() {
+        return w.location && w.location.hostname === 'docs.google.com' &&
+            w.location.pathname.indexOf('/spreadsheets/') === 0;
+    }
+
+    function sheetsBoundary(path) {
+        if (!isSheetsDocument()) return null;
+        for (var i = 0; i < path.length; i++) {
+            var el = path[i];
+            if (!el || typeof el.closest !== 'function') continue;
+            var grid = el.closest('.grid-container');
+            if (!grid) continue;
+            var bar = grid.querySelector('.native-scrollbar-x');
+            if (!bar || bar.clientWidth <= 0 || bar.scrollWidth < bar.clientWidth) return null;
+            var style = w.getComputedStyle(bar);
+            return { left: bar.scrollLeft, range: bar.scrollWidth - bar.clientWidth,
+                rtl: style.direction === 'rtl' };
+        }
+        return null;
+    }
+
+    function sheetCanScroll(boundary, dir) {
+        return boundary.rtl
+            ? (dir < 0 ? boundary.left > -boundary.range + 1 : boundary.left < -1)
+            : (dir < 0 ? boundary.left > 1 : boundary.left < boundary.range - 1);
+    }
+
+    function chainCanScroll(path, dir) {
+        var doc = w.document;
+        var scroller = doc.scrollingElement || doc.documentElement;
         for (var i = 0; i < path.length; i++) {
             var el = path[i];
             if (!el || el.nodeType !== 1) {
                 continue;
             }
-            var range = el.scrollWidth - el.clientWidth;
-            if (range <= 1) {
-                continue;
+            // Virtual grids and canvases often scroll a model or a sibling scrollbar instead
+            // of this element. Their wheel gesture belongs to the page even at an edge.
+            var role = typeof el.getAttribute === 'function' ? el.getAttribute('role') : null;
+            if (el.tagName === 'CANVAS' || role === 'grid' || role === 'treegrid') {
+                return true;
             }
+            var range = el.scrollWidth - el.clientWidth;
             var overflowX = '';
+            var cssDirection = 'ltr';
+            var overscrollX = 'auto';
             try {
-                overflowX = w.getComputedStyle(el).overflowX;
+                var style = w.getComputedStyle(el);
+                overflowX = style.overflowX;
+                cssDirection = style.direction || 'ltr';
+                overscrollX = style.overscrollBehaviorX || 'auto';
             } catch (e2) {
                 overflowX = '';
+            }
+            if (overscrollX === 'contain' || overscrollX === 'none') {
+                return true;
+            }
+            if (range <= 1) {
+                continue;
             }
             // The root needs a special case - it computes `overflow-x: visible` on an ordinary page
             // even though the viewport scrolls - but it must NOT skip the test entirely, which is
@@ -160,8 +214,19 @@
             if (!scrollable) {
                 continue;
             }
+            if (el !== scroller) {
+                return true;
+            }
             var left = el.scrollLeft;
-            if (dir < 0 ? left > 1 : left < range - 1) {
+            // Chromium uses the negative scrollLeft model for RTL: zero is the right edge and
+            // -range is the left edge. Wheel delta direction stays physical, so its edge checks
+            // are the inverse of LTR's positive coordinate range.
+            var canMove = cssDirection === 'rtl'
+                ? (dir < 0 ? left > -range + 1 : left < -1)
+                : (dir < 0 ? left > 1 : left < range - 1);
+            // A root that explicitly contains overscroll also refuses history navigation at its
+            // boundary, matching the page author's scroll-chain policy.
+            if (canMove || overscrollX === 'contain' || overscrollX === 'none') {
                 return true;
             }
         }
@@ -173,9 +238,7 @@
     // ONE overlay for the life of the document, shown and hidden rather than built and destroyed.
     //
     // It used to be created per gesture and removed on a timer after the exit animation, which
-    // stacked: the exit runs EXIT_MS and a gesture ends after GESTURE_GAP_MS of quiet - 180 against
-    // 120 - so swiping twice in a row
-    // - not a corner case, just swiping twice - left two chevrons on screen at once. A single
+    // stacked when a second swipe began during that animation. A single
     // element cannot stack however the gestures overlap.
     var host = null;
     var root = null;
@@ -287,27 +350,22 @@
     // End of gesture: everything goes back to neutral. Never to abandon a gesture in flight -
     // clearing `rejected` mid-gesture would let a swipe this code already ruled out come back.
     //
-    // Both signals that a gesture ended call decide() immediately before this: the endTimer
-    // callback, and the gap check at the top of onWheel (a NEXT event arriving after
-    // GESTURE_GAP_MS of quiet). Whichever of the two gets there first, the other's decide() is a
-    // no-op, because this already put `direction` and `accumX` back to zero. Neither may be the
-    // only decider: Chromium dispatches input on a higher-priority task queue than timers, so a
-    // wheel event can run ahead of an already-due timer task, and a completed gesture that got
-    // reset without deciding is a navigation the user made and silently did not get.
-    //
-    // pagehide is the one reset() that deliberately does NOT decide - see decide().
+    // A matching native release calls decide() first. Lifecycle resets deliberately do not.
     function reset() {
-        if (endTimer) {
-            w.clearTimeout(endTimer);
-            endTimer = 0;
-        }
         hideAffordance(direction);
         accumX = 0;
         verticalPath = 0;
         eventCount = 0;
         rejected = false;
         direction = 0;
+        scrollPath = null;
+        lastWheelEvent = null;
+        capturedWheel = null;
+        capturedSheetBoundary = null;
+        sheetBoundary = null;
+        sheetEdgeNavigation = false;
         reachedCommit = false;
+        nativeGestureId = null;
     }
 
     // Rule the current gesture out, keeping the accumulators so nothing restarts until the
@@ -354,22 +412,15 @@
     //   and together clear COMMIT_PX before a third event ever arrives. Without this, that pair
     //   navigates with no chevron ever drawn.
     // - available(direction): asked again here rather than reusing the answer latched in onWheel,
-    //   because the host can push new state during the gesture and throughout the GESTURE_GAP_MS
-    //   after it. It subsumes switchedOff() - the setting can flip mid-gesture, and the comment on
+    //   because the host can push new state during the gesture. It subsumes switchedOff() - the
+    //   setting can flip mid-gesture, and the comment on
     //   switchedOff() promises the detector stops when it does - and additionally fails closed if
     //   the direction lost its history entry, or if state went away entirely.
     //
-    // MOMENTUM costs latency here and nothing else, which is what reachedCommit is for. The
-    // numbers are in AGENTS.md: macOS emits momentum-phase scroll for 180-870ms after the fingers
-    // lift, carrying 325-2500px, measured on this hardware. Whether Chromium forwards those to the
-    // renderer as `wheel` events is not confirmed and cannot be settled with synthetic events. If
-    // it does, each one re-arms endTimer through onWheel and a flick commits at end-of-momentum
-    // rather than at release.
-    //
-    // It cannot change the ANSWER, only when it arrives: a momentum tail runs the flick's own
-    // direction, so it cannot reverse or ease back, and past COMMIT_PX the vertical tiers - the
-    // one path by which a tail's dy could have cancelled a completed swipe - are no longer asked.
     function decide() {
+        // A page may register a window bubble listener after ours. Its preventDefault is
+        // visible now, after dispatch, even though it was false inside onWheel.
+        if (!sheetBoundary && lastWheelEvent && lastWheelEvent.defaultPrevented) abandon();
         if (rejected || direction === 0 || eventCount < MIN_EVENTS || !available(direction)) {
             return;
         }
@@ -379,35 +430,63 @@
     }
 
     function onWheel(event) {
-        var now = Date.now();
-        if (now - lastEventAt > GESTURE_GAP_MS) {
-            // This much quiet means the PREVIOUS gesture ended, and this event belongs to a new
-            // one - so the old gesture gets decided here, not silently discarded. See reset().
-            decide();
-            reset();
-        }
-        lastEventAt = now;
-        // Kept armed for as long as events keep arriving; fires once they stop - the other of the
-        // two places a gesture is decided and then reset to neutral either way.
-        //
-        // Armed before the early returns below on purpose: a gesture that is rejected or switched
-        // off partway still has to end, and this timer is the only thing that ends one. The cost
-        // is a clearTimeout/setTimeout pair on every wheel event, even with the gesture switched
-        // off, on the hottest path in a browser.
-        if (endTimer) {
-            w.clearTimeout(endTimer);
-        }
-        endTimer = w.setTimeout(function () {
-            endTimer = 0;
-            decide();
-            reset();
-        }, GESTURE_GAP_MS);
-
-        if (rejected || switchedOff()) {
+        // Consume the capture snapshot before a new native contact resets old state.
+        var hasCapture = capturedWheel === event;
+        var eventBoundary = hasCapture ? capturedSheetBoundary : null;
+        capturedWheel = null;
+        capturedSheetBoundary = null;
+        // Cheap filters precede the synchronous renderer-to-host claim. Do not skip vertical
+        // pixel events: their initial scroll chain must retain ownership if the contact curls.
+        if (switchedOff()) { reset(); return; }
+        if (event.deltaMode !== 0) {
+            if (nativeGestureId !== null) abandon();
             return;
         }
-        // Line and page modes come from sources that are never a trackpad.
-        if (event.deltaMode !== 0) {
+        var bridge = w.__bossSwipeNav;
+        var activeId = null;
+        try {
+            activeId = bridge && typeof bridge.activeGestureId === 'function'
+                ? bridge.activeGestureId()
+                : null;
+        } catch (e) {
+            activeId = null;
+        }
+        // No active finger sequence means this is momentum, a mouse wheel, or native observation
+        // is unavailable. All fail closed. A new id cannot finish accumulators from an older one.
+        if (activeId === null || activeId === undefined) {
+            return;
+        }
+        var tokenParts = String(activeId).split(':');
+        activeId = tokenParts[0];
+        var beganAt = Number(tokenParts[1]);
+        // performance.timeOrigin + event.timeStamp is epoch time in Chromium. Reject anything
+        // observably older than this native sequence; JxBrowser does not preserve the original
+        // AWT timestamp, so this is deliberately only an extra conservative check.
+        if (beganAt && w.performance &&
+            w.performance.timeOrigin + event.timeStamp + 1 < beganAt) {
+            return;
+        }
+        if (nativeGestureId !== null && nativeGestureId !== activeId) {
+            reset();
+        }
+        if (endedGestureId === activeId) {
+            return;
+        }
+        nativeGestureId = activeId;
+
+        if (!scrollPath) {
+            scrollPath = eventPath(event);
+            sheetBoundary = hasCapture ? eventBoundary : sheetsBoundary(scrollPath);
+        }
+
+        if (!sheetBoundary && lastWheelEvent && lastWheelEvent.defaultPrevented) abandon();
+        lastWheelEvent = event;
+        if (rejected) {
+            return;
+        }
+        // Run in bubble phase so a page widget gets the first chance to claim a synthetic or
+        // JavaScript-driven horizontal scroller with preventDefault().
+        if (event.defaultPrevented && !sheetBoundary) {
             abandon();
             return;
         }
@@ -448,7 +527,8 @@
             direction = dir;
             // Decided once per gesture and latched, both of these: which way it goes, and
             // whether the page wanted the scroll for itself.
-            if (chainCanScroll(event, dir) || !available(dir)) {
+            sheetEdgeNavigation = sheetBoundary !== null && !sheetCanScroll(sheetBoundary, dir);
+            if ((sheetBoundary ? !sheetEdgeNavigation : chainCanScroll(scrollPath, dir)) || !available(dir)) {
                 abandon();
                 return;
             }
@@ -478,12 +558,49 @@
         trackAffordance(direction, progress);
     }
 
-    // Capture-phase and passive: the gesture only commits when nothing was going to scroll,
-    // so there is never anything to preventDefault, and passive keeps this off Chromium's
-    // scroll-blocking path.
-    w.addEventListener('wheel', onWheel, { capture: true, passive: true });
+    // Called by the host only for a native Ended/Cancelled phase with no momentum phase.
+    w.__bossSwipeNavRelease = function (gestureId, cancelled, nativeX, nativeRejected) {
+        endedGestureId = String(gestureId);
+        if (nativeGestureId === null || String(gestureId) !== nativeGestureId) {
+            return;
+        }
+        // CoreGraphics is authoritative at release so an earlier native Changed event delayed on
+        // Chromium's renderer queue cannot make a late easing-back or reversal look committed.
+        if (!cancelled && !nativeRejected && Math.abs(nativeX) >= COMMIT_PX) {
+            // Native and DOM wheel signs are allowed to differ; reversal is evaluated wholly in
+            // the native coordinate system and the page's latched direction chooses navigation.
+            accumX = direction * Math.abs(nativeX);
+            decide();
+        }
+        reset();
+    };
+
+    // Bubble phase lets target/page handlers claim custom scrollers with preventDefault first;
+    // passive keeps this observer off Chromium's scroll-blocking path.
+    w.addEventListener('wheel', function (event) {
+        capturedWheel = event;
+        capturedSheetBoundary = switchedOff() || event.deltaMode !== 0 || !isSheetsDocument()
+            ? null : sheetsBoundary(eventPath(event));
+        // A page may stop propagation before our bubble listener. Release that event's target
+        // after dispatch anyway, rather than retaining a detached subtree until another wheel.
+        if (typeof w.queueMicrotask === 'function') {
+            w.queueMicrotask(function () {
+                if (capturedWheel === event) {
+                    capturedWheel = null;
+                    capturedSheetBoundary = null;
+                }
+            });
+        }
+    }, { capture: true, passive: true });
+    w.addEventListener('wheel', onWheel, { capture: false, passive: true });
     // pagehide is NOT routed through decide() - the page is already unloading, so navigating
     // it anywhere is moot at best; this only tears down the affordance so nothing outlives the
     // document it was drawn into.
     w.addEventListener('pagehide', reset, { capture: true });
+    w.addEventListener('blur', function (event) {
+        if (event.target === w) reset();
+    }, { capture: false });
+    w.addEventListener('visibilitychange', function () {
+        if (w.document.hidden) reset();
+    }, { capture: true });
 })();

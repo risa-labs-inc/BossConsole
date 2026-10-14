@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.repository
 
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginManifestConstants
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
 import kotlinx.coroutines.Dispatchers
@@ -171,6 +172,10 @@ class LocalPluginRepository(
 
     /**
      * Read plugin information from a JAR file.
+     *
+     * The manifest entry read is bounded (PluginManifestReader.MAX_MANIFEST_BYTES):
+     * a zip-bomb `plugin.json` is skipped like any other malformed JAR instead
+     * of being fully loaded into memory.
      */
     private fun readPluginFromJar(jarFile: File): PluginInfo? {
         return try {
@@ -179,7 +184,7 @@ class LocalPluginRepository(
                     jar.getJarEntry(PluginManifestConstants.MANIFEST_PATH)
                         ?: return null
 
-                val content = jar.getInputStream(manifestEntry).bufferedReader().readText()
+                val content = PluginManifestReader.readManifestContent(jar, manifestEntry)
                 val manifest = json.decodeFromString<PluginManifest>(content)
 
                 PluginInfo(
@@ -213,6 +218,9 @@ class LocalPluginRepository(
 
     /**
      * Read just the plugin ID from a JAR file.
+     *
+     * Bounded like readPluginFromJar: an oversize manifest entry is treated
+     * as unreadable and skipped.
      */
     private fun readPluginId(jarFile: File): String? {
         return try {
@@ -221,7 +229,7 @@ class LocalPluginRepository(
                     jar.getJarEntry(PluginManifestConstants.MANIFEST_PATH)
                         ?: return null
 
-                val content = jar.getInputStream(manifestEntry).bufferedReader().readText()
+                val content = PluginManifestReader.readManifestContent(jar, manifestEntry)
                 val manifest = json.decodeFromString<PluginManifest>(content)
                 manifest.pluginId
             }

@@ -5,7 +5,7 @@
 
 /**
  * Escapes a value for safe inclusion as HTML text content. `email`,
- * `sessionId`, `rpName` and `credentialDisplayName` all reach these
+ * `sessionId` and `credentialDisplayName` all reach these
  * templates as caller-supplied strings (query parameters or user-chosen
  * credential names) with no character restriction upstream, so every value
  * substituted into HTML text must be escaped here rather than trusted.

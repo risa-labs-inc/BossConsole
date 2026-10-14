@@ -15,6 +15,50 @@
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   /* ---------------------------------------------------------------------------------------------
+     Idle.
+
+     NOTHING MAY ANIMATE WHILE NOBODY IS LOOKING. On macOS the panel is rendered off-screen, so every
+     changed frame is copied out of Chromium through the CPU; a page that loops forever kept the fans
+     audibly running for as long as the sign-in screen was up. So motion runs while the pointer is over
+     the panel (or for the opening few seconds), then everything settles: CSS animations pause in place
+     via `brand-idle`, and each script loop below stops scheduling frames until [onWake] restarts it.
+     --------------------------------------------------------------------------------------------- */
+  var IDLE_AFTER_MS = 8000;
+  var idle = false;
+  var idleTimer = null;
+  var wakeHandlers = [];
+
+  function onWake(handler) {
+    wakeHandlers.push(handler);
+  }
+
+  function sleep() {
+    if (idleTimer) window.clearTimeout(idleTimer);
+    idleTimer = null;
+    idle = true;
+    document.body.classList.add('brand-idle');
+  }
+
+  function wake() {
+    if (idleTimer) window.clearTimeout(idleTimer);
+    idleTimer = window.setTimeout(sleep, IDLE_AFTER_MS);
+    if (!idle) return;
+    idle = false;
+    document.body.classList.remove('brand-idle');
+    for (var i = 0; i < wakeHandlers.length; i++) wakeHandlers[i]();
+  }
+
+  ['pointermove', 'pointerdown', 'keydown', 'focusin'].forEach(function (type) {
+    window.addEventListener(type, wake, { passive: true });
+  });
+  // The form on the Compose side taking focus is the commonest way attention leaves the panel.
+  window.addEventListener('blur', sleep);
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) sleep();
+  });
+  wake();
+
+  /* ---------------------------------------------------------------------------------------------
      Matrix-style digit rain, the background field.
 
      BLUE, NOT GREEN. The glyphs are drawn in the site's own `#88a9ff` / white, because Matrix green
@@ -86,16 +130,23 @@
       return String(Math.floor(Math.random() * 10));
     }
 
+    // Idle drains rather than freezing: no new glyphs, the live ones fade out over their own
+    // lifetime, and the loop stops once the canvas is empty.
+    var running = false;
+
     function frame() {
-      requestAnimationFrame(frame);
       // Half rate. Cheap, and indistinguishable at this brightness.
       oddFrame = !oddFrame;
-      if (oddFrame) return;
+      if (oddFrame) {
+        requestAnimationFrame(frame);
+        return;
+      }
 
       // A real clear, so nothing can persist beyond its own lifetime.
       ctx.clearRect(0, 0, width, height);
       ctx.font = GLYPH_SIZE + 'px ui-monospace, SFMono-Regular, Menlo, monospace';
       ctx.textBaseline = 'top';
+      var live = 0;
 
       for (var i = 0; i < columns.length; i++) {
         var col = columns[i];
@@ -108,7 +159,7 @@
         var boost = near < 130 ? (1 - near / 130) * 0.05 : 0;
 
         col.tick++;
-        if (col.tick >= col.framesPerStep) {
+        if (!idle && col.tick >= col.framesPerStep) {
           col.tick = 0;
           col.y += STEP;
           col.glyphs.push({ ch: digit(), y: col.y, age: 0 });
@@ -132,6 +183,7 @@
           ctx.fillStyle = 'rgba(198, 220, 255, ' + (0.055 * life + boost * life) + ')';
           ctx.fillText(glyph.ch, x, glyph.y);
         }
+        live += col.glyphs.length;
 
         // Flicker: an existing digit changes rather than a new one being drawn. Mutating the list is
         // what makes this free - the glyph is redrawn from its own record either way.
@@ -139,6 +191,18 @@
           col.glyphs[Math.floor(Math.random() * col.glyphs.length)].ch = digit();
         }
       }
+
+      if (idle && live === 0) {
+        running = false;
+        return;
+      }
+      requestAnimationFrame(frame);
+    }
+
+    function run() {
+      if (running) return;
+      running = true;
+      requestAnimationFrame(frame);
     }
 
     window.addEventListener('resize', resize);
@@ -165,7 +229,8 @@
       if (startedRain) return;
       startedRain = true;
       resize();
-      frame();
+      run();
+      onWake(run);
     }
 
     var hero = document.querySelector('.hero');
@@ -194,12 +259,19 @@
     var tx = 0;
     var ty = 0;
 
+    // Scheduled only while the cursor is still catching up, so a resting pointer costs no frames.
+    var following = false;
+
     function onMove(e) {
       tx = e.clientX;
       ty = e.clientY;
       if (cursor) {
         cursor.classList.add('is-visible');
         document.body.classList.add('brand-cursor-active');
+      }
+      if (!following) {
+        following = true;
+        requestAnimationFrame(follow);
       }
     }
 
@@ -208,8 +280,13 @@
       // cursor rather than a laggy one.
       cx += (tx - cx) * 0.18;
       cy += (ty - cy) * 0.18;
+      if (Math.abs(tx - cx) < 0.25 && Math.abs(ty - cy) < 0.25) {
+        cx = tx;
+        cy = ty;
+        following = false;
+      }
       if (cursor) cursor.style.transform = 'translate3d(' + cx + 'px,' + cy + 'px,0)';
-      requestAnimationFrame(follow);
+      if (following) requestAnimationFrame(follow);
     }
 
     function hide() {
@@ -262,8 +339,6 @@
       var interactive = e.target && e.target.closest && e.target.closest('[data-preview],[data-brand-close]');
       cursor.classList.toggle('is-hot', !!interactive);
     });
-
-    follow();
   })();
 
   /* ---------------------------------------------------------------------------------------------

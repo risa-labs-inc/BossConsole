@@ -1,5 +1,4 @@
-import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
-import type { PluginStoreContext } from "../types/context.ts"
+import { createRoute, z } from "@hono/zod-openapi"
 import {
   RatePluginRequestSchema,
   RatePluginResponseSchema,
@@ -8,8 +7,9 @@ import {
 import { getPlugin } from "../services/plugins.ts"
 import { ratePlugin, getUserRating, deleteRating, getPluginRatings } from "../services/ratings.ts"
 import { getUserFromToken } from "../utils/auth.ts"
+import { newRouter } from "../utils/router.ts"
 
-const rating = new OpenAPIHono<{ Variables: PluginStoreContext }>()
+const rating = newRouter()
 
 // ============================================================================
 // POST /:pluginId/rate - Rate a plugin
@@ -101,7 +101,7 @@ rating.openapi(rateRoute, async (ctx) => {
     console.error('Error rating plugin:', error)
     return ctx.json({ 
       success: false, 
-      error: (error as Error).message 
+      error: 'Internal server error'
     }, 500)
   }
 })
@@ -188,7 +188,7 @@ rating.openapi(getUserRatingRoute, async (ctx) => {
     }, 200)
   } catch (error) {
     console.error('Error getting user rating:', error)
-    return ctx.json({ error: (error as Error).message }, 500)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 
@@ -270,13 +270,22 @@ rating.openapi(deleteRatingRoute, async (ctx) => {
     return ctx.json({ success: true }, 200)
   } catch (error) {
     console.error('Error deleting rating:', error)
-    return ctx.json({ error: (error as Error).message }, 500)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 
 // ============================================================================
 // GET /:pluginId/ratings - Get all ratings for a plugin
 // ============================================================================
+
+// Matches the family bound #1045 pins on /list (and /search already caps): page 1..500 with
+// pageSize 1..50 keeps the worst-case single request a 25,000-row window on a public,
+// rate-limit-free route, instead of asking PostgREST for an arbitrarily large range.
+const RATINGS_PAGE_SIZE_MAX = 50
+
+// A ratings page walks one plugin's own review list, so a page past this bound has no
+// legitimate use - capping it closes the deep-offset scan the pageSize cap alone does not.
+const RATINGS_PAGE_MAX = 500
 
 const getPluginRatingsRoute = createRoute({
   method: 'get',
@@ -289,8 +298,11 @@ const getPluginRatingsRoute = createRoute({
       pluginId: z.string()
     }),
     query: z.object({
-      page: z.string().optional().default('1').transform(Number),
-      pageSize: z.string().optional().default('20').transform(Number)
+      // Raw strings on purpose: the handler below owns the coercion and the bounds check, so
+      // an out-of-range value gets this route's fixed 400 envelope (issue #915) rather than
+      // whatever a library-default validation failure happens to be shaped as.
+      page: z.string().optional().default('1'),
+      pageSize: z.string().optional().default('20')
     })
   },
   responses: {
@@ -299,8 +311,10 @@ const getPluginRatingsRoute = createRoute({
       content: {
         'application/json': {
           schema: z.object({
+            // Rows carry no rater identity: this route is unauthenticated, and the raw
+            // auth.users UUID it used to return let any caller enumerate rater identities
+            // page by page (issue #915).
             ratings: z.array(z.object({
-              userId: z.string(),
               rating: z.number(),
               review: z.string(),
               createdAt: z.string()
@@ -309,6 +323,14 @@ const getPluginRatingsRoute = createRoute({
             page: z.number(),
             pageSize: z.number()
           })
+        }
+      }
+    },
+    400: {
+      description: 'Invalid page or pageSize',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
         }
       }
     },
@@ -335,7 +357,22 @@ rating.openapi(getPluginRatingsRoute, async (ctx) => {
   try {
     const supabase = ctx.get("supabase")
     const { pluginId } = ctx.req.valid('param')
-    const { page, pageSize } = ctx.req.valid('query')
+    const { page: rawPage, pageSize: rawPageSize } = ctx.req.valid('query')
+
+    // Fail closed before anything touches the database: page/pageSize used to flow straight
+    // into a PostgREST .range() call with no bounds (issue #915). Number('x') is NaN and
+    // Number('1.5') fails Number.isInteger, so non-numeric, fractional, zero, negative and
+    // out-of-range values all land here instead of becoming malformed or oversized ranges.
+    const page = Number(rawPage)
+    const pageSize = Number(rawPageSize)
+    if (
+      !Number.isInteger(page) || page < 1 || page > RATINGS_PAGE_MAX ||
+      !Number.isInteger(pageSize) || pageSize < 1 || pageSize > RATINGS_PAGE_SIZE_MAX
+    ) {
+      return ctx.json({
+        error: `page must be an integer from 1 to ${RATINGS_PAGE_MAX} and pageSize an integer from 1 to ${RATINGS_PAGE_SIZE_MAX}`
+      }, 400)
+    }
 
     // Get plugin
     const plugin = await getPlugin(supabase, pluginId)
@@ -354,7 +391,7 @@ rating.openapi(getPluginRatingsRoute, async (ctx) => {
     }, 200)
   } catch (error) {
     console.error('Error getting plugin ratings:', error)
-    return ctx.json({ error: (error as Error).message }, 500)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 

@@ -8,6 +8,7 @@ import java.awt.datatransfer.Transferable
 import java.lang.reflect.Proxy
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -31,9 +32,21 @@ import kotlin.test.assertTrue
  * would be testing JxBrowser rather than this code.
  */
 class BrowserClipboardCommandsTest {
+    private val authority = BrowserMenuContextAuthority()
+
+    private fun executeEditorCommand(
+        menuContext: BrowserMenuContext?,
+        focusedFrame: Frame?,
+        mainFrame: Frame?,
+        command: EditorCommand,
+    ): Boolean =
+        ai.rever.boss.plugin.browser
+            .executeEditorCommand(menuContext, focusedFrame, mainFrame, command, authority)
+
     /** A [Frame] that records the commands it is asked to run and answers [accepts]. */
     private class RecordingFrame(
         private val accepts: Boolean = true,
+        private val closed: Boolean = false,
     ) {
         val executed = mutableListOf<EditorCommand>()
 
@@ -44,6 +57,7 @@ class BrowserClipboardCommandsTest {
             ) { _, method, args ->
                 when (method.name) {
                     "execute" -> {
+                        check(!closed) { "Frame is closed" }
                         executed += args[0] as EditorCommand
                         accepts
                     }
@@ -77,11 +91,31 @@ class BrowserClipboardCommandsTest {
      * into the wrong document.
      */
     @Test
-    fun `the focused frame receives the command, and the main frame does not`() {
+    fun `the context menu frame beats the focused frame, which beats the main frame`() {
+        val menu = RecordingFrame()
         val focused = RecordingFrame()
         val main = RecordingFrame()
 
-        executeEditorCommand(focused.frame, main.frame, EditorCommand.copy())
+        val context = authority.capture(menu.frame)
+        executeEditorCommand(context, focused.frame, main.frame, EditorCommand.copy())
+
+        assertEquals(1, menu.executed.size, "the exact frame the menu was opened on must be used")
+        assertEquals(EditorCommand.Name.COPY, menu.executed.single().name())
+        assertTrue(focused.executed.isEmpty(), "a focused frame must be ignored if a menu frame exists")
+        assertTrue(main.executed.isEmpty(), "the main frame must not be used")
+    }
+
+    @Test
+    fun `the focused frame is the fallback when no menu frame is held`() {
+        val focused = RecordingFrame()
+        val main = RecordingFrame()
+
+        executeEditorCommand(
+            menuContext = null,
+            focusedFrame = focused.frame,
+            mainFrame = main.frame,
+            command = EditorCommand.copy(),
+        )
 
         assertEquals(1, focused.executed.size, "the focused frame should have run the command")
         assertEquals(EditorCommand.Name.COPY, focused.executed.single().name())
@@ -94,10 +128,15 @@ class BrowserClipboardCommandsTest {
      * working there instead of turning the fix into a different silent no-op.
      */
     @Test
-    fun `the main frame is the fallback when nothing is focused`() {
+    fun `the main frame is the final fallback when nothing is focused`() {
         val main = RecordingFrame()
 
-        executeEditorCommand(focusedFrame = null, mainFrame = main.frame, command = EditorCommand.paste())
+        executeEditorCommand(
+            menuContext = null,
+            focusedFrame = null,
+            mainFrame = main.frame,
+            command = EditorCommand.paste(),
+        )
 
         assertEquals(EditorCommand.Name.PASTE, main.executed.single().name())
     }
@@ -105,7 +144,14 @@ class BrowserClipboardCommandsTest {
     /** A closed or still-loading browser has neither frame. Refusing beats throwing at a menu. */
     @Test
     fun `no frame at all is a refusal, not a throw`() {
-        assertFalse(executeEditorCommand(focusedFrame = null, mainFrame = null, command = EditorCommand.cut()))
+        assertFalse(
+            executeEditorCommand(
+                menuContext = null,
+                focusedFrame = null,
+                mainFrame = null,
+                command = EditorCommand.cut(),
+            ),
+        )
     }
 
     /**
@@ -118,8 +164,22 @@ class BrowserClipboardCommandsTest {
     fun `a refusal by Chromium is reported, not swallowed`() {
         val refusing = RecordingFrame(accepts = false)
 
-        assertFalse(executeEditorCommand(refusing.frame, null, EditorCommand.copy()))
-        assertTrue(executeEditorCommand(RecordingFrame(accepts = true).frame, null, EditorCommand.copy()))
+        assertFalse(
+            executeEditorCommand(
+                menuContext = null,
+                focusedFrame = refusing.frame,
+                mainFrame = null,
+                command = EditorCommand.copy(),
+            ),
+        )
+        assertTrue(
+            executeEditorCommand(
+                menuContext = null,
+                focusedFrame = RecordingFrame(accepts = true).frame,
+                mainFrame = null,
+                command = EditorCommand.copy(),
+            ),
+        )
     }
 
     // --- who has to restore keyboard focus ---
@@ -161,6 +221,202 @@ class BrowserClipboardCommandsTest {
             shouldFocusOnShow(RenderingMode.OFF_SCREEN, alreadyShown = true, hostWindowFocused = true),
             "under OFF_SCREEN the widget owns focus and a host-side call fights it",
         )
+    }
+
+    @Test
+    fun `Test B - dismissed menu does not poison ordinary commands`() {
+        val iframeA = RecordingFrame()
+        val focusedB = RecordingFrame()
+        val main = RecordingFrame()
+
+        // Simulating a menu created for A
+        // But the user dismisses the menu and triggers an ordinary paste (menuContext = null)
+        executeEditorCommand(
+            menuContext = null,
+            focusedFrame = focusedB.frame,
+            mainFrame = main.frame,
+            command = EditorCommand.paste(),
+        )
+        assertTrue(iframeA.executed.isEmpty(), "a stale menu frame must not be used by ordinary commands")
+        assertEquals(1, focusedB.executed.size)
+    }
+
+    @Test
+    fun `Test C - two distinct menu contexts do not overwrite each other`() {
+        val iframeA = RecordingFrame()
+        val iframeB = RecordingFrame()
+
+        val contextA = authority.capture(iframeA.frame)
+        val contextB = authority.capture(iframeB.frame)
+
+        executeEditorCommand(contextA, null, null, EditorCommand.copy())
+        executeEditorCommand(contextB, null, null, EditorCommand.paste())
+
+        assertEquals(1, iframeA.executed.size)
+        assertEquals(EditorCommand.Name.COPY, iframeA.executed.single().name())
+
+        assertEquals(1, iframeB.executed.size)
+        assertEquals(EditorCommand.Name.PASTE, iframeB.executed.single().name())
+    }
+
+    @Test
+    fun `Test D - menu context ignores changed focus`() {
+        val iframeA = RecordingFrame()
+        val iframeB = RecordingFrame()
+
+        val contextA = authority.capture(iframeA.frame)
+
+        // Execute with context A, but focus has changed to iframeB
+        executeEditorCommand(contextA, iframeB.frame, null, EditorCommand.copy())
+
+        assertEquals(1, iframeA.executed.size, "menu context must win over changed focus")
+        assertTrue(iframeB.executed.isEmpty(), "changed focus must be ignored")
+    }
+
+    @Test
+    fun `Test F - invalid or closed menu frame fails safely without falling back`() {
+        val closedFrame = RecordingFrame(accepts = false)
+        val focused = RecordingFrame()
+        val main = RecordingFrame()
+
+        val contextForClosed = authority.capture(closedFrame.frame)
+
+        // This should return the result of the frame execution (which is false for our mock),
+        // but importantly, it should NOT fall back to focused or main frame
+        assertFalse(
+            executeEditorCommand(
+                menuContext = contextForClosed,
+                focusedFrame = focused.frame,
+                mainFrame = main.frame,
+                command = EditorCommand.cut(),
+            ),
+        )
+
+        assertEquals(1, closedFrame.executed.size)
+        assertTrue(focused.executed.isEmpty(), "must not fall back to focused frame")
+        assertTrue(main.executed.isEmpty(), "must not fall back to main frame")
+
+        // What if the weak reference itself is cleared?
+        val nullContext = authority.capture(null)
+        assertFalse(
+            executeEditorCommand(
+                menuContext = nullContext,
+                focusedFrame = focused.frame,
+                mainFrame = main.frame,
+                command = EditorCommand.cut(),
+            ),
+        )
+        // Ensure no fallback executed
+        assertTrue(focused.executed.isEmpty())
+        assertTrue(main.executed.isEmpty())
+    }
+
+    @Test
+    fun `Test 6 - menuContext from BrowserContextMenuInfo propagates to editor command`() {
+        val menu = RecordingFrame()
+        val context = authority.capture(menu.frame)
+
+        // Simulate what a plugin does: receive BrowserContextMenuInfo, extract menuContext,
+        // and pass it to an editor command.
+        val info = BrowserContextMenuInfo(menuContext = context)
+        val extractedContext = info.menuContext
+
+        // The extracted token must be the same instance - identity, not equality.
+        assertSame(context, extractedContext)
+
+        // And it must successfully route to the correct frame.
+        executeEditorCommand(extractedContext, null, null, EditorCommand.copy())
+        assertEquals(1, menu.executed.size)
+    }
+
+    @Test
+    fun `Test 7 - executeEditorCommand has no hidden global state dependency`() {
+        // This test proves the function is pure with respect to frame selection:
+        // calling it twice with different contexts routes to different frames,
+        // and calling it without context never consults any prior menu state.
+        val frameA = RecordingFrame()
+        val frameB = RecordingFrame()
+        val main = RecordingFrame()
+
+        val contextA = authority.capture(frameA.frame)
+
+        // 1. Use context A
+        executeEditorCommand(contextA, frameB.frame, main.frame, EditorCommand.copy())
+        assertEquals(1, frameA.executed.size)
+        assertTrue(frameB.executed.isEmpty())
+        assertTrue(main.executed.isEmpty())
+
+        // 2. Now call WITHOUT context — must not use A
+        executeEditorCommand(null, frameB.frame, main.frame, EditorCommand.paste())
+        assertEquals(1, frameA.executed.size, "frameA must not receive a second command")
+        assertEquals(1, frameB.executed.size, "focused frame must be used when no context")
+        assertTrue(main.executed.isEmpty())
+
+        // 3. Call WITHOUT context and without focused frame — main frame fallback
+        executeEditorCommand(null, null, main.frame, EditorCommand.selectAll())
+        assertEquals(1, main.executed.size)
+    }
+
+    @Test
+    fun `foreign handle tokens fail closed without executing any frame`() {
+        val menu = RecordingFrame()
+        val focused = RecordingFrame()
+        val foreign = BrowserMenuContextAuthority().capture(menu.frame)
+        assertFalse(executeEditorCommand(foreign, focused.frame, focused.frame, EditorCommand.paste()))
+        assertTrue(menu.executed.isEmpty())
+        assertTrue(focused.executed.isEmpty())
+    }
+
+    @Test
+    fun `revoked tokens fail closed and new tokens still work`() {
+        val menu = RecordingFrame()
+        val focused = RecordingFrame()
+        val stale = authority.capture(menu.frame)
+        // Navigation, callback replacement/removal, and disposal all revoke the authority.
+        authority.invalidate()
+        assertFalse(executeEditorCommand(stale, focused.frame, focused.frame, EditorCommand.paste()))
+        assertTrue(menu.executed.isEmpty())
+        assertTrue(focused.executed.isEmpty())
+        assertTrue(executeEditorCommand(authority.capture(menu.frame), null, null, EditorCommand.copy()))
+    }
+
+    @Test
+    fun `unknown token and missing clicked frame never use ordinary fallback`() {
+        val focused = RecordingFrame()
+        for (token in listOf(object : BrowserMenuContext {}, authority.capture(null))) {
+            assertFalse(executeEditorCommand(token, focused.frame, focused.frame, EditorCommand.cut()))
+        }
+        assertTrue(focused.executed.isEmpty())
+    }
+
+    @Test
+    fun `legacy menu copy preserves content but drops transient frame authority`() {
+        val info = BrowserContextMenuInfo(pageUrl = "https://example.test", menuContext = authority.capture(null))
+        assertEquals(info, info.copy())
+        assertEquals(null, info.copy().menuContext)
+    }
+
+    @Test
+    fun `revocation while reading native menu params cannot refresh an old frame token`() {
+        val menu = RecordingFrame()
+        val beforeRead = authority.snapshot()
+        authority.invalidate()
+        val stale = authority.capture(menu.frame, beforeRead)
+        assertFalse(executeEditorCommand(stale, menu.frame, menu.frame, EditorCommand.paste()))
+        assertTrue(menu.executed.isEmpty())
+    }
+
+    @Test
+    fun `closed frame exception never falls back to another frame`() {
+        val closed = RecordingFrame(closed = true)
+        val focused = RecordingFrame()
+        // BrowserHandleImpl catches this Exception and reports refusal; the selector must
+        // propagate it without trying a different document.
+        assertFailsWith<IllegalStateException> {
+            executeEditorCommand(authority.capture(closed.frame), focused.frame, focused.frame, EditorCommand.paste())
+        }
+        assertTrue(closed.executed.isEmpty())
+        assertTrue(focused.executed.isEmpty())
     }
 
     // --- the JxBrowser API this rests on ---

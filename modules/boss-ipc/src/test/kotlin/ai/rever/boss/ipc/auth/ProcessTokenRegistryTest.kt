@@ -25,6 +25,30 @@ class ProcessTokenRegistryTest {
     }
 
     @Test
+    fun `revokeIfCurrent ignores a non-matching token and keeps the current credential`() {
+        val registry = ProcessTokenRegistry()
+        val current = registry.issue("process")
+        val wrongButSameLength = "f".repeat(64)
+
+        // Different content, and a different length, must both be safely rejected by the
+        // constant-time compare rather than revoking or throwing.
+        registry.revokeIfCurrent("process", wrongButSameLength)
+        registry.revokeIfCurrent("process", "short")
+
+        assertEquals("process", registry.identityFor(current), "a wrong token must not revoke the current one")
+    }
+
+    @Test
+    fun `revokeIfCurrent revokes when the token matches`() {
+        val registry = ProcessTokenRegistry()
+        val current = registry.issue("process")
+
+        registry.revokeIfCurrent("process", current)
+
+        assertNull(registry.identityFor(current))
+    }
+
+    @Test
     fun `concurrent issuance leaves only one credential and revoke removes it`() {
         val registry = ProcessTokenRegistry()
         val executor =

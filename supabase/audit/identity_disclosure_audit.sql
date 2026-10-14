@@ -222,7 +222,7 @@ select 'CHECK 5: client access to internal-only routines',
        coalesce(string_agg(signature || ' (' || role_name || ')' ||
            case when to_regprocedure(signature) is null then ' MISSING SIGNATURE' else '' end, ', '), 'HEALTHY')
 from unnest(array['public.get_encryption_key()', 'public.encrypt_text(text)',
-                  'public.decrypt_text(text)', 'public.safe_decrypt_recovery_codes(text)',
+                  'public.decrypt_text(text)', 'public.try_decrypt_text(text)', 'public.safe_decrypt_recovery_codes(text)',
                   'public.upsert_plugin_rating(uuid,uuid,integer,text)',
                   'public.record_plugin_download(uuid,uuid,uuid,text)',
                   'public.custom_access_token_hook(jsonb)']) signature

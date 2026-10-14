@@ -68,7 +68,7 @@ object ImportService {
 
                 val blocked =
                     when {
-                        website.isEmpty() || isNonWebEntry(entry.website) -> SkipReason.MISSING_URL
+                        website.isEmpty() || isNonWebPasswordEntry(entry.website) -> SkipReason.MISSING_URL
 
                         // Chrome stores logins with an empty username_value.
                         // The CSV path pre-skips these; without the same check
@@ -177,14 +177,6 @@ object ImportService {
 
         return host?.lowercase()?.removePrefix("www.") ?: trimmed
     }
-
-    /**
-     * Entries a browser stores for native apps rather than web pages.
-     *
-     * Chrome exports rows like `android://<hash>@com.example`; they have no host
-     * and could never be autofilled, so importing them adds noise only.
-     */
-    private fun isNonWebEntry(raw: String): Boolean = raw.trim().startsWith("android://", ignoreCase = true)
 
     // ==================== Bookmarks ====================
 
@@ -325,11 +317,8 @@ object ImportService {
         index: Int,
     ): Bookmark =
         Bookmark(
-            // Bookmark.generateId() is a bare millisecond timestamp, so a bulk
-            // insert would hand hundreds of entries the same id — and
-            // removeBookmark filters by id, so deleting one would delete them
-            // all. Unique per entry AND per run: a deterministic id would make
-            // re-importing the same export collide with the previous run.
+            // Use one import-run id and an entry index to identify each imported bookmark.
+            // Re-importing the same export must not reuse ids from the previous run.
             id = "imported-$importRunId-$index-${url.hashCode()}",
             tabConfig = TabConfig(type = "browser", title = title, url = url),
             workspaceName = "",

@@ -9,6 +9,15 @@ import kotlin.test.assertNull
 
 class PluginHealthCenterTest {
     @Test
+    fun `failed registration remains visible even when manager disables plugin`() {
+        val info = plugin("notes", "Notes", PluginState.DISABLED, errorMessage = "registration failed")
+        val rows = pluginHealthRows(mapOf("notes" to info), emptyMap(), emptySet(), emptySet(), emptySet())
+        val snapshot = pluginHealthSnapshot(rows, setOf("notes"))
+        assertEquals(PluginHealthStatus.NEEDS_ATTENTION, snapshot.rows.single().status)
+        assertEquals(emptySet(), snapshot.sandboxDisabledPluginIds)
+    }
+
+    @Test
     fun `maps disabled plugin to existing enable action`() {
         val row =
             pluginHealthRows(

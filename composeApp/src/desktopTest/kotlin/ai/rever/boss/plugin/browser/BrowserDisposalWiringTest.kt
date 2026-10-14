@@ -50,10 +50,9 @@ class BrowserDisposalWiringTest {
     fun `early teardown failures and renderer close cannot bypass native disposal`() {
         val handle = source("BrowserHandleImpl")
         val dispose = handle.substringAfter("override fun dispose()")
-        assertTrue(dispose.contains("val popOutCleanup = runCatching { closePopOutOnEdt() }"))
-        assertTrue(dispose.contains("try {\n            popOutCleanup.getOrThrow()"))
-        val completion = dispose.substringAfter("} finally {")
-        assertTrue(completion.contains("finishLocalBrowserDisposal("))
+        assertTrue(dispose.contains("handleCleanup.run("))
+        assertTrue(dispose.contains("closePopOut = { closePopOutOnEdt() }"))
+        val completion = dispose.substringAfter("detachView = {")
         assertTrue(completion.contains("currentViewState?.close()"))
         assertTrue(completion.contains("requestNativeClose = { nativeDisposal.start() }"))
         // Anchor on the member that follows setupEventListeners(), not on the first "}" after the
@@ -74,12 +73,15 @@ class BrowserDisposalWiringTest {
             closed.contains("disposed.set(true)"),
             "External close must not pre-set the disposed flag inline; that would make the unified dispose() a no-op",
         )
-        // The unification must not reorder the native teardown: onGone still precedes the native
-        // close request inside dispose().
+        // Surface teardown retires page injection before the native close request.
+        val surfaceTeardown = handle.substringAfter("private fun releaseBrowserSurfaceResources")
+        assertTrue(surfaceTeardown.contains("pageInjection.onGone()"))
         val disposeBody = handle.substringAfter("override fun dispose()")
+        val retireSurface = disposeBody.indexOf("releaseBrowserSurfaceResources(cleanup)")
+        val requestNativeClose = disposeBody.indexOf("nativeDisposal.start()")
         assertTrue(
-            disposeBody.indexOf("pageInjection.onGone()") in 1 until disposeBody.indexOf("nativeDisposal.start()"),
-            "pageInjection.onGone() must still precede the native disposal in dispose()",
+            retireSurface in 1 until requestNativeClose,
+            "Surface teardown must still precede the native disposal in dispose()",
         )
     }
 

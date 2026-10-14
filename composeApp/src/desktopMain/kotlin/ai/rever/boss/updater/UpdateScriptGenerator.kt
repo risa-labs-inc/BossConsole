@@ -106,6 +106,7 @@ internal fun windowsUpdateScript(
     escapedMsiPath: String,
     appPid: Long,
     escapedExePath: String?,
+    restartAutomatically: Boolean = true,
 ): String {
     val cleanup =
         """
@@ -116,8 +117,8 @@ internal fun windowsUpdateScript(
         """.trimIndent()
 
     return listOf(
-        windowsInstallBlock(escapedMsiPath, appPid),
-        windowsRelaunchBlock(escapedExePath),
+        windowsInstallBlock(escapedMsiPath, appPid, restartAutomatically),
+        if (restartAutomatically) windowsRelaunchBlock(escapedExePath) else "echo Open BOSS again manually.",
         cleanup,
     ).joinToString("\n\n")
 }
@@ -136,6 +137,7 @@ internal fun windowsUpdateScript(
 private fun windowsInstallBlock(
     escapedMsiPath: String,
     appPid: Long,
+    restartAutomatically: Boolean,
 ): String =
     """
     @echo off
@@ -172,7 +174,7 @@ private fun windowsInstallBlock(
     REM driving, and a running BOSS holding its own files open is what it needs least.
     if not %MSI_RESULT% EQU 0 (
         echo Installation failed with exit code %MSI_RESULT%. Opening installer manually...
-        start "" $escapedMsiPath
+        ${if (restartAutomatically) """start "" $escapedMsiPath""" else "REM Leave BOSS closed; see this log for the failed installation"}
         goto cleanup
     )
 
@@ -226,7 +228,7 @@ object UpdateScriptGenerator {
      * @param arg The string to escape
      * @return The escaped string, safe for shell interpolation
      */
-    private fun escapeShellArg(arg: String): String {
+    internal fun escapeShellArg(arg: String): String {
         // Single quotes prevent ALL interpolation and command substitution
         // To include a literal single quote, we use: '\''
         // (end quote, escaped quote, start quote)
@@ -288,20 +290,35 @@ object UpdateScriptGenerator {
         dmgPath: String,
         targetAppPath: String,
         appPid: Long,
+        restartAutomatically: Boolean = true,
+        windowlessRelaunchRequestPath: String? = null,
     ): File {
         // Validate inputs for security
         validatePath(dmgPath, "DMG path")
         validatePath(targetAppPath, "Target app path")
+        windowlessRelaunchRequestPath?.let { validatePath(it, "Windowless relaunch request path") }
 
         // Escape paths for safe shell interpolation
         val escapedDmgPath = escapeShellArg(dmgPath)
         val escapedTargetAppPath = escapeShellArg(targetAppPath)
+        val escapedRelaunchRequest = windowlessRelaunchRequestPath?.let(::escapeShellArg)
+        val cleanupRequest =
+            if (escapedRelaunchRequest != null) {
+                """
+            cleanup_windowless_request() {
+                rm -f $escapedRelaunchRequest
+            }
+            trap cleanup_windowless_request EXIT
+        """
+            } else {
+                ""
+            }
 
         logger.debug(LogCategory.SYSTEM, "Security: Validated and escaped macOS update script parameters")
 
         val tempDir = updaterTempDir()
 
-        val scriptFile = File(tempDir, "update_boss_${System.currentTimeMillis()}.sh")
+        val scriptFile = Files.createTempFile(tempDir.toPath(), "update_boss_", ".sh").toFile()
 
         val script =
             """
@@ -310,16 +327,18 @@ object UpdateScriptGenerator {
             # BOSS Update Helper Script
             # This script runs after BOSS quits to install the update
 
+$cleanupRequest
+
             echo "BOSS Update Helper started"
             echo "Waiting for BOSS to quit (PID: $appPid)..."
 
             # Wait for the app process to terminate (max 30 seconds)
             WAIT_COUNT=0
-            MAX_WAIT=30
+            MAX_WAIT=${if (restartAutomatically) 30 else 0}
             while kill -0 $appPid 2>/dev/null; do
                 sleep 1
                 WAIT_COUNT=${'$'}((WAIT_COUNT + 1))
-                if [ ${'$'}WAIT_COUNT -ge ${'$'}MAX_WAIT ]; then
+                if [ ${'$'}MAX_WAIT -gt 0 ] && [ ${'$'}WAIT_COUNT -ge ${'$'}MAX_WAIT ]; then
                     echo "Timeout waiting for app to quit"
                     exit 1
                 fi
@@ -330,22 +349,40 @@ object UpdateScriptGenerator {
             # Give extra time for file locks to release
             sleep 2
 
-            # Mount the DMG (using escaped path for security)
+            # Mount the DMG and capture what hdiutil printed (using escaped
+            # path for security). -quiet is gone on purpose: the device table
+            # it suppresses ends with the mount point of the volume this exact
+            # command mounted, which is the only authoritative answer to
+            # "where did this DMG mount" (Issue #922).
             echo "Mounting DMG: $escapedDmgPath"
-            hdiutil attach $escapedDmgPath -nobrowse -quiet
+            MOUNT_OUTPUT=${'$'}(hdiutil attach $escapedDmgPath -nobrowse)
             if [ ${'$'}? -ne 0 ]; then
                 echo "Failed to mount DMG"
+                echo "${'$'}MOUNT_OUTPUT"
                 # Fallback: Open DMG for manual installation (using escaped path)
-                open $escapedDmgPath
+                ${if (restartAutomatically) "open $escapedDmgPath" else "echo Automatic installation failed; see the updater log"}
                 exit 1
             fi
 
-            # Find the mounted volume
-            VOLUME=${'$'}(ls -d /Volumes/BOSS* 2>/dev/null | head -n 1)
-            if [ -z "${'$'}VOLUME" ]; then
-                echo "Could not find mounted BOSS volume"
+            # Find the mounted volume: the last tab-delimited field of the
+            # last line that names a /Volumes path. Tab-delimited, not
+            # whitespace-split, because volume names can contain spaces -
+            # macOS's own "BOSS 1" disambiguation when a volume of the same
+            # name is already mounted. Taken from hdiutil's output because a
+            # glob of /Volumes answers with whichever BOSS-named volume
+            # sorts first - a user's own external "BOSS" drive, or an older
+            # BOSS DMG left mounted - and the updater then installed whatever
+            # app bundle that unrelated volume happened to hold (Issue #922).
+            # A name that even a tab parse cannot carry fails the -d test
+            # below, and the update fails closed instead of guessing.
+            VOLUME=${'$'}(printf '%s\n' "${'$'}MOUNT_OUTPUT" | grep '/Volumes/' | tail -n 1 | awk -F '\t' '{print ${'$'}NF}')
+            if [ -z "${'$'}VOLUME" ] || [ ! -d "${'$'}VOLUME" ]; then
+                echo "Could not identify the volume this DMG mounted at - refusing to guess"
+                # The update now fails closed on a parse miss, so this log is the
+                # only record of what hdiutil actually printed.
+                echo "${'$'}MOUNT_OUTPUT"
                 # Try to open DMG manually (using escaped path)
-                open $escapedDmgPath
+                ${if (restartAutomatically) "open $escapedDmgPath" else "echo Automatic installation failed; see the updater log"}
                 exit 1
             fi
 
@@ -356,7 +393,7 @@ object UpdateScriptGenerator {
             if [ -z "${'$'}APP_BUNDLE" ]; then
                 echo "Could not find BOSS.app in volume"
                 hdiutil detach "${'$'}VOLUME" -quiet
-                open $escapedDmgPath
+                ${if (restartAutomatically) "open $escapedDmgPath" else "echo Automatic installation failed; see the updater log"}
                 exit 1
             fi
 
@@ -404,8 +441,8 @@ object UpdateScriptGenerator {
                     # exactly like a crash: the user clicks "Install update", the app
                     # quits, and nothing comes back. Tell them, then restore the app
                     # they still have.
-                    osascript -e "display dialog \"This BOSS update requires macOS ${'$'}MIN_OS or later.\n\nThis Mac runs macOS ${'$'}CUR_OS, so the update was cancelled and your current version has been kept.\" buttons {\"OK\"} with icon caution with title \"Update cancelled\"" >/dev/null 2>&1 || true
-                    open $escapedTargetAppPath || echo "Relaunch failed - please start BOSS manually"
+                    ${if (restartAutomatically) """osascript -e "display dialog \"This BOSS update requires macOS ${'$'}MIN_OS or later.\n\nThis Mac runs macOS ${'$'}CUR_OS, so the update was cancelled and your current version has been kept.\" buttons {\"OK\"} with icon caution with title \"Update cancelled\"" >/dev/null 2>&1 || true""" else "echo Update cancelled; see the updater log"}
+                    ${if (restartAutomatically) """open $escapedTargetAppPath || echo "Relaunch failed - please start BOSS manually" """ else "echo Open BOSS again manually."}
                     exit 1
                 fi
                 echo "macOS ${'$'}CUR_OS satisfies the required ${'$'}MIN_OS"
@@ -447,6 +484,8 @@ object UpdateScriptGenerator {
             echo "Cleaning up..."
             hdiutil detach "${'$'}VOLUME" -quiet
 
+            ${if (restartAutomatically) {
+                """
             # Ask LaunchServices to launch the updated app (using the escaped path).
             # A successful `open` only means the request was accepted; it does not
             # verify that the app stayed running after launch.
@@ -460,6 +499,25 @@ object UpdateScriptGenerator {
 
             # Give the app time to start
             sleep 2
+
+
+            """
+            } else if (escapedRelaunchRequest != null) {
+                """
+            if [ -f $escapedRelaunchRequest ]; then
+                echo "Relaunching BOSS in the Dock without a window..."
+                open -n $escapedTargetAppPath --args --no-window
+                if [ ${'$'}? -ne 0 ]; then
+                    sleep 2
+                    open -n $escapedTargetAppPath --args --no-window || echo "Relaunch failed - please start BOSS manually"
+                fi
+            else
+                echo "Open BOSS again manually."
+            fi
+                """
+            } else {
+                """echo "Open BOSS again manually." """
+            }}
 
             # Self-destruct - remove this script
             echo "Update complete. Cleaning up script..."
@@ -489,6 +547,7 @@ object UpdateScriptGenerator {
         msiPath: String,
         appPid: Long,
         targetExePath: String? = null,
+        restartAutomatically: Boolean = true,
     ): File {
         // Validate input for security
         validatePath(msiPath, "MSI path")
@@ -501,7 +560,7 @@ object UpdateScriptGenerator {
 
         val tempDir = updaterTempDir()
 
-        val scriptFile = File(tempDir, "update_boss_${System.currentTimeMillis()}.bat")
+        val scriptFile = Files.createTempFile(tempDir.toPath(), "update_boss_", ".bat").toFile()
 
         // CRLF, not the LF `writeText` would otherwise leave: cmd.exe parses an
         // LF-only batch file by seeking byte offsets that assume CRLF, so `goto` into
@@ -512,6 +571,7 @@ object UpdateScriptGenerator {
                 escapedMsiPath = escapedMsiPath,
                 appPid = appPid,
                 escapedExePath = targetExePath?.let(::escapeWindowsArg),
+                restartAutomatically = restartAutomatically,
             )
         scriptFile.writeText(script.replace("\n", "\r\n"))
 
@@ -536,6 +596,7 @@ object UpdateScriptGenerator {
     fun generateLinuxDebUpdateScript(
         debPath: String,
         appPid: Long,
+        restartAutomatically: Boolean = true,
     ): File {
         // Validate input for security
         validatePath(debPath, "DEB path")
@@ -548,7 +609,7 @@ object UpdateScriptGenerator {
         val tempDir = updaterTempDir()
         val escapedUpdaterDir = escapeShellArg(tempDir.absolutePath)
 
-        val scriptFile = File(tempDir, "update_boss_${System.currentTimeMillis()}.sh")
+        val scriptFile = Files.createTempFile(tempDir.toPath(), "update_boss_", ".sh").toFile()
 
         val script =
             """
@@ -577,11 +638,11 @@ object UpdateScriptGenerator {
 
             # Wait for the app process to terminate (max 30 seconds)
             WAIT_COUNT=0
-            MAX_WAIT=30
+            MAX_WAIT=${if (restartAutomatically) 30 else 0}
             while kill -0 $appPid 2>/dev/null; do
                 sleep 1
                 WAIT_COUNT=${'$'}((WAIT_COUNT + 1))
-                if [ ${'$'}WAIT_COUNT -ge ${'$'}MAX_WAIT ]; then
+                if [ ${'$'}MAX_WAIT -gt 0 ] && [ ${'$'}WAIT_COUNT -ge ${'$'}MAX_WAIT ]; then
                     echo "❌ Timeout waiting for app to quit"
                     exit 1
                 fi
@@ -700,6 +761,8 @@ ASKPASS_EOF
                 fi
 
                 echo ""
+                ${if (restartAutomatically) {
+                """
                 echo "[4/5] Launching BOSS..."
                 if [ -x /opt/boss/bin/BOSS ]; then
                     nohup /opt/boss/bin/BOSS > /dev/null 2>&1 &
@@ -715,6 +778,10 @@ ASKPASS_EOF
                 fi
 
                 sleep 2
+                """
+            } else {
+                """echo "Open BOSS again manually." """
+            }}
                 echo ""
                 echo "=== Update Script Completed Successfully ==="
                 echo "Log file: ${'$'}LOG_FILE"
@@ -745,6 +812,7 @@ ASKPASS_EOF
     fun generateLinuxRpmUpdateScript(
         rpmPath: String,
         appPid: Long,
+        restartAutomatically: Boolean = true,
     ): File {
         // Validate input for security
         validatePath(rpmPath, "RPM path")
@@ -757,7 +825,7 @@ ASKPASS_EOF
         val tempDir = updaterTempDir()
         val escapedUpdaterDir = escapeShellArg(tempDir.absolutePath)
 
-        val scriptFile = File(tempDir, "update_boss_${System.currentTimeMillis()}.sh")
+        val scriptFile = Files.createTempFile(tempDir.toPath(), "update_boss_", ".sh").toFile()
 
         val script =
             """
@@ -786,11 +854,11 @@ ASKPASS_EOF
 
             # Wait for the app process to terminate (max 30 seconds)
             WAIT_COUNT=0
-            MAX_WAIT=30
+            MAX_WAIT=${if (restartAutomatically) 30 else 0}
             while kill -0 $appPid 2>/dev/null; do
                 sleep 1
                 WAIT_COUNT=${'$'}((WAIT_COUNT + 1))
-                if [ ${'$'}WAIT_COUNT -ge ${'$'}MAX_WAIT ]; then
+                if [ ${'$'}MAX_WAIT -gt 0 ] && [ ${'$'}WAIT_COUNT -ge ${'$'}MAX_WAIT ]; then
                     echo "❌ Timeout waiting for app to quit"
                     exit 1
                 fi
@@ -914,6 +982,8 @@ ASKPASS_EOF
                 fi
 
                 echo ""
+                ${if (restartAutomatically) {
+                """
                 echo "[4/5] Launching BOSS..."
                 if [ -x /opt/boss/bin/BOSS ]; then
                     nohup /opt/boss/bin/BOSS > /dev/null 2>&1 &
@@ -929,6 +999,10 @@ ASKPASS_EOF
                 fi
 
                 sleep 2
+                """
+            } else {
+                """echo "Open BOSS again manually." """
+            }}
                 echo ""
                 echo "=== Update Script Completed Successfully ==="
                 echo "Log file: ${'$'}LOG_FILE"
@@ -955,6 +1029,11 @@ ASKPASS_EOF
      * @param scriptFile The script file to execute
      */
     fun launchScript(scriptFile: File) {
+        launchScriptProcess(scriptFile)
+    }
+
+    /** The macOS idle-update path must know that the deferred helper is alive. */
+    internal fun launchScriptProcess(scriptFile: File): Process {
         try {
             // Platform temp directory: "/tmp" is not a real path on Windows, so
             // hardcoding it sent installer logs to a directory that never exists
@@ -1008,6 +1087,7 @@ ASKPASS_EOF
                     ),
                 )
             }
+            return process
         } catch (e: Exception) {
             logger.error(LogCategory.SYSTEM, "Failed to launch update script", error = e)
             throw e

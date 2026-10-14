@@ -5,6 +5,7 @@ import ai.rever.boss.components.settings.shared.SettingsTheme.AccentColor
 import ai.rever.boss.components.settings.shared.SettingsTheme.BorderColor
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextPrimary
 import ai.rever.boss.components.settings.shared.SettingsTheme.TextSecondary
+import ai.rever.boss.components.settings.shared.SettingsToggle
 import ai.rever.boss.components.workspaces.PredefinedWorkspaces
 import ai.rever.boss.components.workspaces.WorkspaceSettings
 import ai.rever.boss.components.workspaces.WorkspaceSettingsManager
@@ -38,9 +39,9 @@ fun WorkspaceSettings() {
     ) {
         // The titles stay literal here, inside SettingsSection, because that is what the settings
         // search index is built from - see SettingsSearchIndexDriftTest. Hiding one behind a
-        // wrapper made "Default Workspace" unfindable, and an indexed setting that navigates and
+        // wrapper made "Default Space" unfindable, and an indexed setting that navigates and
         // then highlights nothing reads as the search being broken.
-        SettingsSection(title = "Default Workspace") {
+        SettingsSection(title = "Default Space") {
             WorkspaceOptionList(
                 options = defaultWorkspaceOptions(),
                 selectedId = settings.defaultWorkspaceId,
@@ -48,7 +49,20 @@ fun WorkspaceSettings() {
             )
         }
 
-        SettingsSection(title = "When Switching Workspaces") {
+        SettingsSection(title = "Session Restore") {
+            SettingsToggle(
+                label = "Enable Last Session Space",
+                checked = settings.enableLastSessionSpace,
+                onCheckedChange = { enabled ->
+                    coroutineScope.launch {
+                        WorkspaceSettingsManager.updateSettings(settings.copy(enableLastSessionSpace = enabled))
+                    }
+                },
+            )
+            NoteItem("Off by default. Reopen the last active Space; hide the automatic Last Session entry.")
+        }
+
+        SettingsSection(title = "When Switching Spaces") {
             WorkspaceOptionList(
                 options = switchOptions(),
                 selectedId = settings.onWorkspaceSwitch,
@@ -56,12 +70,12 @@ fun WorkspaceSettings() {
             )
         }
 
-        SettingsSection(title = "About Workspaces") {
+        SettingsSection(title = "About Spaces") {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                NoteItem(text = "Workspaces define panel layouts with terminals and browsers")
+                NoteItem(text = "Spaces define panel layouts with terminals and browsers")
                 NoteItem(text = "Terminal commands use {projectPath} placeholder for the current project")
                 NoteItem(text = "Browser tabs use {gitRemoteUrl} to open the project's GitHub page")
-                NoteItem(text = "Save custom workspaces via the Workspace button in the top bar")
+                NoteItem(text = "Save custom spaces via the Space button in the top bar")
             }
         }
     }
@@ -81,14 +95,14 @@ private fun defaultWorkspaceOptions(): List<WorkspaceOption> =
             WorkspaceOption(
                 id = WorkspaceSettings.ASK_WORKSPACE_ID,
                 name = "Ask",
-                description = "Start with no workspace, then ask which one when a project is selected",
+                description = "Ask where each project opens: this space, a new space, or a new window",
             ),
         )
         add(
             WorkspaceOption(
                 id = WorkspaceSettings.NO_WORKSPACE_ID,
                 name = "None",
-                description = "Never apply a workspace, and never ask",
+                description = "Open each project in the current space, and never ask",
             ),
         )
         PredefinedWorkspaces.allWorkspaces.forEach { workspace ->
@@ -113,7 +127,7 @@ private fun switchOptions(): List<WorkspaceOption> =
         WorkspaceOption(
             id = WorkspaceSettings.SWITCH_ASK,
             name = "Ask",
-            description = "Ask whether to keep the workspace you are leaving running",
+            description = "Ask whether to keep the space you are leaving running",
         ),
         WorkspaceOption(
             id = WorkspaceSettings.SWITCH_KEEP,
@@ -123,7 +137,7 @@ private fun switchOptions(): List<WorkspaceOption> =
         WorkspaceOption(
             id = WorkspaceSettings.SWITCH_CLOSE,
             name = "Close it",
-            description = "Close its tabs, and rebuild the workspace from its layout next time",
+            description = "Close its tabs, and rebuild the space from its layout next time",
         ),
     )
 

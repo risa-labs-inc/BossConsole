@@ -133,9 +133,11 @@ class WindowFocusManagerTest {
 
         tracker.snapshotRegistration("window-a", isFocused = false)
         assertFalse(tracker.isFocused("window-a"))
+        assertNull(tracker.activeWindowFlow.value)
 
         tracker.snapshotRegistration("window-a", isFocused = true)
         assertTrue(tracker.isFocused("window-a"))
+        assertEquals("window-a", tracker.activeWindowFlow.value)
     }
 
     @Test
@@ -150,6 +152,7 @@ class WindowFocusManagerTest {
 
         assertFalse(tracker.isFocused("window-a"))
         assertTrue(tracker.isFocused("window-b"))
+        assertEquals("window-b", tracker.activeWindowFlow.value)
     }
 
     @Test
@@ -158,9 +161,11 @@ class WindowFocusManagerTest {
         val listener = tracker.createListener("window-a")
 
         listener.windowGainedFocus(null)
+        assertEquals("window-a", tracker.activeWindowFlow.value)
         listener.windowLostFocus(null)
 
         assertFalse(tracker.isFocused("window-a"))
+        assertNull(tracker.activeWindowFlow.value)
     }
 
     @Test
@@ -220,5 +225,36 @@ class WindowFocusManagerTest {
 
         tracker.onUnregistered("window-b")
         assertFalse(tracker.isFocused("window-b"))
+    }
+
+    @Test
+    fun `an iconified window is recognised, a merely hidden one is not`() {
+        // The bug was testing isVisible instead. A minimized window IS visible; it is iconified,
+        // so the old guard never fired and toFront ran against a window still in the taskbar.
+        assertTrue(isIconified(java.awt.Frame.ICONIFIED))
+        assertTrue(isIconified(java.awt.Frame.ICONIFIED or java.awt.Frame.MAXIMIZED_BOTH))
+        assertFalse(isIconified(java.awt.Frame.NORMAL))
+        assertFalse(isIconified(java.awt.Frame.MAXIMIZED_BOTH))
+    }
+
+    @Test
+    fun `restoring a minimized window keeps it maximized if it was`() {
+        // Assigning Frame.NORMAL would clear every bit, so a window the user had maximized would
+        // come back small. Only the ICONIFIED bit may be touched.
+        val wasMaximized = java.awt.Frame.ICONIFIED or java.awt.Frame.MAXIMIZED_BOTH
+
+        assertEquals(java.awt.Frame.MAXIMIZED_BOTH, deiconified(wasMaximized))
+        assertEquals(java.awt.Frame.NORMAL, deiconified(java.awt.Frame.ICONIFIED))
+    }
+
+    @Test
+    fun `restoring a window that is not minimized changes nothing`() {
+        assertEquals(java.awt.Frame.NORMAL, deiconified(java.awt.Frame.NORMAL))
+        assertEquals(java.awt.Frame.MAXIMIZED_BOTH, deiconified(java.awt.Frame.MAXIMIZED_BOTH))
+    }
+
+    @Test
+    fun `focusWindow preserves failure behavior for invalid or unregistered target`() {
+        assertFalse(WindowFocusManager.focusWindow("invalid-unregistered-id"))
     }
 }

@@ -8,10 +8,10 @@ import ai.rever.boss.utils.logging.LogCategory
 /**
  * The in-page two-finger swipe detector, as JavaScript.
  *
- * A macOS trackpad swipe cannot be observed from the JVM side of this app. Under the default
- * `HARDWARE_ACCELERATED` rendering mode the browser is a native surface layered over the window
- * rather than a component in the Compose scene, so Compose never sees the wheel (the same fact
- * [shouldAllowPinch] documents at length). Chromium's own overscroll history navigation is already
+ * Under the default `HARDWARE_ACCELERATED` rendering mode the browser is a native surface layered
+ * over the window, so Compose never sees the wheel. JxBrowser's native surface does forward AWT
+ * wheel callbacks, but that layer has already discarded macOS finger and momentum phases.
+ * Chromium's own overscroll history navigation is already
  * switched on in `BrowserServiceImpl` and does nothing for a trackpad in EITHER rendering mode -
  * measured, see the note at that call site; it is a touchscreen feature. What is left is the
  * renderer: it sees every wheel event, because that is how pages scroll.
@@ -32,6 +32,9 @@ internal object BrowserSwipeNavScript {
 
     /** Property the host pushes navigability onto. Matched by the script. */
     const val STATE_PROPERTY: String = "__bossSwipeNavState"
+
+    /** Function invoked by the native phase observer when fingers leave the trackpad. */
+    const val RELEASE_PROPERTY: String = "__bossSwipeNavRelease"
 
     /** Lazily-loaded gesture script (cached for the process lifetime). */
     val source: String by lazy { loadResource("/browser/swipe-nav.js") }
@@ -65,6 +68,16 @@ internal object BrowserSwipeNavScript {
         canGoBack: Boolean,
         canGoForward: Boolean,
     ): String = "window.$STATE_PROPERTY = { enabled: $enabled, back: $canGoBack, forward: $canGoForward };"
+
+    /**
+     * Only typed native values cross this boundary; use the same statement in parity tests.
+     * JVM Double rendering yields numeric literals or NaN/Infinity, all valid JS expressions;
+     * no page-supplied text is interpolated here.
+     */
+    fun release(end: ScrollGestureEnd): String {
+        val function = "window.$RELEASE_PROPERTY"
+        return "$function && $function('${end.id}', ${end.cancelled}, ${end.accumX}, ${end.rejected});"
+    }
 
     private fun loadResource(path: String): String =
         try {

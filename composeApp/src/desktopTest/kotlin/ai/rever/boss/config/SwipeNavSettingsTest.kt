@@ -129,4 +129,19 @@ class SwipeNavSettingsTest {
         SwipeNavSettingsManager.set(true)
         assertEquals(true, parseSwipeNavEnabled(System.getProperty(SwipeNavSettingsManager.KEY)))
     }
+
+    @Test
+    fun `publishing notifies the observer of the effective setting`() {
+        val previous = SwipeNavSettingsManager.onEnabledChanged
+        val values = mutableListOf<Boolean>()
+        try {
+            SwipeNavSettingsManager.onEnabledChanged = values::add
+            SwipeNavSettingsManager.set(false)
+            SwipeNavSettingsManager.set(true)
+            val override = parseSwipeNavEnabled(SwipeNavSettingsManager.envOverride())
+            assertEquals(listOf(override ?: false, override ?: true), values)
+        } finally {
+            SwipeNavSettingsManager.onEnabledChanged = previous
+        }
+    }
 }

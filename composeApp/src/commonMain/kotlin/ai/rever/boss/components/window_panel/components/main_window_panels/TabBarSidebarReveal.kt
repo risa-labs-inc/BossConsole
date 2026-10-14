@@ -1,10 +1,13 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.LayoutDirection
+
 /**
  * Hover-reveal for the collapsed vertical tab bar: when the bar is down to its slim icon rail -
  * either forced by a narrow panel ([TAB_BAR_AUTO_COLLAPSE_WIDTH]) or collapsed with the chevron -
- * resting the pointer on the rail slides the full bar in as an overlay drawer, which retracts
- * once the pointer leaves. Gated by the `tabBarHoverExpand` setting (on by default).
+ * reaching or crossing its left edge reveals the full bar as an overlay drawer. It remains
+ * open through a 100dp margin beyond its right edge. Gated by `tabBarHoverExpand`.
  *
  * The timing lives in a `LaunchedEffect` in `BossMainPanel`; the decision itself is kept pure
  * here so it can be unit-tested. Ported from BossTerm's `tabs/SidebarHoverReveal.kt`, where the
@@ -12,16 +15,12 @@ package ai.rever.boss.components.window_panel.components.main_window_panels
  * the drawer retracting out from under an interaction.
  */
 
-/** Pointer rest time before the collapsed rail reveals the full bar. */
-internal const val SIDEBAR_REVEAL_OPEN_DELAY_MS = 150L
-
 /**
- * Grace period after the pointer leaves before the reveal retracts. Must exceed
- * [SIDEBAR_REVEAL_OPEN_DELAY_MS]: it covers the rail-to-drawer handoff (the drawer slides over
- * the rail, so hover moves between two different nodes - and under HARDWARE it moves between two
- * different WINDOWS, which is slower still) and brief excursions past the drawer's edge.
+ * Forty milliseconds after leaving the retention margin covers more than two 16ms cursor samples.
+ * One transient outside sample therefore cannot close the drawer before the next sample recovers.
  */
-internal const val SIDEBAR_REVEAL_CLOSE_DELAY_MS = 250L
+internal const val SIDEBAR_REVEAL_CLOSE_DELAY_MS = 40L
+internal const val SIDEBAR_POINTER_SAMPLE_INTERVAL_MS = 16L
 
 /**
  * Whether the hover drawer should be revealed.
@@ -43,3 +42,48 @@ internal fun hoverRevealTarget(
     pointerOnDrawer: Boolean,
     drawerBusy: Boolean = false,
 ): Boolean = enabled && railShown && (pointerOnRail || pointerOnDrawer || drawerBusy)
+
+/**
+ * Whether the native edge tracker runs at all. Off in fullscreen, as the edge reveal has been since
+ * #1753: #1828 moved activation from the hover strip (which still checks fullscreen) to this tracker,
+ * which did not, so a fullscreen window opened the drawer whenever the pointer touched its left edge.
+ */
+internal fun edgeRevealTracking(
+    railShown: Boolean,
+    hoverExpand: Boolean,
+    fullscreen: Boolean,
+): Boolean = railShown && hoverExpand && !fullscreen
+
+/** Exact edge activation, with crossing detection for cursor movements that skip the edge. */
+internal fun pointerReachesSidebarEdge(
+    x: Int,
+    y: Int,
+    previousX: Int?,
+    region: IntRect,
+    direction: LayoutDirection = LayoutDirection.Ltr,
+): Boolean {
+    val edge = if (direction == LayoutDirection.Ltr) region.left else region.right - 1
+    return y >= region.top && y < region.bottom &&
+        (
+            x == edge || (
+                previousX != null &&
+                    (
+                        (previousX > edge && x < edge) ||
+                            (previousX < edge && x > edge)
+                    )
+            )
+        )
+}
+
+/** Retention is horizontal only: leaving through the left edge keeps the reveal open. */
+internal fun pointerWithinSidebarMargin(
+    x: Int,
+    region: IntRect,
+    sidebarWidthDp: Float,
+    direction: LayoutDirection = LayoutDirection.Ltr,
+): Boolean =
+    if (direction == LayoutDirection.Ltr) {
+        x <= region.left + sidebarWidthDp + 100f
+    } else {
+        x >= region.right - sidebarWidthDp - 100f
+    }

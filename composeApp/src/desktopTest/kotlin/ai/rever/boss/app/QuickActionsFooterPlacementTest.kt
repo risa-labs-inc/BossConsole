@@ -264,4 +264,48 @@ class VerticalBarHostTest {
             verticalBarHost(tabBarOnLeft = false, barCollapsed = false, drawerVisible = true),
         )
     }
+
+    @Test
+    fun `hidden rail leaves actions available through fallback chrome`() {
+        assertEquals(
+            VerticalBarHost.NONE,
+            verticalBarHost(tabBarOnLeft = true, barCollapsed = true, drawerVisible = false, hideCollapsedRail = true),
+        )
+    }
+
+    @Test
+    fun `header opened drawer hosts actions when the rail is hidden`() {
+        assertEquals(
+            VerticalBarHost.FOOT,
+            verticalBarHost(tabBarOnLeft = true, barCollapsed = true, drawerVisible = true, hideCollapsedRail = true),
+        )
+    }
+
+    @Test
+    fun `native toolbar displaces floating and sidebar actions`() {
+        for (bar in VerticalBarHost.entries) {
+            assertEquals(
+                FocusQuickActionsPlacement.TITLE_BAR,
+                focusQuickActionsPlacement(
+                    settings = FocusModeSettings(),
+                    topBarHidden = true,
+                    rightStripHidden = true,
+                    showTopBar = false,
+                    verticalBar = bar,
+                    titleBarAvailable = true,
+                ),
+            )
+            assertEquals(
+                false,
+                hostActionsNeedAPanel(
+                    settings = FocusModeSettings(),
+                    topBarHidden = true,
+                    showTopBar = false,
+                    verticalBar = bar,
+                    railActionsFit = false,
+                    titleBarAvailable = true,
+                ),
+            )
+        }
+    }
 }

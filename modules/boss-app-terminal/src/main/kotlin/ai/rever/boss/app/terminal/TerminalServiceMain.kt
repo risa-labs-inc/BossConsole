@@ -88,9 +88,15 @@ fun main() {
     runBlocking {
         val connection = bootstrap.connect(manifest)
         val terminalService = TerminalServiceImpl()
-        connection.processServer.addService(terminalService)
-        connection.startServer()
-        logger.info("Terminal Service running on: {}", bootstrap.processAddress)
-        connection.awaitTermination()
+        Runtime.getRuntime().addShutdownHook(Thread({ terminalService.close() }, "terminal-session-cleanup"))
+        try {
+            connection.processServer.addService(terminalService)
+            connection.startServer()
+            logger.info("Terminal Service running on: {}", bootstrap.processAddress)
+            connection.awaitTermination()
+        } finally {
+            terminalService.close()
+            connection.shutdown()
+        }
     }
 }

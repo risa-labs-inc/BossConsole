@@ -79,6 +79,13 @@ data class ContextMenuItem(
     val onTrailingClick: (() -> Unit)? = null,
     val secondaryTrailingIcon: ImageVector? = null,
     val secondaryTrailingIconColor: Color? = null,
+    /**
+     * What the secondary trailing slot is, for a screen reader.
+     *
+     * It was the literal "Delete", which is wrong for the two things that use the slot today - a
+     * Stop/Close button in the run bar, and a passive unsaved MARK in the Space menu.
+     */
+    val secondaryTrailingDescription: String? = null,
     val onSecondaryTrailingClick: (() -> Unit)? = null,
     val subMenu: List<ContextMenuItem>? = null, // Submenu items
     val enabled: Boolean = true,
@@ -100,6 +107,10 @@ data class ContextMenuItem(
  *   menus use them for edit and delete. Dropping one silently removes something the user relies
  *   on, so those menus keep the drawn path until they are reshaped to express the same actions as
  *   structure (a submenu).
+ * - A **trailing mark is a distinct fact**, and disqualifies for the same reason rather than a
+ *   weaker one. Either trailing slot may hold a passive indicator instead of a button - the Space
+ *   menu marks "running here", "running elsewhere" and "unsaved" that way - and a native menu
+ *   would render the label alone, silently answering neither question.
  */
 internal fun List<ContextMenuItem>.isNativeRepresentable(): Boolean =
     all { item ->
@@ -149,6 +160,15 @@ private fun ImageVector.toNativeMenuIcon(): ImageBitmap {
 }
 
 private val NATIVE_MENU_ICON_TINT = Color(0xFF8A8A8E)
+
+/**
+ * The box a trailing mark or inline button sits in.
+ *
+ * One size for both trailing slots, so a row that reserves an empty second slot puts the first
+ * mark exactly where a row with two marks puts it. A per-slot size would leave the columns a
+ * pixel or two out, which on 8dp dots is visible.
+ */
+private val MENU_MARK_SLOT = 20.dp
 
 /**
  * Convert to the toolkit-neutral model the native engine speaks.
@@ -321,6 +341,13 @@ private fun ContextMenuContent(
     var expandedSubMenuIndex by remember { mutableStateOf<Int?>(null) }
     var isSubMenuHovered by remember { mutableStateOf(false) }
     val colors = BossTheme.colors
+    // Whether the second trailing slot is a COLUMN of this menu rather than a thing one row has.
+    //
+    // Rows are flush right, so without this a row carrying only the first mark slides that mark
+    // into the second mark's position - and the Space menu then draws "running elsewhere" in the
+    // same place as "unsaved", one hollow and one filled, in two columns that do not line up.
+    // Rendered rather than reasoned about: the arithmetic was fine and the screenshot was not.
+    val reserveSecondarySlot = items.any { it.secondaryTrailingIcon != null }
 
     Column(
         modifier =
@@ -472,27 +499,47 @@ private fun ContextMenuContent(
                                 )
                             }
                         }
-                        // Secondary trailing icon (e.g., delete button)
-                        if (item.secondaryTrailingIcon != null && item.onSecondaryTrailingClick != null) {
+                        // Secondary trailing icon: a button when it has an action, a passive
+                        // indicator when it does not - the same duality the primary slot above
+                        // already has, and for the same reason. It used to require a click
+                        // handler to render AT ALL, so a second STATE could not be marked on a
+                        // row that already marks one: the Space menu needs "running" and
+                        // "unsaved" side by side, and those are two orthogonal facts rather than
+                        // four values of one mark.
+                        if (item.secondaryTrailingIcon == null && reserveSecondarySlot && item.trailingIcon != null) {
+                            // Blank, and load-bearing: it holds the first mark in its own column.
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.size(MENU_MARK_SLOT))
+                        }
+                        if (item.secondaryTrailingIcon != null) {
+                            val onSecondaryClick = item.onSecondaryTrailingClick
                             Spacer(modifier = Modifier.width(8.dp))
                             Box(
                                 modifier =
                                     Modifier
-                                        .size(18.dp)
-                                        .clickable(
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null,
-                                        ) {
-                                            item.onSecondaryTrailingClick.invoke()
-                                            onDismissRequest()
-                                        },
+                                        .size(MENU_MARK_SLOT)
+                                        .then(
+                                            if (onSecondaryClick != null) {
+                                                Modifier.clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = null,
+                                                ) {
+                                                    onSecondaryClick.invoke()
+                                                    onDismissRequest()
+                                                }
+                                            } else {
+                                                Modifier
+                                            },
+                                        ),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Icon(
                                     imageVector = item.secondaryTrailingIcon,
-                                    contentDescription = "Delete",
+                                    contentDescription = item.secondaryTrailingDescription ?: "Action",
                                     tint = item.secondaryTrailingIconColor ?: colors.textSecondary,
-                                    modifier = Modifier.size(14.dp),
+                                    // The primary slot's sizes: an indicator dot is 8dp, a button
+                                    // is big enough to hit.
+                                    modifier = Modifier.size(if (onSecondaryClick != null) 14.dp else 8.dp),
                                 )
                             }
                         }

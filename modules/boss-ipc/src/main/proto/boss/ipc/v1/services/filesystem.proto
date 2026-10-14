@@ -51,7 +51,7 @@ message ScanDirectoryRequest {
   bool recursive = 2;           // If true, scan subdirectories too
   bool include_hidden = 3;      // If true, include hidden files/dirs (starting with '.')
   repeated string extensions = 4;  // Filter by extension (e.g., "kt", "ts"). Empty = all.
-  int32 max_depth = 5;          // Max recursion depth (0 = no limit)
+  int32 max_depth = 5;          // Requested depth; server caps depth at 64 and scanned entries at 10,000
 }
 
 message ScanDirectoryResponse {
@@ -64,7 +64,7 @@ message ScanDirectoryResponse {
 message ReadFileRequest {
   string path = 1;
   int64 offset_bytes = 2;       // 0 = start
-  int64 max_bytes = 3;          // 0 = read all
+  int64 max_bytes = 3;          // Explicit page size, capped at 1 MiB; 0 = read all or refuse an oversized file
 }
 
 message ReadFileResponse {

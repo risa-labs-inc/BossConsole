@@ -5,6 +5,7 @@ import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.KeymapSettings
 import ai.rever.boss.keymap.model.ShortcutContext
 import ai.rever.boss.keymap.presets.KeymapPresets
+import ai.rever.boss.utils.SystemUtils
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -171,7 +172,27 @@ class StandardBrowserBindingsTest {
             "IntelliJ IDEA" to KeymapPresets.getIntelliJPreset(),
             "Emacs" to KeymapPresets.getEmacsPreset(),
         ).forEach { (name, settings) ->
-            val focus = assertNotNull(settings.getBinding(KeymapPresets.FLUCK_FOCUS_ADDRESS_BAR_ACTION), name)
+            val focus = settings.getBinding(KeymapPresets.FLUCK_FOCUS_ADDRESS_BAR_ACTION)
+
+            // Emacs off macOS is the one preset that does not get this addition, and refusing it
+            // is the merge working rather than failing. That preset binds its own C-l to browser
+            // reload in the same BROWSER context, and off macOS `Cmd` and `Ctrl` are one physical
+            // key, so Cmd+L and Ctrl+L are one chord there. withoutChordsTakenBy drops an
+            // addition whose every chord is taken instead of shipping a live conflict, and an
+            // Emacs user's own C-l is the one that should win in an Emacs preset.
+            //
+            // This was invisible before the signature folded the primary modifier: both bindings
+            // matched Control+L and neither the validator nor this test said so.
+            val emacsOffMac = name == "Emacs" && !SystemUtils.isMacOS
+            if (emacsOffMac) {
+                assertNull(focus, "$name must not ship a second action on its own C-l")
+                val reload = assertNotNull(settings.getBinding(KeymapActions.BROWSER_RELOAD), name)
+                assertEquals("L", reload.key, name)
+                assertEquals(listOf("Ctrl"), reload.modifiers, name)
+                return@forEach
+            }
+
+            assertNotNull(focus, name)
             assertEquals("L", focus.key, name)
             assertEquals(listOf("Cmd"), focus.modifiers, name)
             assertEquals(ShortcutContext.BROWSER, focus.context, "$name must not make it GLOBAL")

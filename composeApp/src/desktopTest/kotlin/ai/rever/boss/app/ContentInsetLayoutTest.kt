@@ -1,5 +1,6 @@
 package ai.rever.boss.app
 
+import ai.rever.boss.components.window_panel.components.main_window_panels.drawerSlideOffset
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,9 +13,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
@@ -43,13 +46,17 @@ class ContentInsetLayoutTest {
         bottomBar: Boolean,
         topBar: Boolean = true,
         leftSidebar: Boolean = true,
+        layoutDirection: LayoutDirection = LayoutDirection.Ltr,
     ): DpSize {
         var reported = DpSize(-1.dp, -1.dp)
         rule.setContent {
             // A density of exactly 1 is what makes the px-to-Dp conversion untestable: every wrong
             // answer equals the right one. Verified by mutation - dropping the divide passes at 1x
             // and fails here. The scale is arbitrary, only its being non-unit matters.
-            CompositionLocalProvider(LocalDensity provides Density(TEST_DENSITY)) {
+            CompositionLocalProvider(
+                LocalDensity provides Density(TEST_DENSITY),
+                LocalLayoutDirection provides layoutDirection,
+            ) {
                 ScaffoldShape(rightSidebar, bottomBar, topBar, leftSidebar) { reported = it }
             }
         }
@@ -76,7 +83,7 @@ class ContentInsetLayoutTest {
                         Modifier
                             .fillMaxHeight()
                             .weight(1f)
-                            .reportContentInset(density, onInset),
+                            .reportContentInset(density, LocalLayoutDirection.current, onInset),
                 )
                 if (rightSidebar) Bar(modifier = Modifier.fillMaxHeight().width(RIGHT_SIDEBAR))
             }
@@ -86,6 +93,12 @@ class ContentInsetLayoutTest {
 
     @Composable
     private fun Bar(modifier: Modifier) = Box(modifier = modifier)
+
+    @Test
+    fun `drawer animation starts at its anchored edge`() {
+        assertEquals(-240, drawerSlideOffset(240, LayoutDirection.Ltr))
+        assertEquals(240, drawerSlideOffset(240, LayoutDirection.Rtl))
+    }
 
     @Test
     fun `the inset is the right sidebar's width and the bottom bar's height`() {
@@ -119,6 +132,14 @@ class ContentInsetLayoutTest {
         val withoutNearChrome = insetFor(rightSidebar = true, bottomBar = true, topBar = false, leftSidebar = false)
 
         assertEquals(withNearChrome, withoutNearChrome)
+    }
+
+    @Test
+    fun `RTL reports the logical end sidebar rather than the physical right sidebar`() {
+        assertEquals(
+            DpSize(RIGHT_SIDEBAR, BOTTOM_BAR),
+            insetFor(rightSidebar = true, bottomBar = true, layoutDirection = LayoutDirection.Rtl),
+        )
     }
 
     private companion object {

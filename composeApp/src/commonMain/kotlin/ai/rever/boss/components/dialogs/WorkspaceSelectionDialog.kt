@@ -79,7 +79,7 @@ fun WorkspaceSelectionDialog(
 
                 // Subtitle
                 Text(
-                    text = "Select workspaces and panels where this bookmark should open",
+                    text = "Select spaces and panels where this bookmark should open",
                     fontSize = 13.sp,
                     color = BossTheme.colors.textSecondary,
                 )
@@ -103,7 +103,7 @@ fun WorkspaceSelectionDialog(
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
-                                    text = "No workspaces available",
+                                    text = "No spaces available",
                                     fontSize = 13.sp,
                                     color = BossTheme.colors.textSecondary,
                                     fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
@@ -136,7 +136,7 @@ fun WorkspaceSelectionDialog(
 
                 // Helper text
                 Text(
-                    text = "Leave empty to open bookmark in current workspace",
+                    text = "Leave empty to open bookmark in current space",
                     fontSize = 11.sp,
                     color = BossTheme.colors.textSecondary,
                 )

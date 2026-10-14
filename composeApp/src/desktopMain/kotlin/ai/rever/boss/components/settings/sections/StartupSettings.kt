@@ -31,9 +31,9 @@ fun StartupSettingsSection() {
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        SettingsSection(title = "Workspace Loading") {
+        SettingsSection(title = "Space Loading") {
             SettingsLongInput(
-                label = "Workspace Load Timeout",
+                label = "Space Load Timeout",
                 value = settings.workspaceLoadTimeoutMs,
                 onValueChange = { newValue ->
                     coroutineScope.launch {
@@ -68,7 +68,7 @@ fun StartupSettingsSection() {
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text(
-                        text = "Workspace Loading",
+                        text = "Space Loading",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = TextPrimary,
@@ -76,8 +76,8 @@ fun StartupSettingsSection() {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text =
-                            "On startup, the app waits for the workspace manager to load your Last Session. " +
-                                "If no workspaces are found within the timeout, it assumes a fresh install and shows the New Tab dialog.",
+                            "On startup, the app waits for the space manager to load your Last Session. " +
+                                "If no spaces are found within the timeout, it assumes a fresh install and shows the New Tab dialog.",
                         fontSize = 11.sp,
                         color = TextSecondary,
                         lineHeight = 16.sp,

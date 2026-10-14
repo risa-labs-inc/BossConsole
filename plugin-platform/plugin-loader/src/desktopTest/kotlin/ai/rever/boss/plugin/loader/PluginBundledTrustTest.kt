@@ -1,6 +1,9 @@
 package ai.rever.boss.plugin.loader
 
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFileAttributeView
+import java.nio.file.attribute.PosixFilePermission
 import kotlin.io.path.createTempDirectory
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -20,6 +23,36 @@ class PluginBundledTrustTest {
         val jar = File(tempDir, "bundled.jar").apply { writeText("jar-bytes") }
         PluginBundledTrust.markTrusted(jar.absolutePath, FileHashing.sha256(jar))
         assertTrue(PluginBundledTrust.isTrusted(jar.absolutePath))
+    }
+
+    @Test
+    fun `a failed marker replacement preserves the last complete trust record`() {
+        val jar = File(tempDir, "atomic-marker.jar").apply { writeText("bundled-bytes") }
+        val digest = FileHashing.sha256(jar)
+        PluginBundledTrust.markTrusted(jar.absolutePath, digest)
+        if (Files.getFileAttributeView(tempDir.toPath(), PosixFileAttributeView::class.java) == null) return
+
+        try {
+            Files.setPosixFilePermissions(
+                tempDir.toPath(),
+                setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_EXECUTE),
+            )
+
+            PluginBundledTrust.markTrusted(jar.absolutePath, "not-the-jar-digest")
+            assertTrue(
+                PluginBundledTrust.isTrusted(jar.absolutePath),
+                "a staging failure must not truncate or replace the last complete marker",
+            )
+        } finally {
+            Files.setPosixFilePermissions(
+                tempDir.toPath(),
+                setOf(
+                    PosixFilePermission.OWNER_READ,
+                    PosixFilePermission.OWNER_WRITE,
+                    PosixFilePermission.OWNER_EXECUTE,
+                ),
+            )
+        }
     }
 
     @Test

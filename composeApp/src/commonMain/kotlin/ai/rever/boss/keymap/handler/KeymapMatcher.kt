@@ -7,6 +7,7 @@ import ai.rever.boss.keymap.model.ShortcutContext
 import ai.rever.boss.keymap.model.canonicalKeyName
 import ai.rever.boss.keymap.model.canonicalModifiers
 import ai.rever.boss.keymap.model.composeKeyName
+import ai.rever.boss.keymap.model.primaryModifierPressed
 import ai.rever.boss.utils.SystemUtils
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
@@ -203,20 +204,13 @@ class KeymapMatcher(
 
         // Match logic: Handle platform-aware Cmd/Ctrl matching
         val primaryModifierMatch =
-            if (required.cmd || required.ctrl) {
-                if (isMacOS) {
-                    // macOS: Cmd matches Meta, Ctrl matches Ctrl
-                    (required.cmd && event.isMetaPressed) || (required.ctrl && event.isCtrlPressed)
-                } else {
-                    // Linux/Windows: Cmd matches Ctrl (since Ctrl is the primary modifier)
-                    // Meta/Super key is rarely used for shortcuts
-                    (required.cmd && event.isCtrlPressed) || (required.ctrl && event.isMetaPressed)
-                }
-            } else {
-                // Binding doesn't require primary modifier
-                // Event must not have any primary modifier pressed
-                !event.isMetaPressed && !event.isCtrlPressed
-            }
+            primaryModifierPressed(
+                hasCmd = required.cmd,
+                hasCtrl = required.ctrl,
+                metaDown = event.isMetaPressed,
+                controlDown = event.isCtrlPressed,
+                isMacOS = isMacOS,
+            )
 
         val modifierMatch =
             primaryModifierMatch &&

@@ -17,6 +17,7 @@ import { withErrorHandler, withStatusErrorHandler } from "../utils/error-handler
 import { generateSupabaseAccessToken } from "../utils/jwt.ts"
 import { ALLOWED_ORIGINS, getAllowedOrigins, getAllowedRpIds, getRpId, rpIdMatchesOrigin } from "../utils/config.ts"
 import { normalizeBase64Url } from "../utils/base64.ts"
+import { maskEmail, maskPasskeyId, maskSessionId, maskUserId } from "../utils/logging.ts"
 import {
   challengeMatches,
   COSE_ALG_ES256,
@@ -43,44 +44,66 @@ export interface AuthenticationCredential {
 }
 
 /**
- * Generates an authentication challenge for a user
+ * A syntactically valid challenge response that commits nothing: a fresh
+ * random challenge that is never stored, so /auth/complete can never
+ * verify against it, with an empty allowCredentials list so the client's
+ * credential request fails locally. Used for every pre-auth failure state
+ * (unknown email, no passkeys, lookup error, challenge-store failure) so
+ * those failure states are indistinguishable from each other. An enrolled
+ * account remains distinguishable because legacy non-discoverable passkeys
+ * require their real credential IDs in allowCredentials.
+ */
+function inertChallenge(sessionId?: string) {
+  return {
+    success: true as const,
+    challenge: generateChallenge(),
+    timeout: 60000,
+    rpId: getRpId(),
+    userVerification: 'preferred',
+    allowCredentials: [] as { id: string; type: string; transports: string[] }[],
+    sessionId,
+    error: undefined,
+  }
+}
+
+/**
+ * Generates an authentication challenge for a user.
+ *
+ * Narrows the enumeration oracle tracked by BossConsole#768: unknown email,
+ * known email with no passkeys, lookup error and challenge-store failure all
+ * return the same inert response shape. A real passkey user still receives a
+ * non-empty allowCredentials list and is therefore distinguishable; legacy
+ * non-discoverable credentials cannot authenticate without their real IDs.
+ * Closing that residual oracle requires the discoverable-credential migration
+ * tracked separately in #768. Timing is not equalised by this function.
  */
 export const generateAuthChallenge = withErrorHandler(
   async (supabase: SupabaseClient, email: string, sessionId?: string) => {
-    console.log('🔑 Generating authentication challenge for email:', email)
+    console.log('🔑 Generating authentication challenge for email:', maskEmail(email))
 
     // Use utility function for scalable user lookup
     const userResult = await findUserByEmail(supabase, email)
 
     if (!userResult.success || !userResult.user) {
-      console.error('User not found with email:', email)
-      return {
-        success: false,
-        error: 'User not found'
-      }
+      console.error('User lookup did not resolve to a user')
+      return inertChallenge(sessionId)
     }
 
     const userId = userResult.user.id
-    console.log('Resolved email to user ID:', userId)
+    console.log('Resolved email to user ID:', maskUserId(userId))
 
     // Get user's passkeys
     const passkeyResult = await getUserPasskeys(supabase, userId)
 
     if (!passkeyResult.success) {
       console.error('Error fetching user passkeys:', passkeyResult.error)
-      return {
-        success: false,
-        error: 'Failed to fetch user credentials'
-      }
+      return inertChallenge(sessionId)
     }
 
     const userPasskeys = passkeyResult.passkeys || []
 
     if (userPasskeys.length === 0) {
-      return {
-        success: false,
-        error: 'No passkeys found for user'
-      }
+      return inertChallenge(sessionId)
     }
 
     // Generate and store challenge
@@ -91,10 +114,13 @@ export const generateAuthChallenge = withErrorHandler(
     })
 
     if (!storeResult.success) {
-      return {
-        success: false,
-        error: storeResult.error || 'Failed to store challenge'
-      }
+      console.error('Failed to store challenge:', storeResult.error)
+      // Inert, not a distinguishable failure (review follow-up): a
+      // success:false here is reachable only for an enrolled account (we got
+      // past the passkey lookup), which inverts the oracle - a prober learns
+      // the account is enrolled precisely when the store hiccups. Return the
+      // same inert challenge as the pre-auth failures instead.
+      return inertChallenge(sessionId)
     }
 
     // Build allowed credentials list
@@ -269,7 +295,7 @@ export const completeAuthentication = withErrorHandler(
     // authenticator data is known to be authentic (WebAuthn L2 §7.2 step 21).
     const counter = evaluateSignCounter(passkey.sign_count, authData.signCount)
     if (!counter.ok) {
-      console.error('❌ Signature counter regression for passkey:', passkey.id, counter.reason)
+      console.error('❌ Signature counter regression for passkey:', maskPasskeyId(passkey.id), counter.reason)
       return {
         success: false,
         error: 'Signature counter did not increase - possible cloned authenticator'
@@ -302,14 +328,14 @@ export const completeAuthentication = withErrorHandler(
     // assertion already claimed this counter value.
     const useResult = await recordPasskeyUse(supabase, passkey.id, counter.nextValue)
     if (!useResult.advanced) {
-      console.error('❌ Signature counter was claimed concurrently for passkey:', passkey.id)
+      console.error('❌ Signature counter was claimed concurrently for passkey:', maskPasskeyId(passkey.id))
       return {
         success: false,
         error: 'Signature counter did not increase - possible cloned authenticator'
       }
     }
 
-    console.log('✅ Authentication successful for user:', passkey.user_id)
+    console.log('✅ Authentication successful for user:', maskUserId(passkey.user_id))
 
     // Mint the session *before* writing the completion row, so the row is only
     // ever published complete.
@@ -348,12 +374,12 @@ export const completeAuthentication = withErrorHandler(
     // Store completed authentication if there's a session_id
     console.log('🔍 Challenge data:', {
       has_session_id: !!challengeData.session_id,
-      session_id: challengeData.session_id,
-      user_id: passkey.user_id
+      session_id: maskSessionId(challengeData.session_id),
+      user_id: maskUserId(passkey.user_id)
     })
 
     if (challengeData.session_id) {
-      console.log('💾 Storing completed authentication for session:', challengeData.session_id)
+      console.log('💾 Storing completed authentication for session:', maskSessionId(challengeData.session_id))
       const storeResult = await storeCompletedAuthentication(supabase, {
         challenge: signedChallenge,
         sessionId: challengeData.session_id,
@@ -442,7 +468,7 @@ function parseStoredExpiryMillis(value: unknown): number | null {
  */
 export const checkAuthStatus = withStatusErrorHandler(
   async (supabase: SupabaseClient, sessionId: string) => {
-    console.log('🔍 Checking auth status for session:', sessionId)
+    console.log('🔍 Checking auth status for session:', maskSessionId(sessionId))
 
     // maybeSingle + newest-first: a client-supplied sessionId can legitimately be
     // reused, and .single() on two rows returns PGRST116, which would wedge the
@@ -483,14 +509,14 @@ export const checkAuthStatus = withStatusErrorHandler(
       })
 
       if (completedError || !completedAuth) {
-        console.log('❌ No completed authentication found for session:', sessionId)
+        console.log('❌ No completed authentication found for session:', maskSessionId(sessionId))
         return {
           status: 'expired' as const,
           message: 'Session not found or expired'
         }
       }
 
-      console.log('✅ Found completed authentication:', completedAuth.user_id)
+      console.log('✅ Found completed authentication:', maskUserId(completedAuth.user_id))
 
       // Replay the session recorded when the ceremony completed, once. Minting a
       // new session on every poll churns auth.sessions rows (and invalidates the
@@ -545,7 +571,7 @@ export const checkAuthStatus = withStatusErrorHandler(
       }
 
       // Generate Supabase session for passkey authentication
-      console.log('🎫 Generating Supabase session for passkey auth:', userResult.user.email)
+      console.log('🎫 Generating Supabase session for passkey auth:', maskEmail(userResult.user.email))
 
       const tokens = await generateSupabaseAccessToken(supabase, userResult.user.email)
 
@@ -568,7 +594,7 @@ export const checkAuthStatus = withStatusErrorHandler(
         .eq('id', completedAuth.id)
 
       if (tokenStoreError) {
-        console.error('⚠️ Failed to persist session for session id:', sessionId, tokenStoreError)
+        console.error('⚠️ Failed to persist session for session id:', maskSessionId(sessionId), tokenStoreError)
       }
 
       return {

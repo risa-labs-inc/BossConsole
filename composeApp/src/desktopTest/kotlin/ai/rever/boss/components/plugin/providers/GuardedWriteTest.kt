@@ -90,12 +90,13 @@ class GuardedWriteTest {
         val previousLevel = BossLogger.globalLevel
         try {
             BossLogger.setGlobalLevel(LogLevel.WARN)
-            assertFalse(guardedWrite(path, content) { _, _ -> throw IOException("write failed") })
+            assertFalse(guardedWrite(path, content) { _, _ -> throw IOException("write failed: $content") })
             val entry = BossLogger.getRecentLogs(limit = 100).last { it.data?.get("path") == path }
             assertEquals(content.length, entry.data?.get("chars"))
             assertEquals("IOException", entry.data?.get("error"))
             assertFalse(entry.message.contains(content))
             assertFalse(entry.data.toString().contains(content))
+            assertEquals(null, entry.error, "Exception messages can contain edited credentials")
         } finally {
             BossLogger.setGlobalLevel(previousLevel)
         }

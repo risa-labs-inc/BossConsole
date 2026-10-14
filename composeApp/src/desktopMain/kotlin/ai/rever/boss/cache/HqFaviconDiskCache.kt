@@ -18,10 +18,13 @@ import javax.imageio.ImageIO
 internal class CachedFavicon(
     val icon: TabIcon.Image,
     val fetchedAtMs: Long,
+    val source: FaviconArtworkSource = FaviconArtworkSource.GOOGLE,
 )
 
+internal enum class FaviconArtworkSource { GOOGLE, SITE }
+
 /**
- * The on-disk half of [HighQualityFaviconService]: one PNG per host, capped in count and aged out
+ * The on-disk half of [HighQualityFaviconService]: separate PNGs for Google and site artwork, capped
  * by [FaviconFreshness].
  *
  * Every entry point takes the directory explicitly, defaulting to the real one, the same seam
@@ -47,6 +50,21 @@ internal object HqFaviconDiskCache {
         val digest = MessageDigest.getInstance("MD5")
         return digest.digest(host.toByteArray()).joinToString("") { "%02x".format(it) }
     }
+
+    /** Google never writes/deletes this namespace; existing untagged cache entries stay readable. */
+    fun originalKeyFor(origin: String): String {
+        val normalized =
+            requireNotNull(OriginalFaviconSource.originFor(origin.takeIf { "://" in it } ?: "https://$origin"))
+        return keyFor("site:$normalized")
+    }
+
+    fun loadOriginal(
+        host: String,
+        dir: File = defaultDir,
+    ): CachedFavicon? =
+        load(originalKeyFor(host), dir)?.let {
+            CachedFavicon(it.icon, it.fetchedAtMs, FaviconArtworkSource.SITE)
+        }
 
     /**
      * The entry under [cacheKey] and the time it was fetched, or null when there is none.

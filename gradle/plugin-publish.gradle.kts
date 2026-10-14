@@ -5,7 +5,8 @@
 //   apply(from = rootProject.file("gradle/plugin-publish.gradle.kts"))
 //
 // Then run:
-//   ./gradlew :plugin-platform:plugin-my-plugin:publishPlugin -PpluginStoreToken=eyJ...
+//   Set BOSS_PLUGIN_STORE_TOKEN in the environment, then run:
+//   ./gradlew :plugin-platform:plugin-my-plugin:publishPlugin
 
 // Find the JAR task (varies by multiplatform setup)
 val jarTask = tasks.findByName("desktopJar") 
@@ -38,13 +39,9 @@ if (jarTask != null) {
         changelog.set(providers.gradleProperty("changelog"))
         tags.set(providers.gradleProperty("tags"))
         
-        // Auth token - from property or environment
-        authToken.set(
-            providers.gradleProperty("pluginStoreToken").orElse(
-                providers.environmentVariable("BOSS_PLUGIN_STORE_TOKEN")
-            )
-        )
-        
+        // Credentials are read by the task at execution time, never from a -P argument.
+        homepageUrl.set(providers.gradleProperty("homepageUrl"))
+
         // Store URL - from property or environment
         storeUrl.set(
             providers.gradleProperty("pluginStoreUrl").orElse(

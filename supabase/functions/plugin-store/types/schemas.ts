@@ -10,21 +10,42 @@ export const PluginTypeSchema = z.enum(['panel', 'tab', 'hybrid', 'mixed', 'serv
 // Browse Route Schemas
 // ============================================================================
 
+// The catalogue's paging bounds, defined once for both routes. The SQL wrappers clamp to the same
+// page size and to a page of 1,000,000 (20260924180000), so no request a route accepts is changed
+// there. CATALOGUE_PAGE_MAX is far below that: 10,000 pages of 100 is a million plugins, and a
+// deeper page is refused here with a 400 rather than silently answered with an empty one.
+export const CATALOGUE_PAGE_MAX = 10_000
+export const CATALOGUE_PAGE_SIZE_MAX = 100
+
 export const ListPluginsQuerySchema = z.object({
-  page: z.string().optional().default('1').transform(Number),
-  pageSize: z.string().optional().default('20').transform(Number),
+  page: z.coerce.number().int().min(1).max(CATALOGUE_PAGE_MAX).default(1),
+  pageSize: z.coerce.number().int().min(1).max(CATALOGUE_PAGE_SIZE_MAX).default(20),
   sortBy: z.enum(['name', 'downloads', 'rating', 'newest', 'updated']).optional().default('downloads')
 })
 
 export const SearchPluginsRequestSchema = z.object({
-  query: z.string().optional().default(''),
+  query: z.string().max(200).optional().default(''),
   type: PluginTypeSchema.optional(),
-  tags: z.array(z.string()).optional(),
+  // Cap the array AND each tag, mirroring the 50-char per-tag cap on the
+  // Publish* schemas. BossConsole#1249: an unbounded `tags` array was
+  // concatenated into the SQL ILIKE filter and could amplify a DoS.
+  tags: z.array(z.string().max(50)).max(20).optional(),
   minRating: z.number().min(0).max(5).optional().default(0),
   verifiedOnly: z.boolean().optional().default(false),
-  page: z.number().min(1).optional().default(1),
-  pageSize: z.number().min(1).max(100).optional().default(20),
+  page: z.number().int().min(1).max(CATALOGUE_PAGE_MAX).optional().default(1),
+  pageSize: z.number().int().min(1).max(CATALOGUE_PAGE_SIZE_MAX).optional().default(20),
   sortBy: z.enum(['name', 'downloads', 'rating', 'newest', 'updated']).optional().default('downloads')
+})
+
+// GET /tags/popular's query (BossConsole#1253). `z.coerce.number()` alone was not enough: a
+// non-numeric value coerces to NaN, JSON has no NaN so the RPC payload carries null, and
+// PostgreSQL reads LIMIT NULL as LIMIT ALL. `.int()` rejects NaN, fractions and Infinity, and the
+// bounds reject zero, negatives and anything past the cap, all before the handler runs. The SQL
+// function clamps to the same range (20260922160000) for a caller that skips this route.
+export const POPULAR_TAGS_LIMIT_MAX = 100
+
+export const PopularTagsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(POPULAR_TAGS_LIMIT_MAX).default(20)
 })
 
 export const PluginListItemSchema = z.object({
@@ -152,7 +173,11 @@ export const PublishPluginRequestSchema = z.object({
   pluginId: z.string().min(3).max(100).regex(/^[a-z0-9.-]+$/i, 'Plugin ID must contain only alphanumeric characters, dots, and hyphens'),
   displayName: z.string().min(1).max(100),
   description: z.string().max(5000).optional().default(''),
-  authorName: z.string().min(1).max(100).optional(), // Optional custom author name, defaults to email username
+  // Accepted but IGNORED: the stored author name is always derived from the
+  // authenticated user, because a self-asserted name lets a publisher claim
+  // an org or "BOSS Team" it does not belong to. Kept in the schema so
+  // existing clients do not have to stop sending it.
+  authorName: z.string().min(1).max(100).optional(),
   homepageUrl: z.string().url('homepageUrl must be a valid URL (required for publishing)'),
   iconUrl: z.union([z.string().url(), z.literal('')]).optional().default(''),
   type: PluginTypeSchema.optional().default('panel'),
@@ -213,6 +238,24 @@ export const FinalizeVersionResponseSchema = z.object({
 // Simplified GitHub Publish Schema
 // ============================================================================
 
+/**
+ * GitHub URL guard. BossConsole#1250: the previous `url.includes('github.com')`
+ * accepted any URL whose text contained the substring (query string, fragment,
+ * `github.com.evil.example` subdomain), because it was a substring check on
+ * the URL text rather than a parse of the hostname. The data layer
+ * (`parseGitHubUrl`) would refuse those URLs anyway, but the schema-level
+ * check is what the publisher's UI sees, and a wrong schema answer fails the
+ * whole validation step. Parse the URL and require the host to be exactly
+ * `github.com`.
+ */
+function isGitHubHost(url: string): boolean {
+  try {
+    return new URL(url).hostname === "github.com"
+  } catch {
+    return false
+  }
+}
+
 export const PublishFromGitHubRequestSchema = z.object({
   /**
    * Organisation to publish under. Optional, and AUTHORISED server-side against
@@ -222,7 +265,7 @@ export const PublishFromGitHubRequestSchema = z.object({
    */
   orgId: z.string().uuid('orgId must be a UUID').optional(),
   githubUrl: z.string().url('Must be a valid GitHub URL').refine(
-    (url) => url.includes('github.com'),
+    isGitHubHost,
     'URL must be a GitHub repository URL'
   ),
   changelog: z.string().max(5000).optional(),
@@ -251,7 +294,7 @@ export const PublishFromGitHubMetadataRequestSchema = z.object({
    */
   orgId: z.string().uuid('orgId must be a UUID').optional(),
   githubUrl: z.string().url('Must be a valid GitHub URL').refine(
-    (url) => url.includes('github.com'),
+    isGitHubHost,
     'URL must be a GitHub repository URL'
   ),
   // Client-provided SHA-256 of the JAR (hex, 64 chars). The server does not

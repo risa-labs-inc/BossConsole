@@ -67,6 +67,18 @@ object BrowserSettings {
             System.setProperty(SHOW_SHARE_BUTTON_PROP, value.toString())
         }
 
+    // Downloads (configurable via Settings > Browser > Downloads). ON by default: BOSS asks
+    // for consent before saving a file with a recognized executable extension. FluckEngine
+    // reads this field directly at download time rather than caching a copy, so toggling it
+    // here takes effect for the next download without an application restart. No system
+    // property mirror is needed - unlike the toolbar toggles above, the download handler
+    // lives in the host itself, not in a separately classloaded plugin. @Volatile because the
+    // write happens on the Compose UI thread and the read on the JxBrowser download callback
+    // thread, with no happens-before edge between them: the annotation is what makes the
+    // "applies to the next download" claim safe rather than a race.
+    @Volatile
+    var warnForExecutables: Boolean = true
+
     init {
         // Publish the defaults up front. A Kotlin property initializer does not run through the
         // custom setter, so without this the properties stay unset until the settings file is

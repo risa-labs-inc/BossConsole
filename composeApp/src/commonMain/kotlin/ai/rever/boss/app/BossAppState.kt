@@ -24,6 +24,7 @@ import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.html.HtmlFileOpenRequest
 import ai.rever.boss.mcp.McpApprovalRequest
+import ai.rever.boss.search.SpotlightFileIndexOwner
 import ai.rever.boss.services.FileHandlerService
 import ai.rever.boss.services.TerminalHandlerService
 import ai.rever.boss.services.URLHandlerService
@@ -84,8 +85,13 @@ internal class BossAppState(
     // --- Dialog visibility --------------------------------------------------
     var showNewTabDialog by mutableStateOf(false)
     var newTabDialogInitialType by mutableStateOf<TabType?>(null)
-    var showTopOfMindDialog by mutableStateOf(false)
     var showGlobalSearchDialog by mutableStateOf(false)
+
+    /**
+     * Retains one project index while this window remains open. Dialog-local search state is kept
+     * in GlobalSearchDialog so a reopen cannot restore another session's query or selection.
+     */
+    val spotlightFileIndexes = SpotlightFileIndexOwner(coroutineScope)
 
     /**
      * The tools launcher's dialog.
@@ -110,8 +116,11 @@ internal class BossAppState(
      */
     var pendingWorkspaceSwitch by mutableStateOf<LayoutWorkspace?>(null)
     var showNewProjectDialog by mutableStateOf(false)
+    var pendingSpaceToOpen by mutableStateOf<ai.rever.boss.components.workspaces.LayoutWorkspace?>(null)
+    var showCreateSpaceDialog by mutableStateOf(false)
     var showCloneProjectDialog by mutableStateOf(false)
     var projectToOpen by mutableStateOf<Project?>(null)
+
     var showShortcutHelpDialog by mutableStateOf(false)
 
     /**
@@ -121,7 +130,7 @@ internal class BossAppState(
      * Null when nothing is pending. Window-scoped, like the project it follows from:
      * project selection is per window, so two windows can be asked independently.
      */
-    var pendingWorkspacePrompt by mutableStateOf<String?>(null)
+    var pendingWorkspacePrompt by mutableStateOf<SpacePrompt?>(null)
 
     /** Settings window visibility, deep-link section and raise-requests. See [SettingsWindowState]. */
     val settingsWindow = SettingsWindowState()
@@ -182,9 +191,17 @@ internal class BossAppState(
     var pendingDependentRestart by
         mutableStateOf<DependentRestartPrompt?>(null)
 
-    // A terminal command that arrived from outside this BOSS invocation and is
-    // waiting for the operator to confirm it. Null whenever nothing is pending.
-    var pendingTerminalCommand by mutableStateOf<PendingTerminalCommand?>(null)
+    // Keep every external request until the operator answers its own prompt.
+    val terminalCommandApprovals = TerminalCommandApprovalQueue()
+    val urlOpenApprovals = UrlOpenApprovalQueue()
+
+    // A Space an external request asked to load, held until the operator sees the terminal
+    // commands it would start. One at a time: a second arrival is refused, not queued.
+    var pendingSpaceLoad by mutableStateOf<PendingSpaceLoad?>(null)
+
+    // The same holding pattern for `boss://plugin?id=…&action=…`: a link the OS
+    // will accept from any program cannot dispatch into a plugin unattended.
+    val pluginActionApprovals = PluginActionApprovalQueue()
 
     // An MCP tool execution requested by an AI agent that is suspended waiting
     // for operator approval under an ASK policy.
@@ -211,6 +228,8 @@ internal class BossAppState(
 
     // --- Plugin install wizard (shown on first login) ------------------------
     var showPluginInstallWizard by mutableStateOf(false)
+    var terminalOnboardingOwnerStarted by mutableStateOf(false)
+    var terminalOnboardingRequestGeneration by mutableStateOf(0)
     var pluginWizardChecked by mutableStateOf(false)
     var pluginWizardRetryCount by mutableStateOf(0)
     var availablePluginsForWizard by mutableStateOf<List<WizardPluginInfo>>(emptyList())
@@ -220,6 +239,8 @@ internal class BossAppState(
     // Track if workspace restoration has completed (for first window only)
     // New windows don't restore Last Session, so start as complete
     var workspaceRestorationComplete by mutableStateOf(!isFirstWindow)
+    var workspaceRestorationStarted by mutableStateOf(false)
+    var sessionRestoreRefused by mutableStateOf(false)
 
     /**
      * The project path startup restored from Last Session, if any.
@@ -235,6 +256,17 @@ internal class BossAppState(
      * later, deliberate re-selection of the same project is a real choice and is prompted.
      */
     var restoredProjectPath by mutableStateOf<String?>(null)
+
+    /**
+     * The project a person just placed with an explicit answer to "where should this open?" -
+     * This Space, New Space, or a new window arriving with it.
+     *
+     * The project-selection effect skips it once, like [restoredProjectPath], because the answer
+     * already said what happens to the layout: This Space keeps it, New Space raises the Space
+     * list itself, and a new window opens on its own fresh Space. Consulting the default-Space
+     * setting on top would apply a layout or prompt a second time.
+     */
+    var answeredProjectPath by mutableStateOf<String?>(null)
 
     // Track if handlers have been marked ready (prevents race condition between workspace load and timeout)
     // Uses atomic flag to ensure handler marking happens exactly once
@@ -270,9 +302,38 @@ internal class BossAppState(
  * invocation (see `DeepLinkOrigin`). The command is carried verbatim so the
  * prompt shows exactly what would run.
  */
-internal data class PendingTerminalCommand(
+internal class PendingTerminalCommand(
     val command: String,
     val workingDirectory: String?,
+)
+
+/**
+ * A Space load held back for the operator's confirmation.
+ *
+ * BOSS reaches this state when a `boss://workspace` request arrives over a path any program can
+ * drive and the Space carries terminal commands - which applying it would type into a shell, the
+ * same thing a held [PendingTerminalCommand] is held for. [commands] are carried verbatim so the
+ * prompt shows exactly what would run, and [workspace] is the parsed file the confirmation
+ * applies, so what is shown is what loads.
+ */
+internal class PendingSpaceLoad(
+    val workspace: LayoutWorkspace,
+    val workspacePath: String,
+    val commands: List<String>,
+)
+
+/**
+ * A URL held back for the operator's confirmation.
+ *
+ * BOSS reaches this state when a `boss://url?url=` request arrives over a path
+ * any program can drive, rather than from the operator's own `boss` invocation
+ * (see `DeepLinkOrigin`). The URL is carried verbatim so the prompt shows
+ * exactly what a tab would open. Keep identity equality: two requests for the
+ * same URL must still get separate arming intervals and consume callbacks.
+ */
+internal class PendingUrlOpen(
+    val url: String,
+    val title: String,
 )
 
 /**
@@ -305,6 +366,13 @@ internal fun ComponentContext.rememberBossAppState(
         remember(splitViewState, windowId) {
             SplitViewOperationsImpl(splitViewState, windowId)
         }
+    // Release its Main-dispatched coroutine scope when this window's composition leaves, so a
+    // closed window does not leak the scope or any in-flight operation.
+    DisposableEffect(splitViewOperations) {
+        onDispose {
+            splitViewOperations.dispose()
+        }
+    }
 
     // Create workspace data provider wrapper for plugins
     val workspaceDataProvider =

@@ -7,6 +7,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.WindowState
@@ -142,19 +144,21 @@ internal fun resolveRegion(
     bounds: IntArray?,
     inset: DpSize,
     regionInWindow: IntRect?,
+    layoutDirection: LayoutDirection,
 ): IntArray? {
-    if (bounds == null || regionInWindow == null) return insetBounds(bounds, inset)
+    if (bounds == null || regionInWindow == null) return insetBounds(bounds, inset, layoutDirection)
     val left = regionInWindow.left.coerceIn(0, bounds[2])
     val top = regionInWindow.top.coerceIn(0, bounds[3])
     val width = regionInWindow.width.coerceAtMost(bounds[2] - left)
     val height = regionInWindow.height.coerceAtMost(bounds[3] - top)
-    if (width <= 0 || height <= 0) return insetBounds(bounds, inset)
+    if (width <= 0 || height <= 0) return insetBounds(bounds, inset, layoutDirection)
     return intArrayOf(bounds[0] + left, bounds[1] + top, width, height)
 }
 
 /**
  * Top-left corner, in AWT logical units, for an overlay of [size] placed at [alignment] inside
  * [bounds] - or the origin when the parent could not be measured.
+ * Start/end follow [layoutDirection]; absolute alignments retain their physical edges.
  *
  * Pure so the arithmetic is pinned by a test; composing a `Window` needs a display, so this is the
  * only reachable part. Offsets are floored at zero so content larger than the parent overhangs the
@@ -164,39 +168,22 @@ internal fun cornerPosition(
     bounds: IntArray?,
     size: DpSize,
     alignment: Alignment,
+    layoutDirection: LayoutDirection,
 ): Pair<Int, Int> {
     if (bounds == null) return 0 to 0
-    val width = size.width.value.toInt()
-    val height = size.height.value.toInt()
-    val slackX = (bounds[2] - width).coerceAtLeast(0)
-    val slackY = (bounds[3] - height).coerceAtLeast(0)
-    val x =
-        bounds[0] +
-            when (alignment) {
-                Alignment.TopStart, Alignment.CenterStart, Alignment.BottomStart -> 0
-                Alignment.TopEnd, Alignment.CenterEnd, Alignment.BottomEnd -> slackX
-                else -> slackX / 2
-            }
-    val y =
-        bounds[1] +
-            when (alignment) {
-                Alignment.TopStart, Alignment.TopCenter, Alignment.TopEnd -> 0
-                Alignment.BottomStart, Alignment.BottomCenter, Alignment.BottomEnd -> slackY
-                else -> slackY / 2
-            }
-    return x to y
+    val content = IntSize(size.width.value.roundToInt(), size.height.value.roundToInt())
+    val available = IntSize(bounds[2], bounds[3])
+    val offset = alignment.align(content, available, layoutDirection)
+    return bounds[0] + offset.x.coerceAtLeast(0) to bounds[1] + offset.y.coerceAtLeast(0)
 }
 
 /**
  * [bounds], with [inset] taken off its END and BOTTOM edges - the sub-region a caller anchored to
  * part of the window is actually placing itself in.
  *
- * Only the far edges, and that is the whole meaning rather than a simplification. The origin is
- * where a `TopStart` overlay goes, and a caller inset from the right and the bottom has not moved
- * its top-left corner anywhere - so a near-corner anchor must be unaffected while a far-corner one
- * moves by exactly the inset. Expressing it as a smaller rectangle rather than as an offset added
- * after the fact is what gets that for free, and keeps [cornerPosition]'s floor-at-the-origin
- * behaviour applying to the region rather than to the window.
+ * End is physical right in LTR and left in RTL. Removing a left inset also moves the
+ * region's origin, so logical start stays fixed while logical end moves inward. Explicit
+ * regions remain physical rectangles; only the inset fallback needs a layout direction.
  *
  * Widths floor at zero: an inset wider than the window would otherwise produce a negative extent,
  * and [cornerPosition] would read that as slack and place the overlay outside the parent.
@@ -209,16 +196,21 @@ internal fun cornerPosition(
 internal fun insetBounds(
     bounds: IntArray?,
     inset: DpSize,
+    layoutDirection: LayoutDirection,
 ): IntArray? {
     // An unmeasurable parent stays unmeasurable, and a zero inset returns the SAME instance - see
     // the KDoc on identity above.
     if (bounds == null || inset == DpSize.Zero) return bounds
+    val endInset =
+        inset.width.value
+            .roundToInt()
+            .coerceIn(0, bounds[2])
     return intArrayOf(
-        bounds[0],
+        bounds[0] + if (layoutDirection == LayoutDirection.Rtl) endInset else 0,
         bounds[1],
         // Rounded, not truncated: the inset is derived as px / density, which is not integral at
         // fractional scale factors, and truncating loses up to a unit per axis.
-        (bounds[2] - inset.width.value.roundToInt()).coerceAtLeast(0),
+        bounds[2] - endInset,
         (bounds[3] - inset.height.value.roundToInt()).coerceAtLeast(0),
     )
 }

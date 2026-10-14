@@ -9,23 +9,79 @@ name: ⚡ Edge Functions
 # job existed, which is the argument for having it.
 
 on:
+  # PRs validate dev/develop integration; main pushes validate the merged tree.
+  # Do not add dev here: dev -> main would enqueue the same macOS work twice.
+  # For a branch without a PR, use workflow_dispatch. See docs/ci-validation.md.
   push:
-    branches: [ main, develop ]
+    branches: [main]
     paths:
       - 'supabase/functions/**'
+      - 'supabase/tests/app-sharing/**'
+      - 'composeApp/src/desktopMain/resources/app-sharing/**'
+      - 'composeApp/src/desktopTest/js/app-sharing/**'
+      - 'scripts/sync-app-viewer-assets.mjs'
+      - 'scripts/app-sharing/**'
+      - 'scripts/app-sharing-maintenance.mjs'
+      - 'infra/cloudflare/terminal-relay/**'
       # The function's behaviour is coupled to the passkey migrations (columns,
       # the session_id index, the RPC grant), so schema edits run these too
       - 'supabase/migrations/**'
+      # redirect tests keep its allow-list in lockstep with these
+      - 'supabase/templates/email/**'
+      - 'supabase/config.toml'
       - '.github/workflows/edge-functions.yml'
   pull_request:
-    branches: [ main ]
+    branches: [main, dev, develop]
     paths:
       - 'supabase/functions/**'
+      - 'supabase/tests/app-sharing/**'
+      - 'composeApp/src/desktopMain/resources/app-sharing/**'
+      - 'composeApp/src/desktopTest/js/app-sharing/**'
+      - 'scripts/sync-app-viewer-assets.mjs'
+      - 'scripts/app-sharing/**'
+      - 'scripts/app-sharing-maintenance.mjs'
+      - 'infra/cloudflare/terminal-relay/**'
       - 'supabase/migrations/**'
+      # redirect tests keep its allow-list in lockstep with these
+      - 'supabase/templates/email/**'
+      - 'supabase/config.toml'
       - '.github/workflows/edge-functions.yml'
   workflow_dispatch:
 
+# Cancel only obsolete PR validation; never cancel main or manual validation.
+concurrency:
+  group: edge-functions-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  fluck-oauth:
+    name: Fluck OAuth - check and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/fluck-oauth
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno task check
+      - run: deno task test
+
+  fluck-vault:
+    name: Fluck vault - check and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/fluck-vault
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno task check
+      - run: deno task test
+
   passkey:
     name: 🔐 Passkey function — check & test
     runs-on: ubuntu-latest
@@ -125,4 +181,179 @@ jobs:
       - name: 🧹 Lint
         # Gating, unlike the two jobs above: this function is new, so it starts
         # with no findings to grandfather. Keep it that way.
+        run: deno lint
+
+  crash-report:
+    name: 💥 Crash Report function — check & test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/crash-report
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: 🦕 Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: 🔎 Type check
+        run: find . -name '*.ts' -print0 | sort -z | xargs -0 -r deno check
+
+      - name: 🧪 Tests
+        # The suite sets function secrets in-process and stubs every fetch;
+        # withholding --allow-net makes an accidentally unstubbed call fail.
+        run: deno test --allow-env --config deno.json
+
+      - name: 🧹 Lint
+        run: deno lint
+
+  live-sessions:
+    name: 🖥️ Live Sessions function — check & test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/live-sessions
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: 🦕 Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: 🔎 Type check
+        run: find . -name '*.ts' -print0 | sort -z | xargs -0 -r deno check
+
+      - name: 🧪 Tests
+        # --allow-all: the suite sets SUPABASE_URL / SUPABASE_ANON_KEY env vars.
+        run: deno test --allow-all
+
+      - name: 🧹 Lint
+        run: deno lint
+
+  fluck-web:
+    name: Fluck Web function - check and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/fluck-web
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: 🦕 Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: 🔎 Type check
+        run: find . -name '*.ts' -print0 | sort -z | xargs -0 -r deno check
+
+      - name: 🧪 Tests
+        # --allow-all: the suite sets SUPABASE_URL / SUPABASE_ANON_KEY / FLUCK_WEB_* env vars.
+        run: deno test --allow-all
+
+      - name: 🧹 Lint
+        run: deno lint
+
+  user-settings:
+    name: User settings — check and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/user-settings
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: find . -name "*.ts" -print0 | xargs -0 -r deno check
+      - run: deno lint
+      - run: deno test --allow-all
+
+  relay-admission:
+    name: Relay admission — check and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/relay-admission
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: find . -name "*.ts" -print0 | xargs -0 -r deno check
+      - run: deno lint
+      - run: deno test --allow-all
+
+  app-sharing:
+    name: 'Application sharing: authorization and signaling'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno check *.ts && deno lint && deno test --allow-env
+        working-directory: supabase/functions/app-sharing
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: supabase/tests/app-sharing/package-lock.json
+      - run: deno check *.ts && deno lint && deno test --allow-env
+        working-directory: supabase/functions/app-sharing-maintenance
+      - run: node --test composeApp/src/desktopTest/js/app-sharing/*.test.mjs
+      - run: node scripts/sync-app-viewer-assets.mjs --check
+      - run: npm ci && npm test
+        working-directory: supabase/tests/app-sharing
+
+  terminal-relay:
+    name: Terminal relay — check and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/cloudflare/terminal-relay
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: infra/cloudflare/terminal-relay/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run test:integration
+        env:
+          WRANGLER_SEND_METRICS: 'false'
+
+  redirect:
+    name: ↪️ Redirect function — check & test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/redirect
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: 🦕 Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: 🔎 Type check
+        run: find . -name '*.ts' -print0 | sort -z | xargs -0 -r deno check
+
+      - name: 🧪 Tests
+        run: deno test --allow-all
+
+      - name: 🧹 Lint (advisory)
+        # Pre-existing findings in app.ts and tests/redirect.test.ts (inline jsr: specifier,
+        # legacy comment); not gating until those are cleaned up. live-sessions lint IS gating.
+        continue-on-error: true
         run: deno lint

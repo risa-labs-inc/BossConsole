@@ -12,11 +12,11 @@ import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.LogSanitizer
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowManager
 import kotlinx.coroutines.*
 import java.io.File
-import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * Handles CLI commands with queueing for app lifecycle coordination.
@@ -29,26 +29,16 @@ import java.util.concurrent.ConcurrentLinkedQueue
 class CLICommandHandler private constructor() {
     private val logger = BossLogger.forComponent("CLICommandHandler")
 
-    private val commandQueue = ConcurrentLinkedQueue<CLICommand>()
+    private val initializationQueue = ReadinessQueue<CLICommand>()
 
     // Holds whole commands, not just the command text: the origin decides whether
     // the command may run unattended, and a queue that dropped it would turn a
     // cold-start request into an unattributed one.
-    private val terminalQueue = ConcurrentLinkedQueue<CLICommand.OpenTerminal>()
-    private val workspaceQueue = ConcurrentLinkedQueue<String>()
-    private val fileQueue = ConcurrentLinkedQueue<String>()
+    private val terminalReadinessQueue = ReadinessQueue<CLICommand.OpenTerminal>()
 
-    @Volatile
-    private var isInitialized = false
-
-    @Volatile
-    private var isTerminalHandlerReady = false
-
-    @Volatile
-    private var isFileHandlerReady = false
-
-    @Volatile
-    private var isWorkspaceHandlerReady = false
+    // Whole commands for the same reason: a Space can carry terminal commands.
+    private val workspaceReadinessQueue = ReadinessQueue<CLICommand.LoadWorkspace>()
+    private val fileReadinessQueue = ReadinessQueue<String>()
 
     // Service references - set during initialization
     private var windowManager: WindowManager? = null
@@ -76,12 +66,12 @@ class CLICommandHandler private constructor() {
     ) {
         this.windowManager = windowManager
         this.getSplitViewState = getSplitViewState
-        this.isInitialized = true
+        val queuedCommands = initializationQueue.markReadyAndClaimQueued()
 
         logger.info(LogCategory.SYSTEM, "CLI initialized with services")
 
         // Execute queued commands
-        executeQueuedCommands()
+        executeQueuedCommands(queuedCommands)
     }
 
     /**
@@ -90,29 +80,34 @@ class CLICommandHandler private constructor() {
      * Otherwise, queues for later execution.
      */
     fun queueCommand(command: CLICommand) {
-        if (isInitialized) {
+        if (initializationQueue.enqueueOrClaimForCaller(command)) {
             scope.launch {
                 executeCommand(command)
             }
         } else {
-            commandQueue.offer(command)
             logger.debug(LogCategory.SYSTEM, "Queued command", mapOf("command" to command.toString()))
         }
     }
+
+    /**
+     * Removes and returns the commands still waiting for [initialize], for a process about to
+     * relaunch itself (see `RelaunchHandoff`). The queue stays not-ready, so a command that arrives
+     * after this call waits as before and is lost only if the relaunch then goes ahead.
+     */
+    fun takeQueuedForRelaunch(): List<CLICommand> = initializationQueue.drainQueued()
 
     /**
      * Mark terminal handler as ready and process queued terminal events.
      * Should be called from BossApp.kt after TerminalEventBus listener is set up.
      */
     fun markTerminalHandlerReady() {
-        isTerminalHandlerReady = true
+        val queuedCommands = terminalReadinessQueue.markReadyAndClaimQueued()
         logger.debug(LogCategory.SYSTEM, "Terminal handler marked as ready")
 
         // Process queued terminal events
         scope.launch {
-            while (terminalQueue.isNotEmpty()) {
-                val queued = terminalQueue.poll()
-                if (queued != null) {
+            queuedCommands.forEach { queued ->
+                try {
                     logger.debug(
                         LogCategory.SYSTEM,
                         "Processing queued terminal command",
@@ -121,11 +116,9 @@ class CLICommandHandler private constructor() {
                             "origin" to queued.origin.name,
                         ),
                     )
-                    try {
-                        handleOpenTerminal(queued.command, queued.origin)
-                    } catch (e: Exception) {
-                        logger.error(LogCategory.SYSTEM, "Failed to process queued terminal event", error = e)
-                    }
+                    handleOpenTerminal(queued.command, queued.origin)
+                } catch (e: Exception) {
+                    logger.error(LogCategory.SYSTEM, "Failed to process queued terminal event", error = e)
                 }
             }
         }
@@ -136,20 +129,17 @@ class CLICommandHandler private constructor() {
      * Should be called from BossApp.kt after FileEventBus listener is set up.
      */
     fun markFileHandlerReady() {
-        isFileHandlerReady = true
+        val queuedFiles = fileReadinessQueue.markReadyAndClaimQueued()
         logger.debug(LogCategory.SYSTEM, "File handler marked as ready")
 
         // Process queued file events
         scope.launch {
-            while (fileQueue.isNotEmpty()) {
-                val filePath = fileQueue.poll()
-                if (filePath != null) {
+            queuedFiles.forEach { filePath ->
+                try {
                     logger.debug(LogCategory.SYSTEM, "Processing queued file", mapOf("path" to filePath))
-                    try {
-                        handleOpenFile(filePath)
-                    } catch (e: Exception) {
-                        logger.error(LogCategory.SYSTEM, "Failed to process queued file event", error = e)
-                    }
+                    handleOpenFile(filePath)
+                } catch (e: Exception) {
+                    logger.error(LogCategory.SYSTEM, "Failed to process queued file event", error = e)
                 }
             }
         }
@@ -160,33 +150,26 @@ class CLICommandHandler private constructor() {
      * Should be called from BossApp.kt after Last Session workspace is loaded.
      */
     fun markWorkspaceHandlerReady() {
-        isWorkspaceHandlerReady = true
+        val queuedWorkspaces = workspaceReadinessQueue.markReadyAndClaimQueued()
         logger.debug(LogCategory.SYSTEM, "Workspace handler marked as ready")
 
         // Process queued workspace loads
         scope.launch {
-            while (workspaceQueue.isNotEmpty()) {
-                val configPath = workspaceQueue.poll()
-                if (configPath != null) {
-                    logger.debug(LogCategory.SYSTEM, "Processing queued workspace", mapOf("path" to configPath))
-                    try {
-                        handleLoadWorkspace(configPath)
-                    } catch (e: Exception) {
-                        logger.error(LogCategory.SYSTEM, "Failed to process queued workspace", error = e)
-                    }
+            queuedWorkspaces.forEach { command ->
+                try {
+                    logger.debug(LogCategory.SYSTEM, "Processing queued workspace", mapOf("path" to command.configPath))
+                    handleLoadWorkspace(command)
+                } catch (e: Exception) {
+                    logger.error(LogCategory.SYSTEM, "Failed to process queued workspace", error = e)
                 }
             }
         }
     }
 
-    private fun executeQueuedCommands() {
+    private fun executeQueuedCommands(queuedCommands: List<CLICommand>) {
         scope.launch {
-            // Process command queue
-            while (commandQueue.isNotEmpty()) {
-                val command = commandQueue.poll()
-                if (command != null) {
-                    executeCommand(command)
-                }
+            for (command in queuedCommands) {
+                executeCommand(command)
             }
 
             // Note: Workspace queue is now processed by markWorkspaceHandlerReady()
@@ -200,22 +183,21 @@ class CLICommandHandler private constructor() {
 
             when (command) {
                 is CLICommand.OpenUrl -> {
-                    handleOpenUrl(command.url)
+                    handleOpenUrl(command.url, command.origin)
                 }
 
                 is CLICommand.LoadWorkspace -> {
-                    handleLoadWorkspace(command.configPath)
+                    handleLoadWorkspace(command)
                 }
 
                 is CLICommand.OpenFile -> {
-                    if (isFileHandlerReady) {
+                    if (fileReadinessQueue.enqueueOrClaimForCaller(command.filePath)) {
                         // File handler ready - execute immediately
                         logger.debug(LogCategory.SYSTEM, "File handler ready, executing immediately", mapOf("path" to command.filePath))
                         handleOpenFile(command.filePath)
                     } else {
                         // File handler not ready - queue for later (cold start)
                         logger.debug(LogCategory.SYSTEM, "File handler not ready, queueing file", mapOf("path" to command.filePath))
-                        fileQueue.add(command.filePath)
                     }
                 }
 
@@ -224,7 +206,7 @@ class CLICommandHandler private constructor() {
                 }
 
                 is CLICommand.OpenTerminal -> {
-                    if (isTerminalHandlerReady) {
+                    if (terminalReadinessQueue.enqueueOrClaimForCaller(command)) {
                         // Terminal handler ready - execute immediately
                         logger.debug(
                             LogCategory.SYSTEM,
@@ -245,7 +227,6 @@ class CLICommandHandler private constructor() {
                                 "origin" to command.origin.name,
                             ),
                         )
-                        terminalQueue.add(command)
                     }
                 }
             }
@@ -256,17 +237,42 @@ class CLICommandHandler private constructor() {
 
     /**
      * Opens URL in Fluck browser tab.
+     *
+     * The tab opens unattended only when [origin] says the operator asked for
+     * it themselves. Any other origin — above all a `boss://url?url=` link,
+     * which the OS will accept from any program that can ask it to open a URL —
+     * is marked for confirmation, and the window shows the operator the exact
+     * URL before a tab is created for it (see [urlOpenDisposition]).
      */
-    private suspend fun handleOpenUrl(url: String) {
+    private suspend fun handleOpenUrl(
+        url: String,
+        origin: DeepLinkOrigin,
+    ) {
         // Normalize and validate URL (adds https:// if missing)
         val normalizedUrl = CLISecurityValidator.normalizeAndValidateUrl(url)
         if (normalizedUrl == null) {
-            logger.warn(LogCategory.SYSTEM, "Invalid URL", mapOf("url" to url))
+            logger.warn(LogCategory.SYSTEM, "Invalid URL", mapOf("url" to LogSanitizer.describeUri(url)))
+            return
+        }
+
+        val disposition = urlOpenDisposition(normalizedUrl, origin)
+        if (disposition == UrlOpenDisposition.REJECT) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "URL open rejected before a tab could be requested",
+                mapOf(
+                    "origin" to origin.name,
+                    "length" to normalizedUrl.length,
+                ),
+            )
             return
         }
 
         withContext(Dispatchers.Main) {
-            URLHandlerService.handleURL(normalizedUrl)
+            URLHandlerService.handleURL(
+                normalizedUrl,
+                requiresConfirmation = disposition == UrlOpenDisposition.CONFIRM,
+            )
         }
     }
 
@@ -275,10 +281,15 @@ class CLICommandHandler private constructor() {
      *
      * Emits workspace load event via WorkspaceEventBus for BossApp to handle.
      * This ensures workspace loading has access to splitViewState and workspaceManager.
+     *
+     * The event says whether the load needs the operator's confirmation, which is
+     * decided by the command's origin exactly as a terminal command's is. Only the
+     * window can act on it, because only the window parses the file and so only it
+     * knows whether the Space carries any terminal commands at all.
      */
-    private suspend fun handleLoadWorkspace(configPath: String) {
+    private suspend fun handleLoadWorkspace(command: CLICommand.LoadWorkspace) {
         // Validate file exists
-        val file = File(configPath).absoluteFile
+        val file = File(command.configPath).absoluteFile
         if (!file.exists()) {
             logger.warn(LogCategory.SYSTEM, "Workspace config not found", mapOf("path" to file.absolutePath))
             return
@@ -297,9 +308,8 @@ class CLICommandHandler private constructor() {
 
         // Queue workspace if handler not ready (cold start)
         // This ensures workspace loads AFTER Last Session, preventing tab destruction
-        if (!isWorkspaceHandlerReady) {
+        if (!workspaceReadinessQueue.enqueueOrClaimForCaller(command.copy(configPath = file.absolutePath))) {
             logger.debug(LogCategory.SYSTEM, "Workspace handler not ready, queueing", mapOf("path" to file.absolutePath))
-            workspaceQueue.add(file.absolutePath)
             return
         }
 
@@ -319,14 +329,21 @@ class CLICommandHandler private constructor() {
 
         // Emit workspace load event - BossApp will handle the actual loading
         // This is much simpler than trying to access splitViewState from CLI layer
+        val requiresConfirmation = command.requiresConfirmation
         ai.rever.boss.components.events.WorkspaceEventBus
-            .loadWorkspace(file.absolutePath, sourceWindowId = focusedWindowId)
+            .loadWorkspace(
+                file.absolutePath,
+                sourceWindowId = focusedWindowId,
+                requiresConfirmation = requiresConfirmation,
+            )
         logger.debug(
             LogCategory.SYSTEM,
             "Emitted workspace load event",
             mapOf(
                 "path" to file.absolutePath,
                 "windowId" to focusedWindowId,
+                "origin" to command.origin.name,
+                "requiresConfirmation" to requiresConfirmation,
             ),
         )
     }
@@ -540,6 +557,51 @@ class CLICommandHandler private constructor() {
 }
 
 /**
+ * Atomically transfers a value either to the caller once ready, or to the
+ * readiness transition that claims the deferred FIFO queue.
+ *
+ * Callers must execute claimed values after this object has released its monitor.
+ * FIFO applies within a deferred batch; a post-ready caller may run before that batch.
+ */
+internal class ReadinessQueue<T> {
+    private val lock = Any()
+    private val deferred = ArrayDeque<T>()
+    private var ready = false
+
+    /** Returns true only when this caller owns [value] for immediate execution. */
+    fun enqueueOrClaimForCaller(value: T): Boolean =
+        synchronized(lock) {
+            if (ready) {
+                true
+            } else {
+                deferred.addLast(value)
+                false
+            }
+        }
+
+    /** Transfers every deferred value to the caller in FIFO order without marking the queue ready. */
+    fun drainQueued(): List<T> =
+        synchronized(lock) {
+            buildList(deferred.size) {
+                while (deferred.isNotEmpty()) {
+                    add(deferred.removeFirst())
+                }
+            }
+        }
+
+    /** Marks this queue ready and transfers every deferred value to the caller in FIFO order. */
+    fun markReadyAndClaimQueued(): List<T> =
+        synchronized(lock) {
+            ready = true
+            buildList(deferred.size) {
+                while (deferred.isNotEmpty()) {
+                    add(deferred.removeFirst())
+                }
+            }
+        }
+}
+
+/**
  * Longest command BOSS will put in front of the operator for confirmation. A
  * command it cannot show in full is not one anybody can meaningfully approve, so
  * a longer one from outside the operator's own invocation is dropped rather than
@@ -582,15 +644,75 @@ internal fun terminalCommandDisposition(
     }
 
 /**
+ * Whether a Space this load opens must show its terminal commands to the operator before they
+ * run. Decided by who asked, exactly as [terminalCommandDisposition] decides for one command: only
+ * the operator's own `boss` invocation skips the prompt. Whether there is anything to show is the
+ * window's to decide, since only it parses the file.
+ */
+internal val CLICommand.LoadWorkspace.requiresConfirmation: Boolean
+    get() = !origin.isOperatorInitiated
+
+/**
+ * Longest URL BOSS will put in front of the operator for confirmation. A URL
+ * it cannot show in full is not one anybody can meaningfully approve, so a
+ * longer one from outside the operator's own invocation is dropped rather than
+ * prompted. URLs the operator passed to `boss` themselves are never shown and
+ * are bounded only by [CLISecurityValidator.normalizeAndValidateUrl].
+ */
+internal const val URL_CONFIRM_MAX_URL_LENGTH = 2048
+
+/** What BOSS does with a `boss://url` request. */
+internal enum class UrlOpenDisposition {
+    /** Open the tab. */
+    OPEN,
+
+    /** Show the operator the URL and open a tab only if they confirm. */
+    CONFIRM,
+
+    /** Do nothing at all. */
+    REJECT,
+}
+
+/**
+ * Decides what happens to a URL open request, from who asked for it.
+ *
+ * A URL opens unattended only when [origin] says the operator ran `boss`
+ * themselves; otherwise it is put in front of them first, and dropped outright
+ * if it is too long to display in full. [url] is the already-normalized form —
+ * the same string the prompt would show.
+ */
+internal fun urlOpenDisposition(
+    url: String,
+    origin: DeepLinkOrigin,
+): UrlOpenDisposition =
+    when {
+        origin.isOperatorInitiated -> UrlOpenDisposition.OPEN
+        url.length > URL_CONFIRM_MAX_URL_LENGTH -> UrlOpenDisposition.REJECT
+        else -> UrlOpenDisposition.CONFIRM
+    }
+
+/**
  * Sealed class representing CLI commands.
  */
 sealed class CLICommand {
+    /**
+     * @property url the URL to open.
+     * @property origin who asked. Defaults to [DeepLinkOrigin.EXTERNAL] so a
+     *   caller that does not say gets the cautious handling; see
+     *   [CLICommandHandler.handleOpenUrl].
+     */
     data class OpenUrl(
         val url: String,
+        val origin: DeepLinkOrigin = DeepLinkOrigin.EXTERNAL,
     ) : CLICommand()
 
+    /**
+     * @property origin who asked. Defaults to [DeepLinkOrigin.EXTERNAL], as
+     *   [OpenTerminal]'s does, because a Space can carry terminal commands.
+     */
     data class LoadWorkspace(
         val configPath: String,
+        val origin: DeepLinkOrigin = DeepLinkOrigin.EXTERNAL,
     ) : CLICommand()
 
     data class OpenFile(

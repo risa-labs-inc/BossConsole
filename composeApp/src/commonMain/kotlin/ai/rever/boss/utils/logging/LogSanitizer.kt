@@ -22,6 +22,8 @@ object LogSanitizer {
 
     fun maskUriParams(uri: String?): String = delegate.maskUriParams(uri)
 
+    fun redactUrlUserInfo(text: String): String = delegate.redactUrlUserInfo(text)
+
     fun maskSessionId(sessionId: String?): String = delegate.maskSessionId(sessionId)
 
     fun describeUri(uri: String?): String = delegate.describeUri(uri)

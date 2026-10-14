@@ -1,13 +1,20 @@
 package ai.rever.boss.app
 
+import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.workspaces.PredefinedWorkspaces
 import ai.rever.boss.components.workspaces.requiresProject
+import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.WorkspacePlaceholders
+import ai.rever.boss.plugin.api.TabRegistry
 import ai.rever.boss.plugin.workspace.PanelConfig
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
 import ai.rever.boss.plugin.workspace.TabConfig
+import ai.rever.boss.window.WindowProjectState
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -29,6 +36,23 @@ class FreshStartWorkspaceTest {
         PredefinedWorkspaces.allWorkspaces.single { it.id == PredefinedWorkspaces.BROWSER_ONLY_ID }
     private val claudeCode =
         PredefinedWorkspaces.allWorkspaces.single { it.id == PredefinedWorkspaces.CLAUDE_CODE_ID }
+
+    @Test
+    fun `a refused fresh-start default does not claim an unapplied Space`() =
+        runBlocking {
+            val before = workspaceManager.currentWorkspace.value
+            val splitViewState = SplitViewState(TabRegistry(), windowId = "fresh-start-refusal")
+            val projectState = WindowProjectState(windowId = "fresh-start-refusal")
+            val unavailable =
+                browserOnly.copy(
+                    id = "unavailable-default",
+                    layout = SinglePanel(PanelConfig("main", listOf(TabConfig(type = "unknown", title = "Missing")))),
+                )
+
+            assertNull(applyDefaultWorkspaceOnFreshStart(splitViewState, projectState, unavailable))
+            assertNull(splitViewState.currentWorkspaceId)
+            assertEquals(before, workspaceManager.currentWorkspace.value)
+        }
 
     @Test
     fun `a fresh window opens on a workspace that needs no project`() {

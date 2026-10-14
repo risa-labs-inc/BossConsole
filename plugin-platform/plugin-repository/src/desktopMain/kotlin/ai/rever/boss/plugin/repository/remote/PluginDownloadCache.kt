@@ -3,317 +3,307 @@ package ai.rever.boss.plugin.repository.remote
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import java.io.File
+import java.nio.channels.Channels
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.NoSuchFileException
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption.ATOMIC_MOVE
+import java.nio.file.StandardCopyOption.REPLACE_EXISTING
+import java.nio.file.StandardOpenOption.READ
+import java.nio.file.attribute.BasicFileAttributes
 import java.security.MessageDigest
+import kotlin.io.path.name
 
-/**
- * Local cache for downloaded plugin JARs.
- *
- * Caches downloaded JARs to avoid re-downloading plugins that haven't changed.
- * Uses SHA-256 verification to ensure cache integrity.
- *
- * @param cacheDir Directory to store cached JARs (defaults to ~/.boss/plugin-cache)
- */
+/** Local, hash-verified cache. Exact IDs and versions are addressed by SHA-256 keys. */
 class PluginDownloadCache(
-    private val cacheDir: File = BossDirectories.resolve("plugin-cache"),
+    cacheDir: File = BossDirectories.resolve("plugin-cache"),
 ) {
     private val logger = BossLogger.forComponent("PluginDownloadCache")
 
-    init {
-        if (!cacheDir.exists()) {
-            cacheDir.mkdirs()
-            logger.debug(LogCategory.SYSTEM, "Created plugin cache directory", mapOf("path" to cacheDir.absolutePath))
+    // Resolve the host-supplied root once, including intentional host directory links.
+    // Retain initialization failure so it cannot prevent repository construction.
+    private val location =
+        runCatching {
+            val path = Files.createDirectories(cacheDir.toPath()).toRealPath()
+            path to Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS).fileKey()
         }
-    }
+    private val root: Path get() = location.getOrThrow().first
+    private val rootIdentity: Any? get() = location.getOrThrow().second
+
+    @Serializable
+    private data class CacheMetadata(
+        val pluginId: String,
+        val version: String,
+    )
+
+    /** What a query needs from one cached jar, held in memory so queries never stat the tree. */
+    private class IndexEntry(
+        val pluginId: String,
+        val version: String,
+        val sizeBytes: Long,
+    )
 
     /**
-     * Get a cached JAR if it exists and matches the expected SHA-256 hash.
-     *
-     * @param pluginId The plugin ID
-     * @param version The plugin version
-     * @param expectedSha256 The expected SHA-256 hash (must be non-blank)
-     * @return The cached file if valid, null otherwise
+     * In-memory picture of the cache directory: built once here at construction and kept by
+     * every mutation below, so the query methods never walk the tree. The scan runs before the
+     * instance can be shared, so there is nothing to race; and like [location], a build failure
+     * is retained and rethrown by queries rather than preventing construction.
      */
+    private val index = runCatching { scanIndex() }
+
+    private fun scanIndex(): MutableMap<Path, IndexEntry> {
+        checkRoot()
+        val scanned = mutableMapOf<Path, IndexEntry>()
+        // Files.walk does not follow links, so a linked directory inside the cache is
+        // listed but never traversed - and isJar refuses it on top of that.
+        Files.walk(root).use { paths ->
+            paths.filter { it != root && isJar(it) }.forEach { path ->
+                readMetadata(path)?.let { metadata ->
+                    scanned[path] = IndexEntry(metadata.pluginId, metadata.version, Files.size(path))
+                }
+            }
+        }
+        return scanned
+    }
+
+    @Synchronized
     fun getCachedJar(
         pluginId: String,
         version: String,
         expectedSha256: String,
     ): File? {
-        val cachedFile = getCacheFile(pluginId, version)
-
-        if (!cachedFile.exists()) {
+        val path = cacheFile(pluginId, version)
+        val metadata = if (Files.isRegularFile(path, NOFOLLOW_LINKS)) readMetadata(path) else null
+        if (metadata == null) {
+            // A miss here also means the index entry, if any, points at a jar that is gone or
+            // no longer identifiable - dropping it keeps listCachedPlugins honest about what
+            // is actually usable.
+            index.getOrNull()?.remove(path)
+            if (Files.exists(path, NOFOLLOW_LINKS)) {
+                logger.warn(LogCategory.SYSTEM, "Ignoring plugin cache entry with invalid identity metadata")
+            }
             return null
         }
-
-        // Verify SHA-256. A blank or mismatching hash invalidates the cache —
-        // we never load unhashed or tampered JARs from cache.
-        val actualSha256 = cachedFile.sha256()
-        if (!actualSha256.equals(expectedSha256, ignoreCase = true)) {
-            logger.warn(
-                LogCategory.SYSTEM,
-                "Cached JAR SHA-256 mismatch, removing",
-                mapOf(
-                    "pluginId" to pluginId,
-                    "version" to version,
-                    "expected" to expectedSha256.take(16) + "...",
-                    "actual" to actualSha256.take(16) + "...",
-                ),
-            )
-            cachedFile.delete()
-            return null
+        val digest = MessageDigest.getInstance("SHA-256")
+        Files.newByteChannel(path, setOf(READ, NOFOLLOW_LINKS)).use { channel ->
+            Channels.newInputStream(channel).use { input ->
+                val buffer = ByteArray(8192)
+                var size = input.read(buffer)
+                while (size != -1) {
+                    digest.update(buffer, 0, size)
+                    size = input.read(buffer)
+                }
+            }
         }
-
-        logger.debug(
-            LogCategory.SYSTEM,
-            "Found valid cached JAR",
-            mapOf(
-                "pluginId" to pluginId,
-                "version" to version,
-            ),
-        )
-
-        return cachedFile
+        val actual = digest.digest().joinToString("") { "%02x".format(it) }
+        return if (actual.equals(expectedSha256, ignoreCase = true)) {
+            // Re-add on a verified hit: a jar whose metadata was repaired after a miss must
+            // come back into listings, not stay invisible until the next construction.
+            index.getOrNull()?.set(path, IndexEntry(metadata.pluginId, metadata.version, Files.size(path)))
+            path.toFile()
+        } else {
+            logger.warn(LogCategory.SYSTEM, "Ignoring plugin cache entry with mismatching SHA-256")
+            Files.deleteIfExists(path)
+            Files.deleteIfExists(metadataPath(path))
+            index.getOrNull()?.remove(path)
+            null
+        }
     }
 
-    /**
-     * Cache a downloaded JAR file.
-     *
-     * @param pluginId The plugin ID
-     * @param version The plugin version
-     * @param sourceFile The downloaded JAR file to cache
-     * @return The cached file
-     */
+    @Synchronized
     fun cacheJar(
         pluginId: String,
         version: String,
         sourceFile: File,
     ): File {
-        val cachedFile = getCacheFile(pluginId, version)
-
-        // Ensure parent directory exists
-        cachedFile.parentFile?.mkdirs()
-
-        // Copy to cache
-        sourceFile.copyTo(cachedFile, overwrite = true)
-
-        logger.debug(
-            LogCategory.SYSTEM,
-            "Cached plugin JAR",
-            mapOf(
-                "pluginId" to pluginId,
-                "version" to version,
-                "size" to cachedFile.length(),
-            ),
-        )
-
-        return cachedFile
+        val target = cacheFile(pluginId, version)
+        Files.createDirectories(target.parent)
+        checkDirectory(target.parent)
+        val temporary = Files.createTempFile(target.parent, ".download-", ".part")
+        val metadataPart = Files.createTempFile(target.parent, ".metadata-", ".part")
+        try {
+            Files.copy(sourceFile.toPath(), temporary, REPLACE_EXISTING)
+            Files.writeString(metadataPart, Json.encodeToString(CacheMetadata(pluginId, version)))
+            // Metadata names the same ID/version on every write; it does not vouch for bytes.
+            // Publish it first so a failed metadata write cannot replace an existing artifact.
+            Files.move(metadataPart, metadataPath(target), ATOMIC_MOVE, REPLACE_EXISTING)
+            Files.move(temporary, target, ATOMIC_MOVE, REPLACE_EXISTING)
+            index.getOrNull()?.set(target, IndexEntry(pluginId, version, Files.size(target)))
+        } finally {
+            Files.deleteIfExists(temporary)
+            Files.deleteIfExists(metadataPart)
+        }
+        return target.toFile()
     }
 
-    /**
-     * Remove a specific cached JAR.
-     *
-     * @param pluginId The plugin ID
-     * @param version The plugin version
-     * @return true if removed, false if not found
-     */
+    @Synchronized
     fun removeCachedJar(
         pluginId: String,
         version: String,
     ): Boolean {
-        val cachedFile = getCacheFile(pluginId, version)
-
-        if (!cachedFile.exists()) {
-            return false
-        }
-
-        val deleted = cachedFile.delete()
-
-        if (deleted) {
-            logger.debug(
-                LogCategory.SYSTEM,
-                "Removed cached JAR",
-                mapOf(
-                    "pluginId" to pluginId,
-                    "version" to version,
-                ),
-            )
-
-            // Clean up empty parent directory
-            val pluginDir = cachedFile.parentFile
-            if (pluginDir?.listFiles()?.isEmpty() == true) {
-                pluginDir.delete()
-            }
-        }
-
-        return deleted
-    }
-
-    /**
-     * Remove all cached JARs for a plugin (all versions).
-     *
-     * @param pluginId The plugin ID
-     * @return Number of versions removed
-     */
-    fun removeAllVersions(pluginId: String): Int {
-        val pluginDir = File(cacheDir, sanitizePluginId(pluginId))
-
-        if (!pluginDir.exists()) {
-            return 0
-        }
-
-        val files = pluginDir.listFiles() ?: return 0
-        val count = files.size
-
-        pluginDir.deleteRecursively()
-
-        logger.info(
-            LogCategory.SYSTEM,
-            "Removed all cached versions",
-            mapOf(
-                "pluginId" to pluginId,
-                "count" to count,
-            ),
-        )
-
-        return count
-    }
-
-    /**
-     * Clear the entire cache.
-     *
-     * @return Number of files removed
-     */
-    fun clearCache(): Int {
-        val files = cacheDir.walkTopDown().filter { it.isFile }.toList()
-        val count = files.size
-
-        cacheDir.deleteRecursively()
-        cacheDir.mkdirs()
-
-        logger.info(
-            LogCategory.SYSTEM,
-            "Cleared plugin cache",
-            mapOf(
-                "filesRemoved" to count,
-            ),
-        )
-
-        return count
-    }
-
-    /**
-     * Get the total size of the cache in bytes.
-     */
-    fun getCacheSize(): Long =
-        cacheDir
-            .walkTopDown()
-            .filter { it.isFile }
-            .sumOf { it.length() }
-
-    /**
-     * Get the number of cached plugins.
-     */
-    fun getCachedPluginCount(): Int = cacheDir.listFiles()?.count { it.isDirectory } ?: 0
-
-    /**
-     * Get the number of cached JAR files.
-     */
-    fun getCachedFileCount(): Int =
-        cacheDir
-            .walkTopDown()
-            .filter { it.isFile && it.extension == "jar" }
-            .count()
-
-    /**
-     * List all cached plugins with their versions.
-     *
-     * @return Map of plugin ID to list of cached versions
-     */
-    fun listCachedPlugins(): Map<String, List<String>> {
-        val result = mutableMapOf<String, List<String>>()
-
-        cacheDir.listFiles()?.filter { it.isDirectory }?.forEach { pluginDir ->
-            val versions =
-                pluginDir
-                    .listFiles()
-                    ?.filter { it.isFile && it.extension == "jar" }
-                    ?.map { it.nameWithoutExtension.substringAfterLast("_") }
-                    ?: emptyList()
-
-            if (versions.isNotEmpty()) {
-                result[pluginDir.name] = versions
-            }
-        }
-
-        return result
-    }
-
-    /**
-     * Clean up old cache entries.
-     * Removes cache entries older than the specified number of days.
-     *
-     * @param maxAgeDays Maximum age in days (default: 30)
-     * @return Number of files removed
-     */
-    fun cleanOldEntries(maxAgeDays: Int = 30): Int {
-        val cutoffTime = System.currentTimeMillis() - (maxAgeDays * 24 * 60 * 60 * 1000L)
-        var removed = 0
-
-        cacheDir
-            .walkTopDown()
-            .filter { it.isFile && it.lastModified() < cutoffTime }
-            .forEach { file ->
-                if (file.delete()) {
-                    removed++
-                }
-            }
-
-        // Clean up empty directories
-        cacheDir
-            .walkBottomUp()
-            .filter { it.isDirectory && it != cacheDir && (it.listFiles()?.isEmpty() == true) }
-            .forEach { it.delete() }
-
-        if (removed > 0) {
-            logger.info(
-                LogCategory.SYSTEM,
-                "Cleaned old cache entries",
-                mapOf(
-                    "removed" to removed,
-                    "maxAgeDays" to maxAgeDays,
-                ),
-            )
-        }
-
+        val path = cacheFile(pluginId, version)
+        val removed = Files.deleteIfExists(path)
+        Files.deleteIfExists(metadataPath(path))
+        index.getOrNull()?.remove(path)
         return removed
     }
 
-    // ============================================================================
-    // Helper Functions
-    // ============================================================================
+    fun removeAllVersions(pluginId: String): Int {
+        val directory = pluginDirectory(pluginId)
+        if (!Files.exists(directory, NOFOLLOW_LINKS)) return 0
+        // The walk that enumerates victims runs outside the monitor - collecting paths is
+        // the expensive part, and holding the lock across it stalled every other cache op.
+        // The delete pass itself is unlink-only and bounded by what was collected.
+        val victims = collectForDeletion(directory, includeRoot = true)
+        return synchronized(this) { deleteCollected(victims) }
+    }
 
-    private fun getCacheFile(
+    fun clearCache(): Int {
+        checkRoot()
+        val victims = collectForDeletion(root, includeRoot = false)
+        return synchronized(this) { deleteCollected(victims) }
+    }
+
+    fun getCacheSize(): Long = synchronized(this) { index.getOrThrow().values.sumOf { it.sizeBytes } }
+
+    fun getCachedPluginCount(): Int =
+        synchronized(this) {
+            index
+                .getOrThrow()
+                .values
+                .mapTo(mutableSetOf()) { it.pluginId }
+                .size
+        }
+
+    fun getCachedFileCount(): Int = synchronized(this) { index.getOrThrow().size }
+
+    private fun isJar(path: Path): Boolean = Files.isRegularFile(path, NOFOLLOW_LINKS) && path.name.endsWith(".jar")
+
+    fun listCachedPlugins(): Map<String, List<String>> =
+        synchronized(this) { index.getOrThrow().values.groupBy({ it.pluginId }, { it.version }) }
+
+    private fun metadataPath(jar: Path): Path = jar.resolveSibling(jar.name.removeSuffix(".jar") + ".json")
+
+    private fun readMetadata(jar: Path): CacheMetadata? =
+        runCatching {
+            val path = metadataPath(jar)
+            if (!Files.isRegularFile(path, NOFOLLOW_LINKS)) return@runCatching null
+            val text =
+                Files.newByteChannel(path, setOf(READ, NOFOLLOW_LINKS)).use { channel ->
+                    Channels.newInputStream(channel).use { input -> input.readNBytes(16_385).toString(Charsets.UTF_8) }
+                }
+            if (text.length > 16_384) return@runCatching null
+            val metadata = Json.decodeFromString<CacheMetadata>(text)
+            metadata.takeIf { cacheFile(it.pluginId, it.version) == jar }
+        }.getOrNull()
+
+    fun cleanOldEntries(maxAgeDays: Int = 30): Int {
+        require(maxAgeDays >= 0) { "Cache age must not be negative" }
+        val cutoff = System.currentTimeMillis() - maxAgeDays.toLong() * 86_400_000L
+        // Expired candidates are collected outside the monitor; the locked delete pass is
+        // unlink-only and bounded by what actually expired, not by the whole tree.
+        val expired =
+            entries().filter { path ->
+                Files.isRegularFile(path, NOFOLLOW_LINKS) &&
+                    Files.getLastModifiedTime(path, NOFOLLOW_LINKS).toMillis() < cutoff
+            }
+        if (expired.isEmpty()) return 0
+        return synchronized(this) {
+            var removed = 0
+            for (path in expired) {
+                if (Files.deleteIfExists(path)) removed++
+            }
+            index.getOrNull()?.keys?.removeAll(expired.toSet())
+            removed
+        }
+    }
+
+    private fun checkRoot() {
+        checkDirectory(root)
+        // Some providers (including Windows) return null: only path checks apply there.
+        check(Files.readAttributes(root, BasicFileAttributes::class.java, NOFOLLOW_LINKS).fileKey() == rootIdentity) {
+            "Plugin cache directory was replaced"
+        }
+    }
+
+    private fun checkDirectory(path: Path) {
+        check(Files.isDirectory(path, NOFOLLOW_LINKS) && path.toRealPath() == path) {
+            "Plugin cache directory must not be a symbolic link"
+        }
+    }
+
+    private fun pluginDirectory(pluginId: String): Path {
+        val component = cacheKey(pluginId)
+        checkRoot()
+        return root.resolve("p-$component").also {
+            if (Files.exists(it, NOFOLLOW_LINKS)) checkDirectory(it)
+        }
+    }
+
+    private fun cacheFile(
         pluginId: String,
         version: String,
-    ): File {
-        val sanitizedId = sanitizePluginId(pluginId)
-        return File(cacheDir, "$sanitizedId/${sanitizedId}_$version.jar")
-    }
-
-    private fun sanitizePluginId(pluginId: String): String {
-        // Replace characters that might cause issues in file paths
-        return pluginId.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-    }
-
-    private fun File.sha256(): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        inputStream().use { fis ->
-            val buffer = ByteArray(8192)
-            var bytesRead: Int
-            while (fis.read(buffer).also { bytesRead = it } != -1) {
-                digest.update(buffer, 0, bytesRead)
-            }
+    ): Path {
+        val component = cacheKey(version)
+        val directory = pluginDirectory(pluginId)
+        return directory.resolve("v-$component.jar").also {
+            check(!Files.isSymbolicLink(it)) { "Plugin cache entry must not be a symbolic link" }
         }
-        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun cacheKey(value: String): String {
+        // Hash the exact value so long IDs, case variants and punctuation never alias.
+        // The bound exceeds portable legacy filename limits while bounding metadata reads.
+        require(value.length in 1..4096 && value.matches(Regex("[A-Za-z0-9._+-]+")) && !value.endsWith('.')) {
+            "Invalid plugin cache ID or version"
+        }
+        val bytes = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun entries(): List<Path> {
+        checkRoot()
+        // Files.walk does not follow links. Legacy entries are never used for lookups,
+        // but remain removable by clear/expiry without traversing their link targets.
+        return Files.walk(root).use { paths -> paths.filter { it != root }.toList() }
+    }
+
+    /**
+     * Collect every path under [directory] for deletion, deepest first.
+     *
+     * Runs unlocked on purpose: callers hand the list to [deleteCollected] under the monitor.
+     * The directory vanishing between the caller's existence check and the walk - a racing
+     * [clearCache], or external removal - yields no victims rather than a failure.
+     */
+    private fun collectForDeletion(
+        directory: Path,
+        includeRoot: Boolean,
+    ): List<Path> =
+        try {
+            Files.walk(directory).use { paths ->
+                paths.filter { it != directory || includeRoot }.sorted(Comparator.reverseOrder()).toList()
+            }
+        } catch (e: NoSuchFileException) {
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Plugin cache directory vanished during collection",
+                mapOf("path" to e.file),
+            )
+            emptyList()
+        }
+
+    /** Delete [victims] and drop them from the index. Caller must hold the monitor. */
+    private fun deleteCollected(victims: List<Path>): Int {
+        var removed = 0
+        for (path in victims) {
+            val isFile = isJar(path)
+            if (Files.deleteIfExists(path) && isFile) removed++
+        }
+        index.getOrNull()?.keys?.removeAll(victims.toSet())
+        return removed
     }
 }

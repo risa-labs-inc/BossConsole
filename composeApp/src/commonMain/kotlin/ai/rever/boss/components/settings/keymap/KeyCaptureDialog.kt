@@ -4,6 +4,7 @@ import ai.rever.boss.components.events.MODIFIER_ONLY_KEYS
 import ai.rever.boss.keymap.model.KeyBinding
 import ai.rever.boss.keymap.model.KeyStroke
 import ai.rever.boss.keymap.model.ShortcutContext
+import ai.rever.boss.keymap.model.recordedModifiers
 import ai.rever.boss.keymap.model.storedKeyName
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
@@ -45,6 +46,7 @@ fun KeyCaptureDialog(
     var capturedKey by remember { mutableStateOf<Key?>(null) }
     var capturedModifiers by remember { mutableStateOf<List<String>>(emptyList()) }
     var hasCapture by remember { mutableStateOf(false) }
+    var unsupportedCapture by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
@@ -152,19 +154,22 @@ fun KeyCaptureDialog(
                             .onPreviewKeyEvent { event ->
                                 if (event.type == KeyEventType.KeyDown && isShortcutCaptureKey(event.key)) {
                                     capturedKey = event.key
-                                    val mods = mutableListOf<String>()
-                                    val isMacOS = SystemUtils.isMacOS
-                                    if (isMacOS) {
-                                        if (event.isMetaPressed) mods.add("Cmd")
-                                        if (event.isCtrlPressed) mods.add("Ctrl")
-                                    } else {
-                                        if (event.isCtrlPressed) mods.add("Cmd")
-                                        if (event.isMetaPressed) mods.add("Ctrl")
-                                    }
-                                    if (event.isShiftPressed) mods.add("Shift")
-                                    if (event.isAltPressed) mods.add("Alt")
-                                    capturedModifiers = mods
-                                    hasCapture = true
+                                    // The shared rule, not a private swap. This dialog used to
+                                    // record a Control press as "Cmd" off macOS and a Super press
+                                    // as "Ctrl", which agreed with the old matcher and disagreed
+                                    // with both the default preset and the string this dialog
+                                    // shows the user one line below. See recordedModifiers.
+                                    val modifiers =
+                                        recordedModifiers(
+                                            metaDown = event.isMetaPressed,
+                                            controlDown = event.isCtrlPressed,
+                                            shiftDown = event.isShiftPressed,
+                                            altDown = event.isAltPressed,
+                                            isMacOS = SystemUtils.isMacOS,
+                                        )
+                                    unsupportedCapture = modifiers == null
+                                    capturedModifiers = modifiers.orEmpty()
+                                    hasCapture = modifiers != null
                                     true
                                 } else {
                                     false
@@ -183,7 +188,12 @@ fun KeyCaptureDialog(
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(
-                                text = "Press any key combination...",
+                                text =
+                                    if (unsupportedCapture) {
+                                        "Super shortcuts are unsupported. Choose another combination."
+                                    } else {
+                                        "Press any key combination..."
+                                    },
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = BossTheme.colors.textSecondary,

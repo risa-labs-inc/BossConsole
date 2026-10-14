@@ -29,6 +29,7 @@ internal enum class SwipeNavDirection { BACK, FORWARD }
  */
 internal class BrowserSwipeNavBridge(
     private val onNavigate: (SwipeNavDirection) -> Unit,
+    private val gestureClaim: ScrollGestureClaim? = null,
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
     private val logger = BossLogger.forComponent("BrowserSwipeNavBridge")
@@ -53,6 +54,10 @@ internal class BrowserSwipeNavBridge(
             reportFailure(e)
         }
     }
+
+    /** Native finger-contact sequence currently producing renderer wheel events. */
+    @JsAccessible
+    fun activeGestureId(): String? = gestureClaim?.currentGestureToken()
 
     /**
      * Log at most one failure per minute.
@@ -105,18 +110,11 @@ internal data class SwipeNavCommit(
  * Two windows, because two different things are being refused.
  *
  * [SWIPE_NAV_DEBOUNCE_MS] catches a double-fire *bug* in this bridge or its caller, in either
- * direction. The page cannot produce a real second gesture that fast: `swipe-nav.js`'s `decide()`
- * calls this at most once per gesture END, and two gesture ends are always at least the script's
- * own `GESTURE_GAP_MS` apart, because that quiet gap IS how the script tells one gesture from the
- * next. So the value belongs strictly below that floor and above a same-frame double-dispatch,
- * with enough headroom that host-side clock jitter cannot eat the difference.
+ * direction. The page calls this at most once per native gesture id, so this only needs enough
+ * headroom to catch a same-frame double-dispatch.
  *
- * [SWIPE_NAV_REPEAT_MS] refuses a SAME-DIRECTION repeat, and it is the one guard against a paused
- * drag. The script segments gestures on 120ms of quiet, and 120ms of quiet with the fingers still
- * down is byte-identical to a lift: a slow deliberate drag that hesitates mid-swipe is two
- * gestures to the script and would navigate back twice. That guard cannot live in the page,
- * because the commit navigates the tab and the script's state dies with the document - the second
- * half of the drag lands in a freshly loaded script that has never heard of the first.
+ * [SWIPE_NAV_REPEAT_MS] refuses a SAME-DIRECTION repeat as defense in depth across the navigation
+ * which destroys the committing page's state.
  *
  * The trade is deliberate and it is not symmetric. Two intentional same-direction swipes less
  * than [SWIPE_NAV_REPEAT_MS] apart are dropped, and the user swipes again. An unwanted extra step
@@ -139,9 +137,9 @@ internal fun shouldAcceptSwipeNav(
     direction: SwipeNavDirection,
 ): Boolean {
     if (previous == null) return true
-    // The repeat window is the larger of the two - pinned in BrowserSwipeNavTest against the
-    // script's own gesture gap, which sits between them - so a same-direction swipe clearing it has
-    // cleared the debounce as well, and one window per case is the whole rule.
+    // The repeat window is the larger of the two, so a same-direction swipe clearing it has
+    // cleared the debounce as well. Native gesture IDs do not survive this bridge's navigate call;
+    // the gate also limits duplicate or page-originated calls after document replacement.
     val window = if (direction == previous.direction) SWIPE_NAV_REPEAT_MS else SWIPE_NAV_DEBOUNCE_MS
     return nowMs - previous.atMs > window
 }
@@ -180,5 +178,5 @@ internal class SwipeNavGate(
 /** Any direction, for a double-dispatch bug. Two frames, well clear of the script's 120ms floor. */
 internal const val SWIPE_NAV_DEBOUNCE_MS = 32L
 
-/** Same direction, for a drag that hesitated past the script's gesture gap. */
+/** Same-direction calls across document replacement, which discards the page's gesture ID. */
 internal const val SWIPE_NAV_REPEAT_MS = 400L

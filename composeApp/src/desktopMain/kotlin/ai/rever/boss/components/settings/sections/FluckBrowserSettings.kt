@@ -18,6 +18,8 @@ import ai.rever.boss.html.HtmlFileOpenMode
 import ai.rever.boss.html.HtmlFileSettingsManager
 import ai.rever.boss.plugin.browser.BrowserSettings
 import ai.rever.boss.plugin.browser.BrowserSettingsManager
+import ai.rever.boss.plugin.browser.MacOSScrollGesturePhases
+import ai.rever.boss.plugin.browser.swipeNavSettingsDescription
 import ai.rever.boss.plugin.ui.BossAlertDialog
 import ai.rever.boss.terminal.ExistingSplitTargetMode
 import ai.rever.boss.terminal.TerminalLinkOpenMode
@@ -99,6 +101,7 @@ fun FluckBrowserSettings() {
                 // stale value after the other one changes it.
                 val stored by SwipeNavSettingsManager.settings.collectAsState()
                 val swipeEnabled = parseSwipeNavEnabled(envOverride) ?: stored.enabled
+                val phaseAvailability by MacOSScrollGesturePhases.availability.collectAsState()
                 SettingsToggle(
                     label = "Two-finger swipe navigation",
                     checked = swipeEnabled,
@@ -106,11 +109,7 @@ fun FluckBrowserSettings() {
                     // Disabled rather than silently ignored: a user with the variable exported
                     // would otherwise watch this control do nothing and conclude it is broken.
                     enabled = !envOwned,
-                    description =
-                        envOverride
-                            .takeIf { envOwned }
-                            ?.let { "Set by ${SwipeNavSettingsManager.KEY}=$it in the environment" }
-                            ?: "Swipe right with two fingers to go back, left to go forward.",
+                    description = swipeNavSettingsDescription(envOverride, phaseAvailability),
                 )
             }
         }
@@ -191,6 +190,27 @@ fun FluckBrowserSettings() {
                     )
                 }
             }
+        }
+
+        // Downloads
+        SettingsSection(title = "Downloads") {
+            var warnForExecutables by remember { mutableStateOf(BrowserSettings.warnForExecutables) }
+
+            SettingsToggle(
+                label = "Warn before downloading executable files",
+                checked = warnForExecutables,
+                onCheckedChange = { enabled ->
+                    warnForExecutables = enabled
+                    BrowserSettings.warnForExecutables = enabled
+                    coroutineScope.launch {
+                        BrowserSettingsManager.saveSettings()
+                    }
+                },
+                description =
+                    "Ask for confirmation before saving a file with a recognized executable " +
+                        "extension. Filename checks, save location and cancellation still apply " +
+                        "either way.",
+            )
         }
 
         // Default Browser

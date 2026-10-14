@@ -2,13 +2,11 @@ package ai.rever.boss.components.overlays
 
 import ai.rever.boss.plugin.browser.LocalAwtWindow
 import ai.rever.boss.window.ApplyBossWindowIcon
-import ai.rever.boss.window.BossWindowIcon
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.window.Window
 
 /**
  * Heavyweight HUD host for HARDWARE_ACCELERATED browser mode.
@@ -39,16 +37,11 @@ fun HeavyweightHud(
     val bounds = rememberOverlayParentBounds(parent)
     val state = rememberOverlayWindowState(bounds)
 
-    Window(
+    OverlayWindow(
         onCloseRequest = {},
         state = state,
-        undecorated = true,
-        transparent = true,
-        alwaysOnTop = true,
         focusable = false,
-        resizable = false,
-        icon = BossWindowIcon.painter,
-    ) {
+    ) { window ->
         EnsureOverlayWindowTransparent(window, kind = "hud")
         ApplyBossWindowIcon(window)
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = alignment) {

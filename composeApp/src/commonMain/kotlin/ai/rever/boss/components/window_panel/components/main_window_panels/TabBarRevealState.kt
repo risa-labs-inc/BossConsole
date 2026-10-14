@@ -15,6 +15,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
@@ -78,7 +81,7 @@ fun rememberTabBarLayout(panelWidthPx: Int): TabBarLayout {
  *
  * Two independent reasons the drawer can be open, kept apart on purpose. [drawerOpen] is the
  * chevron on a panel too narrow to hold a full bar, and it installs a click-catcher; [revealed] is
- * the pointer resting on the rail, and it must NOT swallow the click that focuses the content
+ * the pointer reaching the left edge, and it must NOT swallow the click that focuses the content
  * behind it, because the pointer leaving is what closes it.
  */
 @Stable
@@ -103,6 +106,9 @@ class TabBarRevealState internal constructor(
     /** The revealed bar has a context menu open; see `hoverRevealTarget`'s `drawerBusy`. */
     internal var busy by mutableStateOf(false)
 
+    internal var pointerAtEdge by mutableStateOf(false)
+    internal var pointerInRevealArea by mutableStateOf(false)
+
     /** Whether a drawer should be on screen at all. */
     val drawerVisible: Boolean get() = drawerOpen || revealed
 
@@ -121,13 +127,35 @@ class TabBarRevealState internal constructor(
         if (pointerInSidebar) suppressed = true
     }
 
+    /** An outside press dismisses the hover reveal even inside its retention margin. */
+    internal fun dismissMainPanelPress(
+        x: Int,
+        y: Int,
+        region: IntRect,
+        sidebarWidth: Dp,
+        direction: LayoutDirection = LayoutDirection.Ltr,
+    ) {
+        val inMainPanel =
+            region.contains(IntOffset(x, y)) &&
+                if (direction == LayoutDirection.Ltr) {
+                    x >= region.left + sidebarWidth.value
+                } else {
+                    x < region.right - sidebarWidth.value
+                }
+        if (inMainPanel) dismissFromMainPanel()
+    }
+
+    internal fun dismissFromMainPanel() {
+        if (isTransientReveal && !busy) dismiss(pointerInSidebar = true)
+    }
+
     /** Open the drawer, for a panel too narrow for the in-flow bar to be anything but the rail. */
     fun openDrawer() {
         drawerOpen = true
     }
 
     /**
-     * True while this drawer exists ONLY because the pointer is resting on the sidebar.
+     * True while this drawer exists ONLY because the pointer revealed it at the edge.
      *
      * What distinguishes the two kinds of drawer, and so what decides whether the header offers a
      * pin or a chevron. A chevron-opened drawer on a narrow panel is already as pinned as it can
@@ -160,25 +188,28 @@ fun rememberTabBarRevealState(
 
     val pointerOnRail by state.railHover.collectIsHoveredAsState()
     val pointerOnDrawer by state.drawerHover.collectIsHoveredAsState()
+    val nativeTracking = sidebarNativePointerTrackingAvailable()
+    val drawerHovered = sidebarHoverSignal(nativeTracking, state.pointerInRevealArea, pointerOnDrawer)
     val target =
         hoverRevealTarget(
             enabled = hoverExpand,
             railShown = railShown,
-            pointerOnRail = pointerOnRail,
-            pointerOnDrawer = pointerOnDrawer,
+            pointerOnRail = sidebarHoverSignal(nativeTracking, state.pointerAtEdge, pointerOnRail),
+            pointerOnDrawer = state.revealed && drawerHovered,
             drawerBusy = state.busy,
         )
 
     LaunchedEffect(target, state.suppressed) {
         val reveal = target && !state.suppressed
         if (reveal == state.revealed) return@LaunchedEffect
-        delay(if (reveal) SIDEBAR_REVEAL_OPEN_DELAY_MS else SIDEBAR_REVEAL_CLOSE_DELAY_MS)
+        // The edge crossing can last just one frame; capture it immediately.
+        if (!reveal) delay(SIDEBAR_REVEAL_CLOSE_DELAY_MS)
         state.revealed = reveal
     }
 
     // Re-arm on the pointer-LEFT edge, so a dismissal cannot be undone by the very hover that is
     // still sitting on the rail.
-    val pointerInSidebar = pointerOnRail || pointerOnDrawer
+    val pointerInSidebar = state.pointerAtEdge || state.pointerInRevealArea || pointerOnRail || pointerOnDrawer
     LaunchedEffect(pointerInSidebar) { if (!pointerInSidebar) state.suppressed = false }
     LaunchedEffect(narrow) { if (!narrow) state.drawerOpen = false }
     LaunchedEffect(railShown, hoverExpand) {
@@ -192,6 +223,19 @@ fun rememberTabBarRevealState(
     return state
 }
 
+/** Hosts without an AWT content pane use the in-tree hover edge and drawer hover sources. */
+@Composable
+internal expect fun sidebarNativePointerTrackingAvailable(): Boolean
+
+/** Track native cursor coordinates across the host, browser and drawer windows. */
+@Composable
+expect fun TrackTabBarRevealPointer(
+    state: TabBarRevealState,
+    enabled: Boolean,
+    region: IntRect?,
+    sidebarWidth: Dp,
+)
+
 /**
  * Whether the pointer is anywhere in the sidebar - the rail or the drawer over it.
  *
@@ -204,3 +248,9 @@ fun TabBarRevealState.pointerInSidebar(): Boolean {
     val onDrawer by drawerHover.collectIsHoveredAsState()
     return onRail || onDrawer
 }
+
+private fun sidebarHoverSignal(
+    nativeTracking: Boolean,
+    tracked: Boolean,
+    hovered: Boolean,
+): Boolean = tracked || (!nativeTracking && hovered)

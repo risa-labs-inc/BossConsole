@@ -1,11 +1,14 @@
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -26,11 +29,19 @@ data class BrowserSettingsData(
     val offerToSavePasswords: Boolean = true,
     // Tab sharing — show the co-browse share (QR) button in the browser toolbar (off by default)
     val showShareButton: Boolean = false,
+    // Ask for consent before saving a file with a recognized executable extension (on by default)
+    val warnForExecutables: Boolean = true,
 )
 
 object BrowserSettingsManager {
     private val logger = BossLogger.forComponent("BrowserSettingsManager")
-    private val settingsFile = BossDirectories.resolve("browser-settings.json")
+
+    /**
+     * `internal var` so a test can point it at a temp file, matching
+     * `DefaultAppsSettingsManager`. desktopTest already isolates user.home; this seam
+     * additionally isolates round trips from other tests sharing that home and JVM.
+     */
+    internal var settingsFile = BossDirectories.resolve("browser-settings.json")
     private val json =
         Json {
             prettyPrint = true
@@ -54,6 +65,17 @@ object BrowserSettingsManager {
      */
     fun ensureLoaded() { /* referencing this object already ran loadSettingsSync() */ }
 
+    /**
+     * Test seam: re-run the synchronous load so a [saveSettings] is visible without a process restart.
+     *
+     * Named for the [DefaultAppsSettingsManager.resetForTest] precedent but with deliberately
+     * different semantics: this one does not reset to defaults, it re-reads. A failed load keeps
+     * the in-memory values rather than clobbering them, like [loadSettingsSync] does at startup.
+     */
+    internal fun reloadForTest() {
+        loadSettingsSync()
+    }
+
     private fun loadSettingsSync() {
         try {
             if (settingsFile.exists()) {
@@ -73,6 +95,7 @@ object BrowserSettingsManager {
                 BrowserSettings.offerToSavePasswords = settings.offerToSavePasswords
                 // Tab sharing (setter mirrors to the system property the plugin reads)
                 BrowserSettings.showShareButton = settings.showShareButton
+                BrowserSettings.warnForExecutables = settings.warnForExecutables
 
                 // Update available profiles if we have more
                 if (settings.availableProfiles.isNotEmpty()) {
@@ -80,6 +103,10 @@ object BrowserSettingsManager {
                     BrowserSettings.availableProfiles.addAll(settings.availableProfiles)
                 }
             }
+        } catch (e: SerializationException) {
+            // Decoder messages contain the input document. Browser settings may hold custom
+            // user-agent/profile values and must not copy them into the host log.
+            logger.warn(LogCategory.BROWSER, "Failed to load browser settings", decodeFailure(e))
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Failed to load browser settings", error = e)
         }
@@ -100,10 +127,11 @@ object BrowserSettingsManager {
                         suggestPasswords = BrowserSettings.suggestPasswords,
                         offerToSavePasswords = BrowserSettings.offerToSavePasswords,
                         showShareButton = BrowserSettings.showShareButton,
+                        warnForExecutables = BrowserSettings.warnForExecutables,
                     )
 
                 val content = json.encodeToString(settings)
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
             } catch (e: Exception) {
                 logger.warn(LogCategory.BROWSER, "Failed to save browser settings", error = e)
             }

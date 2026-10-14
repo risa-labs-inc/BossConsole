@@ -37,6 +37,8 @@ class PluginUpdateManagerCheckCompatTest {
             repositoryManager = repos,
             hostIpcVersion = "1.0.0",
             isIpcCompatible = isCompatible,
+            // Not this suite's subject - an always-accept vet keeps the pre-wire behaviour.
+            verifyDownloadedJar = { _, _ -> Result.success(Unit) },
         )
     }
 

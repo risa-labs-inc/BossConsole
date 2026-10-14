@@ -5,10 +5,12 @@ import ai.rever.boss.plugin.api.DialogChoice
 import ai.rever.boss.plugin.api.DialogChoiceItem
 import ai.rever.boss.plugin.api.GenericDialogProvider
 import ai.rever.boss.plugin.api.ProgressDialogHandle
+import ai.rever.boss.utils.CleanupRunner
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -243,13 +245,16 @@ class GenericDialogProviderImpl private constructor() : GenericDialogProvider {
         isIndeterminate: Boolean,
         cancellable: Boolean,
     ): ProgressDialogHandle {
+        val requestId = UUID.randomUUID().toString()
         val handle =
             ProgressDialogHandleImpl(
-                onDismiss = { _currentDialog.value = null },
+                onDismiss = {
+                    _currentDialog.update { current -> if (current?.id == requestId) null else current }
+                },
             )
         val request =
             DialogRequest.Progress(
-                id = UUID.randomUUID().toString(),
+                id = requestId,
                 title = title,
                 message = message,
                 isIndeterminate = isIndeterminate,
@@ -282,6 +287,7 @@ class ProgressDialogHandleImpl(
     val message: StateFlow<String> = _message.asStateFlow()
 
     private val _isCancelled = AtomicBoolean(false)
+    private val isDismissed = AtomicBoolean(false)
     private var onCancelCallback: (() -> Unit)? = null
 
     override fun updateProgress(progress: Float) {
@@ -293,7 +299,7 @@ class ProgressDialogHandleImpl(
     }
 
     override fun dismiss() {
-        onDismiss()
+        if (isDismissed.compareAndSet(false, true)) onDismiss()
     }
 
     override fun isCancelled(): Boolean = _isCancelled.get()
@@ -306,7 +312,13 @@ class ProgressDialogHandleImpl(
      * Called by the dialog host when the user cancels.
      */
     fun cancel() {
-        _isCancelled.set(true)
-        onCancelCallback?.invoke()
+        if (_isCancelled.compareAndSet(false, true)) onCancelCallback?.invoke()
+    }
+
+    /** A plugin cancellation callback cannot prevent the host from removing the dialog. */
+    internal fun cancelAndDismiss() {
+        val cleanup = CleanupRunner("ProgressDialog")
+        cleanup.run("cancel operation", ::cancel)
+        cleanup.run("dismiss dialog", ::dismiss)
     }
 }

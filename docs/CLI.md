@@ -24,7 +24,11 @@ You can install or update the CLI symlinks inside BossConsole via **Toolbox → 
 | `boss workspace <file>` | Loads a workspace configuration | `boss workspace ./workspace.json` |
 | `boss terminal` | Opens a new integrated BossTerm pane | `boss terminal` |
 | `boss status` | Checks running BossConsole health and status | `boss status --json` |
+| `boss doctor` | Reports health problems with suggested next steps (exit `2` when degraded) | `boss doctor --json` |
+| `boss project-detect` | Reports project languages, tools, and frameworks from local files | `boss project-detect --path . --json` |
 | `boss mcp <action>` | Discovers and invokes MCP tools | `boss mcp list` |
+| `boss pack <action>` | Plans and applies plugin packs (exit `2` when an apply is partial) | `boss pack plan team.json` |
+| `boss plugin <action>` | Developer CLI: scaffold, validate, and link plugins | `boss plugin init my-tool` |
 | `boss completion <shell>` | Generates shell tab-completion scripts | `boss completion bash > ~/.boss-complete.sh` |
 
 ---
@@ -51,7 +55,7 @@ boss status --json
 ```json
 {
   "running": true,
-  "version": "9.5.7",
+  "version": "9.5.10",
   "os": "Windows 11",
   "arch": "amd64",
   "activeProject": "BossConsole",
@@ -62,6 +66,48 @@ boss status --json
   }
 }
 ```
+
+#### Health: the `health` field and `boss doctor`
+
+`boss status --json` also carries a `health` object. It reports problems BOSS already tracks but previously showed only inside a window: plugins the sandbox watchdog stopped after repeated failures, plugins that need attention in **Help > Plugin Health & Recovery**, a browser engine that is not installed, could not start, or has stopped responding, and MCP kill-switch or policy faults that withhold tools. The field is additive and `boss status` keeps its existing exit codes; its human output gains a single `Health:` line.
+
+`boss doctor` prints the same report with a suggested next step for each problem, and exits with code `2` while any problem is present. Both commands are read-only: they never change plugin, browser or MCP state. Both also say in words when coverage was incomplete: `Not checked:` for an area nothing could be read from, and `Partially checked:` for one where some sources answered and others failed.
+
+```bash
+# Human-readable report: exit 0 when healthy, 2 when degraded, 1 when BOSS is not running
+boss doctor
+
+# The health object as JSON, with the same exit codes
+boss doctor --json
+```
+
+**Health Object Example**:
+```json
+{
+  "degraded": true,
+  "findings": [
+    {
+      "area": "plugins",
+      "severity": "warning",
+      "code": "plugin_stopped_after_failures",
+      "summary": "Plugin 'Terminal Tab' was stopped after repeated failures.",
+      "subject": "ai.rever.boss.plugin.dynamic.terminaltab",
+      "remedy": "Reload it from Help > Plugin Health & Recovery in the affected window, or restart BOSS."
+    }
+  ],
+  "unchecked": [],
+  "partial": []
+}
+```
+
+- `degraded` is the verdict for the workspace, and is `true` whenever `findings` is non-empty. A reader should not infer health from the findings count alone: a newer BOSS may report `degraded: true` with an empty `findings` list, and both `boss doctor` and the `Health:` line in `boss status` report that as degraded rather than as OK.
+- `area` is `plugins`, `browser` or `mcp`.
+- `severity` is `critical` when something that should work is broken and a whole capability is gone (a browser engine that failed, or every MCP tool), and `warning` for something narrower: one plugin, one setting that was not saved, or a browser engine that has not been downloaded yet. Critical findings are listed first.
+- `code` is stable for scripts to match on: `plugin_stopped_after_failures`, `plugin_needs_attention`, `browser_engine_not_installed`, `browser_engine_unavailable`, `browser_engine_unresponsive`, `mcp_tools_withheld`, `mcp_tool_setting_not_saved`, `mcp_policy_unreadable`, `mcp_policy_not_saved`. `summary` is for people and may be reworded.
+- `subject` (a plugin id or tool name) and `remedy` are omitted when they do not apply.
+- `unchecked` lists areas whose state could not be read at all, including `plugins` while no BOSS window is open. They are neither healthy nor degraded and do not affect the exit code.
+- `partial` lists areas that were read from several sources where some of those sources failed. Today only `plugins` can appear, because it has one source per open window: if one window's source fails, the other windows' findings are still reported and `plugins` is listed here instead of being dropped into `unchecked`. Findings in a partial area are real, but the area is not fully covered, so an empty result there is not a clean bill of health. Like `unchecked`, it does not affect the exit code. An area is never in both `unchecked` and `partial`. The field is additive: a BOSS that predates it simply omits it, and both `boss status` and `boss doctor` treat an absent `partial` as empty.
+- Plugin health covers every open window that could be read. A plugin you disabled, or one your role cannot access, is not reported as a problem.
 
 ---
 
@@ -134,7 +180,57 @@ boss mcp invoke workspace_info --json
 
 ---
 
-### 5. `boss completion <bash|zsh|fish>`
+### 5. `boss mcp ledger <verify|tail|search|secrets>`
+
+Reads the local, sanitized MCP operation ledger without requiring a running BOSS process.
+
+```bash
+# Verify retained hash-chain integrity; exits non-zero for broken, incomplete, or unverifiable data
+boss mcp ledger verify
+
+# Show the newest 20 records, or filter the durable history
+boss mcp ledger tail -n 20
+boss mcp ledger search --tool run_command --disposition failed --from 2026-09-01 --limit 50
+
+# Which tools received a secret, and when: one summary per secret the matching calls referenced
+boss mcp ledger secrets
+boss mcp ledger secrets --secret 6f1d2c3e-4b5a-4c6d-8e7f-90a1b2c3d4e5 --from 2026-09-01
+boss mcp ledger search --secret 6f1d2c3e-4b5a-4c6d-8e7f-90a1b2c3d4e5.username --provider boss-workspace
+boss mcp ledger secrets --provider secret-manager          # every provider the plugin registered
+boss mcp ledger secrets --provider secret-manager::vault   # one of them
+
+# Machine-readable output or an explicit ledger path
+boss mcp ledger verify --json
+boss mcp ledger tail --file /path/to/mcp-calls.jsonl --json
+boss mcp ledger secrets --json
+```
+
+`secrets` answers the question to ask before rotating a credential: for each secret the matching
+calls referenced, how many calls named it, how many handed it to a tool's handler and how many
+were withheld (refused, denied, timed out, or voided at the fence before the handler ran), which
+tools and providers asked, and the first, last and last-delivered times. `--secret <id>` matches a
+reference to any field of that secret; `--secret <id>.<field>` matches that field only. The
+ledger records references, never values, so this needs no vault access and works with BOSS
+closed.
+
+`--provider` takes a host provider id (`boss-workspace`), a plugin id, which matches every provider
+that plugin registered, or one plugin provider as `<pluginId>::<providerId>`, which is how the
+ledger records a plugin's tools.
+
+The answer only covers the history rotation has kept: the active file and up to five rotated
+backups, sized by bytes rather than by age. A use older than the oldest backup is not counted, so
+`delivered: never` means "not in the retained ledger", not "never". Run `boss mcp ledger verify`
+beside it to check that the retained history has not been edited.
+
+The chain detects edits, insertions, reordering, and removals from inside retained history. It is
+not a signature: someone able to rewrite the entire chain can recompute it, and removing only the
+newest tail cannot be distinguished from normal retained history without an external checkpoint.
+An all-legacy ledger from before integrity tracking exits non-zero until BOSS writes one new record
+that anchors the hash chain; the report distinguishes that ordinary upgrade state from tampering.
+
+---
+
+### 6. `boss completion <bash|zsh|fish>`
 
 Generates tab-autocompletion scripts for your shell, completing subcommands and MCP actions (`list`, `describe`, `invoke`):
 
@@ -153,12 +249,70 @@ boss completion fish > ~/.config/fish/completions/boss.fish
 
 ---
 
+## Plugin Developer CLI (`boss plugin`)
+
+The `boss plugin` command suite accelerates developing third-party plugins with scaffolding, validation, and hot-linking. See [`docs/PLUGIN_LAUNCHPAD.md`](PLUGIN_LAUNCHPAD.md) for full specifications.
+
+### 1. `boss plugin init <name>`
+Scaffolds a new plugin project across templates (`mcp-tool`, `ui-panel`, `background-service`, `full`):
+```bash
+boss plugin init my-tool --template mcp-tool
+boss plugin init my-service --template background-service --dir ~/plugins/my-service --json
+```
+
+### 2. `boss plugin validate [<path>]`
+Validates a plugin source directory or packaged `.jar` against manifest rules, permitted permissions, and bytecode entrypoints:
+```bash
+boss plugin validate
+boss plugin validate build/libs/my-plugin-0.1.0.jar --json
+```
+
+### 3. `boss plugin link [<path>]`
+Links the plugin into `$BOSS_HOME/plugins/dev/<plugin-id>`. If BossConsole is running, triggers a live hot-reload over the loopback IPC socket:
+```bash
+boss plugin link
+boss plugin link . --json
+```
+
+---
+
+## Plugin Packs (`boss pack`)
+
+A plugin pack names the plugins a desk needs and the MCP policy rules that make their tools usable. `boss pack` is a thin client over three host MCP tools, `pack_plan`, `pack_apply` and `pack_status`, so an agent can call the same tools directly and is governed the same way.
+
+```json
+{
+  "pack": "team-backend",
+  "plugins": ["ai.rever.boss.plugin.dynamic.terminaltab", "ai.rever.boss.plugin.dynamic.codebase@1.4.2?"],
+  "allow_tools": ["run_tests"],
+  "ask_providers": ["ai.rever.boss.plugin.dynamic.codebase"]
+}
+```
+
+A plugin entry is `<pluginId>`, `<pluginId>@<exact version>`, and a trailing `?` marks it optional. Rule lists are `allow_tools`, `ask_tools`, `deny_tools`, `allow_providers`, `ask_providers` and `deny_providers`.
+
+```bash
+boss pack plan team.json          # what would change; changes nothing
+boss pack apply team.json --wait  # apply, then report each row
+boss pack status [<job>]          # progress and result of an apply
+```
+
+- **Approval.** `pack_apply` is a prepared, single-use operation: BOSS resolves the plan before asking for approval and presents the resolved plan (plugin actions, versions, SHA-256 hashes, dependency closures, and rule changes) in a dedicated scrollable preview in the MCP approval dialog without silent row truncation. Every `pack_apply` requires fresh operator approval of that specific resolved plan: standing trust (session trust or persistent ALLOW) cannot bypass approval for `pack_apply`, and standing-trust controls are omitted. An explicit DENY policy stops the call immediately before any store lookups. A pack whose dependency closure is unresolved, cyclic, truncated, or too large to display is rejected before approval.
+- **Consent covers the dependencies.** `pack_plan` resolves each install's full transitive closure and lists the extra plugin ids in `alsoInstalls`, so approving a pack that names one plugin cannot quietly install several. When the walk could not see the whole closure the row says so (`closureComplete: false`, with `unresolved`, `cyclic` or `truncated`). `pack_apply` installs the closure its own fresh plan resolved and reports which dependencies arrived; it never re-walks the store at install time.
+- **Precedence.** A pack only adds a rule where none exists. It never replaces an operator rule, in either direction, and it cannot set a rule for the pack tools themselves. While the policy file is unreadable, nothing is written. A rule whose tool belongs to a DENYed provider is reported as ineffective rather than added, because writing it would not make the tool callable. The plan can say so only for a tool that is already registered; for a tool the pack's own install brings in, the provider is known only once that install has run, so the DENY is caught when the rule is written and reported as `denied_by_provider` in the result.
+- **Resets win.** The reset counter for every rule subject is captured when the pack is planned and checked again when the rule is written. If the operator resets that tool or provider between approving the pack and the job running, the write is refused and reported, rather than reinstating what they just cleared.
+- **Installs.** Plugins come from the plugin store through the installers the host already uses, with their manifest and signature checks. A plugin with no version named installs the store's current release together with its dependencies; a pinned version installs that release alone.
+- **Re-applying** does only what the previous apply left undone.
+- **Exit codes** for `apply --wait`: `0` applied or already satisfied, `2` partial, `1` failed or not run.
+
 ## Process Exit Codes & Stream Guarantees
 
 The CLI adheres to strict UNIX process exit codes and standard stream separation:
 
 - **Exit Code `0`**: Operation succeeded. `stdout` contains the tool output or JSON response.
 - **Exit Code `1`**: Tool execution failed (`isError == true`), invalid tool arguments, or desktop app offline. Clikt usage errors also use exit code `1`. The error description is written strictly to `stderr`, leaving `stdout` clean so shell pipelines do not ingest corrupted data.
+- **Output encoding**: Piped or redirected output, including every `--json` response and `boss mcp invoke` tool output, is UTF-8 on every platform; a Windows console keeps its own code page. Windows PowerShell 5.1 decodes a native command's output with `[Console]::OutputEncoding`, so set it to UTF-8 (`[Console]::OutputEncoding = [System.Text.Encoding]::UTF8`) before capturing output that contains non-ASCII text.
+- **Exit Code `2`**: `boss doctor` reports at least one health finding, or `boss pack apply --wait` completes partially. `stdout` still contains the report so a script can read the details. `boss project-detect` uses exit code `1` for an invalid path.
 
 ### Offline Fail-Fast
 If BossConsole is not running, commands fail immediately without hanging:
@@ -179,4 +333,8 @@ $ echo $?
 
 PowerShell: use `--stdin` for JSON on Windows PowerShell 5.1 or legacy native argument passing, which can strip embedded quotes from `--args`. PowerShell 7.3+ uses Standard argument passing in this launcher. Packaged Windows console I/O still requires platform verification.
 
+cmd: `boss.bat` refuses an argument with a double quote inside it, because cmd would run what follows the quote (#1617). Quote whole arguments only. The arguments after `status`, `doctor`, `mcp` and `completion` are passed on untouched, so `boss mcp invoke search_workspace --args {"query":"x"}` works. For a `terminal -c` command that needs a quote, use `boss.ps1`.
+
 Registry access before sign-in follows the existing host policy: tools without required permissions or an admin requirement remain available. For an admin operator, the per-tool disabled switch is the remaining registry access control.
+
+4. **Secret references**: an argument may carry `{{secret:<id>}}` (or `.username` / `.notes`). `boss mcp invoke` takes the same governed path as an attached agent: the running BOSS window prompts, naming the secret and the tool, and the value is substituted host-side after approval. The CLI output is the tool's result with resolved values scrubbed; the reference, never the value, is what the ledger records. See [MCP_SECRET_REFERENCES.md](MCP_SECRET_REFERENCES.md).

@@ -46,9 +46,10 @@ internal val MODIFIER_ONLY_KEYS =
  * Use this to wrap components that consume all keyboard input (like terminals, browsers)
  * to ensure global/workspace shortcuts still work.
  *
- * Recognizes shortcut chords on KeyDown and emits a KeyUp event to KeyboardEventBus.
- * Modifier-first release cancels, matching the AWT dispatcher. Place this modifier before
- * the wrapped component's focus target so its focus observer can clear pending state.
+ * Recognizes shortcut chords and emits the KeyDown event to KeyboardEventBus, once per press:
+ * repeats and the release are consumed without emitting, and releasing a modifier first
+ * cancels nothing, matching the AWT dispatcher. Place this modifier before the wrapped
+ * component's focus target so its focus observer can clear held state.
  *
  * @param windowId The current window ID for event routing
  * @param source The event source identifier (e.g., COMPONENT_TERMINAL, COMPONENT_BROWSER)

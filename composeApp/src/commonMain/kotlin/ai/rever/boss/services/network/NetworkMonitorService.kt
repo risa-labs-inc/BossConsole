@@ -45,29 +45,36 @@ object NetworkMonitorService {
     private var isAutoRetryCheck = false
 
     /**
+     * Test-only seam: when non-null, [checkConnectivity] reports this probe's
+     * result instead of racing the real network probes. Production code never
+     * assigns it; tests clear it when they are done.
+     */
+    internal var probeOverride: (suspend () -> Boolean)? = null
+
+    /**
      * Check network connectivity
      */
     suspend fun checkConnectivity(): Boolean =
         withContext(Dispatchers.IO) {
+            // Capture the previous state BEFORE the `Checking` write: the
+            // consecutive-failure counter lives in Disconnected.retryAttempt,
+            // and reading the state back after that write always saw Checking,
+            // resetting the counter to 0 on every failed attempt.
+            val previousState = _networkState.value
+
             _networkState.value = NetworkState.Checking
 
             val isConnected =
                 try {
                     // Race both probes: this check gates the first usable screen, and
                     // probing sequentially made the worst case timeout*2 (20s).
-                    raceConnectivityProbes()
+                    probeOverride?.invoke() ?: raceConnectivityProbes()
                 } catch (e: Exception) {
                     logger.warn(LogCategory.NETWORK, "Connectivity check failed", error = e)
                     false
                 }
 
-            val currentState = _networkState.value
-            val retryAttempt =
-                if (currentState is NetworkState.Disconnected) {
-                    currentState.retryAttempt + 1
-                } else {
-                    0
-                }
+            val previousAttempt = (previousState as? NetworkState.Disconnected)?.retryAttempt ?: 0
 
             _networkState.value =
                 if (isConnected) {
@@ -75,7 +82,7 @@ object NetworkMonitorService {
                 } else {
                     NetworkState.Disconnected(
                         lastCheckTime = System.currentTimeMillis(),
-                        retryAttempt = retryAttempt,
+                        retryAttempt = previousAttempt + 1,
                     )
                 }
 
@@ -147,20 +154,26 @@ object NetworkMonitorService {
         isAutoRetryCheck = true // Use shorter timeout for retry checks
         autoRetryJob =
             scope.launch {
-                while (isActive && _networkState.value !is NetworkState.Connected) {
-                    for (i in AUTO_RETRY_INTERVAL_SECONDS downTo 1) {
-                        _nextRetryCountdown.value = i
-                        delay(1000)
-                    }
-                    _nextRetryCountdown.value = 0
+                try {
+                    while (isActive && _networkState.value !is NetworkState.Connected) {
+                        for (i in AUTO_RETRY_INTERVAL_SECONDS downTo 1) {
+                            _nextRetryCountdown.value = i
+                            delay(1000)
+                        }
+                        _nextRetryCountdown.value = 0
 
-                    val connected = checkConnectivity()
-                    if (connected) {
-                        _isAutoRetrying.value = false
-                        isAutoRetryCheck = false
-                        onConnected()
-                        break
+                        val connected = checkConnectivity()
+                        if (connected) {
+                            onConnected()
+                            break
+                        }
                     }
+                } finally {
+                    // Clear on every exit path, including the one where the
+                    // loop body never runs because the state was already
+                    // Connected: otherwise isAutoRetrying sticks at true.
+                    _isAutoRetrying.value = false
+                    isAutoRetryCheck = false
                 }
             }
     }

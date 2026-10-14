@@ -59,8 +59,20 @@ probe_required_artifacts() {
   # Metadata can lead platform artifacts briefly. HEAD is intentional: a range
   # request could download an entire Chromium JAR if an intermediary ignored it.
   # Windows ARM64 is optional in the release matrix, so it is not a hard gate.
+  #
+  # jxbrowser-compose and jxbrowser-swing are on the desktop compile classpath
+  # (composeApp/build.gradle.kts), and jxbrowser-kotlin is pulled in transitively
+  # by jxbrowser-compose. All three publish as their own Maven modules, so their
+  # propagation can lag the platform binaries. Probing only the binaries let
+  # JxBrowser 9.5.1 dispatch while those modules were still unresolvable, and the
+  # branding build failed at `desktopCompileClasspath` with "Could not find
+  # com.teamdev.jxbrowser:jxbrowser-compose:9.5.1" (BossConsole#667). Gate on the
+  # compile-classpath modules too, not just the binaries.
   local artifacts=(
     jxbrowser
+    jxbrowser-compose
+    jxbrowser-swing
+    jxbrowser-kotlin
     jxbrowser-linux64
     jxbrowser-linux64-arm
     jxbrowser-mac

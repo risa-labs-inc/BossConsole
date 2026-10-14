@@ -2,29 +2,36 @@ package ai.rever.boss.app
 
 import ai.rever.boss.components.plugin.DefaultPlugin
 import ai.rever.boss.components.plugin.PluginUpdateRegistry
+import ai.rever.boss.components.plugin.currentPluginHealth
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.plugin.tab_types.registerPanelHostTab
 import ai.rever.boss.components.registery.PanelComponentStoreRegistry
+import ai.rever.boss.components.window_panel.RegisterSplitViewState
 import ai.rever.boss.components.window_panel.SplitNode
+import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.components.wizard.plugin.PluginWizardIntegration
 import ai.rever.boss.components.workspaces.LAST_SESSION_ID
 import ai.rever.boss.components.workspaces.LAST_SESSION_NAME
+import ai.rever.boss.components.workspaces.LastSessionSet
 import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.ProjectSelectionWorkspace
 import ai.rever.boss.components.workspaces.WorkspaceSettingsManager
 import ai.rever.boss.components.workspaces.applyWorkspace
-import ai.rever.boss.components.workspaces.asLastSession
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
+import ai.rever.boss.components.workspaces.extractRunningWorkspaces
+import ai.rever.boss.components.workspaces.isRestorable
+import ai.rever.boss.components.workspaces.isUnsaved
+import ai.rever.boss.components.workspaces.layoutWatcherWrite
 import ai.rever.boss.components.workspaces.requiresProject
 import ai.rever.boss.components.workspaces.resolveOnProjectSelection
+import ai.rever.boss.components.workspaces.sessionSetOf
+import ai.rever.boss.components.workspaces.tabListChanges
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.consumePendingInitialProject
 import ai.rever.boss.consumePendingInitialTab
-import ai.rever.boss.performance.BrowserTabInfo
-import ai.rever.boss.performance.EditorTabResourceInfo
+import ai.rever.boss.health.WorkspaceHealthSources
 import ai.rever.boss.performance.PerformanceState
-import ai.rever.boss.performance.TerminalInfo
 import ai.rever.boss.plugin.api.Panel.Companion.bottom
 import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.right
@@ -37,9 +44,7 @@ import ai.rever.boss.services.auth.CoreAuthService
 import ai.rever.boss.services.auth.UserDataStorage
 import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
 import ai.rever.boss.services.terminal.TerminalAPIAccess
-import ai.rever.boss.setupDownloadTabCloseCallback
 import ai.rever.boss.startup.StartupSettingsManager
-import ai.rever.boss.topofmind.TabTreeState
 import ai.rever.boss.updater.UpdateCoordinator
 import ai.rever.boss.utils.CLIInstaller
 import ai.rever.boss.utils.CLIVersionManager
@@ -60,6 +65,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -100,23 +107,24 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         state.draggablePanelComponent.panelDropZonesProvider = { state.tabDragComponent.panelDropZones }
     }
 
-    // Register this window's state in the global registry for multi-window features
-    LaunchedEffect(splitViewState, windowId) {
-        SplitViewStateRegistry.register(windowId, splitViewState)
-    }
-
     // Cancel the split state's deferred-open scope when the state itself goes.
     //
-    // Keyed on `splitViewState` ALONE, deliberately. The obvious place for this
-    // was `SplitViewStateRegistry.unregister`, which is called from the big
-    // DisposableEffect below - and that one is keyed on seven values, only one of
-    // which is the split state. A change to any of the other six would have
-    // cancelled the scope of a state that is still live, after which every
-    // deferred open in that window silently did nothing for the rest of the
-    // session, with no error anywhere.
+    // Keyed on `splitViewState` ALONE, deliberately. Neighbouring effects are keyed on
+    // more than the split state (the plugin effect below is keyed on seven values), and
+    // riding along on one of those would cancel the scope of a state that is still live,
+    // after which every deferred open in that window silently did nothing for the rest of
+    // the session, with no error anywhere.
     DisposableEffect(splitViewState) {
         onDispose { splitViewState.dispose() }
     }
+
+    // Register this window's state in the global registry for multi-window features.
+    // RegisterSplitViewState pairs the register with its unregister on the same keys, so
+    // the entry's lifetime is exactly this window's composition lifetime - an onDispose in
+    // a distant multi-keyed effect could strand a live window or leak a dead one. Declared
+    // after the state-dispose effect so teardown still unregisters before the state dies:
+    // Compose forgets sibling effects in reverse order.
+    RegisterSplitViewState(windowId, splitViewState)
 
     // Register this window's panel component store so the plugin reload path can
     // reset open sidebar panel slots across all windows (see PanelComponentStoreRegistry).
@@ -151,6 +159,13 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         LastSessionCoordinator.instance.register(
             windowId = windowId,
             isFirstWindow = isFirstWindow,
+            canSave = { state.workspaceRestorationComplete && !state.sessionRestoreRefused },
+            // Every Space this window is running, and which one is showing - so a restart brings
+            // the whole window back rather than the one Space that happened to be on screen.
+            // Even one Space needs a set to preserve its id; see `sessionSetOf`.
+            extractSet = {
+                liveSessionSet(splitViewState, windowProjectState.selectedProject.value.path, defaultWorkingDirectory)
+            },
         ) {
             // Invoked at teardown, possibly from the shutdown-hook thread, so read
             // live state here rather than closing over a recomposition snapshot.
@@ -165,14 +180,9 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         }
     }
 
-    // Register callback for FluckEngine to auto-close download redirect tabs (desktop only)
-    LaunchedEffect(splitViewState) {
-        setupDownloadTabCloseCallback(splitViewState)
-    }
-
     // Cancel any active drag when window loses focus (prevents stuck ghost)
     LaunchedEffect(state.tabDragComponent, windowId) {
-        WindowFocusManager.focusedWindowFlow.collect { focusedWindowId ->
+        WindowFocusManager.activeWindowFlow.collect { focusedWindowId ->
             // If this window lost focus and there's an active drag, cancel it
             if (focusedWindowId != windowId && state.tabDragComponent.isDragging) {
                 state.tabDragComponent.cancelDrag()
@@ -199,7 +209,18 @@ internal fun BossAppStartupEffects(state: BossAppState) {
     LaunchedEffect(windowId, windowProjectState) {
         val pendingProject = consumePendingInitialProject(windowId)
         if (pendingProject != null) {
+            // Opening a project in a NEW window is itself the answer to "where": the window's
+            // own fresh Space. So the project-selection effect must not ask for a layout on top.
+            state.answeredProjectPath = pendingProject.path
             windowProjectState.selectProject(pendingProject)
+        }
+    }
+
+    // "Open this project" from anywhere outside BossAppDialogs - the top bar, Home, the Open
+    // Project list - lands on this window's one "where should it open?" dialog.
+    LaunchedEffect(windowId) {
+        ProjectOpenRequests.requestsFor(windowId).collect { project ->
+            requestProjectOpen(state, state.windowProjectState, project)
         }
     }
 
@@ -210,7 +231,7 @@ internal fun BossAppStartupEffects(state: BossAppState) {
     // Use DisposableEffect to clean up on disposal and prevent memory leaks
     DisposableEffect(splitViewState, state.draggablePanelComponent) {
         // Cache for getAllPanels() to avoid repeated tree traversals
-        // All 6 providers are called within milliseconds of each other every 5 seconds
+        // The count providers are called within milliseconds of each other every 5 seconds
         // Using synchronized block for thread-safe access from provider lambdas
         val cacheLock = Any()
         var cachedPanels: List<SplitNode.Panel>? = null
@@ -265,51 +286,6 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             },
         )
 
-        // Register detailed resource providers for the Resources tab
-        PerformanceState.registerDetailedResourceProviders(
-            browserTabs = {
-                getCachedPanels().flatMap { panel ->
-                    val tabsState = panel.tabsComponent.tabsState.value
-                    val activeTabId = tabsState.activeTab?.id
-                    tabsState.tabs.filterIsInstance<FluckTabInfo>().map { tab ->
-                        BrowserTabInfo(
-                            id = tab.id,
-                            title = tab.title,
-                            url = tab.currentUrl,
-                            isActive = tab.id == activeTabId,
-                        )
-                    }
-                }
-            },
-            terminals = {
-                getCachedPanels().flatMap { panel ->
-                    val tabsState = panel.tabsComponent.tabsState.value
-                    val activeTabId = tabsState.activeTab?.id
-                    tabsState.tabs.filterIsInstance<TerminalTabInfo>().map { tab ->
-                        TerminalInfo(
-                            id = tab.id,
-                            title = tab.title,
-                            isActive = tab.id == activeTabId,
-                        )
-                    }
-                }
-            },
-            editorTabs = {
-                getCachedPanels().flatMap { panel ->
-                    val tabsState = panel.tabsComponent.tabsState.value
-                    val activeTabId = tabsState.activeTab?.id
-                    tabsState.tabs.filterIsInstance<EditorTabInfo>().map { tab ->
-                        EditorTabResourceInfo(
-                            id = tab.id,
-                            fileName = tab.title,
-                            filePath = tab.filePath,
-                            isActive = tab.id == activeTabId,
-                        )
-                    }
-                }
-            },
-        )
-
         onDispose {
             PerformanceState.clearResourceProviders()
         }
@@ -338,15 +314,16 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         val path = selectedProject.path
         if (path.isEmpty()) return@LaunchedEffect
 
-        // A project the restore selected is not a project the user just picked. Last
-        // Session carries its own layout, and both of the branches below would discard
-        // it - the apply by clearing panels, the prompt by covering it with a question
-        // nobody asked. See isUserProjectSelection.
-        if (!isUserProjectSelection(path, state.restoredProjectPath)) {
-            // Consumed, so re-opening the same project later still counts as a choice.
-            state.restoredProjectPath = null
-            return@LaunchedEffect
-        }
+        // A project the restore selected is not a project the user just picked: Last Session
+        // carries its own layout, and both branches below would discard it - the apply by
+        // clearing panels, the prompt by covering it with a question nobody asked. Nor is one a
+        // person placed through "where should this open?", which already decided the layout.
+        // Both marks are consumed together, so re-opening the same project later still counts as
+        // a choice. See gateProjectSelection.
+        val gate = gateProjectSelection(path, state.restoredProjectPath, state.answeredProjectPath)
+        state.restoredProjectPath = gate.restoredProjectPath
+        state.answeredProjectPath = gate.answeredProjectPath
+        if (!gate.handle) return@LaunchedEffect
 
         when (val choice = WorkspaceSettingsManager.currentSettings.value.resolveOnProjectSelection()) {
             // Named rather than folded into an else, so adding a fourth mode has to
@@ -357,7 +334,7 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             is ProjectSelectionWorkspace.Ask -> {
                 // The prompt names the project so it reads as a consequence of what was
                 // just done, rather than an unexplained dialog at startup.
-                state.pendingWorkspacePrompt = selectedProject.name
+                state.pendingWorkspacePrompt = SpacePrompt(selectedProject, placeOnPick = false)
             }
 
             is ProjectSelectionWorkspace.Apply -> {
@@ -371,8 +348,12 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                     !choice.workspace.requiresProject() &&
                         workspaceManager.currentWorkspace.value?.id == choice.workspace.id
                 if (!alreadyApplied) {
-                    applyWorkspace(choice.workspace, splitViewState, windowProjectState)
-                    workspaceManager.loadWorkspace(choice.workspace)
+                    // Apply first: a refused apply keeps what is on screen, and entering the
+                    // Space in the manager anyway would have it claiming a workspace that was
+                    // never applied.
+                    if (applyWorkspace(choice.workspace, splitViewState, windowProjectState)) {
+                        workspaceManager.loadWorkspace(choice.workspace)
+                    }
                 }
             }
         }
@@ -423,7 +404,15 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         ai.rever.boss.services.editor.EditorAPIAccess
             .initialize(plugin)
 
+        // Let `boss status` and `boss doctor` report this window's plugin health. DefaultPlugin's
+        // init already created the manager, so a health query reads it and creates nothing.
+        val pluginHealthSource = { currentPluginHealth(plugin.dynamicPluginManager) }
+        WorkspaceHealthSources.registerPlugins(windowId, pluginHealthSource)
+
         onDispose {
+            // Unregister first, before the plugin is disposed, so a health query never reads a disposed manager.
+            WorkspaceHealthSources.unregisterPlugins(windowId, pluginHealthSource)
+
             // NOTE: Browser disposal moved to main.kt onCloseRequest handler
             // Browsers must be disposed BEFORE Compose disposal begins, not during it
             // See main.kt onCloseRequest for the disposeAllBrowsersBlocking() call
@@ -436,7 +425,9 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             // Panels must release resources before this window's plugin classloaders close,
             // during window teardown. Store disposal is idempotent.
             state.panelComponentStore.dispose()
-            // Cleanup plugin coroutines
+            // Cleanup plugin coroutines. dispose() returns immediately - the teardown runs on
+            // the plugin's own background scope and must not be joined here: this is the UI
+            // thread, and blocking it is exactly the stall it exists to prevent.
             plugin.dispose()
             // NOTE: the updater is NOT torn down here. It is process-wide; the
             // first window to close used to cancel periodic checks and in-flight
@@ -444,8 +435,10 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             // handle is released by rememberBossAppState, which also acquired it,
             // and app-level teardown is UpdateCoordinator.shutdown() in main.kt.
 
-            // Unregister this window's state from the global registries
-            SplitViewStateRegistry.unregister(windowId)
+            // Unregister this window's state from the global registries.
+            // SplitViewStateRegistry is not here: RegisterSplitViewState owns that pair on
+            // the (windowId, splitViewState) keys, so an unrelated key change above cannot
+            // drop a live window and a throw above cannot leak a dead one.
             WindowProjectStateRegistry.unregister(windowId)
             WindowRunnerStateRegistry.unregister(windowId)
             WindowGitStateRegistry.unregister(windowId)
@@ -492,7 +485,10 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                         defaultPlugin.awaitInitialPluginLoad()
                     }
                 if (loadFinished == null) {
-                    logger.warn(LogCategory.SYSTEM, "Startup plugin load still running after 30s; skipping wizard check")
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Startup plugin load still running after 30s; skipping wizard check",
+                    )
                     state.pluginWizardChecked = true
                     return@LaunchedEffect
                 }
@@ -614,33 +610,56 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                     // Only load "Last Session" for the first window (app startup)
                     // New windows should start fresh (Issue #129)
                     if (isFirstWindow) {
-                        // Check if there's a saved "last-session" workspace
-                        val lastSessionConfig = configs.find { it.name == LAST_SESSION_NAME }
+                        // The multi-Space record first, and the single-Space one only when there
+                        // is none. An installed build upgrading into this has only
+                        // `Last_Session.json`, so the fallback still preserves older sessions.
+                        // Read here rather than up front because this branch is reached at most
+                        // once: `loadWorkspace` below sets currentWorkspace, which is the guard
+                        // on this whole block.
+                        val sessionSet = workspaceManager.loadLastSessionSet()?.takeIf { isRestorable(it) }
 
-                        if (lastSessionConfig != null) {
+                        // The record, BY ID. By name, a Space of the user's called "Last Session"
+                        // was restored instead of the record - and the record's own layout, which
+                        // is the crash-recovery copy, was never applied.
+                        val lastSessionConfig = configs.find { it.id == LAST_SESSION_ID }
+
+                        state.workspaceRestorationStarted = true
+                        if (sessionSet != null) {
+                            // Before applyWorkspace, for the reason the single-Space path below
+                            // states: the effect watching selectedProject.path has to be able to
+                            // tell a restore apart from the user picking a project. Every entry
+                            // carries the window's project, so the active one's is all of them.
+                            state.restoredProjectPath =
+                                sessionSet.spaces
+                                    .firstOrNull { it.id == sessionSet.activeWorkspaceId }
+                                    ?.projectPath
+                            val restored = restoreLastSessionSet(sessionSet, splitViewState, windowProjectState)
+                            state.sessionRestoreRefused = restored.size != sessionSet.spaces.size
+                        } else if (lastSessionConfig != null) {
                             // Ensure it has the correct ID
-                            val configWithId =
-                                if (lastSessionConfig.id != LAST_SESSION_ID) {
-                                    lastSessionConfig.copy(id = LAST_SESSION_ID)
-                                } else {
-                                    lastSessionConfig
-                                }
+                            val configWithId = prepareSessionSpace(lastSessionConfig)
                             // Apply the last session workspace FIRST
-                            workspaceManager.loadWorkspace(configWithId)
                             // Before applyWorkspace, which is what selects the recorded
                             // project: the effect watching selectedProject.path has to be
                             // able to tell this apart from the user picking a project.
                             state.restoredProjectPath = configWithId.projectPath
-                            // A failed restore must not abort this collector: the
-                            // handler-marking below is the only path left once
-                            // loadWorkspace has set currentWorkspace — the fresh-install
-                            // fallback timeout deliberately stands down at that point.
+                            // The explicit started flag excludes the fresh-install timeout
+                            // while this suspends, without falsely claiming an unapplied Space.
                             try {
-                                applyWorkspace(configWithId, splitViewState, windowProjectState)
+                                if (applyWorkspace(configWithId, splitViewState, windowProjectState)) {
+                                    workspaceManager.loadWorkspace(configWithId)
+                                } else {
+                                    state.sessionRestoreRefused = true
+                                }
                             } catch (e: kotlinx.coroutines.CancellationException) {
                                 throw e
                             } catch (e: Exception) {
-                                logger.error(LogCategory.WORKSPACE, "Last Session restore failed - continuing startup", error = e)
+                                state.sessionRestoreRefused = true
+                                logger.error(
+                                    LogCategory.WORKSPACE,
+                                    "Last Session restore failed - continuing startup",
+                                    error = e,
+                                )
                             }
                         } else {
                             // No Last Session: this is the layout a fresh install opens on.
@@ -649,6 +668,14 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                         }
 
                         // Mark workspace restoration as complete (for auto-show dialog logic)
+                        if (state.sessionRestoreRefused) {
+                            ai.rever.boss.components.bars.horizontal.StatusMessageManager.showMessage(
+                                "Some saved tabs could not be restored. The recovery record is protected; " +
+                                    "save new work as a Space before quitting, " +
+                                    "then restore the missing plugins and restart.",
+                                durationMs = 15_000,
+                            )
+                        }
                         state.workspaceRestorationComplete = true
 
                         // CRITICAL: Mark handlers as ready AFTER Last Session loads (or after determining no session exists)
@@ -670,11 +697,10 @@ internal fun BossAppStartupEffects(state: BossAppState) {
             // Read timeout from settings (use current value, don't make it a key to avoid restart)
             val timeoutMs = StartupSettingsManager.currentSettings.value.workspaceLoadTimeoutMs
             delay(timeoutMs) // Wait for workspace manager to load from disk
-            // currentWorkspace != null means Last Session restore is already in
-            // flight (it can outlast this timeout while applyWorkspace waits for
-            // plugin tab types) — let it mark handlers ready itself, otherwise
-            // handler-created tabs get destroyed by the restore's clearAllPanels.
-            if (!state.workspaceRestorationComplete && workspaceManager.currentWorkspace.value == null) {
+            // A restore can outlast this timeout while waiting for plugin tab types.
+            // Let its own completion mark handlers ready before requests create live tabs.
+            if (!state.workspaceRestorationComplete && !state.workspaceRestorationStarted) {
+                state.workspaceRestorationStarted = true
                 // Still not complete after timeout - assume fresh install. Nothing was
                 // restored and there are no workspaces on disk, so this is the very first
                 // launch: apply the default layout before handlers can create tabs.
@@ -682,6 +708,22 @@ internal fun BossAppStartupEffects(state: BossAppState) {
                 state.workspaceRestorationComplete = true
                 state.markHandlersReady(isSessionResolved)
             }
+        }
+    }
+
+    // Give new/unassigned windows a real default Space without rebuilding their live tabs.
+    LaunchedEffect(state.workspaceRestorationComplete, splitViewState.currentWorkspaceId) {
+        if (state.workspaceRestorationComplete &&
+            (
+                splitViewState.currentWorkspaceId == null ||
+                    splitViewState.currentWorkspaceId?.startsWith("unsaved-window-") == true
+            )
+        ) {
+            val space =
+                workspaceManager.savedCopyOf(ai.rever.boss.components.workspaces.DefaultSpace.ID)
+                    ?: ai.rever.boss.components.workspaces.DefaultSpace.planetBerul
+            splitViewState.rebindCurrentWorkspace(space.id)
+            workspaceManager.loadWorkspace(space)
         }
     }
 
@@ -710,6 +752,13 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         }
     }
 
+    LaunchedEffect(state.currentDefaultPlugin, state.workspaceRestorationComplete) {
+        if (state.currentDefaultPlugin != null && state.workspaceRestorationComplete) {
+            ai.rever.boss.components.plugin.PluginUpdateBridge
+                .startAutomaticUpdates()
+        }
+    }
+
     // Keep the badges honest whoever applies an update. The registry used to be
     // cleared only by the host's own update path, so a plugin updated from the
     // Toolbox or from its update toast kept offering a version it was already
@@ -734,90 +783,150 @@ internal fun BossAppStartupEffects(state: BossAppState) {
         // state, so a browser updating its title mid-navigation re-runs the whole walk.
         val defaultWorkingDirectory = DefaultWorkingDirectory.nominalPath()
 
-        // Monitor the entire layout structure for changes
-        snapshotFlow {
-            // Extract current layout workspace
+        // The last layout this window extracted, so the unsaved flag can be recomputed when the
+        // OTHER half of the comparison moves. Both halves change independently: the live layout
+        // when the user does something, and the saved copy when a write lands - and a write lands
+        // asynchronously (`saveCurrentWorkspace` returns before the file exists), so a flag set
+        // only from the layout side would stay lit after a save until the user touched something
+        // else. Recomputing from both is what makes the affordance self-healing rather than
+        // needing a "now clear it" call after every save path in the app.
+        var latestLayout: LayoutWorkspace? = null
+
+        fun reportUnsaved() {
+            val live = latestLayout
+            // An empty id is a Space that cannot be keyed - `LayoutWorkspace.id` defaults to ""
+            // and `applyWorkspace` mints one only for the copy it applies.
+            val workspaceId = workspaceManager.currentWorkspace.value?.id
+            if (live == null || workspaceId.isNullOrEmpty()) return
+            workspaceManager.setWorkspaceUnsaved(
+                windowId = windowId,
+                workspaceId = workspaceId,
+                unsaved = isUnsaved(live, workspaceManager.savedCopyOf(workspaceId)),
+            )
+        }
+
+        fun extract() =
             extractCurrentWorkspace(
                 splitViewState,
                 selectedProject.path,
                 defaultWorkingDirectory = defaultWorkingDirectory,
             )
-        }.onEach { currentLayout ->
-            // Check if we have a loaded workspace
+
+        // Monitor the entire layout structure for changes.
+        //
+        // TWO sources, because the layout is kept in two kinds of state and one of them is
+        // invisible to `snapshotFlow`:
+        //
+        // - The snapshot half sees everything that is Compose state - the split TREE, each pane's
+        //   `_pinnedCount`, and each tab's own title, url and working directory.
+        // - `tabListChanges()` sees what the snapshot half cannot: `tabsState` is a Decompose
+        //   `Value`, so reading it registers no snapshot read and a tab added, closed, reordered or
+        //   moved between panes changed NOTHING this flow was observing. Nothing re-extracted, so
+        //   nothing was marked unsaved and nothing reached the Last Session record.
+        //
+        // Merged rather than folded into one producer, so each half stays the plain observation of
+        // its own source. A change visible to both costs one extra extract and no more: the
+        // downstream is idempotent, and a duplicate only reschedules the settle delay.
+        merge(
+            snapshotFlow { extract() },
+            splitViewState.tabListChanges().map { extract() },
+        ).onEach { currentLayout ->
+            if (!state.workspaceRestorationComplete || state.sessionRestoreRefused) return@onEach
+            latestLayout = currentLayout
+            reportUnsaved()
+
             val loadedConfig = workspaceManager.currentWorkspace.value
 
-            if (loadedConfig != null) {
-                // Compare with the last known workspace state
-                if (lastWorkspaceSnapshot == null) {
-                    // First snapshot after loading
-                    lastWorkspaceSnapshot = currentLayout
-                } else if (currentLayout != lastWorkspaceSnapshot) {
-                    // Layout has changed (splits, tabs added/removed, etc.)
-                    lastWorkspaceSnapshot = currentLayout
-
-                    // Mark the current workspace as modified (if it's not "Last Session")
-                    if (loadedConfig.name != LAST_SESSION_NAME) {
-                        TabTreeState.markWorkspaceAsModified(loadedConfig.id)
-                    }
-
-                    // Cancel previous save job if any
-                    saveJob?.cancel()
-
-                    // Auto-save to current workspace or "Last Session" after a short delay
-                    saveJob =
-                        launch {
-                            delay(2000) // Wait 2 seconds before saving
-
-                            if (loadedConfig.name == LAST_SESSION_NAME) {
-                                // If we're already in "Last Session", update it
-                                workspaceManager.updateCurrentWorkspace(asLastSession(currentLayout))
-                                workspaceManager.saveCurrentWorkspace(LAST_SESSION_NAME)
-                            } else {
-                                // Update the current loaded workspace with changes
-                                val updatedConfig =
-                                    loadedConfig.copy(
-                                        layout = currentLayout.layout,
-                                        timestamp = Clock.System.now().toEpochMilliseconds(),
-                                    )
-                                workspaceManager.updateCurrentWorkspace(updatedConfig)
-                                workspaceManager.saveCurrentWorkspace()
-
-                                // Clear the modified state since we just auto-saved
-                                TabTreeState.markWorkspaceAsSaved(loadedConfig.id)
-                            }
-                        }
+            // Prime on the FIRST extract of a loaded Space rather than treating it as a change:
+            // the first walk of a Space that was just applied is not something the user did. A
+            // window with no Space has nothing to prime against, and its first extract IS the
+            // change that makes it "in" Last Session - both behaviours are as they were.
+            val changed =
+                when {
+                    loadedConfig != null && lastWorkspaceSnapshot == null -> false
+                    currentLayout != lastWorkspaceSnapshot -> true
+                    else -> false
                 }
-            } else {
-                // No workspace loaded, but still save as "Last Session"
-                if (currentLayout != lastWorkspaceSnapshot) {
-                    lastWorkspaceSnapshot = currentLayout
+            lastWorkspaceSnapshot = currentLayout
+            if (!changed) return@onEach
 
-                    // Cancel previous save job if any
-                    saveJob?.cancel()
+            // Cancel previous save job if any
+            saveJob?.cancel()
 
-                    // Auto-save as "Last Session" after a short delay
-                    saveJob =
-                        launch {
-                            delay(2000) // Wait 2 seconds before saving
-                            workspaceManager.updateCurrentWorkspace(asLastSession(currentLayout))
-                            workspaceManager.saveCurrentWorkspace(LAST_SESSION_NAME)
-                        }
+            saveJob =
+                launch {
+                    delay(LAYOUT_SETTLE_MS)
+                    if (state.sessionRestoreRefused) return@launch
+
+                    // Recovery snapshots only - never the named Space the
+                    // user is working in, whose file is written by an explicit save alone. See
+                    // `layoutWatcherWrite`, which owns that decision, and note that the manager's
+                    // current workspace IS still refreshed: it is the in-memory "Space I am in, as
+                    // it looks now", which a plugin's Save reads.
+                    val write =
+                        layoutWatcherWrite(
+                            current = loadedConfig,
+                            live = currentLayout,
+                            now = Clock.System.now().toEpochMilliseconds(),
+                        )
+                    updateSessionSpace(write.current, splitViewState)
+                    // The in-memory copy tracks the live layout unconditionally; the FILES do
+                    // not follow it to empty, so the record can be null. See `layoutWatcherWrite`.
+                    write.record?.let { saveSessionRecovery(windowId, it, splitViewState) }
                 }
-            }
         }.launchIn(this)
 
         // Reset snapshot when workspace changes
         workspaceManager.currentWorkspace
             .onEach { config ->
-                if (config != null && config.name != LAST_SESSION_NAME) {
+                if (config != null && config.id != LAST_SESSION_ID) {
                     // Workspace loaded (but not Last Session), reset tracking
                     lastWorkspaceSnapshot = null
-                    // Clear modified status when loading a workspace
-                    TabTreeState.markWorkspaceAsSaved(config.id)
                 }
+                // Whichever Space is showing now, the answer to "is it unsaved" is about that one.
+                reportUnsaved()
             }.launchIn(this)
+
+        // The saved side of the comparison. A successful write replaces the entry in this list -
+        // and only a successful one does, which is why `savedCopyOf` reads it rather than
+        // `currentWorkspace` - so this is where an auto-save or a press of the save button turns
+        // the affordance off.
+        workspaceManager.workspaces
+            .onEach { reportUnsaved() }
+            .launchIn(this)
     }
 }
+
+/**
+ * How long the layout has to sit still before the watcher writes the Last Session record.
+ *
+ * The literal 2000 this replaces, named because it is now the ONE cadence in the auto-save (the
+ * named-Space write it used to share the delay with is gone) and because a test asserting that a
+ * Space stays unsaved "across the watcher's interval" has to be able to say which interval.
+ */
+private const val LAYOUT_SETTLE_MS = 2000L
+
+/**
+ * Every Space this window is running, and which one is showing - so a restart brings the whole
+ * window back rather than the one Space that happened to be on screen. Null for a window running
+ * fewer than two, which the single-Space record already describes on its own; see `sessionSetOf`.
+ * One expression for the shutdown write and the in-session write, so the two cannot drift.
+ */
+private fun liveSessionSet(
+    splitViewState: SplitViewState,
+    projectPath: String,
+    defaultWorkingDirectory: String,
+): LastSessionSet? =
+    sessionSetOf(
+        spaces =
+            extractRunningWorkspaces(
+                splitViewState,
+                projectPath,
+                defaultWorkingDirectory = defaultWorkingDirectory,
+                identityFor = { id -> workspaceManager.savedCopyOf(id) },
+            ),
+        activeWorkspaceId = splitViewState.currentWorkspaceId,
+    )
 
 /**
  * Ask the app-level [UpdateCoordinator] to start update checks.

@@ -26,22 +26,45 @@ package ai.rever.boss.ipc
  *   renumbered fields, removed RPCs, changed types. Runtime and host must
  *   share the same major version.
  *
- * Bump this BEFORE merging any change to `boss-ipc/src/main/proto/`.
+ * Bump this before publishing changes to the proto or public JVM API.
+ * A transport transition also requires its explicit security marker; a numeric
+ * minimum alone must not admit a plaintext runtime into an authenticated host.
  */
 object IpcVersion {
     /**
      * Current IPC contract version of this host build.
      *
      * History:
-     * - 1.0.0 — initial Phase 0 contract. Current. The terminal grid /
+     * - 1.5.0 - additive SecretService organisation ownership, management permission,
+     *   share-target and organisation-share attribution fields. Older runtimes ignore
+     *   these fields; refreshed runtimes must use the 1.5.0 upstream boss-ipc artifact
+     *   and the matching release's plugin-api-ipc artifact to consume the access envelopes.
+     * - 1.4.0 - additive `TerminalService.CloseInput` RPC delivers stdin EOF to a session
+     *   without terminating it, so a caller can let a stdin-consuming one-shot command (sort,
+     *   grep, cat with no args, ...) exit on its own. A runtime that keeps its `minIpcVersion` at
+     *   or below 1.3.0 talking to an older host receives UNIMPLEMENTED for `CloseInput`, which
+     *   callers must treat as "not supported" rather than a session fault; a runtime declaring
+     *   `minIpcVersion: 1.4.0` is rejected at spawn time by a 1.3.0 or older host.
+     * - 1.3.0 - MasteryService surfaces guarded edges that fired (the target node
+     *   was never invoked) through additive MasteryProgress oneof field 9
+     *   NodeSkipped. Old runtimes receive a Progress with an unset oneof - the
+     *   default unknown case, which the executor maps to a no-op.
+     * - 1.2.0 - remote UI diffs distinguish removed properties from explicit
+     *   empty-string values through additive NodeUpdated field 4.
+     * - 1.1.0 - authenticated transport and credential-required JVM APIs.
+     *   Published boss-ipc artifacts now use a distinct version; the security marker
+     *   remains mandatory because version ordering alone does not prove transport compatibility.
+     * - 1.0.0 - initial Phase 0 contract. The terminal grid /
      *   cursor / scrollback / shell-event / modifier-aware-input / theme
      *   RPCs are defined in `services/terminal.proto` as reserved
-     *   scaffolding but are not implemented by the host. A future minor
-     *   bump (1.1.0) is required before any plugin may rely on them; see
+     *   scaffolding but are not implemented by the host. A global IPC version
+     *   bump is not a capability signal for this reserved surface; plugins may
+     *   rely on it only after a concrete host implementation advertises a
+     *   terminal-specific capability. See
      *   issue #743 for the rollback rationale (terminal-tab pivoted to
      *   in-process in PR #742).
      */
-    const val CURRENT: String = "1.0.0"
+    const val CURRENT: String = "1.5.0"
 
     /**
      * Parse a semver string into (major, minor, patch). Trailing

@@ -2,14 +2,17 @@ package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.components.workspaces.WorkspaceManager
+import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.topofmind.ActiveTab
 import ai.rever.boss.topofmind.TopOfMindStateHolder
 
 /**
  * Utility for collecting tabs from all windows.
  *
- * Used by both TopOfMindDialog and GlobalSearchDialog to ensure
- * consistent tab collection logic across the application.
+ * Used by GlobalSearchDialog and by the plugin api's `allWindowTabs`, so the quick switcher and
+ * the global search see one list built one way. It is the ONLY cross-window tab walk: an adapter
+ * or a dialog collecting its own would be a second answer to one question, and there is one of
+ * these per window.
  */
 object TabCollector {
     /**
@@ -18,7 +21,10 @@ object TabCollector {
      * @param workspaceManager The workspace manager for resolving workspace info
      * @return List of all active tabs across all windows
      */
-    fun collectAllTabs(workspaceManager: WorkspaceManager): List<ActiveTab> {
+    fun collectAllTabs(
+        workspaceManager: WorkspaceManager =
+            ai.rever.boss.components.workspaces.workspaceManager,
+    ): List<ActiveTab> {
         val allWindowStates = SplitViewStateRegistry.getAllStates()
         val allTabs = mutableListOf<ActiveTab>()
 

@@ -19,6 +19,11 @@ shared across windows, while Toolbox opens only in the window where you selected
 Persisted disables live in the app data file `mcp-disabled-tools.json`. Fail-closed faults
 surface in the bottom status bar (`McpKillSwitchFault`).
 
+These faults, and MCP policy faults, are also reported without a GUI. `boss doctor` prints each
+one with a suggested next step and exits with code `2` while any is present, and
+`boss status --json` carries the same data in its `health` field. Neither command changes
+anything. See [CLI.md](CLI.md#health-the-health-field-and-boss-doctor).
+
 ## Minimum attach path (for agents)
 
 1. Sign in to BOSS.

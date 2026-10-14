@@ -9,6 +9,7 @@ import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.HotReloadPolicy
 import ai.rever.boss.components.plugin.MicrokernelRuntime
 import ai.rever.boss.components.plugin.ReloadJarCandidates
+import ai.rever.boss.components.plugin.confinedPersistedJarPath
 import ai.rever.boss.components.plugin.findRelocatedPluginJar
 import ai.rever.boss.components.plugin.resolveReloadJarPath
 import ai.rever.boss.components.registery.PanelComponentStoreRegistry
@@ -409,6 +410,60 @@ class PluginLoaderDelegateImpl(
         )
     }
 
+    /**
+     * The JAR a reload of [pluginId] should load, resolved against the disk.
+     * Disk IO, and this runs on reloadScope (Dispatchers.Default): reading the
+     * record parses installed.json and, on a cold cache, opens every plugin
+     * jar's manifest.
+     *
+     * The persisted record is installed.json input: refuse to let a hand-edited
+     * row aim a reload at a jar outside the managed roots. Containing it here
+     * also confines the relocation search dir below, which falls back to this
+     * path's parent. [loadedJarPath] is the path the plugin actually loaded
+     * from, so it keeps its own trust (external installs live outside the
+     * roots).
+     */
+    private suspend fun resolveReloadJar(
+        pluginId: String,
+        loadedJarPath: String?,
+    ): String? =
+        withContext(Dispatchers.IO) {
+            val persistedJarPath =
+                confinedPersistedJarPath(
+                    PluginPersistence.getInstalledPlugins().firstOrNull { it.pluginId == pluginId }?.jarPath,
+                ) { refused ->
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Ignoring persisted reload jar path outside the managed roots",
+                        mapOf("pluginId" to pluginId, "jarPath" to refused),
+                    )
+                }
+            resolveReloadJarPath(
+                candidates =
+                    ReloadJarCandidates(
+                        loadedJarPath = loadedJarPath,
+                        persistedJarPath = persistedJarPath,
+                    ),
+                exists = { File(it).isFile },
+                relocated = {
+                    val dir = (loadedJarPath ?: persistedJarPath)?.let { File(it).parentFile }
+                    findRelocatedPluginJar(dir, pluginId)?.absolutePath
+                },
+                manifestVersion = { path ->
+                    // No swallow: let read failures reach the resolver's
+                    // onManifestVersionReadFailed hook so the candidate is logged.
+                    PluginManifestReader.readFromJar(path).version
+                },
+                onManifestVersionReadFailed = { path ->
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Could not read manifest version of a reload candidate jar",
+                        mapOf("pluginId" to pluginId, "path" to path),
+                    )
+                },
+            )
+        }
+
     private suspend fun doReloadPlugin(pluginId: String): LoadedPluginInfo? {
         return try {
             logger.info(LogCategory.SYSTEM, "Reloading plugin via delegate", mapOf("pluginId" to pluginId))
@@ -423,37 +478,7 @@ class PluginLoaderDelegateImpl(
             // Checking existence up front also means a reload that cannot succeed no longer
             // tears the running plugin down first.
             val loadedJarPath = dynamicPluginManager.getPluginInfo(pluginId)?.jarPath
-            // Disk IO, and this runs on reloadScope (Dispatchers.Default): reading the record
-            // parses installed.json and, on a cold cache, opens every plugin jar's manifest.
-            val jarPath =
-                withContext(Dispatchers.IO) {
-                    val persistedJarPath =
-                        PluginPersistence.getInstalledPlugins().firstOrNull { it.pluginId == pluginId }?.jarPath
-                    resolveReloadJarPath(
-                        candidates =
-                            ReloadJarCandidates(
-                                loadedJarPath = loadedJarPath,
-                                persistedJarPath = persistedJarPath,
-                            ),
-                        exists = { File(it).isFile },
-                        relocated = {
-                            val dir = (loadedJarPath ?: persistedJarPath)?.let { File(it).parentFile }
-                            findRelocatedPluginJar(dir, pluginId)?.absolutePath
-                        },
-                        manifestVersion = { path ->
-                            // No swallow: let read failures reach the resolver's
-                            // onManifestVersionReadFailed hook so the candidate is logged.
-                            PluginManifestReader.readFromJar(path).version
-                        },
-                        onManifestVersionReadFailed = { path ->
-                            logger.warn(
-                                LogCategory.SYSTEM,
-                                "Could not read manifest version of a reload candidate jar",
-                                mapOf("pluginId" to pluginId, "path" to path),
-                            )
-                        },
-                    )
-                }
+            val jarPath = resolveReloadJar(pluginId, loadedJarPath)
 
             if (jarPath == null) {
                 logger.warn(

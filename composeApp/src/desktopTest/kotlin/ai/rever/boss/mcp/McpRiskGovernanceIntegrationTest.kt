@@ -60,8 +60,8 @@ class McpRiskGovernanceIntegrationTest {
     fun `explicit policy session trust and restrictive defaults retain precedence`() {
         val policy = McpPolicyEngine()
         assertEquals(McpPolicyAction.ASK, policy.policyFor("secret_create"))
-        policy.trustForSession("secret_create")
-        assertEquals(McpPolicyAction.ALLOW, policy.policyFor("secret_create"))
+        policy.trustForSession("secret_create", "terminal-tab")
+        assertEquals(McpPolicyAction.ALLOW, policy.policyFor("secret_create", "terminal-tab"))
         policy.setToolPolicy("secret_create", McpPolicyAction.DENY)
         assertEquals(McpPolicyAction.DENY, policy.policyFor("secret_create"))
         policy.clearSessionTrusts()

@@ -1,0 +1,84 @@
+name: Authenticated IPC boundaries
+
+on:
+  # PRs validate dev/develop integration; main pushes validate the merged tree.
+  # Do not add dev here: dev -> main would enqueue the same macOS work twice.
+  # For a branch without a PR, use workflow_dispatch. See docs/ci-validation.md.
+  push:
+    branches: [main]
+    paths:
+      - 'modules/boss-ipc/**'
+      - 'modules/boss-process-manager/**'
+      - 'modules/boss-app-terminal/**'
+      - 'modules/boss-orchestrator/**'
+      - 'composeApp/src/desktopMain/kotlin/ai/rever/boss/kernel/**'
+      - 'composeApp/src/desktopMain/kotlin/ai/rever/boss/components/plugin/OutOfProcessPluginSpawnerImpl.kt'
+      - 'composeApp/src/desktopTest/kotlin/ai/rever/boss/kernel/**'
+      - '.github/workflows/authenticated-ipc.yml'
+  pull_request:
+    branches: [main, dev, develop]
+    paths:
+      - 'modules/boss-ipc/**'
+      - 'modules/boss-process-manager/**'
+      - 'modules/boss-app-terminal/**'
+      - 'modules/boss-orchestrator/**'
+      - 'composeApp/src/desktopMain/kotlin/ai/rever/boss/kernel/**'
+      - 'composeApp/src/desktopMain/kotlin/ai/rever/boss/components/plugin/OutOfProcessPluginSpawnerImpl.kt'
+      - 'composeApp/src/desktopTest/kotlin/ai/rever/boss/kernel/**'
+      - '.github/workflows/authenticated-ipc.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: authenticated-ipc-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  ipc:
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS and Windows run on PRs into main, pushes to main and manual runs.
+        # PRs that don't target main skip them: hosted macOS and Windows runners
+        # run few jobs at once.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && github.base_ref != 'main' && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Verify authenticated RPC and process ownership
+        shell: bash
+        run: >-
+          ./gradlew :boss-ipc:test :boss-ipc:nativeSmokeJvm :boss-process-manager:test
+          :boss-app-terminal:test :boss-orchestrator:test
+          :boss-ipc:ktlintCheck :boss-ipc:detekt
+          :boss-process-manager:ktlintCheck :boss-process-manager:detekt
+          :boss-app-terminal:ktlintCheck :boss-app-terminal:detekt
+          :boss-orchestrator:ktlintCheck :boss-orchestrator:detekt
+          --no-daemon
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: graalvm
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and exercise native authenticated IPC
+        shell: bash
+        run: |
+          ./gradlew :boss-ipc:nativeCompile --no-daemon
+          ./modules/boss-ipc/build/native/nativeCompile/ipc-security-smoke
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: authenticated-ipc-${{ matrix.os }}
+          path: |
+            modules/boss-ipc/build/test-results
+            modules/boss-process-manager/build/test-results
+            modules/boss-app-terminal/build/test-results
+            modules/boss-orchestrator/build/test-results

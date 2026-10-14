@@ -1,13 +1,16 @@
 package ai.rever.boss.updater
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -22,7 +25,54 @@ import java.io.File
  * cross-thread visibility. Each field is an independent flag — no invariant
  * spans multiple fields, so per-field volatility is sufficient.
  */
+internal fun defaultAutoUpdateEnabled(
+    buildType: String? =
+        if (System.getProperty("boss.dev.mode").toBoolean()) "debug" else System.getProperty("boss.build.type"),
+    testAutoUpdate: Boolean = System.getProperty("boss.autoUpdate.test").toBoolean(),
+): Boolean = testAutoUpdate || buildType == "release"
+
 actual object UpdateSettings {
+    private val pluginOptOuts = kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet())
+    actual val pluginAutoUpdateOptOuts: kotlinx.coroutines.flow.StateFlow<Set<String>> = pluginOptOuts
+
+    actual fun setPluginAutomaticUpdates(
+        pluginId: String,
+        enabled: Boolean,
+    ) {
+        pluginOptOuts.value = if (enabled) pluginOptOuts.value - pluginId else pluginOptOuts.value + pluginId
+        System.setProperty("boss.plugins.autoUpdate.optOuts", pluginOptOuts.value.joinToString(","))
+    }
+
+    internal fun restorePluginOptOuts(ids: Set<String>) {
+        pluginOptOuts.value = ids
+        System.setProperty("boss.plugins.autoUpdate.optOuts", ids.joinToString(","))
+    }
+
+    actual fun isPluginAutomaticUpdateEnabled(pluginId: String): Boolean {
+        val optedOut = pluginId in pluginOptOuts.value
+        return autoPluginUpdatesEnabled && !optedOut
+    }
+
+    private val automaticPlugins =
+        kotlinx.coroutines.flow.MutableStateFlow(defaultAutoUpdateEnabled()).also {
+            System.setProperty("boss.plugins.autoUpdate.enabled", it.value.toString())
+        }
+    actual val automaticPluginUpdates: kotlinx.coroutines.flow.StateFlow<Boolean> = automaticPlugins
+    actual var autoPluginUpdatesEnabled: Boolean
+        get() = automaticPlugins.value
+        set(value) {
+            System.setProperty("boss.plugins.autoUpdate.enabled", value.toString())
+            automaticPlugins.value = value
+        }
+
+    private val automatic = kotlinx.coroutines.flow.MutableStateFlow(defaultAutoUpdateEnabled())
+    actual val automaticUpdates: kotlinx.coroutines.flow.StateFlow<Boolean> = automatic
+    actual var autoUpdateEnabled: Boolean
+        get() = automatic.value
+        set(value) {
+            automatic.value = value
+        }
+
     /**
      * Whether automatic update checks are enabled
      * Default: true (preserves current behavior)
@@ -63,6 +113,9 @@ actual object UpdateSettings {
  */
 @Serializable
 data class UpdateSettingsData(
+    val pluginAutoUpdateOptOuts: Set<String> = emptySet(),
+    val autoPluginUpdatesEnabled: Boolean = defaultAutoUpdateEnabled(),
+    val autoUpdateEnabled: Boolean = defaultAutoUpdateEnabled(),
     val autoCheckEnabled: Boolean = true,
     val checkIntervalHours: Long = 6,
     val includePreReleases: Boolean = false,
@@ -77,7 +130,10 @@ internal object UpdateSettingsFiles {
     var settingsFileOverride: File? = null
 
     val settingsFile: File
-        get() = settingsFileOverride ?: BossDirectories.resolve("update-settings.json")
+        get() =
+            settingsFileOverride
+                ?: System.getProperty("boss.autoUpdate.settings.dir")?.let { File(it, "update-settings.json") }
+                ?: BossDirectories.resolve("update-settings.json")
 }
 
 /**
@@ -97,6 +153,7 @@ actual object UpdateSettingsManager {
         Json {
             prettyPrint = true
             ignoreUnknownKeys = true
+            encodeDefaults = true
         }
 
     init {
@@ -123,6 +180,9 @@ actual object UpdateSettingsManager {
                 val settings = json.decodeFromString<UpdateSettingsData>(content)
 
                 // Apply loaded settings
+                UpdateSettings.restorePluginOptOuts(settings.pluginAutoUpdateOptOuts)
+                UpdateSettings.autoPluginUpdatesEnabled = settings.autoPluginUpdatesEnabled
+                UpdateSettings.autoUpdateEnabled = settings.autoUpdateEnabled
                 UpdateSettings.autoCheckEnabled = settings.autoCheckEnabled
                 UpdateSettings.checkIntervalHours = settings.checkIntervalHours
                 UpdateSettings.includePreReleases = settings.includePreReleases
@@ -140,10 +200,17 @@ actual object UpdateSettingsManager {
             } else {
                 logger.debug(LogCategory.SYSTEM, "No saved update settings found, using defaults")
             }
+        } catch (e: SerializationException) {
+            logger.warn(LogCategory.SYSTEM, "Failed to load update settings", decodeFailure(e))
+            // Continue with defaults
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load update settings", error = e)
             // Continue with defaults
         }
+    }
+
+    internal fun reloadForTest() {
+        loadSettingsSync()
     }
 
     /**
@@ -156,6 +223,9 @@ actual object UpdateSettingsManager {
                 try {
                     val settings =
                         UpdateSettingsData(
+                            pluginAutoUpdateOptOuts = UpdateSettings.pluginAutoUpdateOptOuts.value,
+                            autoPluginUpdatesEnabled = UpdateSettings.autoPluginUpdatesEnabled,
+                            autoUpdateEnabled = UpdateSettings.autoUpdateEnabled,
                             autoCheckEnabled = UpdateSettings.autoCheckEnabled,
                             checkIntervalHours = UpdateSettings.checkIntervalHours,
                             includePreReleases = UpdateSettings.includePreReleases,
@@ -164,7 +234,7 @@ actual object UpdateSettingsManager {
                         )
 
                     val content = json.encodeToString(UpdateSettingsData.serializer(), settings)
-                    settingsFile.writeText(content)
+                    settingsFile.atomicWriteText(content)
 
                     logger.debug(
                         LogCategory.SYSTEM,

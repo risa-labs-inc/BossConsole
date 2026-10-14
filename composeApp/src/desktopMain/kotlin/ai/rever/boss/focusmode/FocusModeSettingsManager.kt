@@ -1,13 +1,18 @@
 package ai.rever.boss.focusmode
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import java.io.File
 
 /**
@@ -37,6 +42,11 @@ actual object FocusModeSettingsManager {
 
     private val _currentSettings = MutableStateFlow(platformDefaults)
     actual val currentSettings: StateFlow<FocusModeSettings> = _currentSettings.asStateFlow()
+
+    // Serializes writes so overlapping saves persist in order, freshest last. The mutex alone
+    // only orders them; atomicWriteText (temp file then atomic rename) is what makes each write
+    // crash-safe, so a reader never sees a torn file and a crash mid-write cannot truncate it.
+    private val saveMutex = Mutex()
 
     init {
         // Ensure directory exists
@@ -69,16 +79,31 @@ actual object FocusModeSettingsManager {
                 // Save default settings to file
                 try {
                     val content = json.encodeToString(FocusModeSettings.serializer(), defaultSettings)
-                    settingsFile.writeText(content)
+                    settingsFile.atomicWriteText(content)
                     logger.debug(LogCategory.SYSTEM, "Created default settings file", mapOf("path" to settingsFile.absolutePath))
                 } catch (e: Exception) {
                     logger.warn(LogCategory.SYSTEM, "Could not write default settings file", error = e)
                 }
             }
+        } catch (e: SerializationException) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Failed to decode settings, falling back to defaults",
+                decodeFailure(e),
+            )
+            _currentSettings.value = platformDefaults
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load settings, falling back to defaults", error = e)
             _currentSettings.value = platformDefaults
         }
+    }
+
+    internal fun reloadForTest() {
+        loadSettingsSync()
+    }
+
+    internal fun resetForTest() {
+        _currentSettings.value = platformDefaults
     }
 
     /**
@@ -86,12 +111,15 @@ actual object FocusModeSettingsManager {
      */
     actual suspend fun saveSettings() =
         withContext(Dispatchers.IO) {
-            try {
-                val content = json.encodeToString(FocusModeSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
-                logger.debug(LogCategory.SYSTEM, "Settings saved", mapOf("path" to settingsFile.absolutePath))
-            } catch (e: Exception) {
-                logger.warn(LogCategory.SYSTEM, "Failed to save settings", error = e)
+            saveMutex.withLock {
+                try {
+                    // Encode inside the lock so the last writer persists the freshest state.
+                    val content = json.encodeToString(FocusModeSettings.serializer(), _currentSettings.value)
+                    settingsFile.atomicWriteText(content)
+                    logger.debug(LogCategory.SYSTEM, "Settings saved", mapOf("path" to settingsFile.absolutePath))
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.SYSTEM, "Failed to save settings", error = e)
+                }
             }
         }
 

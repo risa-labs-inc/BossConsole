@@ -6,16 +6,23 @@ import ai.rever.boss.components.bars.horizontalScrollWithScrollbar
 import ai.rever.boss.components.bars.rememberBarContextMenuItems
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.dialogs.McpPolicyManagerDialog
+import ai.rever.boss.components.dialogs.McpToolIdentity
 import ai.rever.boss.components.events.PanelEventBus
+import ai.rever.boss.components.overlays.ContextMenu
+import ai.rever.boss.components.overlays.HoverTooltipBox
+import ai.rever.boss.components.overlays.TooltipPlacement
 import ai.rever.boss.components.overlays.contextMenu
 import ai.rever.boss.components.plugin.registries.StatusBarRegistryImpl
 import ai.rever.boss.components.plugin.registries.owningPluginId
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.window_panel.components.main_window_panels.BossTabsComponent
 import ai.rever.boss.layout.BossChrome
+import ai.rever.boss.mcp.McpPolicyAction
+import ai.rever.boss.mcp.McpToolPolicyConfig
 import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.performance.PerformanceState
 import ai.rever.boss.plugin.api.PanelId
+import ai.rever.boss.plugin.api.RegisteredMcpTool
 import ai.rever.boss.plugin.api.StatusBarAlignment
 import ai.rever.boss.plugin.sandbox.ui.PluginExtensionBoundary
 import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
@@ -25,14 +32,19 @@ import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.LocalWindowProjectState
 import ai.rever.boss.window.Project
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Divider
 import androidx.compose.material.Icon
 import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.GppMaybe
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Security
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,13 +55,24 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @Composable
 fun BossBottomBar(tabsComponent: BossTabsComponent? = null) {
@@ -129,23 +152,16 @@ fun RowScope.BossLeftBottomBar(tabsComponent: BossTabsComponent? = null) {
                 when (activeTab) {
                     is EditorTabInfo -> {
                         // Show file path from project root
-                        val projectRoot =
-                            currentProject.path.let {
-                                if (it.endsWith("/")) it else "$it/"
-                            }
-                        val relativePath = activeTab.filePath.removePrefix(projectRoot)
-                        val pathParts = relativePath.split("/")
+                        val pathParts = editorBreadcrumbSegments(activeTab.filePath, currentProject.path)
 
                         pathParts.forEachIndexed { index, part ->
-                            if (part.isNotEmpty()) {
-                                BossActionButton(
-                                    text = part,
-                                    color = BossTheme.colors.textSecondary,
-                                    onClick = {},
-                                )
-                                if (index < pathParts.lastIndex && pathParts[index + 1].isNotEmpty()) {
-                                    RightArrow()
-                                }
+                            BossActionButton(
+                                text = part,
+                                color = BossTheme.colors.textSecondary,
+                                onClick = {},
+                            )
+                            if (index < pathParts.lastIndex) {
+                                RightArrow()
                             }
                         }
                     }
@@ -228,42 +244,12 @@ fun BossRightBottomBar() {
         )
     }
 
-    val trustedTools by McpToolRegistryImpl.policyEngine.sessionTrustedTools.collectAsState()
-    if (trustedTools.isNotEmpty()) {
-        androidx.compose.material.TextButton(onClick = { McpToolRegistryImpl.policyEngine.clearSessionTrusts() }) {
-            Text("Revoke MCP session trust (${trustedTools.size})", color = BossTheme.colors.alert)
-        }
-    }
-
-    // Inspection/revocation for a rule saved via the approval dialog's "Always Allow"/"Always
-    // Deny" - the gap AGENTS.md's governance section names as reachable only by hand-editing
-    // ~/.boss/mcp-tool-policy.json and restarting.
+    // Every MCP consent control - session trust, saved tool policies, trusted plugins - behind one
+    // bar item. They used to be three separate controls (two of them full-size Material
+    // TextButtons, taller than the bar itself, so their labels were clipped), which spent most of
+    // the bar on grants that are usually empty or rarely touched.
     val persistedPolicyConfig by McpToolRegistryImpl.policyEngine.config.collectAsState()
-    var showPolicyManager by remember { mutableStateOf(false) }
-    if (persistedPolicyConfig.rules.isNotEmpty()) {
-        androidx.compose.material.TextButton(onClick = { showPolicyManager = true }) {
-            Text(
-                "Persisted MCP policies (${persistedPolicyConfig.rules.size})",
-                color = BossTheme.colors.textSecondary,
-            )
-        }
-    }
-    if (showPolicyManager) {
-        McpPolicyManagerDialog(
-            rules = persistedPolicyConfig.rules,
-            // Dispatchers.IO: revokePersistedPolicy does a synchronized atomicWriteText disk
-            // write, and setToolPolicy already made the equivalent invocation-path write take
-            // this same dispatcher (McpToolRegistryImpl) - this call site was the one still
-            // running it on the UI thread, where a click could block behind another write
-            // holding the same lock from a slow, networked or AV-scanned home directory.
-            onRevoke = { toolName ->
-                withContext(Dispatchers.IO) {
-                    McpToolRegistryImpl.policyEngine.revokePersistedPolicy(toolName)
-                }
-            },
-            onDismiss = { showPolicyManager = false },
-        )
-    }
+    McpAccessStatusItem(persistedPolicyConfig)
 
     val policyFault by McpToolRegistryImpl.policyFault.collectAsState()
     policyFault?.let { fault ->
@@ -277,22 +263,13 @@ fun BossRightBottomBar() {
         )
     }
 
-    // Governed Autonomy telemetry: show last executed tool, duration, and status
-    val recentOps by McpToolRegistryImpl.ledger.recentOperations.collectAsState()
-    recentOps.firstOrNull()?.let { lastOp ->
-        val statusSymbol = if (lastOp.isError) "✕" else "✓"
-        val statusColor = if (lastOp.isError) BossTheme.colors.alert else BossTheme.colors.textSecondary
-        Text(
-            text = "MCP: ${lastOp.toolName} (${lastOp.durationMs}ms) $statusSymbol",
-            color = statusColor,
-            fontSize = 11.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 6.dp),
-        )
-    }
+    // Governed Autonomy telemetry: show last executed tool, duration, and status. Clickable
+    // because this line used to be the ONLY visibility into MCP activity - every call before
+    // the current one, and the policy/approval decision behind it, was reachable only by
+    // opening the rotated MCP ledger file in a text editor.
+    McpActivityStatusItem()
 
-    // Status message (temporary messages like "Workspace Saved")
+    // Status message (temporary messages like "Space Saved")
     val statusMessage by StatusMessageManager.currentMessage.collectAsState()
     statusMessage?.let { message ->
         Text(
@@ -309,6 +286,10 @@ fun BossRightBottomBar() {
     // the performance indicator so a transfer sits next to the plugin status items
     // it used to be one of, rather than at the far edge of the bar.
     DownloadCenterStatusItem()
+
+    // Workspace health: shown only while something is wrong, beside the performance figures it
+    // complements - those say what BOSS costs, this says what is not working (BossConsole#394).
+    WorkspaceHealthStatusItem()
 
     // Performance indicator (shows memory/CPU usage)
     val showIndicator = PerformanceState.shouldShowIndicator()
@@ -348,4 +329,164 @@ fun BossRightBottomBar() {
             }
         },
     )
+}
+
+@Composable
+private fun McpAccessStatusItem(persistedPolicyConfig: McpToolPolicyConfig) {
+    val menu = rememberMcpAccessMenu(persistedPolicyConfig)
+    val summary = menu.summary
+    var showMenu by remember { mutableStateOf(false) }
+    if (menu.visible) {
+        var anchorHeight by remember { mutableStateOf(0) }
+        Box(modifier = Modifier.onSizeChanged { anchorHeight = it.height }) {
+            StatusBarTextButton(
+                text = summary.label,
+                color = if (summary.yolo) BossTheme.colors.alert else BossTheme.colors.textSecondary,
+                leadingIcon = if (summary.yolo) Icons.Outlined.GppMaybe else Icons.Outlined.Security,
+                badge = summary.sessionGrants.takeIf { it > 0 }?.toString(),
+                badgeDescription = summary.sessionGrantsDescription(),
+                tooltip = summary.tooltip(),
+                clickLabel = "Open MCP access menu",
+                onClick = { showMenu = true },
+            )
+            if (showMenu) {
+                ContextMenu(
+                    items = menu.items,
+                    alignment = Alignment.BottomStart,
+                    offset = IntOffset(0, -anchorHeight),
+                    onDismissRequest = { showMenu = false },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Every registered tool [McpPolicyManagerDialog] may write a proactive rule for: not disabled by
+ * the kill switch (a proactive rule for a disabled tool would do nothing - [McpToolRegistryImpl]
+ * resolves invocation against `tools`, which already excludes it), and not already in [rules]
+ * (that tool has its row in the saved-rules list instead). Sorted here, once, rather than by the
+ * composable on every recomposition - the caller already [remember]s the result.
+ *
+ * A pure function, not a `@Composable`, because the exclusion this expresses - never offer a rule
+ * for a tool that already has one, or that a rule could not affect - is the one thing standing
+ * between the dialog's Allow/Deny buttons and silently overwriting an existing DENY or granting a
+ * dead tool nothing can invoke. That is worth pinning on its own, not only through the dialog it
+ * feeds (review on #636).
+ *
+ * [revocationVersion] is injected - normally
+ * [ai.rever.boss.mcp.McpPolicyEngine.revocationVersion] - rather than reached for directly, so
+ * this stays a pure, testable mapping over its arguments; each candidate's own generation is
+ * stamped onto it as [McpToolIdentity.expectedRevocation], for [McpPolicyManagerDialog]'s write
+ * path to pass back to `setToolPolicyIfAbsent` unchanged.
+ */
+internal fun mcpProactivePolicyCandidates(
+    allTools: List<RegisteredMcpTool>,
+    rules: Map<String, McpPolicyAction>,
+    disabledToolNames: Set<String>,
+    revocationVersion: (toolName: String, providerId: String?) -> Long,
+): List<McpToolIdentity> =
+    allTools
+        .asSequence()
+        .filter { it.definition.name !in rules }
+        .filter { it.definition.name !in disabledToolNames }
+        .map {
+            McpToolIdentity(
+                it.definition.name,
+                it.providerId,
+                revocationVersion(it.definition.name, it.providerId),
+                it.definition.description,
+                it.definition.readOnly,
+            )
+        }.sortedBy { it.toolName }
+        .toList()
+
+@Composable
+private fun McpActivityStatusItem() {
+    val item = rememberMcpActivityItem()
+    val recentOps by McpToolRegistryImpl.ledger.recentOperations.collectAsState()
+    val tools by McpToolRegistryImpl.tools.collectAsState()
+    if (recentOps.isEmpty() && tools.isEmpty()) return
+    val lastOp = recentOps.firstOrNull { !it.approvalDisposition.isGovernanceEvent }
+    StatusBarTextButton(
+        text = item.text,
+        color = if (lastOp?.isError == true) BossTheme.colors.alert else BossTheme.colors.textSecondary,
+        tooltip = "Open the MCP activity log",
+        onClick = item.onClick,
+    )
+}
+
+/**
+ * A clickable bottom-bar item sized to the bar: 11sp text, a 13dp icon and 2dp of vertical
+ * padding, so it fits even the compact 24dp bar. Material's `TextButton` is not usable here - it
+ * brings 8dp of vertical content padding and body-size text, which inside a 24-30dp bar clips the
+ * label's descenders ("Trusted plugins" rendered with its "g" and "p" cut off).
+ *
+ * Carries the affordances a bare clickable [Text] lacks: a hand cursor, a tooltip naming what the
+ * click does, and [Role.Button] semantics for assistive tech.
+ */
+@Composable
+private fun StatusBarTextButton(
+    text: String,
+    tooltip: String,
+    onClick: () -> Unit,
+    color: Color = BossTheme.colors.textSecondary,
+    leadingIcon: ImageVector? = null,
+    badge: String? = null,
+    // What a screen reader announces the click DOES. Defaults to the tooltip, which is right when
+    // the tooltip names the action ("Open the MCP activity log") and wrong when it describes state.
+    clickLabel: String = tooltip,
+    // How the badge is read aloud; without it a screen reader announces a bare number.
+    badgeDescription: String? = null,
+) {
+    val colors = BossTheme.colors
+    HoverTooltipBox(text = tooltip, placement = TooltipPlacement.TOP) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier =
+                Modifier
+                    .clip(RoundedCornerShape(BossTheme.radius.input))
+                    .pointerHoverIcon(PointerIcon.Hand)
+                    .clickable(onClickLabel = clickLabel, role = Role.Button, onClick = onClick)
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+        ) {
+            if (leadingIcon != null) {
+                Icon(
+                    imageVector = leadingIcon,
+                    contentDescription = null,
+                    tint = color,
+                    modifier = Modifier.size(13.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+            }
+            Text(
+                text = text,
+                color = color,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (badge != null) {
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    text = badge,
+                    color = colors.alert,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    modifier =
+                        Modifier
+                            .background(colors.alert.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 5.dp)
+                            .then(
+                                if (badgeDescription != null) {
+                                    Modifier.clearAndSetSemantics { contentDescription = badgeDescription }
+                                } else {
+                                    Modifier
+                                },
+                            ),
+                )
+            }
+        }
+    }
 }

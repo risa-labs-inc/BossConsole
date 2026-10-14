@@ -21,10 +21,21 @@ import kotlin.test.assertNotEquals
  * No preset gives TAB_NEXT an alternate today. `keymap-settings.json` is hand-editable,
  * `withAlternateKeystroke` is public, and `migrateSettings` propagates any alternate a future
  * preset adds, so this pins the behaviour rather than the current data.
+ *
+ * Since #553 the two primary spellings are the SAME key off macOS, so the cases below that turned
+ * on them differing are split by platform rather than asserted unconditionally. The platform pair
+ * is covered directly by the tests at the bottom, which take `isMacOS` as a parameter and
+ * therefore run both branches on either machine. That split is the point: an inline platform read
+ * is what let the off-macOS answer go unexercised until CI, on this very function.
  */
 class TabCycleModifierTest {
+    // A "Cmd" chord is Meta on macOS and Control elsewhere, unchanged.
     private val cmdKeyCode = if (SystemUtils.isMacOS) KeyEvent.VK_META else KeyEvent.VK_CONTROL
-    private val ctrlKeyCode = if (SystemUtils.isMacOS) KeyEvent.VK_CONTROL else KeyEvent.VK_META
+
+    // A "Ctrl" chord is the Control key on BOTH platforms since #553. It used to be Meta off
+    // macOS, which armed a key the user was not holding, so the release never matched and the
+    // switcher overlay stayed wedged open with Tab swallowed.
+    private val ctrlKeyCode = KeyEvent.VK_CONTROL
 
     @Test
     fun `a Ctrl chord arms the Ctrl key`() {
@@ -43,12 +54,46 @@ class TabCycleModifierTest {
         val primary = KeyStroke("Tab", listOf("Ctrl"))
         val alternate = KeyStroke("Tab", listOf("Cmd"))
 
-        assertNotEquals(
-            AWTKeyboardInterceptor.cyclingModifierKeyCode(primary),
-            AWTKeyboardInterceptor.cyclingModifierKeyCode(alternate),
-            "the two chords must not arm the same physical key, or this test proves nothing",
-        )
         assertEquals(cmdKeyCode, AWTKeyboardInterceptor.cyclingModifierKeyCode(alternate))
+
+        if (SystemUtils.isMacOS) {
+            assertNotEquals(
+                AWTKeyboardInterceptor.cyclingModifierKeyCode(primary),
+                AWTKeyboardInterceptor.cyclingModifierKeyCode(alternate),
+                "on macOS the two chords are different keys and must arm different ones",
+            )
+        } else {
+            // Off macOS both spellings ARE the Control key, so such an alternate is the same
+            // chord written twice rather than a second one. Arming Control for either is correct:
+            // it is the only primary key that can be held, since a Super press matches nothing.
+            assertEquals(
+                AWTKeyboardInterceptor.cyclingModifierKeyCode(primary),
+                AWTKeyboardInterceptor.cyclingModifierKeyCode(alternate),
+            )
+        }
+    }
+
+    @Test
+    fun `on macOS the spelling chooses the key`() {
+        assertEquals(KeyEvent.VK_META, AWTKeyboardInterceptor.cyclingModifierKeyCodeFor(hasCmd = true, isMacOS = true))
+        assertEquals(
+            KeyEvent.VK_CONTROL,
+            AWTKeyboardInterceptor.cyclingModifierKeyCodeFor(hasCmd = false, isMacOS = true),
+        )
+    }
+
+    @Test
+    fun `off macOS both spellings arm Control, the only primary key that can be held`() {
+        // The #553 collapse. Arming VK_META for an explicit "Ctrl" chord armed a key that is not
+        // down, so the release never matched and the switcher overlay stayed wedged open.
+        assertEquals(
+            KeyEvent.VK_CONTROL,
+            AWTKeyboardInterceptor.cyclingModifierKeyCodeFor(hasCmd = true, isMacOS = false),
+        )
+        assertEquals(
+            KeyEvent.VK_CONTROL,
+            AWTKeyboardInterceptor.cyclingModifierKeyCodeFor(hasCmd = false, isMacOS = false),
+        )
     }
 
     @Test

@@ -40,13 +40,14 @@ import com.teamdev.jxbrowser.capture.AudioCaptureMode
  */
 @Composable
 fun ScreenCapturePickerDialog(
+    requestId: String,
     screens: List<ScreenCaptureNotifier.CaptureSourceItem>,
     windows: List<ScreenCaptureNotifier.CaptureSourceItem>,
     browsers: List<ScreenCaptureNotifier.CaptureSourceItem>,
     onDismiss: () -> Unit,
     onSelect: (ScreenCaptureNotifier.CaptureSourceItem, AudioCaptureMode) -> Unit,
 ) {
-    var selectedTab by remember {
+    var selectedTab by remember(requestId) {
         mutableStateOf(
             when {
                 browsers.isNotEmpty() -> ShareTab.TAB
@@ -55,8 +56,8 @@ fun ScreenCapturePickerDialog(
             },
         )
     }
-    var selectedSource by remember { mutableStateOf<ScreenCaptureNotifier.CaptureSourceItem?>(null) }
-    var includeAudio by remember { mutableStateOf(true) }
+    var selectedSource by remember(requestId) { mutableStateOf<ScreenCaptureNotifier.CaptureSourceItem?>(null) }
+    var includeAudio by remember(requestId) { mutableStateOf(true) }
 
     // Opt out of focus-loss dismissal: onDismiss cancels the capture request. The picker lists the
     // app's windows, so "switch to the window I want to share, to check which one it is" is a real

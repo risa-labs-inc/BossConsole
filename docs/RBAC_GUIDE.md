@@ -31,7 +31,11 @@ requires `role.assign` first, which this role does not have. See migration
 else, and still holds no `secret.share.role`.)
 
 **The `user` baseline** carries `user.read/write/update/delete`,
-`organisation.create`, `organisation.read` and `secret.read`. Each of those is a
+`organisation.create`, `organisation.read` and `secret.read`. Hosted BOSS also grants
+`plugins.create` and `api_key.create` to `user`, covering existing users and future
+signups without assigning an admin role. These are production role grants; other
+deployments must configure the equivalent. See the [creation and publishing guide](https://github.com/risa-labs-inc/BossConsole/wiki/Create-and-Publish-a-Plugin).
+Each baseline permission is a
 deliberate kill switch: revoking one from `user` disables that capability
 deployment-wide without touching any other role. `secret.read` is what makes the
 Secret Manager panel - and with it the AI section that plugin owns -
@@ -266,10 +270,6 @@ object RoleService {
     // Get user roles
     suspend fun getUserRoles(userId: String): Result<List<UserRole>>
 
-    // Check if user has role
-    suspend fun userHasRole(userId: String, roleName: String): Result<Boolean>
-    suspend fun isUserAdmin(userId: String): Result<Boolean>
-
     // Assign/remove roles (admin only)
     suspend fun assignRoleByName(targetUserId: String, roleName: String): Result<Unit>
     suspend fun removeRoleByName(targetUserId: String, roleName: String): Result<Unit>
@@ -491,11 +491,11 @@ SELECT public.remove_role_from_user(
 
 ### Query Functions
 
-#### `check_user_has_role(target_user_id, role_name)`
+#### `user_has_role(check_user_id, check_role)`
 Check if a user has a specific role by role name.
 
 ```sql
-SELECT public.check_user_has_role(
+SELECT public.user_has_role(
     'user-uuid'::uuid,
     'admin'::text
 );

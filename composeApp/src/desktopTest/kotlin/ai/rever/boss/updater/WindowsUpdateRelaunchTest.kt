@@ -1,8 +1,10 @@
 package ai.rever.boss.updater
 
+import ai.rever.boss.utils.CodeSourceLocation
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.net.URL
 import java.nio.file.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -347,14 +349,66 @@ class WindowsUpdateRelaunchTest {
         // refuses over the whole path.
         val traversing = File(File(root, "sub"), "..${File.separator}BOSS.exe").path
 
-        val previous: String? = System.getProperty("jpackage.app-path")
-        try {
-            System.setProperty("jpackage.app-path", traversing)
-
+        withJpackageAppPath(traversing) {
             assertNull(
                 UpdateInstaller.getWindowsLauncherPath(),
                 "A refused path must degrade to no relaunch rather than aborting the update",
             )
+        }
+    }
+
+    /**
+     * A network-share install, from the code-source URL through the layout walk. On
+     * Windows the walk has to start from a path that still names the server; a host
+     * with no UNC concept resolves no code source and so no launcher. The old
+     * `File(uri.path)` gave `\software\...` on every host, which fails both branches.
+     */
+    @Test
+    fun `a network-share install resolves the launcher on the share`() {
+        val codeSource = CodeSourceLocation.fileOf(URL("file://nas01/software/BOSS/app/composeApp.jar"))
+        val share = """\\nas01\software\BOSS"""
+        val shareInstall = setOf("""$share\BOSS.exe""", """$share\app""", """$share\runtime""")
+
+        val resolved =
+            windowsLauncherPathFor(
+                jpackageAppPath = null,
+                codeSourcePath = codeSource?.path,
+                exists = { it in shareInstall },
+            )
+
+        if (File.separatorChar == '\\') {
+            assertEquals("""$share\BOSS.exe""", resolved)
+        } else {
+            assertNull(codeSource, "resolved ${codeSource?.path}, which dropped the server")
+            assertNull(resolved)
+        }
+    }
+
+    /**
+     * A hidden share's name ends in `$`, which [UpdatePathValidator] refuses anywhere
+     * in a path, so that install updates without the relaunch. Pinned so relaxing it
+     * is a deliberate change to the validator rather than a side effect.
+     */
+    @Test
+    fun `a launcher on a hidden share updates without a relaunch`(
+        @TempDir tempDir: Path,
+    ) {
+        val hiddenShare = File(tempDir.toFile(), "apps\$").apply { mkdirs() }
+        val launcher = File(hiddenShare, "BOSS.exe").apply { createNewFile() }
+
+        withJpackageAppPath(launcher.path) {
+            assertNull(UpdateInstaller.getWindowsLauncherPath())
+        }
+    }
+
+    private fun withJpackageAppPath(
+        value: String,
+        block: () -> Unit,
+    ) {
+        val previous: String? = System.getProperty("jpackage.app-path")
+        try {
+            System.setProperty("jpackage.app-path", value)
+            block()
         } finally {
             if (previous == null) {
                 System.clearProperty("jpackage.app-path")
