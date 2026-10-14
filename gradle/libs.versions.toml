@@ -185,7 +185,8 @@ intellij-platform = "243.21565.199"
 # 1.0.99 adds AI prompt-cache extras, finish reason and cache/reasoning usage (AiRequest unchanged).
 # Organisation-secret access envelopes were published in 1.0.91; the host transports
 # their server management decisions and attribution through in-process and KERNEL paths.
-boss-plugin-api = "1.0.99"
+# 1.0.100 adds RemoteViewProvider (boss-plugin-api#71).
+boss-plugin-api = "1.0.100"
 
 [libraries]
 bouncycastle-pkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bouncycastle" }

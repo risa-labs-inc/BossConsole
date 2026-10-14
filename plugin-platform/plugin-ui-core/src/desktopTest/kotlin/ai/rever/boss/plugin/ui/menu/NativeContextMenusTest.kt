@@ -272,6 +272,58 @@ class NativeContextMenusTest {
     }
 
     @Test
+    fun `a live remote view turns native menus off`() {
+        assertFalse(shouldUseNativeMenus(settingEnabled = true, isMacOs = true, remotelyViewed = true))
+        assertTrue(shouldUseNativeMenus(settingEnabled = true, isMacOs = true, remotelyViewed = false))
+        assertFalse(shouldUseNativeMenus(settingEnabled = false, isMacOs = true, remotelyViewed = true))
+    }
+
+    @Test
+    fun `an omitted remotelyViewed argument reads the live state and fails closed`() {
+        val base = RemoteViewState.count.value
+        val view = RemoteViewState.begin()
+        try {
+            assertFalse(shouldUseNativeMenus(settingEnabled = true, isMacOs = true))
+        } finally {
+            view.close()
+        }
+        assertEquals(base, RemoteViewState.count.value)
+    }
+
+    @Test
+    fun `remote view count is shared and each handle closes once`() {
+        val base = RemoteViewState.count.value
+        val first = RemoteViewState.begin()
+        val second = RemoteViewState.begin()
+        try {
+            assertEquals(base + 2, RemoteViewState.count.value)
+            first.close()
+            first.close()
+            assertEquals(base + 1, RemoteViewState.count.value)
+            second.close()
+            assertEquals(base, RemoteViewState.count.value)
+        } finally {
+            first.close()
+            second.close()
+        }
+    }
+
+    @Test
+    fun `native menus are hidden on the first view only`() {
+        var hides = 0
+        val counter = RemoteViewCounter { hides++ }
+        val first = counter.begin()
+        assertEquals(1, hides)
+        val second = counter.begin()
+        assertEquals(1, hides)
+        first.close()
+        second.close()
+        assertEquals(0, counter.count.value)
+        counter.begin().close()
+        assertEquals(2, hides)
+    }
+
+    @Test
     fun `show reports failure rather than throwing when unsupported or empty`() {
         // On a Linux CI runner isSupported() is false; on a mac dev box the empty plan is what
         // makes this false. Either way it must return, not throw, and not leave a menu behind.

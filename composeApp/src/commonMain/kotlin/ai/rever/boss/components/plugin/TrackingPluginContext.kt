@@ -41,6 +41,7 @@ import ai.rever.boss.plugin.api.PluginStorageFactory
 import ai.rever.boss.plugin.api.PluginStorageProvider
 import ai.rever.boss.plugin.api.PluginStoreApiKeyProvider
 import ai.rever.boss.plugin.api.ProjectSearchProvider
+import ai.rever.boss.plugin.api.RemoteViewProvider
 import ai.rever.boss.plugin.api.RoleManagementProvider
 import ai.rever.boss.plugin.api.RunConfigurationDataProvider
 import ai.rever.boss.plugin.api.ScreenCaptureProvider
@@ -375,6 +376,35 @@ class TrackingPluginContext(
     // Screen capture provider - delegate to underlying context
     override val screenCaptureProvider: ScreenCaptureProvider? get() = delegate.screenCaptureProvider
 
+    // Closed on unload, and nothing may begin after it: a plugin that outlives its unload (a stray
+    // coroutine, a sandbox not yet torn down) must not be able to pin native menus off for good.
+    private val remoteViewHandles = ConcurrentHashMap.newKeySet<AutoCloseable>()
+
+    @Volatile private var unloaded = false
+    override val remoteViewProvider: RemoteViewProvider? by lazy {
+        delegate.remoteViewProvider?.let { inner ->
+            object : RemoteViewProvider {
+                override fun beginRemoteView(reason: String): AutoCloseable {
+                    val handle = inner.beginRemoteView(reason)
+                    val label = sanitizeRemoteViewReason(reason)
+                    // Checked before and after add(): unregisterAll may drain in between.
+                    val kept = !unloaded && remoteViewHandles.add(handle) && !unloaded
+                    if (!kept) {
+                        remoteViewHandles.remove(handle)
+                        handle.close()
+                        return AutoCloseable {}
+                    }
+                    println("[TrackingPluginContext] remote view begin: plugin=$pluginId reason=$label")
+                    return AutoCloseable {
+                        remoteViewHandles.remove(handle)
+                        handle.close()
+                        println("[TrackingPluginContext] remote view end: plugin=$pluginId reason=$label")
+                    }
+                }
+            }
+        }
+    }
+
     // WebRTC peer provider for co-browse - delegate to underlying context
     override val coBrowseRtcProvider: ai.rever.boss.plugin.api.CoBrowseRtcProvider? get() = delegate.coBrowseRtcProvider
 
@@ -557,6 +587,7 @@ class TrackingPluginContext(
      * shortcuts, status-bar items, search providers).
      */
     fun unregisterAll() {
+        unloaded = true
         println("[TrackingPluginContext] unregisterAll called for plugin: $pluginId")
 
         // Unregister all panels
@@ -586,6 +617,9 @@ class TrackingPluginContext(
         // guarantee as MCP tools: gone the moment the plugin is disabled. One
         // loop over the recorded undo callbacks; new kinds need no edit here.
         tracker.unregisterUiExtensions(pluginId)
+
+        remoteViewHandles.toList().forEach { runCatching { it.close() } }
+        remoteViewHandles.clear()
 
         // Clear tracking records
         tracker.clearPlugin(pluginId)
@@ -640,3 +674,6 @@ private class PluginScopedMcpToolProvider(
 
     override fun tools(): List<ai.rever.boss.plugin.api.McpToolDefinition> = delegate.tools()
 }
+
+/** Plugin-supplied text going into a log line: control characters stripped, length capped. */
+internal fun sanitizeRemoteViewReason(reason: String): String = reason.filter { !it.isISOControl() }.take(80)

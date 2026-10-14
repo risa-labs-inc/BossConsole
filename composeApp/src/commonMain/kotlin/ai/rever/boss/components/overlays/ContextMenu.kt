@@ -12,6 +12,7 @@ import ai.rever.boss.plugin.ui.menu.NATIVE_MENU_ICON_SCALE
 import ai.rever.boss.plugin.ui.menu.NativeContextMenus
 import ai.rever.boss.plugin.ui.menu.NativeMenuAnchor
 import ai.rever.boss.plugin.ui.menu.NativeMenuNode
+import ai.rever.boss.plugin.ui.menu.RemoteViewState
 import ai.rever.boss.plugin.ui.menu.shouldUseNativeMenus
 import ai.rever.boss.window.WindowAppearanceSettingsManager
 import androidx.compose.foundation.VerticalScrollbar
@@ -225,9 +226,11 @@ internal object NativeContextMenuTestOverride {
 private fun useNativeContextMenus(): Boolean {
     NativeContextMenuTestOverride.enabled?.let { return it }
     val settings by WindowAppearanceSettingsManager.currentSettings.collectAsState()
+    val remoteViews by RemoteViewState.count.collectAsState()
     return shouldUseNativeMenus(
         settingEnabled = settings.useNativeContextMenus,
         isMacOs = NativeContextMenus.isSupported(),
+        remotelyViewed = remoteViews > 0,
     )
 }
 

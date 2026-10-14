@@ -1,5 +1,6 @@
 package ai.rever.boss.sharing
 
+import ai.rever.boss.plugin.ui.menu.RemoteViewState
 import org.junit.jupiter.api.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -10,6 +11,19 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class OwnedAppResourcesTest {
+    @Test fun `a remote view owned by a session ends with it, even when owned late`() {
+        val base = RemoteViewState.count.value
+        val live = OwnedAppResources()
+        live.own(RemoteViewState.begin())
+        assertEquals(base + 1, RemoteViewState.count.value)
+        live.close()
+        assertEquals(base, RemoteViewState.count.value)
+
+        val retired = OwnedAppResources().also { it.close() }
+        retired.own(RemoteViewState.begin())
+        assertEquals(base, RemoteViewState.count.value)
+    }
+
     @Test fun `late resources close immediately and one failing close cannot strand others`() {
         val owner = OwnedAppResources()
         val order = mutableListOf<Int>()
