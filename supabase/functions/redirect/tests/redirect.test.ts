@@ -225,10 +225,30 @@ Deno.test("fluck-web arm accepts the direct function landing and refuses a non-f
 })
 
 Deno.test("fluck-web arm is an exact match: a sub-path or look-alike host is NOT the web arm", async () => {
-  for (const rt of ["https://fluck.risaboss.com/auth/x", "https://fluck.risaboss.com.evil.example/auth"]) {
+  for (const rt of [
+    "https://fluck.risaboss.com/auth/x",
+    "https://fluck.risaboss.com.evil.example/auth",
+    "https://fluck.ai/auth/x",
+    "https://fluck.ai.evil.example/auth",
+    "https://www.fluck.ai/auth",
+  ]) {
     const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent(rt))
     assertStringIncludes(html, "boss://auth/verify?token=abc")
   }
+})
+
+Deno.test("fluck.ai email links return through GoTrue for existing and first-time users", async () => {
+  const rt = "https://fluck.ai/auth"
+  for (const type of ["magiclink", "signup"]) {
+    // Production email templates emit the confirmation URL unencoded, so its
+    // type and redirect_to arrive as top-level query parameters.
+    const html = await pageFor(`/redirect?url=https://api.risaboss.com/auth/v1/verify?token=t1&type=${type}&redirect_to=${encodeURIComponent(rt)}`)
+    assertStringIncludes(html, "<h1>Fluck</h1>")
+    assertStringIncludes(html, `https://api.risaboss.com/auth/v1/verify?token=t1&amp;type=${type}&amp;redirect_to=${encodeURIComponent(rt)}`)
+    assert(!html.includes("boss://auth/verify"))
+  }
+  const res = await app.request(`/redirect?url=${encodeURIComponent("https://evil.example/auth/v1/verify?token=t")}&redirect_to=${encodeURIComponent(rt)}`)
+  assertEquals(res.status, 400)
 })
 
 Deno.test("fluck-web redirect allow-list is in lockstep with config.toml and both email templates", async () => {
@@ -237,6 +257,12 @@ Deno.test("fluck-web redirect allow-list is in lockstep with config.toml and bot
   const config = await read("config.toml")
   for (const u of FLUCK_WEB_REDIRECTS) assertStringIncludes(config, `"${u}"`)
   const all = [...FLUCK_WEB_REDIRECTS].sort()
+  // Compare both directions: adding a Fluck URL to config alone must fail too.
+  const configuredFluckUrls = [...config.matchAll(/"(https?:\/\/[^"\s]+)"/g)]
+    .map((m) => m[1])
+    .filter((u) => ["fluck.ai", "fluck.risaboss.com"].includes(new URL(u).hostname) || new URL(u).pathname.endsWith("/fluck-web/auth"))
+    .sort()
+  assertEquals(configuredFluckUrls, all)
   assertEquals(fluckPredicateUrls(await read("templates/email/magic-link.html")), all.filter((u) => !isLoopback(u)))
   assertEquals(fluckPredicateUrls(await read("templates/email/magic-link-local.html")), all.filter(isLoopback))
 })

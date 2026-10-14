@@ -135,7 +135,7 @@ additional_redirect_urls = ["boss://auth/verify", "boss://auth/callback", "bosst
   # Optimist chat web callback (redirect/app.ts OPTIMIST_REDIRECTS)
   "https://askoptimist.com/auth/callback", "https://optimist.risalabs.ai/auth/callback", "http://127.0.0.1:8796/auth/callback",
   # fluck-web page (functions/fluck-web, fluck.risaboss.com): same landing shape as live-sessions
-  "https://fluck.risaboss.com/auth", "https://api.risaboss.com/functions/v1/fluck-web/auth", "http://127.0.0.1:54321/functions/v1/fluck-web/auth"]
+  "https://fluck.ai/auth", "https://fluck.risaboss.com/auth", "https://api.risaboss.com/functions/v1/fluck-web/auth", "http://127.0.0.1:54321/functions/v1/fluck-web/auth"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # Path to JWT signing key. DO NOT commit your signing keys file to git.
@@ -445,6 +445,12 @@ entrypoint = "./functions/live-sessions/index.ts"
 verify_jwt = false
 import_map = "./functions/fluck-web/deno.json"
 entrypoint = "./functions/fluck-web/index.ts"
+
+[functions.fluck-ai]
+# Same portal and authentication rules, isolated to the new public origin.
+verify_jwt = false
+import_map = "./functions/fluck-ai/deno.json"
+entrypoint = "./functions/fluck-ai/index.ts"
 
 [functions.user-settings]
 # Browser navigations carry a one-use handoff or signed HttpOnly cookie, not a JWT header.

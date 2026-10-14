@@ -149,7 +149,7 @@ Deno.test("the page script parses and frames only an https /#/t/ URL; top-level 
   assertEquals(script.match(/location\.assign\(/g)?.length, 1, "one top-level navigation")
   assertStringIncludes(script, "function navigateTopLevel(url) {")
   assert(!script.includes("location.href ="))
-  assertStringIncludes(script, "openFrame(data.url, title(i), i.instance_id)")
+  assertStringIncludes(script, "openFrame(data.url, title(i), i.instance_id, i.agent_name)")
   assertStringIncludes(html, '<iframe id="fluckframe" title="Fluck" allow="clipboard-read; clipboard-write; fullscreen; microphone" allowfullscreen src="about:blank"></iframe>')
   const re = /^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?\/#\/t\/[A-Za-z0-9_-]{43}$/
   assertStringIncludes(script, "var OPEN_URL_RE = " + re.toString())
@@ -478,6 +478,9 @@ Deno.test("GET /api/instances calls fluck_web_list_instances as the user, filter
     assertEquals(body.instances.length, 1)
     assertEquals(body.instances[0].instance_id, "inst-a")
     assertEquals(body.instances[0].endpoint_url, undefined, "the page never sees an endpoint")
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("https://a.trycloudflare.com")))
+    assertEquals(body.instances[0].endpoint_rev, [...digest].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16),
+      "only a short hash of the origin, which the page compares with the origin it framed")
     assert(/^[a-f0-9]{64}$/.test(body.csrf))
     const csrfCookie = res.headers.getSetCookie().find((c) => c.startsWith("__Host-boss_fluck_csrf="))!
     assertStringIncludes(csrfCookie, `=${body.csrf};`)
