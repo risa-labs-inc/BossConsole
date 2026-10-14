@@ -458,6 +458,24 @@ class OAuthSignInFlowTest {
     }
 
     @Test
+    fun `Google uses Safari when default browser cannot open external sign in`() {
+        val url = "https://example.com/authorize?provider=google&redirect_to=boss://auth/callback"
+        listOf(
+            ai.rever.boss.utils.DefaultHandlerState.Ours,
+            ai.rever.boss.utils.DefaultHandlerState.OurEngine,
+            ai.rever.boss.utils.DefaultHandlerState.Other(null),
+            null,
+        ).forEach { handler ->
+            assertTrue(requiresExternalSignInBrowser(handler))
+            assertEquals(listOf("open", "-a", "Safari", url),
+                preferredBrowserCommand(OAuthProviderKind.GOOGLE, "Mac OS X", url, requiresExternalSignInBrowser(handler)))
+        }
+        assertFalse(requiresExternalSignInBrowser(ai.rever.boss.utils.DefaultHandlerState.Other("com.apple.Safari")))
+        assertEquals(listOf("open", "-n", "-a", "Google Chrome", "--args", "--new-window", url),
+            signInBrowserWindowCommands("Mac OS X", url).first())
+    }
+
+    @Test
     fun `reopening the page passes the waiting provider`(): Unit =
         runBlocking {
             val providers = mutableListOf<OAuthProviderKind>()

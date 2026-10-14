@@ -48,7 +48,11 @@ Points worth knowing before changing it:
   with Apple sheet is not an option: Apple limits the `com.apple.developer.applesignin`
   entitlement to Mac App Store apps and never includes it in Developer ID provisioning profiles
   (checked 2026-09-29 against a freshly generated profile for `ai.rever.boss`). If Safari cannot
-  be opened, the default browser is used. Google always uses the default browser.
+  be opened, an external default browser is used. Google uses the external default browser
+  normally, but tries Safari when BOSS, its Chromium engine, or no known browser owns web
+  links. Neither flow sends the sign-in URL back into BOSS. If those attempts fail, BOSS
+  tries a separate window in Chrome, Firefox, or Edge (Chrome, Chromium, or Firefox on
+  Linux). If none can launch, the waiting screen retains its copy-link fallback.
 - **Linux** now registers `boss://` at startup (`LinuxProtocolHandler`, a hidden
   `boss-url-handler.desktop`), and only when nothing else holds the scheme. The waiting screen
   also accepts a pasted `boss://auth/callback` link for a machine where the hand-off fails.
