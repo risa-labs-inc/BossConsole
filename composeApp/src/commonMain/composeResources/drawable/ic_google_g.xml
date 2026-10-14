@@ -1,0 +1,19 @@
+<!-- Google "G" mark, official colours (Sign in with Google branding guidelines). Brand asset: do not theme. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="18dp"
+    android:height="18dp"
+    android:viewportWidth="18"
+    android:viewportHeight="18">
+    <path
+        android:fillColor="#FF4285F4"
+        android:pathData="M17.64,9.2c0,-0.637 -0.057,-1.251 -0.164,-1.84H9v3.481h4.844c-0.209,1.125 -0.843,2.078 -1.796,2.717v2.258h2.908c1.702,-1.567 2.684,-3.874 2.684,-6.615z" />
+    <path
+        android:fillColor="#FF34A853"
+        android:pathData="M9,18c2.43,0 4.467,-0.806 5.956,-2.18l-2.908,-2.259c-0.806,0.54 -1.837,0.86 -3.048,0.86 -2.344,0 -4.328,-1.584 -5.036,-3.711H0.957v2.332A8.997,8.997 0,0 0,9 18z" />
+    <path
+        android:fillColor="#FFFBBC05"
+        android:pathData="M3.964,10.71A5.41,5.41 0,0 1,3.682 9c0,-0.593 0.102,-1.17 0.282,-1.71V4.958H0.957A8.996,8.996 0,0 0,0 9c0,1.452 0.348,2.827 0.957,4.042l3.007,-2.332z" />
+    <path
+        android:fillColor="#FFEA4335"
+        android:pathData="M9,3.58c1.321,0 2.508,0.454 3.345,1.346l2.582,-2.58C13.463,0.891 11.426,0 9,0A8.997,8.997 0,0 0,0.957 4.958L3.964,7.29C4.672,5.163 6.656,3.58 9,3.58z" />
+</vector>

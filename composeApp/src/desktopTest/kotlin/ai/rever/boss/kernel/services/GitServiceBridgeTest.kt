@@ -160,7 +160,7 @@ class GitServiceBridgeTest {
         runBlocking {
             tokenRegistry.revoke(CALLER)
             val failure = assertFailsWith<StatusException> { authenticated.stageAll(Empty.getDefaultInstance()) }
-            assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+            assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
             assertTrue(provider.calls.isEmpty())
         }
 
@@ -179,7 +179,7 @@ class GitServiceBridgeTest {
                         tokenRegistry.revoke(CALLER)
                         provider.setFileStatus(listOf(fileStatus("after-revocation.kt")))
                         val failure = assertFailsWith<StatusException> { watching.await() }
-                        assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+                        assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
                         assertTrue(received.tryReceive().isFailure, "revocation must prevent the next snapshot")
                     } finally {
                         watching.cancel()
@@ -191,7 +191,7 @@ class GitServiceBridgeTest {
 
     private suspend fun assertRefused(call: suspend () -> Unit) {
         val failure = assertFailsWith<StatusException> { call() }
-        assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
+        assertEquals(Status.Code.UNAUTHENTICATED, failure.status.code)
     }
 
     private fun fileStatus(path: String): GitFileStatusData =

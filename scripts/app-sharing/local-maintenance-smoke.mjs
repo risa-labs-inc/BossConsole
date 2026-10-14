@@ -1,0 +1,13 @@
+import {readFile} from 'node:fs/promises';
+import {createHmac,randomUUID} from 'node:crypto';
+import assert from 'node:assert/strict';
+const env=await readFile('/tmp/boss-app-sharing-e2e/functions.env','utf8');
+const secret=env.split('\n').find(line=>line.startsWith('APP_SHARING_MAINTENANCE_KEY='))?.slice('APP_SHARING_MAINTENANCE_KEY='.length);
+assert.ok(secret?.length>=32);
+const body=JSON.stringify({nonce:randomUUID(),timestamp:Math.floor(Date.now()/1000)});
+const signature=createHmac('sha256',secret).update(body).digest('hex');
+const call=(sig)=>fetch('http://127.0.0.1:55431/functions/v1/app-sharing-maintenance',{method:'POST',headers:{'Content-Type':'application/json','X-App-Sharing-Maintenance':sig},body,signal:AbortSignal.timeout(15000)});
+assert.equal((await call('0'.repeat(64))).status,401);
+assert.equal((await call(signature)).status,200);
+assert.equal((await call(signature)).status,503);
+console.log('PASS real scheduler HMAC authentication, committed nonce replay rejection');

@@ -1,7 +1,11 @@
 package ai.rever.boss
 
+import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
+import ai.rever.boss.components.overlays.PanelDropHighlight
+import ai.rever.boss.components.overlays.panelDropHighlightFor
 import ai.rever.boss.components.plugin.TabUpdateRegistry
+import ai.rever.boss.components.window_panel.SplitNode
 import ai.rever.boss.components.window_panel.SplitOrientation
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.plugin.api.TabComponentWithUI
@@ -12,6 +16,8 @@ import ai.rever.boss.plugin.api.TabTypeInfo
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import com.arkivanov.decompose.ComponentContext
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -103,6 +109,166 @@ class TabDropResultHandlingTest {
     }
 
     @Test
+    fun `MoveToPanel lands the tab at the slot the drop named`() {
+        val state = newSplitViewState()
+        val targetPanelId = state.splitPanel("main", SplitOrientation.VERTICAL)
+        val main = state.getPanel("main")!!.tabsComponent
+        val target = state.getPanel(targetPanelId)!!.tabsComponent
+        val tab = DropTestTabInfo(id = "moved")
+        main.addTab(tab)
+        listOf("t0", "t1", "t2").forEach { target.addTab(DropTestTabInfo(id = it)) }
+        val component = main.getComponentById("moved")!!
+
+        handleTabDropResult(
+            TabDropResult.MoveToPanel(
+                tabInfo = tab,
+                sourcePanelId = "main",
+                sourceIndex = 0,
+                targetPanelId = targetPanelId,
+                targetIndex = 1,
+            ),
+            state,
+        )
+
+        assertEquals(
+            listOf("t0", "moved", "t1", "t2"),
+            target.tabsState.value.tabs
+                .map { it.id },
+        )
+        // Adopt-then-move, so the live component still transferred rather than being rebuilt at
+        // the new position.
+        assertSame(component, target.getComponentById("moved"))
+        // The arriving tab stays selected wherever it lands: TabsNavigation.moveTab carries
+        // activeIndex along with the tab it moves.
+        assertEquals(
+            "moved",
+            target.tabsState.value.activeTab
+                ?.id,
+        )
+    }
+
+    @Test
+    fun `MoveToPanel with no slot appends, as a centre drop and a sidebar promotion do`() {
+        val state = newSplitViewState()
+        val targetPanelId = state.splitPanel("main", SplitOrientation.VERTICAL)
+        val main = state.getPanel("main")!!.tabsComponent
+        val target = state.getPanel(targetPanelId)!!.tabsComponent
+        val tab = DropTestTabInfo(id = "moved")
+        main.addTab(tab)
+        listOf("t0", "t1").forEach { target.addTab(DropTestTabInfo(id = it)) }
+
+        handleTabDropResult(
+            TabDropResult.MoveToPanel(
+                tabInfo = tab,
+                sourcePanelId = "main",
+                sourceIndex = 0,
+                targetPanelId = targetPanelId,
+            ),
+            state,
+        )
+
+        assertEquals(
+            listOf("t0", "t1", "moved"),
+            target.tabsState.value.tabs
+                .map { it.id },
+            "a null slot must append, not land at the head of a list nobody pointed at",
+        )
+    }
+
+    /**
+     * Pinned-ness follows where a tab LANDS, and the insertion line is what says where that is.
+     *
+     * The tab bar draws the line after the pinned separator for exactly this reason (see the
+     * comment on the indicator in `BossMainWindowPanel`), so a line above the separator has to
+     * pin and one below it has to leave the tab unpinned - for a tab arriving from another pane
+     * just as for one dragged up the list it is already in. It holds here because the move goes
+     * through `BossTabsComponent.moveTab`, which is the only mutation that maintains
+     * `pinnedCountAfterMove`.
+     */
+    @Test
+    fun `a slot inside the destination's pinned block pins the arriving tab`() {
+        val state = newSplitViewState()
+        val targetPanelId = state.splitPanel("main", SplitOrientation.VERTICAL)
+        val main = state.getPanel("main")!!.tabsComponent
+        val target = state.getPanel(targetPanelId)!!.tabsComponent
+        main.addTab(DropTestTabInfo(id = "moved"))
+        listOf("p0", "p1", "open").forEach { target.addTab(DropTestTabInfo(id = it)) }
+        target.setPinnedCount(2)
+
+        handleTabDropResult(
+            TabDropResult.MoveToPanel(
+                tabInfo = DropTestTabInfo(id = "moved"),
+                sourcePanelId = "main",
+                sourceIndex = 0,
+                targetPanelId = targetPanelId,
+                targetIndex = 1,
+            ),
+            state,
+        )
+
+        assertEquals(3, target.pinnedCount, "landing above the separator pins, as dragging there does")
+        assertTrue(target.isPinned(1))
+    }
+
+    @Test
+    fun `a slot below the destination's separator leaves the arriving tab unpinned`() {
+        val state = newSplitViewState()
+        val targetPanelId = state.splitPanel("main", SplitOrientation.VERTICAL)
+        val main = state.getPanel("main")!!.tabsComponent
+        val target = state.getPanel(targetPanelId)!!.tabsComponent
+        main.addTab(DropTestTabInfo(id = "moved"))
+        listOf("p0", "p1", "open").forEach { target.addTab(DropTestTabInfo(id = it)) }
+        target.setPinnedCount(2)
+
+        handleTabDropResult(
+            TabDropResult.MoveToPanel(
+                tabInfo = DropTestTabInfo(id = "moved"),
+                sourcePanelId = "main",
+                sourceIndex = 0,
+                targetPanelId = targetPanelId,
+                // The first unpinned slot, which is where the indicator draws below the break.
+                targetIndex = 2,
+            ),
+            state,
+        )
+
+        assertEquals(2, target.pinnedCount)
+        assertEquals(
+            listOf("p0", "p1", "moved", "open"),
+            target.tabsState.value.tabs
+                .map { it.id },
+        )
+    }
+
+    @Test
+    fun `a slot past the end of the destination lands at the end`() {
+        val state = newSplitViewState()
+        val targetPanelId = state.splitPanel("main", SplitOrientation.VERTICAL)
+        val main = state.getPanel("main")!!.tabsComponent
+        val target = state.getPanel(targetPanelId)!!.tabsComponent
+        main.addTab(DropTestTabInfo(id = "moved"))
+        listOf("t0", "t1").forEach { target.addTab(DropTestTabInfo(id = it)) }
+
+        handleTabDropResult(
+            TabDropResult.MoveToPanel(
+                tabInfo = DropTestTabInfo(id = "moved"),
+                sourcePanelId = "main",
+                sourceIndex = 0,
+                targetPanelId = targetPanelId,
+                // tabs.size: the trailing slot the last row draws, which is one past every index.
+                targetIndex = 2,
+            ),
+            state,
+        )
+
+        assertEquals(
+            listOf("t0", "t1", "moved"),
+            target.tabsState.value.tabs
+                .map { it.id },
+        )
+    }
+
+    @Test
     fun `MoveToPanel drops the move when the tab was closed mid-drag`() {
         val state = newSplitViewState()
         val targetPanelId = state.splitPanel("main", SplitOrientation.VERTICAL)
@@ -131,6 +297,43 @@ class TabDropResultHandlingTest {
             main.tabsState.value.tabs
                 .isEmpty(),
         )
+    }
+
+    @Test
+    fun `edge drop preview and pane placement agree for all four sides`() {
+        val edges =
+            listOf(
+                Offset(10f, 200f) to PanelDropHighlight.LEFT,
+                Offset(390f, 200f) to PanelDropHighlight.RIGHT,
+                Offset(200f, 10f) to PanelDropHighlight.TOP,
+                Offset(200f, 390f) to PanelDropHighlight.BOTTOM,
+            )
+        for ((position, highlight) in edges) {
+            val state = newSplitViewState()
+            val tab = DropTestTabInfo(id = "direction-tab")
+            state.getPanel("main")!!.tabsComponent.addTab(tab)
+            val drag = TabDraggableComponent()
+            drag.registerPanelDropZones("main", Rect(0f, 0f, 400f, 400f))
+            drag.startDragging(tab, "main", 0, position)
+            assertEquals(highlight, panelDropHighlightFor(drag.dropTarget, "main"))
+            handleTabDropResult(drag.endDrag()!!, state)
+            val before = highlight == PanelDropHighlight.LEFT || highlight == PanelDropHighlight.TOP
+            when (val root = state.rootNode) {
+                is SplitNode.VerticalSplit -> {
+                    assertTrue(highlight == PanelDropHighlight.LEFT || highlight == PanelDropHighlight.RIGHT)
+                    assertEquals("main", ((if (before) root.right else root.left) as SplitNode.Panel).id)
+                }
+
+                is SplitNode.HorizontalSplit -> {
+                    assertTrue(highlight == PanelDropHighlight.TOP || highlight == PanelDropHighlight.BOTTOM)
+                    assertEquals("main", ((if (before) root.bottom else root.top) as SplitNode.Panel).id)
+                }
+
+                else -> {
+                    error("Expected a split for $highlight")
+                }
+            }
+        }
     }
 
     @Test

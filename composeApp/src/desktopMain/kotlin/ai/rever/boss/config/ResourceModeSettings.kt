@@ -1,12 +1,15 @@
 package ai.rever.boss.config
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -71,7 +74,7 @@ object ResourceModeSettings {
             val next = transform(current())
             runCatching {
                 settingsFile.parentFile?.mkdirs()
-                settingsFile.writeText(encode(next))
+                settingsFile.atomicWriteText(encode(next))
                 state.value = next
             }.onFailure { e ->
                 logger.warn(
@@ -104,14 +107,24 @@ object ResourceModeSettings {
      * where one unmodelled field emptied whole lists on installed builds.
      */
     internal fun decode(raw: String): ResourceModeSettingsData =
+        // runCatching preserves Throwable-to-defaults parity: load initializes lazy state and
+        // an escaping Error would be retried on later current() calls.
         runCatching {
             json.decodeFromString(serializer, raw)
         }.getOrElse { e ->
-            logger.warn(
-                LogCategory.SYSTEM,
-                "Could not read resource-mode settings - using defaults",
-                mapOf("error" to (e.message ?: "unknown")),
-            )
+            if (e is SerializationException) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Could not read resource-mode settings - using defaults",
+                    decodeFailure(e),
+                )
+            } else {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Could not read resource-mode settings - using defaults",
+                    error = e,
+                )
+            }
             ResourceModeSettingsData()
         }
 

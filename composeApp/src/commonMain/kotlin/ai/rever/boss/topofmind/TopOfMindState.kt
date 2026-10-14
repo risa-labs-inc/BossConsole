@@ -11,10 +11,6 @@ object TabTreeState {
     private val _expandedNodes = MutableStateFlow<Set<String>>(emptySet())
     val expandedNodes: StateFlow<Set<String>> = _expandedNodes
 
-    // Track which workspaces have been modified
-    private val _modifiedWorkspaces = MutableStateFlow<Set<String>>(emptySet())
-    val modifiedWorkspaces: StateFlow<Set<String>> = _modifiedWorkspaces
-
     fun toggleExpansion(nodeId: String) {
         val current = _expandedNodes.value.toMutableSet()
         if (current.contains(nodeId)) {
@@ -30,20 +26,6 @@ object TabTreeState {
         val workspaceNodes = nodes.filterIsInstance<TabTreeNode.WorkspaceNode>()
         _expandedNodes.value = workspaceNodes.map { it.id }.toSet()
     }
-
-    fun markWorkspaceAsModified(workspaceId: String) {
-        val current = _modifiedWorkspaces.value.toMutableSet()
-        current.add(workspaceId)
-        _modifiedWorkspaces.value = current
-    }
-
-    fun markWorkspaceAsSaved(workspaceId: String) {
-        val current = _modifiedWorkspaces.value.toMutableSet()
-        current.remove(workspaceId)
-        _modifiedWorkspaces.value = current
-    }
-
-    fun isWorkspaceModified(workspaceId: String): Boolean = _modifiedWorkspaces.value.contains(workspaceId)
 
     // Track expanded sections (workspace:sectionPath) - sections collapsed by default
     private val _expandedSections = MutableStateFlow<Set<String>>(emptySet())

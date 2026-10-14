@@ -3,6 +3,7 @@ package ai.rever.boss.services.supabase
 import ai.rever.boss.services.supabase.models.SecretEntry
 import ai.rever.boss.services.supabase.models.SecretEntryWithSharing
 import ai.rever.boss.services.supabase.models.SecretShareEntry
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
@@ -12,6 +13,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
@@ -35,6 +37,60 @@ import kotlin.test.assertNull
  * pinning is that the services are wired to it and stay so.
  */
 class SecretDecodingTest {
+    @Test
+    fun `blanked corrupt passwords preserve every row in both listing models`() {
+        val payload =
+            buildJsonArray {
+                for (id in listOf("good", "corrupt")) {
+                    add(
+                        buildJsonObject {
+                            baseSecret(id)
+                            put("password", if (id == "corrupt") "" else "readable")
+                            put("is_owner", true)
+                            put("access_level", "owner")
+                        },
+                    )
+                }
+            }
+
+        val plain = supabaseJson.decodeFromJsonElement<List<SecretEntry>>(payload)
+        val shared = supabaseJson.decodeFromJsonElement<List<SecretEntryWithSharing>>(payload)
+        assertEquals(listOf("good", "corrupt"), plain.map { it.id })
+        assertEquals(listOf("readable", ""), plain.map { it.password })
+        assertEquals(listOf("good", "corrupt"), shared.map { it.id })
+        assertEquals(listOf("readable", ""), shared.map { it.password })
+    }
+
+    @Test
+    fun `a null password fails the whole decode - which is why the listing RPCs COALESCE it to empty`() {
+        // The load-bearing counterpart to the empty-string case above: "" decodes whether or not
+        // the SQL COALESCE exists, so on its own it proves nothing about the fix. This pins WHY the
+        // COALESCE must be there. SecretEntry.password and SecretEntryWithSharing.password are
+        // non-null String with no default, and supabaseJson's coerceInputValues coerces a null only
+        // into a property's default - a required field without one still throws. Because these RPCs
+        // return LISTS, that throw is all-or-nothing and takes the WHOLE page, which is exactly the
+        // outage this PR removes. So try_decrypt_text's NULL is COALESCEd to '' in every listing RPC
+        // (migration 20260914010000) before it can ever reach this decoder.
+        val payload =
+            buildJsonArray {
+                add(
+                    buildJsonObject {
+                        baseSecret("corrupt")
+                        put("password", null as String?)
+                        put("is_owner", true)
+                        put("access_level", "owner")
+                    },
+                )
+            }
+
+        assertFailsWith<SerializationException> {
+            supabaseJson.decodeFromJsonElement<List<SecretEntry>>(payload)
+        }
+        assertFailsWith<SerializationException> {
+            supabaseJson.decodeFromJsonElement<List<SecretEntryWithSharing>>(payload)
+        }
+    }
+
     /** The ten columns every secret RPC returned before the organisation work. */
     private fun JsonObjectBuilder.baseSecret(id: String) {
         put("id", id)

@@ -8,13 +8,17 @@ import ai.rever.boss.components.workspaces.WorkspaceSwitchAction
 import ai.rever.boss.components.workspaces.WorkspaceSwitchDialog
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.resolveOnWorkspaceSwitch
+import ai.rever.boss.components.workspaces.spaceToOpen
 import ai.rever.boss.components.workspaces.workspaceManager
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 
 /**
@@ -30,31 +34,75 @@ internal class WorkspaceSwitch internal constructor(
     val request: (LayoutWorkspace) -> Unit,
     /** Carry one out, the question having been settled. */
     val resolve: (workspace: LayoutWorkspace, keepLeaving: Boolean) -> Unit,
+    val requestFromTitleBar: (LayoutWorkspace) -> Unit,
 )
 
 @Composable
+@Suppress("CyclomaticComplexMethod") // Keep/close, same-Space reopen, and refusal each preserve distinct ownership.
 internal fun rememberWorkspaceSwitch(
     state: BossAppState,
     splitViewState: SplitViewState,
 ): WorkspaceSwitch {
     val scope = rememberCoroutineScope()
     val settings by WorkspaceSettingsManager.currentSettings.collectAsState()
+    var afterOpen by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     val resolve: (LayoutWorkspace, Boolean) -> Unit = { workspace, keepLeaving ->
+        val completed = afterOpen.also { afterOpen = null }
         scope.launch {
             val leaving = workspaceManager.currentWorkspace.value
-            if (leaving != null && leaving.id.isNotEmpty()) {
-                if (keepLeaving) {
-                    splitViewState.preserveCurrentState(leaving.id, leaving.name)
-                } else {
-                    splitViewState.closeCurrentWorkspace()
-                }
+            val leavingId = leaving?.id?.takeIf { it.isNotEmpty() }
+
+            // Preserve whatever the answer to keep-or-close was: the leaving tree has to still
+            // be in the map if the incoming Space turns out to be unbuildable, because nothing
+            // on the refusal path can rebuild it. A close the user asked for happens below,
+            // once the apply has actually landed - closing here cleared the live tabs first and
+            // a refused apply then left an emptied window, the wipe this ordering exists for.
+            if (leavingId != null && (keepLeaving || leavingId != workspace.id)) {
+                splitViewState.preserveCurrentState(leavingId, leaving?.name.orEmpty())
+            } else if (leavingId != null) {
+                // Reopening this Space with discard must rebuild its saved definition.
+                splitViewState.discardPreservedState(leavingId)
             }
 
-            // Load first to reset dirty state, then apply - which may restore state preserved
-            // for the workspace being entered.
-            workspaceManager.loadWorkspace(workspace)
-            applyWorkspace(workspace, splitViewState, state.windowProjectState)
+            // A TEMPLATE picked here becomes a Space first: substituted, named for the project and
+            // saved, so what gets loaded and applied is an ordinary Space. Returns `workspace`
+            // unchanged for anything that is not a template, and for a template picked with no
+            // project selected (which says so and applies as before). See `spaceToOpen`.
+            val opened = spaceToOpen(workspace, state.windowProjectState.selectedProject.value.path)
+
+            if (applyWorkspace(opened, splitViewState, state.windowProjectState)) {
+                // The apply landed, so the manager can enter the Space (which is also what
+                // re-skins the app) - and only then does a close destroy anything.
+                workspaceManager.loadWorkspace(opened)
+                if (leavingId != null && !keepLeaving && leavingId != opened.id) {
+                    splitViewState.closeWorkspace(leavingId)
+                    // The unsaved mark goes with the layout it was about. Closing destroys this
+                    // window's copy of the Space - preserved state dropped, panels cleared - so
+                    // after this there is nothing here that differs from the file, and a mark left
+                    // behind would point at work that no longer exists and could never be saved.
+                    workspaceManager.setWorkspaceUnsaved(state.windowId, leavingId, false)
+                }
+                completed?.invoke()
+            } else {
+                // Refused: nothing was built and nothing was destroyed. Put the leaving tree
+                // back on screen and drop the snapshot just taken of it - it is the same tree,
+                // and a preserved copy of the workspace currently shown would be written into
+                // the next session record as a second running Space.
+                if (leavingId != null) {
+                    splitViewState.restorePreservedState(leavingId)
+                    splitViewState.discardPreservedState(leavingId)
+                }
+                // `spaceToOpen` enters a materialised template itself - the loadWorkspace inside
+                // it is how the save lands under the right identity - so a refusal can leave the
+                // manager claiming a Space that was never applied. Point it back at what is on
+                // screen, which also re-applies that Space's theme over the one just set.
+                if (leaving == null) {
+                    workspaceManager.resetToDefault()
+                } else if (workspaceManager.currentWorkspace.value?.id != leaving.id) {
+                    workspaceManager.loadWorkspace(leaving)
+                }
+            }
         }
     }
 
@@ -71,7 +119,19 @@ internal fun rememberWorkspaceSwitch(
         }
     }
 
-    return remember(state, splitViewState, settings) { WorkspaceSwitch(request, resolve) }
+    return remember(state, splitViewState, settings) {
+        WorkspaceSwitch(
+            request = {
+                afterOpen = null
+                request(it)
+            },
+            resolve = resolve,
+            requestFromTitleBar = {
+                afterOpen = { openRunningSpacesPanel(state, splitViewState) }
+                request(it)
+            },
+        )
+    }
 }
 
 /** The keep-or-close question, while one is outstanding. */
@@ -82,13 +142,18 @@ internal fun WorkspaceSwitchPrompt(
 ) {
     val pending = state.pendingWorkspaceSwitch ?: return
     val scope = rememberCoroutineScope()
+    val leaving = workspaceManager.currentWorkspace.value
+    // Collected, not read once: the watcher can settle while the question is on screen, and the
+    // dialog must not still be saying "no unsaved changes" by the time it is answered.
+    val unsavedWorkspaces by workspaceManager.unsavedWorkspaces.collectAsState()
 
     WorkspaceSwitchDialog(
-        leavingName =
-            workspaceManager.currentWorkspace.value
-                ?.name
-                .orEmpty(),
+        leavingName = leaving?.name.orEmpty(),
         enteringName = pending.name,
+        // The same rule as the vertical bar and the Space menu, so all three agree about the same
+        // Space - including on Last Session, which is a slot rather than a document and so always
+        // holds work that has never been saved anywhere.
+        leavingUnsaved = spaceIsUnsaved(leaving?.id, unsavedWorkspaces[state.windowId].orEmpty()),
         onChoose = { keep, dontAskAgain ->
             state.pendingWorkspaceSwitch = null
             if (dontAskAgain) {
@@ -105,4 +170,17 @@ internal fun WorkspaceSwitchPrompt(
         // somebody pressed Escape on.
         onDismiss = { state.pendingWorkspaceSwitch = null },
     )
+}
+
+@Composable
+internal fun HandleMenuSpaceSwitch(
+    state: BossAppState,
+    workspaceSwitch: WorkspaceSwitch,
+) {
+    LaunchedEffect(state.pendingSpaceToOpen) {
+        state.pendingSpaceToOpen?.let { space ->
+            state.pendingSpaceToOpen = null
+            workspaceSwitch.request(space)
+        }
+    }
 }

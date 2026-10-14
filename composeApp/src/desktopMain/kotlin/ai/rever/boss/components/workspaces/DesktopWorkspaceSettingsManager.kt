@@ -1,14 +1,19 @@
 package ai.rever.boss.components.workspaces
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
+import ai.rever.boss.utils.renameAsideCorrupt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import java.io.File
 
 /**
  * Desktop implementation of WorkspaceSettingsManager.
@@ -16,7 +21,20 @@ import kotlinx.serialization.json.Json
  */
 actual object WorkspaceSettingsManager {
     private val logger = BossLogger.forComponent("WorkspaceSettingsManager")
-    private val settingsFile = BossDirectories.resolve("workspace-settings.json")
+
+    /**
+     * The production settings path, captured once so [resetForTesting] can restore it without
+     * re-deriving the literal at every call site.
+     */
+    private val defaultSettingsFile = BossDirectories.resolve("workspace-settings.json")
+
+    /**
+     * Overridable so hermetic tests exercise the real read/write path without touching
+     * `~/.boss`, as [ai.rever.boss.run.RunConfigurationManager] does. Restored by
+     * [resetForTesting] callers; production code never reassigns it.
+     */
+    @Volatile
+    internal var settingsFile: File = defaultSettingsFile
     private val json =
         Json {
             prettyPrint = true
@@ -75,14 +93,41 @@ actual object WorkspaceSettingsManager {
             } else {
                 logger.debug(LogCategory.SYSTEM, "Stamped workspace settings version")
             }
+        } catch (e: SerializationException) {
+            // Corrupt content, not a read error: move the bad file aside so it is kept for
+            // inspection instead of being re-failed on every launch or overwritten by the next
+            // save, and write a fresh default so this launch self-heals.
+            logger.error(
+                LogCategory.SYSTEM,
+                "Workspace settings file is corrupt, resetting to defaults",
+                decodeFailure(e),
+            )
+            if (!settingsFile.renameAsideCorrupt()) {
+                logger.warn(LogCategory.SYSTEM, "Workspace settings file not moved aside; overwriting it")
+            }
+            val defaultSettings = WorkspaceSettings(settingsVersion = WorkspaceSettings.CURRENT_SETTINGS_VERSION)
+            _currentSettings.value = defaultSettings
+            writeSettings(defaultSettings)
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Error loading settings", error = e)
         }
     }
 
+    /**
+     * Reset manager state and optionally redirect [settingsFile] to [testFile]; with no
+     * argument, restore [defaultSettingsFile]. Call only when no save is in flight, and
+     * always finish with a no-argument call, so the singleton is left where the app and
+     * other tests expect it. Mirrors [ai.rever.boss.run.RunConfigurationManager].
+     */
+    internal fun resetForTesting(testFile: File? = null) {
+        settingsFile = testFile ?: defaultSettingsFile
+        _currentSettings.value = WorkspaceSettings(settingsVersion = WorkspaceSettings.CURRENT_SETTINGS_VERSION)
+        loadSettingsSync()
+    }
+
     private fun writeSettings(settings: WorkspaceSettings) {
         try {
-            settingsFile.writeText(json.encodeToString(WorkspaceSettings.serializer(), settings))
+            settingsFile.atomicWriteText(json.encodeToString(WorkspaceSettings.serializer(), settings))
             logger.debug(LogCategory.SYSTEM, "Settings saved")
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Error saving settings", error = e)

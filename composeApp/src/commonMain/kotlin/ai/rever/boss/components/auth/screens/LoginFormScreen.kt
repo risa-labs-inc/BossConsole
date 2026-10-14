@@ -1,12 +1,15 @@
 package ai.rever.boss.components.auth.screens
 
 import ai.rever.boss.components.auth.forms.AuthButtonHeight
+import ai.rever.boss.components.auth.forms.AuthOrDivider
 import ai.rever.boss.components.auth.forms.AuthScaffold
 import ai.rever.boss.components.auth.forms.EmailField
 import ai.rever.boss.components.auth.forms.ErrorMessage
 import ai.rever.boss.components.auth.forms.LoadingIndicator
+import ai.rever.boss.components.auth.forms.OAuthProviderButtons
 import ai.rever.boss.components.auth.forms.PrimaryActionButton
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.services.auth.OAuthProviderKind
 import ai.rever.boss.services.supabase.models.AvailableWebAuthnCredential
 import ai.rever.boss.viewmodels.LoginViewModel
 import ai.rever.boss.viewmodels.auth.AuthOptions
@@ -50,6 +53,8 @@ import androidx.compose.ui.unit.dp
  */
 private fun emailLooksValid(email: String): Boolean = email.isNotBlank() && email.contains("@")
 
+// One screen's worth of step state; the steps themselves are already extracted below.
+@Suppress("LongMethod")
 @Composable
 fun LoginFormScreen(
     viewModel: LoginViewModel,
@@ -59,6 +64,10 @@ fun LoginFormScreen(
     onMagicLinkSent: (String) -> Unit = {},
     onPasskeyAuthInitiated: (String) -> Unit = {},
     onPasskeySelectionRequired: (String) -> Unit = {},
+    oauthError: String? = null,
+    oauthStarting: OAuthProviderKind? = null,
+    onOAuthSignIn: (OAuthProviderKind) -> Unit = {},
+    onDismissOAuthError: () -> Unit = {},
 ) {
     var email by remember { mutableStateOf("") }
     var authOptions by remember { mutableStateOf<AuthOptions?>(null) }
@@ -81,10 +90,19 @@ fun LoginFormScreen(
     }
 
     AuthScaffold(title = "Sign in", subtitle = "Continue to BOSS") {
+        OAuthStep(
+            visible = !showAuthOptions,
+            enabled = !isLoading && !checkingUserExists,
+            busyProvider = oauthStarting,
+            error = oauthError,
+            onSignIn = onOAuthSignIn,
+        )
+
         EmailField(
             value = email,
             onValueChange = {
                 email = it
+                if (oauthError != null) onDismissOAuthError()
                 // Editing the email invalidates whatever the last check concluded.
                 if (showAuthOptions) {
                     showAuthOptions = false
@@ -92,8 +110,8 @@ fun LoginFormScreen(
                 }
             },
             enabled = !isLoading && !checkingUserExists,
-            // The only thing anyone does on this screen is type an address, so the caret starts there.
-            // Combined with the Go key action below, signing in never needs the mouse.
+            // Typing an address is still the most common thing done on this screen, so the caret starts
+            // there. Combined with the Go key action below, signing in never needs the mouse.
             autoFocus = true,
             keyboardActions = KeyboardActions(onGo = { submit() }),
         )
@@ -133,6 +151,29 @@ fun LoginFormScreen(
             )
         }
     }
+}
+
+/**
+ * Google and Apple, above the email field, with their last error and the "or" divider. The buttons
+ * are hidden once the email step has moved on to its options, where they would compete with the
+ * passkey and magic-link buttons for the same decision; their error is not, so a sign-in that
+ * failed is never left unexplained.
+ */
+@Composable
+private fun OAuthStep(
+    visible: Boolean,
+    enabled: Boolean,
+    busyProvider: OAuthProviderKind?,
+    error: String?,
+    onSignIn: (OAuthProviderKind) -> Unit,
+) {
+    if (visible) OAuthProviderButtons(enabled = enabled, busyProvider = busyProvider, onSignIn = onSignIn)
+    if (error != null) {
+        if (visible) Spacer(modifier = Modifier.height(BossTheme.space.sm))
+        ErrorMessage(error)
+        if (!visible) Spacer(modifier = Modifier.height(BossTheme.space.md))
+    }
+    if (visible) AuthOrDivider()
 }
 
 /**

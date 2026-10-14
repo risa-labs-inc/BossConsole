@@ -10,7 +10,7 @@ class McpSearchNavigationWiringTest {
     @Test
     fun `mouse and keyboard MCP selection reach the host navigation callback`() {
         val source = File("src/commonMain/kotlin/ai/rever/boss/components/dialogs/GlobalSearchDialog.kt").readText()
-        assertContains(source, "selectResult(filteredResults[selectedIndex])")
+        assertContains(source, "selectResult(filteredResults[dialogState.selectedIndex])")
         assertContains(source, "onResultClick = { result -> selectResult(result) }")
         val mcpBranch =
             source

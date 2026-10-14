@@ -22,3 +22,36 @@ internal fun isUserProjectSelection(
     path: String,
     restoredProjectPath: String?,
 ): Boolean = path.isNotEmpty() && path != restoredProjectPath
+
+/**
+ * What the project-selection effect does with a newly observed [path], given the two "already
+ * handled" marks a window can hold: the path a restore selected and the path a person placed by
+ * answering "where should this open?".
+ */
+internal data class ProjectSelectionGate(
+    /** Consult the default-Space setting. False when either mark already accounts for [path]. */
+    val handle: Boolean,
+    val restoredProjectPath: String?,
+    val answeredProjectPath: String?,
+)
+
+/**
+ * Consume whichever marks match [path], BOTH of them.
+ *
+ * Both, because they can hold the same path at once - a new window arriving with a project that a
+ * restore also records. Clearing only the one checked first left the other behind, and a mark that
+ * outlives its selection silently swallows the next real selection of that project.
+ */
+internal fun gateProjectSelection(
+    path: String,
+    restoredProjectPath: String?,
+    answeredProjectPath: String?,
+): ProjectSelectionGate {
+    val restored = !isUserProjectSelection(path, restoredProjectPath)
+    val answered = path == answeredProjectPath
+    return ProjectSelectionGate(
+        handle = !restored && !answered,
+        restoredProjectPath = if (restored) null else restoredProjectPath,
+        answeredProjectPath = if (answered) null else answeredProjectPath,
+    )
+}

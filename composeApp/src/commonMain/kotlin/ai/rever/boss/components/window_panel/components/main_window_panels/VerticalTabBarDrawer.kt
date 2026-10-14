@@ -2,9 +2,12 @@ package ai.rever.boss.components.window_panel.components.main_window_panels
 
 import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.overlays.overlayCornerIsHeavyweight
+import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -13,9 +16,12 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -88,15 +94,32 @@ fun BoxScope.VerticalTabBarDrawer(
     val heavyweight = overlayCornerIsHeavyweight()
     val layoutDirection = LocalLayoutDirection.current
     val drawerRegion = region.besideLeadingRail(railWidth, layoutDirection)
+    val floating = railWidth == 0.dp
+    val inset = if (floating) 8.dp else 0.dp
+    val shape = RoundedCornerShape(22.dp)
+    val surfaceModifier =
+        if (floating) {
+            Modifier
+                .fillMaxHeight()
+                .padding(inset)
+                .shadow(8.dp, shape)
+                .clip(shape)
+                .background(BossTheme.colors.raised)
+                .border(0.75.dp, BossTheme.colors.textPrimary.copy(alpha = 0.18f), shape)
+        } else {
+            Modifier
+        }
+    // Include the gap in hover tracking so crossing from the edge into the panel keeps it open.
+    val hoverModifier = Modifier.hoverable(hoverSource, enabled = hoverEnabled)
 
     if (heavyweight) {
         OverlayCorner(
             alignment = Alignment.TopStart,
             // First-frame size only; later measurements use the parent region.
-            initialSize = DpSize(width, drawerRegion.height.dp),
+            initialSize = DpSize(width + inset * 2, drawerRegion.height.dp),
             regionInWindow = drawerRegion,
         ) {
-            Box(modifier = Modifier.hoverable(hoverSource, enabled = hoverEnabled)) { content() }
+            Box(modifier = hoverModifier.then(surfaceModifier)) { content() }
         }
     } else {
         // OFF_SCREEN rendering: the browser is lightweight, everything layers normally, and the
@@ -113,7 +136,7 @@ fun BoxScope.VerticalTabBarDrawer(
             enter = slideInHorizontally(initialOffsetX = { drawerSlideOffset(it, layoutDirection) }),
             exit = slideOutHorizontally(targetOffsetX = { drawerSlideOffset(it, layoutDirection) }),
         ) {
-            Box(modifier = Modifier.hoverable(hoverSource, enabled = hoverEnabled)) { content() }
+            Box(modifier = hoverModifier.then(surfaceModifier)) { content() }
         }
     }
 }

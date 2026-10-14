@@ -3,6 +3,7 @@ package ai.rever.boss.components.events
 import ai.rever.boss.ipc.IpcEventBridge
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
 /**
@@ -10,10 +11,15 @@ import kotlinx.coroutines.flow.asSharedFlow
  *
  * @property workspacePath Path to the workspace file
  * @property sourceWindowId The window that should load the workspace (required for multi-window support)
+ * @property requiresConfirmation True when the request came from somewhere other than the
+ *   operator's own invocation of BOSS (see `DeepLinkOrigin`), so any terminal commands the
+ *   Space carries must be shown to the operator before they reach a shell. Defaults to false
+ *   so a caller that is the operator clicking something stays direct.
  */
 data class WorkspaceLoadEvent(
     val workspacePath: String,
     val sourceWindowId: String,
+    val requiresConfirmation: Boolean = false,
 )
 
 /**
@@ -32,17 +38,23 @@ object WorkspaceEventBus {
         )
     val workspaceLoadEvents: SharedFlow<WorkspaceLoadEvent> = _workspaceLoadEvents.asSharedFlow()
 
+    /** Subscription count of the load events flow for subscriber readiness synchronization. */
+    val subscriptionCount: StateFlow<Int>
+        get() = _workspaceLoadEvents.subscriptionCount
+
     /**
      * Emit a workspace load event.
      *
      * @param workspacePath Path to the workspace file
      * @param sourceWindowId The window that should load the workspace (required for multi-window support)
+     * @param requiresConfirmation See [WorkspaceLoadEvent.requiresConfirmation]
      */
     suspend fun loadWorkspace(
         workspacePath: String,
         sourceWindowId: String,
+        requiresConfirmation: Boolean = false,
     ) {
-        val event = WorkspaceLoadEvent(workspacePath, sourceWindowId)
+        val event = WorkspaceLoadEvent(workspacePath, sourceWindowId, requiresConfirmation)
         _workspaceLoadEvents.emit(event)
         ipcBridge?.forward("WorkspaceLoadEvent", event, sourceWindowId)
     }

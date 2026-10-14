@@ -99,3 +99,7 @@ internal fun displayLabel(
     website: String,
     username: String,
 ): String = if (username.isEmpty()) website else "$username @ $website"
+
+/** Native-app associations must never become browser website matches. */
+internal fun isNonWebPasswordEntry(raw: String): Boolean =
+    listOf("android://", "androidapp://", "iosapp://").any { raw.trim().startsWith(it, ignoreCase = true) }

@@ -177,6 +177,20 @@ object WindowManager {
             _windows.remove(window)
             logger.debug(LogCategory.UI, "Closed window", mapOf("windowId" to windowId, "remainingWindows" to _windows.size))
         }
+        pendingInitialTabs.remove(windowId)?.let {
+            logger.debug(
+                LogCategory.UI,
+                "Cleaned up unconsumed pending tab on window close",
+                mapOf("tab" to it.title, "windowId" to windowId),
+            )
+        }
+        pendingInitialProjects.remove(windowId)?.let {
+            logger.debug(
+                LogCategory.UI,
+                "Cleaned up unconsumed pending project on window close",
+                mapOf("project" to it.name, "windowId" to windowId),
+            )
+        }
     }
 
     /**

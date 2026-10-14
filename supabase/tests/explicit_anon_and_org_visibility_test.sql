@@ -5,7 +5,7 @@ select no_plan();
 select ok(to_regprocedure(f) is not null and not has_function_privilege(r, to_regprocedure(f), 'EXECUTE'), r || ' cannot execute ' || f)
 from unnest(array['anon', 'authenticated']) r
 cross join unnest(array['public.get_encryption_key()', 'public.encrypt_text(text)',
-    'public.decrypt_text(text)', 'public.safe_decrypt_recovery_codes(text)',
+    'public.decrypt_text(text)', 'public.try_decrypt_text(text)', 'public.safe_decrypt_recovery_codes(text)',
     'public.user_display_name(uuid)', 'public.upsert_plugin_rating(uuid,uuid,integer,text)',
     'public.record_plugin_download(uuid,uuid,uuid,text)', 'public.custom_access_token_hook(jsonb)']) f;
 

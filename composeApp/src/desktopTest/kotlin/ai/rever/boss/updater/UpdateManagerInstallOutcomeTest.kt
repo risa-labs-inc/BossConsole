@@ -52,6 +52,17 @@ class UpdateManagerInstallOutcomeTest {
     }
 
     @Test
+    fun `version bound install refuses replacement at the same path`(): Unit =
+        runBlocking {
+            manager.stageDownloadedUpdate(update("9.5.9"), "/staged/update.dmg")
+            val approved = assertIs<UpdateState.ReadyToInstall>(manager.updateState.value)
+            manager.stageDownloadedUpdate(update("9.5.10"), "/staged/update.dmg")
+            assertFalse(manager.installUpdate(approved))
+            assertNull(installedPath)
+            assertIs<UpdateState.ReadyToInstall>(manager.updateState.value)
+        }
+
+    @Test
     fun `unsupported OS refusal dismisses only that version and keeps the error`() =
         runBlocking {
             val update = update("9.5.9")

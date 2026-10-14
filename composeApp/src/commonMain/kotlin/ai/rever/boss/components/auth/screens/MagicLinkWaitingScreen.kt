@@ -2,6 +2,7 @@ package ai.rever.boss.components.auth.screens
 
 import ai.rever.boss.components.auth.forms.*
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.services.auth.MagicLinkErrorService
 import ai.rever.boss.services.supabase.AuthService
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -335,94 +336,30 @@ fun MagicLinkWaitingScreen(
 }
 
 /**
- * Process a manual magic link input (for debugging purposes)
+ * Handles a link pasted into "Paste magic link manually". Where the OS does not deliver `boss://` links
+ * (BossConsole#410, Linux) this box is how a user signs in, so text that is not a sign-in link says so
+ * rather than doing nothing.
  */
-private fun processMagicLink(
+internal fun processMagicLink(
     magicLinkUrl: String,
     onSuccess: () -> Unit,
 ) {
+    logger.debug(LogCategory.AUTH, "Processing manual magic link")
+    val deepLink = signInDeepLinkFor(magicLinkUrl)
+    if (deepLink == null) {
+        // Not logged: the text can be a sign-in link, token included, in a shape this does not read.
+        logger.warn(LogCategory.AUTH, "Pasted text is not a sign-in link")
+        MagicLinkErrorService.setError(NOT_A_SIGN_IN_LINK)
+        return
+    }
     try {
-        logger.debug(LogCategory.AUTH, "Processing manual magic link")
-
-        // Handle different URL formats and ensure HTTPS for security
-        val processedUrl =
-            when {
-                // Already a proper deep link
-                magicLinkUrl.startsWith("boss://") -> {
-                    magicLinkUrl
-                }
-
-                // Supabase magic link from api.risaboss.com or other domains - extract token and create deep link
-                (magicLinkUrl.contains("verify") && magicLinkUrl.contains("token=")) -> {
-                    val token = extractTokenFromUrl(magicLinkUrl)
-                    val type = extractTypeFromUrl(magicLinkUrl) ?: "magiclink"
-                    if (token != null) {
-                        "boss://auth/verify?token=$token&type=$type"
-                    } else {
-                        logger.warn(LogCategory.AUTH, "Failed to extract token from URL")
-                        return
-                    }
-                }
-
-                // Force HTTPS for security - convert HTTP to HTTPS
-                magicLinkUrl.startsWith("http://") -> {
-                    val httpsUrl = magicLinkUrl.replaceFirst("http://", "https://")
-                    logger.debug(LogCategory.AUTH, "Converting insecure HTTP to HTTPS")
-                    httpsUrl
-                }
-
-                // Already HTTPS - good to go
-                magicLinkUrl.startsWith("https://") -> {
-                    magicLinkUrl
-                }
-
-                // Add https:// if missing
-                magicLinkUrl.contains("://").not() -> {
-                    "https://$magicLinkUrl"
-                }
-
-                else -> {
-                    magicLinkUrl
-                }
-            }
-
-        logger.debug(LogCategory.AUTH, "Processed URL for deep link")
         ai.rever.boss.utils.DeepLinkHandler
-            .processDeepLink(processedUrl)
+            .processDeepLink(deepLink)
         onSuccess()
     } catch (e: Exception) {
         logger.warn(LogCategory.AUTH, "Error processing manual magic link", error = e)
     }
 }
 
-private fun extractTokenFromUrl(url: String): String? {
-    return try {
-        val tokenParam = "token="
-        val tokenStart = url.indexOf(tokenParam)
-        if (tokenStart == -1) return null
-
-        val tokenValueStart = tokenStart + tokenParam.length
-        val tokenEnd = url.indexOf("&", tokenValueStart).let { if (it == -1) url.length else it }
-
-        url.substring(tokenValueStart, tokenEnd)
-    } catch (e: Exception) {
-        logger.warn(LogCategory.AUTH, "Error extracting token from URL", error = e)
-        null
-    }
-}
-
-private fun extractTypeFromUrl(url: String): String? {
-    return try {
-        val typeParam = "type="
-        val typeStart = url.indexOf(typeParam)
-        if (typeStart == -1) return null
-
-        val typeValueStart = typeStart + typeParam.length
-        val typeEnd = url.indexOf("&", typeValueStart).let { if (it == -1) url.length else it }
-
-        url.substring(typeValueStart, typeEnd)
-    } catch (e: Exception) {
-        logger.warn(LogCategory.AUTH, "Error extracting type from URL", error = e)
-        null
-    }
-}
+private const val NOT_A_SIGN_IN_LINK =
+    "That is not a BOSS sign-in link. Copy the link from the sign-in email and paste it here."

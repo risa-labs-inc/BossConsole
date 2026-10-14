@@ -52,6 +52,27 @@ internal fun paneGlyphFor(
 }
 
 /**
+ * Every pane's glyph, keyed by panel id, normalised against the area they cover BETWEEN them.
+ *
+ * One call for the whole set rather than one per pane, because the answer for any one of them
+ * depends on all of them - and ONE definition rather than two, because the window tab bar names a
+ * pane for its group header and `SplitViewState` names the same pane again for every tab it reports
+ * to a plugin. A second copy of this normalisation is exactly how those two answers start
+ * disagreeing about what a pane is called.
+ *
+ * A pane with no measured bounds is absent from the result AND excluded from the area, which is
+ * what a layout looks like mid-composition; [paneLabel] falls through to a number for it.
+ */
+internal fun paneGlyphs(
+    panelIds: List<String>,
+    boundsOf: (String) -> PanelBounds?,
+): Map<String, PaneGlyph> {
+    val measured = panelIds.mapNotNull { id -> boundsOf(id)?.let { id to it } }
+    val all = measured.map { it.second }
+    return measured.mapNotNull { (id, bounds) -> paneGlyphFor(bounds, all)?.let { id to it } }.toMap()
+}
+
+/**
  * The rectangle every pane sits inside, or null when it is not a real area yet.
  *
  * Not the window and not the split area's own measured bounds: the panes' union is the one

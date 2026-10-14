@@ -20,10 +20,6 @@ object MacOSGestureHandler {
 
     private var isAvailable: Boolean? = null
 
-    // Threshold for triggering zoom - accumulate this much gesture magnitude before firing
-    // Value 0.15 chosen empirically to match Safari's feel (not too sensitive, not too sluggish)
-    private const val ZOOM_THRESHOLD = 0.15
-
     /**
      * Check if macOS gesture APIs are available
      */
@@ -54,16 +50,19 @@ object MacOSGestureHandler {
     /**
      * Add a magnification (pinch) gesture listener to a component.
      *
+     * Delivers every raw magnification delta rather than zoom steps, because the caller has to
+     * offer each one to the page before it knows whether to zoom at all. Callers that do zoom
+     * smooth the deltas with a [PinchZoomAccumulator].
+     *
      * @param component The Swing component to listen on
-     * @param onZoomIn Called when user pinches out (zoom in)
-     * @param onZoomOut Called when user pinches in (zoom out)
+     * @param onMagnify Called on the EDT with each event's magnification; positive when the
+     *        user pinches out (zoom in), negative when they pinch in (zoom out)
      * @return An opaque registration token to pass to [removeMagnificationListener],
      *         or null if gestures are unsupported or registration failed
      */
     fun addMagnificationListener(
         component: Component,
-        onZoomIn: () -> Unit,
-        onZoomOut: () -> Unit,
+        onMagnify: (Double) -> Unit,
     ): Any? {
         if (!isSupported()) return null
 
@@ -71,12 +70,6 @@ object MacOSGestureHandler {
             val gestureUtilitiesClass = Class.forName("com.apple.eawt.event.GestureUtilities")
             val magnificationListenerClass = Class.forName("com.apple.eawt.event.MagnificationListener")
             val magnificationEventClass = Class.forName("com.apple.eawt.event.MagnificationEvent")
-
-            // Accumulator for smooth zooming (like Safari). Per-listener state so
-            // several registered listeners don't feed a shared accumulator and
-            // trip the threshold N times faster than a single one would.
-            val accumulatorLock = Any()
-            var magnificationAccumulator = 0.0
 
             // Create a dynamic proxy for MagnificationListener
             val listener =
@@ -89,31 +82,7 @@ object MacOSGestureHandler {
                         val getMagnification = magnificationEventClass.getMethod("getMagnification")
                         val magnification = getMagnification.invoke(event) as Double
 
-                        // Use synchronized to prevent race condition between gesture thread and UI thread
-                        var shouldZoomIn = false
-                        var shouldZoomOut = false
-
-                        synchronized(accumulatorLock) {
-                            magnificationAccumulator += magnification
-
-                            // Only trigger zoom when accumulated enough
-                            if (magnificationAccumulator >= ZOOM_THRESHOLD) {
-                                shouldZoomIn = true
-                                magnificationAccumulator = 0.0
-                            } else if (magnificationAccumulator <= -ZOOM_THRESHOLD) {
-                                shouldZoomOut = true
-                                magnificationAccumulator = 0.0
-                            }
-                        }
-
-                        // Fire callbacks outside synchronized block to avoid holding lock during UI work
-                        SwingUtilities.invokeLater {
-                            if (shouldZoomIn) {
-                                onZoomIn()
-                            } else if (shouldZoomOut) {
-                                onZoomOut()
-                            }
-                        }
+                        SwingUtilities.invokeLater { onMagnify(magnification) }
                     } else if (method.name == "toString") {
                         return@newProxyInstance "MacOSGestureHandler.MagnificationListener"
                     } else if (method.name == "hashCode") {
@@ -178,5 +147,46 @@ object MacOSGestureHandler {
         } catch (_: Exception) {
             // Best-effort; the proxy becomes unreachable either way
         }
+    }
+}
+
+/**
+ * Turns a stream of raw pinch magnification deltas into discrete page-zoom steps.
+ *
+ * One instance per listener, so several registered listeners don't feed a shared total and trip
+ * the threshold N times faster than a single one would. BrowserHandleImpl only calls it on the
+ * EDT; it is synchronized anyway so a caller on another thread cannot corrupt the total.
+ */
+internal class PinchZoomAccumulator(
+    private val threshold: Double = ZOOM_THRESHOLD,
+) {
+    enum class Step { IN, OUT }
+
+    private var total = 0.0
+
+    /** Adds [magnification] and returns the step it completes, if any. */
+    @Synchronized
+    fun add(magnification: Double): Step? {
+        total += magnification
+        return when {
+            total >= threshold -> Step.IN.also { total = 0.0 }
+            total <= -threshold -> Step.OUT.also { total = 0.0 }
+            else -> null
+        }
+    }
+
+    /**
+     * Drops a partial step. Called when the page claims a pinch, so a gesture it handled cannot
+     * leave behind a remainder that tips a later, unclaimed delta into a page zoom.
+     */
+    @Synchronized
+    fun reset() {
+        total = 0.0
+    }
+
+    companion object {
+        // Accumulate this much gesture magnitude before firing a step. Value 0.15 chosen
+        // empirically to match Safari's feel (not too sensitive, not too sluggish)
+        const val ZOOM_THRESHOLD = 0.15
     }
 }

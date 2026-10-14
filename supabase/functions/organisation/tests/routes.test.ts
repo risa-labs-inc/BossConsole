@@ -830,6 +830,104 @@ Deno.test("an out-of-range expiry is refused before the RPC", async () => {
 })
 
 // ---------------------------------------------------------------------------
+// The invite link's authority
+// ---------------------------------------------------------------------------
+
+Deno.test("an unset ORG_PUBLIC_BASE_URL never mints a host from client headers", async () => {
+  const { stub, restore } = setup()
+  try {
+    // The exact deployment the issue describes: no configured public origin,
+    // so the OLD builder fell back to X-Forwarded-Host/Host -- headers the
+    // client can set wherever the edge does not overwrite them.
+    Deno.env.delete("ORG_PUBLIC_BASE_URL")
+    stub.responses.set("create_organisation_invite", {
+      success: true,
+      token: "boss_inv_abcdefghijklmnopqrstuvwxyz0123456789ABCD",
+      token_prefix: "boss_inv_abcdefg",
+      expires_at: "2026-09-01T00:00:00Z",
+      max_uses: null,
+    })
+
+    const headers = formHeaders(await sessionCookie())
+    // The old builder PREFERRED x-forwarded-host over host, so this is the
+    // exact header a poisoner sends. The CSRF gate is unaffected: it checks
+    // Origin against the host header, and both still say api.risaboss.com --
+    // which is precisely why the poisoned header sailed through to the URL.
+    headers.set("x-forwarded-host", "attacker.example")
+
+    const response = await app.request(`${BASE}/o/${FIXTURE.slug}/admin/invites/create`, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams({ [CSRF_FIELD]: CSRF, expires_in_hours: "168" }),
+    })
+
+    assertEquals(response.status, 200)
+    const body = await response.text()
+
+    // THE assertion of the fix: a credential-bearing URL must not carry an
+    // authority the CLIENT chose. The one-time join token would otherwise be
+    // handed to attacker.example on a plate.
+    assertEquals(
+      body.includes("attacker.example"),
+      false,
+      "the poisoned host must not appear anywhere in the response",
+    )
+
+    // And the link that IS rendered carries no host at all: the relative
+    // publicBasePath. It still works pasted into the origin the admin is
+    // reading, and it cannot be pointed at anyone else's.
+    assertEquals(
+      body.includes(`value="/functions/v1/organisation/join/boss_inv_abcdefghijklmnopqrstuvwxyz0123456789ABCD"`),
+      true,
+      "the unset-env invite link must be the relative path",
+    )
+    assertEquals(/value="https?:\/\//.test(body), false, "no absolute link may be minted without ORG_PUBLIC_BASE_URL")
+  } finally {
+    restore()
+  }
+})
+
+Deno.test("a configured ORG_PUBLIC_BASE_URL supplies the host, ignoring client headers", async () => {
+  const { stub, restore } = setup()
+  try {
+    // withTestEnv configures https://boss.example; set it explicitly so this
+    // test says what it means even if the helper's value ever changes.
+    Deno.env.set("ORG_PUBLIC_BASE_URL", "https://boss.example")
+    stub.responses.set("create_organisation_invite", {
+      success: true,
+      token: "boss_inv_abcdefghijklmnopqrstuvwxyz0123456789ABCD",
+      token_prefix: "boss_inv_abcdefg",
+      expires_at: "2026-09-01T00:00:00Z",
+      max_uses: null,
+    })
+
+    const headers = formHeaders(await sessionCookie())
+    headers.set("x-forwarded-host", "attacker.example")
+
+    const response = await app.request(`${BASE}/o/${FIXTURE.slug}/admin/invites/create`, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams({ [CSRF_FIELD]: CSRF, expires_in_hours: "168" }),
+    })
+
+    assertEquals(response.status, 200)
+    const body = await response.text()
+    assertEquals(
+      body.includes("attacker.example"),
+      false,
+      "a configured base must not be overridden by client headers",
+    )
+    assertEquals(
+      body.includes(`value="https://boss.example/functions/v1/organisation/join/boss_inv_abcdefghijklmnopqrstuvwxyz0123456789ABCD"`),
+      true,
+      "the invite link must use the configured base, unchanged",
+    )
+  } finally {
+    restore()
+  }
+})
+
+// ---------------------------------------------------------------------------
 // The invite landing page
 // ---------------------------------------------------------------------------
 
@@ -912,3 +1010,143 @@ Deno.test("a missing session secret fails closed with a 503", async () => {
 function stripNonce(html: string): string {
   return html.replace(/nonce="[A-Za-z0-9_-]+"/g, 'nonce="N"')
 }
+
+// ---------------------------------------------------------------------------
+// Sec-Fetch-Mode: the harvested-nonce gate, on a real POST
+//
+// csrfField() renders the nonce into the page HTML, so same-origin script
+// (Swagger UI, a CDN script) can fetch the admin page, parse the nonce out of
+// it and post it back. Those posts arrive with Sec-Fetch-Mode: cors; a real
+// form submission arrives with navigate. The gate between the two is the only
+// thing a harvester cannot fake.
+// ---------------------------------------------------------------------------
+
+Deno.test("a script-driven post with a HARVESTED valid nonce is refused", async () => {
+  const { stub, restore } = setup()
+  try {
+    // The attack from the issue: every other check passes - same origin,
+    // session-bound nonce harvested from the rendered HTML - and only the
+    // browser-set fetch mode gives it away.
+    const headers = formHeaders(await sessionCookie())
+    headers.set("sec-fetch-mode", "cors")
+
+    const before = stub.calls.length
+    const response = await app.request(`${BASE}/o/${FIXTURE.slug}/admin/settings`, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams({ [CSRF_FIELD]: CSRF, name: "Renamed" }),
+    })
+
+    assertEquals(response.status, 403)
+    // The gate must run BEFORE the admin probe, so nothing at all was called.
+    assertEquals(stub.calls.length, before)
+  } finally {
+    restore()
+  }
+})
+
+Deno.test("a harvested-nonce post hidden in an iframe is refused by the dest gate", async () => {
+  // The §1 bypass from the review: script on the same origin harvests the
+  // nonce, builds a form targeted at a hidden iframe and calls submit() - a
+  // genuine navigation, so Sec-Fetch-Mode: navigate honestly, but
+  // Sec-Fetch-Dest: iframe gives it away.
+  const { stub, restore } = setup()
+  try {
+    const headers = formHeaders(await sessionCookie())
+    headers.set("sec-fetch-mode", "navigate")
+    headers.set("sec-fetch-dest", "iframe")
+
+    const before = stub.calls.length
+    const response = await app.request(`${BASE}/o/${FIXTURE.slug}/admin/settings`, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams({ [CSRF_FIELD]: CSRF, name: "Pwned" }),
+    })
+
+    assertEquals(response.status, 403)
+    assertEquals(stub.calls.length, before)
+  } finally {
+    restore()
+  }
+})
+
+Deno.test("a real form post with Sec-Fetch-Mode: navigate and a valid nonce is accepted", async () => {
+  const { stub, restore } = setup()
+  try {
+    stub.responses.set("update_organisation_settings", { success: true })
+    const headers = formHeaders(await sessionCookie())
+    headers.set("sec-fetch-mode", "navigate")
+
+    const response = await app.request(`${BASE}/o/${FIXTURE.slug}/admin/settings`, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams({
+        [CSRF_FIELD]: CSRF,
+        name: "Renamed",
+        visibility: "public",
+      }),
+    })
+
+    assertEquals(response.status, 303)
+    assertEquals(
+      response.headers.get("location"),
+      "/functions/v1/organisation/o/acme/admin?ok=settings_saved",
+    )
+    assert(stub.calls.find((c) => c.fn === "update_organisation_settings"))
+  } finally {
+    restore()
+  }
+})
+
+Deno.test("a client with no Sec-Fetch headers is governed by the nonce alone", async () => {
+  // curl, CLI integrations, this test suite: no Sec-Fetch-* at all. They do not
+  // suddenly break - the mode gate only applies when the header is present,
+  // and the existing checks decide exactly as before.
+  const { stub, restore } = setup()
+  try {
+    stub.responses.set("update_organisation_settings", { success: true })
+    const headers = new Headers({
+      "content-type": "application/x-www-form-urlencoded",
+      "host": "api.risaboss.com",
+      "origin": "https://api.risaboss.com",
+      "x-forwarded-proto": "https",
+      cookie: await sessionCookie(),
+    })
+
+    const response = await app.request(`${BASE}/o/${FIXTURE.slug}/admin/settings`, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams({ [CSRF_FIELD]: CSRF, name: "Renamed" }),
+    })
+
+    assertEquals(response.status, 303)
+    assert(stub.calls.find((c) => c.fn === "update_organisation_settings"))
+  } finally {
+    restore()
+  }
+})
+
+Deno.test("an invalid nonce is refused on every fetch-mode branch", async () => {
+  // Defense in depth: the Sec-Fetch-Mode gate ADDS a check, the nonce check
+  // stays exactly as strict as it was. Whichever branch runs, a wrong nonce
+  // never slips through.
+  const { stub, restore } = setup()
+  try {
+    for (const mode of ["cors", "navigate", null]) {
+      const headers = formHeaders(await sessionCookie())
+      if (mode) headers.set("sec-fetch-mode", mode)
+
+      const before = stub.calls.length
+      const response = await app.request(`${BASE}/o/${FIXTURE.slug}/admin/settings`, {
+        method: "POST",
+        headers,
+        body: new URLSearchParams({ [CSRF_FIELD]: "harvested-but-wrong", name: "Renamed" }),
+      })
+
+      assertEquals(response.status, 403, `sec-fetch-mode: ${mode}`)
+      assertEquals(stub.calls.length, before, `sec-fetch-mode: ${mode}`)
+    }
+  } finally {
+    restore()
+  }
+})

@@ -39,12 +39,6 @@ function check(name, cond, detail) {
     console.log(`  FAIL ${name}${detail === undefined ? '' : ` -> ${detail}`}`);
   }
 }
-/** Smallest distance between consecutive commits; Infinity when there are fewer than two. */
-function minGap(times) {
-  let smallest = Infinity;
-  for (let i = 1; i < times.length; i++) smallest = Math.min(smallest, times[i] - times[i - 1]);
-  return smallest;
-}
 function eq(name, actual, expected) {
   check(
     name,
@@ -61,7 +55,7 @@ function hostProperties() {
     if (!m) throw new Error(`${name} not found in BrowserSwipeNavScript.kt`);
     return m[1];
   };
-  return { bridge: grab('BRIDGE_PROPERTY'), state: grab('STATE_PROPERTY') };
+  return { bridge: grab('BRIDGE_PROPERTY'), state: grab('STATE_PROPERTY'), release: grab('RELEASE_PROPERTY') };
 }
 
 /**
@@ -88,6 +82,10 @@ function newPage(js, options = {}) {
   const registrations = [];
   let clockMs = 1000;
   let preventedDefaults = 0;
+  let nativeGestureId = '1';
+  let claimCalls = 0;
+  let nativeX = 0;
+  let nativeBeganAt = 0;
 
   const element = (props = {}) =>
     Object.assign(
@@ -101,6 +99,7 @@ function newPage(js, options = {}) {
         children: [],
         parentNode: null,
         setAttribute() {},
+        getAttribute(name) { return this[name] || null; },
         appendChild(child) {
           child.parentNode = this;
           this.children.push(child);
@@ -157,11 +156,17 @@ function newPage(js, options = {}) {
   };
   const shadowRoots = [];
   sandbox.window = {
+    location: options.location,
+    performance: { timeOrigin: 0 },
     addEventListener: add,
     setTimeout: sandbox.setTimeout,
     clearTimeout: sandbox.clearTimeout,
     matchMedia: () => ({ matches: options.reduceMotion === true }),
-    getComputedStyle: (el) => ({ overflowX: el.overflowX }),
+    getComputedStyle: (el) => ({
+      overflowX: el.overflowX,
+      direction: el.direction || 'ltr',
+      overscrollBehaviorX: el.overscrollBehaviorX || 'auto',
+    }),
     document: {
       body: options.noBody ? null : body,
       scrollingElement: scroller,
@@ -196,6 +201,10 @@ function newPage(js, options = {}) {
   // The clock is recorded alongside the direction: the host's SWIPE_NAV_DEBOUNCE_MS rests on
   // "two commits are never closer than GESTURE_GAP_MS", and that claim lives in this script.
   sandbox.window[hostProps.bridge] = {
+    activeGestureId: () => {
+      claimCalls++;
+      return nativeGestureId === null ? null : `${nativeGestureId}:${nativeBeganAt}`;
+    },
     navigate: (d) => {
       navigated.push(d);
       navigatedAt.push(clockMs);
@@ -208,33 +217,46 @@ function newPage(js, options = {}) {
   vm.createContext(sandbox);
   vm.runInContext(js, sandbox);
 
-  const wheel = (dx, dy, over) => {
-    const chain = over ? [over, scroller] : [body, scroller];
+  const wheel = (dx, dy, over, eventOptions = {}) => {
+    if (nativeGestureId !== null) nativeX += dx;
+    const chain = eventOptions.path || (over ? [over, scroller] : [body, scroller]);
     const event = {
       deltaMode: 0,
       deltaX: dx,
       deltaY: dy,
-      target: chain[0],
-      composedPath: () => chain,
+      timeStamp: eventOptions.timeStamp === undefined ? clockMs : eventOptions.timeStamp,
+      defaultPrevented: eventOptions.defaultPrevented === true,
+      target: eventOptions.target || chain[0],
+      composedPath: eventOptions.noComposedPath ? undefined : () => chain,
       preventDefault: () => {
         preventedDefaults++;
       },
     };
-    (listeners.wheel || []).forEach((f) => f(event));
+    (listeners.wheel || []).forEach((f) => {
+      f(event);
+      if (f === (listeners.wheel || [])[0] && eventOptions.afterCapture) eventOptions.afterCapture();
+    });
+    if (eventOptions.preventAfterObserver) event.defaultPrevented = true;
   };
 
   return {
     element,
     body,
+    claimCalls: () => claimCalls,
+    executeRelease: statement => vm.runInContext(statement, sandbox),
+    releaseRaw: (...args) => sandbox.window[hostProps.release](...args),
+    elementBlur: () => (listeners.blur || []).forEach(f => f({ target: element({ tagName: "INPUT" }) })),
+    windowBlur: () => (listeners.blur || []).forEach(f => f({ target: sandbox.window })),
+    hide: () => { sandbox.document.hidden = true; (listeners.visibilitychange || []).forEach(f => f()); },
     navigated,
     navigatedAt,
     registrations,
     wheel,
     wheelRaw: (event) => (listeners.wheel || []).forEach((f) => f(event)),
-    swipe: (count, dx, dy, over, startMs) => {
+    swipe: (count, dx, dy, over, startMs, eventOptions) => {
       for (let i = 0; i < count; i++) {
         if (startMs !== undefined) clockMs = startMs + i;
-        wheel(dx, dy || 0, over);
+        wheel(dx, dy || 0, over, eventOptions);
       }
     },
     advance: (ms) => {
@@ -252,9 +274,33 @@ function newPage(js, options = {}) {
     setState: (value) => {
       sandbox.window[hostProps.state] = value;
     },
+    release: () => {
+      const ended = nativeGestureId;
+      nativeGestureId = null;
+      sandbox.window[hostProps.release](ended, false, nativeX, false);
+    },
+    cancel: () => {
+      const ended = nativeGestureId;
+      nativeGestureId = null;
+      sandbox.window[hostProps.release](ended, true, nativeX, true);
+    },
+    momentumWheel: (dx, dy) => {
+      nativeGestureId = null;
+      wheel(dx, dy || 0);
+    },
+    newGesture: () => {
+      nativeGestureId = String(Number(nativeGestureId || 1) + 1);
+      nativeX = 0;
+      nativeBeganAt = clockMs;
+    },
     // Let every pending timer run, however far in the future. What a lifted finger and a
     // finished exit animation look like from the script's side.
     settle: () => {
+      if (nativeGestureId !== null) {
+        const ended = nativeGestureId;
+        nativeGestureId = null;
+        sandbox.window[hostProps.release](ended, false, nativeX, false);
+      }
       for (let guard = 0; guard < 100; guard++) {
         if (!timers.length) return;
         clockMs = Math.max(clockMs, Math.min(...timers.map((t) => t.at)));
@@ -289,11 +335,10 @@ const REPEAT_MS = hostRepeatMs();
 const js = fs.readFileSync(scriptJs, 'utf8');
 const constant = (name) => Number(new RegExp(`var ${name} = (\\d+)`).exec(js)[1]);
 const COMMIT_PX = constant('COMMIT_PX');
-const GAP_MS = constant('GESTURE_GAP_MS');
 const MIN_EVENTS = constant('MIN_EVENTS');
 const MAX_STEP_PX = constant('MAX_STEP_PX');
 console.log(
-  `detector: COMMIT_PX=${COMMIT_PX} GESTURE_GAP_MS=${GAP_MS} MIN_EVENTS=${MIN_EVENTS} ` +
+  `detector: COMMIT_PX=${COMMIT_PX} MIN_EVENTS=${MIN_EVENTS} ` +
     `MAX_STEP_PX=${MAX_STEP_PX}; host: ${hostProps.bridge} / ${hostProps.state}, ` +
     `SWIPE_NAV_REPEAT_MS=${REPEAT_MS}`,
 );
@@ -301,9 +346,9 @@ console.log(
 console.log('\nwiring');
 {
   const p = newPage(js);
-  check('installs exactly one wheel listener', p.installed() === 1, p.installed());
-  const wheelReg = p.registrations.find((r) => r.type === 'wheel');
-  eq('listens capture-phase and passive', wheelReg.opts, { capture: true, passive: true });
+  check('installs capture snapshot and bubble observer once', p.installed() === 2, p.installed());
+  const wheelReg = p.registrations.find((r) => r.type === 'wheel' && r.opts.capture === false);
+  eq('listens in bubble phase and passive', wheelReg.opts, { capture: false, passive: true });
   check(
     'script names the host bridge property',
     js.includes(`window.${hostProps.bridge}`) || js.includes(`w.${hostProps.bridge}`),
@@ -340,47 +385,43 @@ console.log('\na real swipe');
 {
   const p = newPage(js);
   p.swipe(12, -10);
-  p.advance(GAP_MS + 80);
+  p.release();
+  p.newGesture();
   p.swipe(12, -10);
   p.settle();
-  eq('two swipes across a gap navigate twice', p.navigated, ['back', 'back']);
+  eq('two native gesture ids navigate twice', p.navigated, ['back', 'back']);
 }
 {
-  // The floor the host's SWIPE_NAV_DEBOUNCE_MS is derived from, proved rather than asserted in
-  // prose: whatever the ordering of timers and events, two commits are never closer together than
-  // GESTURE_GAP_MS, because that gap IS how one gesture is told from the next. If a future change
-  // to decide()'s call sites falsifies that, the debounce's whole justification goes with it.
+  // A pause with fingers held produces no native Ended phase, however long it lasts.
   const p = newPage(js);
-  p.swipe(12, -10);
-  p.advance(GAP_MS + 40);
-  p.swipe(12, -10);
-  p.advance(GAP_MS + 40);
-  p.swipe(12, 10);
+  p.swipe(9, -10);
+  p.advance(REPEAT_MS + 1000);
+  eq('stationary hold does not commit', p.navigated, []);
+  p.swipe(3, 10);
   p.settle();
-  eq('three gestures navigate three times', p.navigated, ['back', 'back', 'forward']);
-  check(
-    'and no two commits are closer than the gesture gap',
-    minGap(p.navigatedAt) >= GAP_MS,
-    `${JSON.stringify(p.navigatedAt)} min gap ${minGap(p.navigatedAt)}, want >= ${GAP_MS}`,
-  );
+  eq('and remains cancellable after the hold', p.navigated, []);
 }
 {
-  // A slow deliberate drag that HESITATES mid-swipe. 120ms of quiet with the fingers still down is
-  // byte-identical to a lift, so this is two gestures here and there is no signal that would make
-  // it one. What is pinned is that the script really does emit two commits: the guard against it
-  // is SWIPE_NAV_REPEAT_MS in BrowserSwipeNavBridge.kt, which has to live host-side because this
-  // script's state dies with the document the first commit navigates away from.
   const p = newPage(js);
-  p.swipe(9, -10);
-  p.advance(GAP_MS + 1);
-  p.swipe(9, -10);
+  p.swipe(2, -10);
+  p.release();
+  p.advance(50);
+  p.newGesture();
+  p.swipe(12, -10, 0, undefined, undefined, { timeStamp: 1000 });
   p.settle();
-  eq('a drag paused past the gesture gap is two gestures to the script', p.navigated, ['back', 'back']);
-  check(
-    'and the two are close enough for the host repeat window to catch',
-    minGap(p.navigatedAt) <= REPEAT_MS,
-    `${JSON.stringify(p.navigatedAt)} min gap ${minGap(p.navigatedAt)}, want <= ${REPEAT_MS}`,
-  );
+  eq('a renderer wheel older than the native begin cannot join the new id', p.navigated, []);
+}
+{
+  const p = newPage(js);
+  p.swipe(12, -10);
+  p.cancel();
+  eq('a native cancelled phase never navigates', p.navigated, []);
+}
+{
+  const p = newPage(js);
+  p.swipe(10, -10);
+  p.momentumWheel(-1000, 200);
+  eq('momentum without an active finger id does not commit', p.navigated, []);
 }
 
 console.log('\nthe end of the gesture, not the threshold, is what commits');
@@ -468,7 +509,8 @@ console.log('\nthe end of the gesture, not the threshold, is what commits');
   // gesture the user completed past the commit distance navigates nowhere, silently.
   const p = newPage(js);
   p.swipe(12, -10);
-  p.jump(GAP_MS + 1);
+  p.release();
+  p.newGesture();
   p.wheel(-10, 0);
   eq('a finished gesture still commits when the next event beats its timer', p.navigated, ['back']);
   p.settle();
@@ -554,7 +596,97 @@ console.log('\ngestures that must not navigate');
   const carousel = p.element({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 0, overflowX: 'auto' });
   p.swipe(12, -10, 0, carousel);
   p.settle();
-  eq('but does navigate once that element is at its edge', p.navigated, ['back']);
+  eq('a nested scroller retains the gesture at its left edge', p.navigated, []);
+}
+{
+  const p = newPage(js);
+  const carousel = p.element({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 800, overflowX: 'auto' });
+  p.swipe(12, 10, 0, carousel);
+  p.settle();
+  eq('a nested scroller retains the gesture at its right edge', p.navigated, []);
+}
+{
+  const p = newPage(js);
+  // Chromium's RTL scrollLeft range runs from zero at the right edge to -range at the left.
+  const carousel = p.element({
+    scrollWidth: 1200,
+    clientWidth: 400,
+    scrollLeft: -300,
+    overflowX: 'auto',
+    direction: 'rtl',
+  });
+  p.swipe(12, -10, 0, carousel);
+  p.settle();
+  eq('an RTL scroller keeps a gesture toward its physical left', p.navigated, []);
+}
+{
+  const p = newPage(js);
+  const carousel = p.element({
+    scrollWidth: 1200,
+    clientWidth: 400,
+    scrollLeft: 0,
+    overflowX: 'auto',
+    direction: 'rtl',
+  });
+  p.swipe(12, 10, 0, carousel);
+  p.settle();
+  eq('an RTL scroller retains the gesture at its right edge', p.navigated, []);
+}
+{
+  const p = newPage(js);
+  const carousel = p.element({
+    scrollWidth: 1200,
+    clientWidth: 400,
+    scrollLeft: -800,
+    overflowX: 'auto',
+    direction: 'rtl',
+  });
+  p.swipe(12, -10, 0, carousel);
+  p.settle();
+  eq('an RTL scroller retains the gesture at its left edge', p.navigated, []);
+}
+{
+  const p = newPage(js);
+  const carousel = p.element({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 20, overflowX: 'auto' });
+  p.wheel(-10, 0, carousel);
+  carousel.scrollLeft = 0;
+  p.swipe(11, -10, 0, carousel);
+  p.settle();
+  eq('a nested scroller reaching its edge mid-gesture never becomes navigation', p.navigated, []);
+}
+{
+  const p = newPage(js);
+  const elsewhere = p.element({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 300, overflowX: 'auto' });
+  p.body.appendChild(elsewhere);
+  p.swipe(12, -10);
+  p.settle();
+  eq('a scrollable element elsewhere on the page does not take the gesture', p.navigated, ['back']);
+}
+{
+  const p = newPage(js);
+  const carousel = p.element({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 300, overflowX: 'auto' });
+  // The first event can be vertical or even zero-horizontal; ownership still belongs to the
+  // element where the gesture began when later events arrive over another target.
+  p.wheel(0, 0, carousel);
+  p.swipe(12, -10);
+  p.settle();
+  eq('the initial event scroll chain owns the whole gesture', p.navigated, []);
+}
+{
+  const p = newPage(js);
+  const host = p.element({ scrollWidth: 1200, clientWidth: 400, scrollLeft: 300, overflowX: 'auto' });
+  const shadowRoot = { nodeType: 11, parentNode: null, host };
+  const shadowChild = p.element({ parentNode: shadowRoot });
+  p.swipe(12, -10, 0, shadowChild, undefined, { noComposedPath: true, target: shadowChild });
+  p.settle();
+  eq('fallback path traversal crosses a shadow root through its host', p.navigated, []);
+}
+{
+  const p = newPage(js);
+  p.swipe(12, -10, 0, undefined, undefined, { defaultPrevented: true });
+  p.settle();
+  eq('a page handler that prevented the wheel owns the gesture', p.navigated, []);
+  check('default-prevented input never draws navigation UI', p.liveOverlays() === 0, p.liveOverlays());
 }
 {
   const p = newPage(js);
@@ -571,8 +703,17 @@ console.log('\ngestures that must not navigate');
 }
 {
   const p = newPage(js);
+  let pathReads = 0;
+  for (let i = 0; i < 8; i++) {
+    p.wheelRaw({ deltaMode: 0, deltaX: -10, deltaY: 0, target: p.body,
+      composedPath: () => { pathReads++; return [p.body]; } });
+  }
+  eq('ordinary pages build one scroll path per contact, not per capture event', pathReads, 1);
+}
+{
+  const p = newPage(js);
   p.wheelRaw({ deltaMode: 1, deltaX: -40, deltaY: 0, target: p.body, composedPath: () => [p.body] });
-  p.swipe(12, -10);
+  eq('line-mode wheels avoid host IPC', p.claimCalls(), 0);
   p.settle();
   eq('anything that is not pixel-mode', p.navigated, []);
 }
@@ -663,6 +804,62 @@ console.log("\nChrome's cancellation tiers (history_swiper.mm)");
   eq('and a clean swipe still is not', p.navigated, ['back']);
 }
 
+console.log('\nGoogle Sheets boundary adapter');
+for (const [left, dx, want] of [[0,-10,['back']],[0,10,[]],[100,-10,[]],[100,10,[]],[200,10,['forward']],[200,-10,[]]]) {
+  const p = newPage(js, { location: { hostname:'docs.google.com', pathname:'/spreadsheets/d/test/edit' } });
+  const bar = p.element({ clientWidth:100, scrollWidth:300, scrollLeft:left });
+  const grid = { querySelector: () => bar };
+  const canvas = p.element({ tagName:'CANVAS', closest: () => grid });
+  for (let i=0;i<12;i++) p.wheel(dx,0,canvas,{defaultPrevented:true});
+  p.settle();
+  eq('Sheets starts at '+left+' delta '+dx, p.navigated, want);
+}
+{
+  const p = newPage(js, { location: { hostname:'docs.google.com', pathname:'/spreadsheets/d/test/edit' } });
+  const bar = p.element({ clientWidth:100, scrollWidth:300, scrollLeft:10 });
+  const canvas = p.element({ tagName:'CANVAS', closest: () => ({querySelector:()=>bar}) });
+  p.wheel(-10,0,canvas,{afterCapture:()=>{bar.scrollLeft=0;},defaultPrevented:true});
+  p.swipe(12,-10,0,canvas);p.settle();
+  eq('Sheets reaching edge during first event remains page-owned',p.navigated,[]);
+  p.newGesture();p.swipe(12,-10,0,canvas);p.settle();
+  eq('Sheets next outward contact at edge navigates',p.navigated,['back']);
+}
+{
+  const p = newPage(js, { location: { hostname:'other.example', pathname:'/spreadsheets/d/test/edit' } });
+  const canvas=p.element({tagName:'CANVAS',closest:()=>({querySelector:()=>p.element({clientWidth:100,scrollWidth:300})})});
+  p.swipe(12,-10,0,canvas);p.settle();
+  eq('Sheets adapter does not override another origin',p.navigated,[]);
+}
+
+console.log('\nvirtual spreadsheet ownership');
+for (const props of [{ tagName: 'CANVAS' }, { role: 'grid' }, { role: 'treegrid' }]) {
+  const p = newPage(js);
+  const surface = p.element(props);
+  p.swipe(12, -10, 0, surface);
+  p.settle();
+  eq('virtual surface retains gesture: ' + JSON.stringify(props), p.navigated, []);
+}
+{
+  const p = newPage(js, { root: { overscrollBehaviorX: 'none' } });
+  p.swipe(12, -10);
+  p.settle();
+  eq('root overscroll opt-out without a DOM scroll range', p.navigated, []);
+}
+{
+  const p = newPage(js);
+  p.wheel(-10, 0, undefined, { preventAfterObserver: true });
+  p.swipe(12, -10);
+  p.settle();
+  eq('late page cancellation stays latched through later uncancelled events', p.navigated, []);
+}
+{
+  const p = newPage(js);
+  p.swipe(12, -10);
+  p.wheel(-10, 0, undefined, { preventAfterObserver: true });
+  p.settle();
+  eq('late cancellation of final event prevents release navigation', p.navigated, []);
+}
+
 console.log('\nswitching it off while a page is open');
 {
   const p = newPage(js, { state: { enabled: false, back: true, forward: true } });
@@ -701,6 +898,20 @@ console.log('\nthe root scroller');
   p.swipe(12, -10);
   p.settle();
   eq('a root that can still scroll keeps the gesture', p.navigated, []);
+}
+{
+  const p = newPage(js, {
+    root: {
+      scrollWidth: 4000,
+      clientWidth: 800,
+      scrollLeft: 0,
+      overflowX: 'visible',
+      overscrollBehaviorX: 'contain',
+    },
+  });
+  p.swipe(12, -10);
+  p.settle();
+  eq('a contained root keeps the gesture at its boundary', p.navigated, []);
 }
 
 console.log('\na fast flick');
@@ -742,7 +953,8 @@ console.log('\nthe affordance');
   // twice in a row looks like.
   const p = newPage(js);
   p.swipe(5, -10);
-  p.advance(GAP_MS + 80);
+  p.release();
+  p.newGesture();
   p.swipe(5, -10);
   check('never stacks a second chevron', p.liveOverlays() === 1, p.liveOverlays());
 }
@@ -766,6 +978,62 @@ console.log('\nthe affordance');
 }
 
 console.log('');
+// Focus transfer inside the document must not cancel a physical contact.
+for (const kind of ['elementBlur', 'windowBlur', 'hide']) {
+  const p = newPage(js);
+  p.swipe(6, -20);
+  p[kind]();
+  p.release();
+  eq(kind + ' release semantics', p.navigated, kind === 'elementBlur' ? ['back'] : []);
+}
+{
+  const p = newPage(js, { state: { enabled: false, back: true, forward: true } });
+  p.swipe(6, 0, 20);
+  eq('disabled vertical scrolling avoids host IPC', p.claimCalls(), 0);
+}
+{
+  const p = newPage(js);
+  p.swipe(6, -20);
+  p.releaseRaw('1', false, -120, false);
+  p.releaseRaw('1', false, -120, false);
+  eq('duplicate release commits once', p.navigated, ['back']);
+}
+{
+  const p = newPage(js);
+  p.newGesture();
+  p.swipe(6, -20);
+  p.releaseRaw('1', true, 0, true);
+  p.release();
+  eq('stale release preserves the newer contact', p.navigated, ['back']);
+}
+{
+  const p = newPage(js);
+  p.momentumWheel(-20, 0);
+  p.swipe(6, -20);
+  eq('unavailable native contact cannot navigate', p.navigated, []);
+}
+{
+  const p = newPage(js);
+  p.newGesture();
+  p.swipe(6, -20, 0, undefined, undefined, { timeStamp: 999 });
+  p.release();
+  eq('one millisecond early renderer stamps are accepted', p.navigated, ['back']);
+}
+// Kotlin produces these terminal values by running the real native reducer over the same
+// samples. This exercises the generated release statement as well as recognizer parity.
+const nativeResultsAt = process.argv.indexOf('--native-results');
+if (nativeResultsAt >= 0) {
+  const fixtures = JSON.parse(fs.readFileSync(path.join(__dirname, 'swipe-nav-cases.json'), 'utf8'));
+  const results = JSON.parse(fs.readFileSync(process.argv[nativeResultsAt + 1], 'utf8'));
+  for (const fixture of fixtures) {
+    const p = newPage(js);
+    for (const [dx, dy] of fixture.samples) p.wheel(dx, dy);
+    const end = results[fixture.name];
+    p.executeRelease(end.statement);
+    eq('native/page parity: ' + fixture.name, p.navigated, fixture.expected);
+  }
+}
+
 if (failures) {
   console.log(`${failures} failing check(s)`);
   process.exit(1);

@@ -8,6 +8,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.nio.channels.Channels
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.StandardOpenOption.READ
 
 /**
  * Executes repair strategies for failing processes.
@@ -78,8 +82,9 @@ class RepairEngine(
             RepairStrategy.REPAIR_STRATEGY_ESCALATE,
         )
 
-    suspend fun handleFailure(report: ProcessFailureReport): RepairOutcome =
+    suspend fun handleFailure(request: ProcessFailureReport): RepairOutcome =
         withContext(Dispatchers.IO) {
+            val report = RepairLimits.bounded(request)
             val processId = report.processId
             val manifest: ProcessManifest? = if (report.hasManifest()) report.manifest else null
             val diagnostic = analyzer.analyze(report, manifest)
@@ -129,9 +134,10 @@ class RepairEngine(
 
             RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED -> {
                 try {
-                    onRequestRestart(processId, listOf("-Xmx512m"))
+                    val args = listOf("-Xmx512m")
+                    onRequestRestart(processId, args)
                     logger.info("Tuned restart requested for process: {}", processId)
-                    RepairOutcome.Restarted(processId)
+                    RepairOutcome.Restarted(processId, jvmArgs = args)
                 } catch (e: CancellationException) {
                     // Before the Exception arm: CancellationException *is* an Exception, so
                     // catching it here would turn "the caller hung up" into a repair failure
@@ -244,6 +250,7 @@ class RepairEngine(
     private fun readSourceFiles(manifest: ProcessManifest?): Map<String, String> {
         if (manifest == null || manifest.sourceFilesList.isEmpty()) return emptyMap()
         return manifest.sourceFilesList
+            .take(RepairLimits.SOURCE_COUNT)
             .associateWith { path -> readConfinedSourceFile(path) }
             .filterValues { it.isNotBlank() }
     }
@@ -272,12 +279,24 @@ class RepairEngine(
                 }
 
                 else -> {
-                    confined.readText()
+                    readBoundedSource(confined)
                 }
             }
         } catch (_: Exception) {
             ""
         }
+
+    private fun readBoundedSource(file: File): String {
+        val bytes =
+            Files.newByteChannel(file.toPath(), setOf(READ, NOFOLLOW_LINKS)).use { channel ->
+                Channels.newInputStream(channel).use { it.readNBytes(RepairLimits.SOURCE_BYTES + 1) }
+            }
+        if (bytes.size > RepairLimits.SOURCE_BYTES) {
+            logger.warn("Manifest source file exceeds the read limit; omitted from repair analysis")
+            return ""
+        }
+        return bytes.toString(Charsets.UTF_8)
+    }
 
     private fun buildEscalationReport(
         processId: String,
@@ -301,6 +320,7 @@ class RepairEngine(
 sealed class RepairOutcome {
     data class Restarted(
         val processId: String,
+        val jvmArgs: List<String> = emptyList(),
     ) : RepairOutcome()
 
     data class StateReset(

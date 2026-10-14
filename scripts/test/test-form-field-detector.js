@@ -1,0 +1,501 @@
+#!/usr/bin/env node
+/**
+ * Runs the form-field detection scripts against a fake DOM.
+ *
+ * FormFieldDetector is JavaScript living inside a Kotlin string, and unlike the interaction
+ * collector it has no Kotlin test at all - so nothing currently reads it, by grep or by
+ * execution. It is injected into the main frame by
+ * BrowserHandleImpl.injectPageHelpers, so what it does on a page is not a detail.
+ *
+ * This runs both of its scripts and pins what they DO. Four of the checks below are
+ * defects rather than desired behaviour; each is marked and names the follow-up. They are
+ * pinned rather than fixed here so that the fix is a reviewable diff against a known state
+ * instead of an unmeasured claim.
+ *
+ * It also closes a coupling the Kotlin side cannot see: the injected script emits nine keys
+ * and parseFieldInfoJson picks them back out with one hand-written regex per key, across two
+ * languages in the same file. A rename on either side does not fail - it silently yields "" for
+ * that field forever. Both key sets are read from source here and compared.
+ *
+ * Usage: node scripts/test/test-form-field-detector.js
+ */
+
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+const repoRoot = path.resolve(__dirname, '../..');
+
+/** Sources are read line-ending-normalised: a Windows checkout with core.autocrlf on has CRLF. */
+function readSource(file) {
+  return fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+}
+const detectorKt = path.join(
+  repoRoot,
+  'composeApp/src/desktopMain/kotlin/ai/rever/boss/plugin/browser/FormFieldDetector.kt',
+);
+const collectorKt = path.join(
+  repoRoot,
+  'composeApp/src/desktopMain/kotlin/ai/rever/boss/plugin/browser/BrowserInteractionScript.kt',
+);
+
+let failures = 0;
+function check(name, cond, detail) {
+  if (cond) {
+    console.log(`  ok   ${name}`);
+  } else {
+    failures++;
+    console.log(`  FAIL ${name}${detail === undefined ? '' : ` -> ${detail}`}`);
+  }
+}
+function eq(name, actual, expected) {
+  check(
+    name,
+    JSON.stringify(actual) === JSON.stringify(expected),
+    `got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Extract both scripts out of the Kotlin string literals.
+//
+// Neither block interpolates a Kotlin constant, so unlike the collector harness there is
+// nothing to resolve - but an interpolation added later would reach the page as a literal
+// "$NAME", so it is rejected here rather than silently executed.
+// ---------------------------------------------------------------------------
+function dedent(block) {
+  const lines = block.split('\n').slice(1);
+  const body = lines.filter((l) => l.trim());
+  if (!body.length) throw new Error('empty script block');
+  const indent = Math.min(...body.map((l) => l.length - l.trimStart().length));
+  return lines.map((l) => (l.trim() ? l.slice(indent) : '')).join('\n');
+}
+
+function loadScripts() {
+  const src = readSource(detectorKt);
+  const parts = src.split('"""');
+  if (parts.length !== 5) {
+    throw new Error(`expected exactly 2 script blocks in FormFieldDetector.kt, found ${(parts.length - 1) / 2}`);
+  }
+  const inject = dedent(parts[1]);
+  const enumerate = dedent(parts[3]);
+  for (const [name, js] of [['inject', inject], ['enumerate', enumerate]]) {
+    const interpolated = js.split('\n').filter((l) => /\$\w|\$\{/.test(l));
+    if (interpolated.length) {
+      throw new Error(`unresolved Kotlin interpolation in ${name} script: ${interpolated[0]}`);
+    }
+  }
+  return { inject, enumerate };
+}
+
+/** The keys parseFieldInfoJson pulls back out, read from the Kotlin rather than restated. */
+function kotlinParsedKeys() {
+  const src = readSource(detectorKt);
+  return [...src.matchAll(/extractValue\("(\w+)"\)/g)].map((m) => m[1]).sort();
+}
+
+/** The regex parseFieldInfoJson builds per key, reconstructed from the Kotlin source. */
+function kotlinExtractRegex(key) {
+  const src = readSource(detectorKt);
+  // val pattern = "\"$key\":\"([^\"]*)\""
+  const literal = /val pattern = "(.+?)"\n/.exec(src);
+  if (!literal) throw new Error('could not find the extractValue pattern in FormFieldDetector.kt');
+  const pattern = literal[1]
+    .replace(/\\"/g, '"')
+    .replace('$key', key);
+  return new RegExp(pattern);
+}
+
+/** Whether the sibling collector guards against being injected twice into one document. */
+function collectorHasReinjectionGuard() {
+  const src = readSource(collectorKt);
+  return /STARTED_FLAG/.test(src) && /if \(window\.\$STARTED_FLAG\)/.test(src);
+}
+
+// ---------------------------------------------------------------------------
+// Fake DOM: only the subset these scripts exercise. This is not a browser DOM;
+// unimplemented property reads can return undefined and require explicit coverage.
+// Fixtures use valid lowercase input types and absolute form actions: these properties do not
+// implement browser normalization/URL resolution. window is not the VM global, and listeners
+// are not deduplicated. Each injection creates fresh closures, so the duplicate-listener
+// characterization below also holds in a real browser despite that model simplification.
+// ---------------------------------------------------------------------------
+function newPage() {
+  const listeners = [];
+  const logs = [];
+  const timers = [];
+
+  const el = (tag, attrs = {}) => {
+    const node = {
+      nodeType: 1,
+      tagName: tag.toUpperCase(),
+      children: [],
+      parentElement: null,
+      _attrs: { ...attrs },
+      get type() {
+        return node.tagName === 'TEXTAREA' ? 'textarea' : (node._attrs.type || 'text');
+      },
+      get name() {
+        return node._attrs.name;
+      },
+      get id() {
+        return node._attrs.id;
+      },
+      get placeholder() {
+        return node._attrs.placeholder;
+      },
+      get value() {
+        return node._attrs.value;
+      },
+      get className() {
+        return node._attrs.class;
+      },
+      get action() {
+        return node._attrs.action;
+      },
+      get isConnected() {
+        let walk = node;
+        while (walk && walk !== document._root) walk = walk.parentElement;
+        return walk === document._root;
+      },
+      getAttribute(n) {
+        return Object.prototype.hasOwnProperty.call(node._attrs, n) ? node._attrs[n] : null;
+      },
+      closest(sel) {
+        let walk = node;
+        while (walk) {
+          if (walk.tagName === sel.toUpperCase()) return walk;
+          walk = walk.parentElement;
+        }
+        return null;
+      },
+    };
+    return node;
+  };
+
+  const append = (parent, child) => {
+    child.parentElement = parent;
+    parent.children.push(child);
+    return child;
+  };
+
+  /** Depth-first flatten, so querySelectorAll can answer without a real selector engine. */
+  const flatten = (node, out = []) => {
+    for (const c of node.children) {
+      out.push(c);
+      flatten(c, out);
+    }
+    return out;
+  };
+
+  const document = {
+    activeElement: null,
+    _root: el('body'),
+    addEventListener(type, fn, capture) {
+      listeners.push({ type, fn, capture });
+    },
+    querySelectorAll(sel) {
+      const wanted = sel.split(',').map((s) => s.trim().toUpperCase());
+      return flatten(document._root).filter((n) => wanted.includes(n.tagName));
+    },
+  };
+
+  const window = {};
+  const sandbox = {
+    window,
+    document,
+    console: { log: (...args) => logs.push(args) },
+    setTimeout: (fn, ms) => timers.push({ fn, ms }),
+    Array,
+    Object,
+    JSON,
+    String,
+  };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+
+  const fire = (type, target) => {
+    for (const l of listeners) {
+      if (l.type === type) l.fn({ target });
+    }
+  };
+
+  return {
+    sandbox,
+    window,
+    document,
+    listeners,
+    logs,
+    timers,
+    el,
+    append,
+    focus: (node) => {
+      document.activeElement = node;
+      fire('focusin', node);
+    },
+    fire,
+    run: (js) => vm.runInContext(js, sandbox),
+    runTimers: () => {
+      const queued = timers.splice(0, timers.length);
+      const errors = [];
+      for (const t of queued) {
+        try { t.fn(); } catch (error) { errors.push(error); }
+      }
+      return errors;
+    },
+  };
+}
+
+const { inject, enumerate } = loadScripts();
+
+// ---------------------------------------------------------------------------
+
+console.log('\nlistener registration');
+{
+  const p = newPage();
+  p.run(inject);
+  eq('listener types', p.listeners.map((l) => l.type), ['focusin', 'focusout']);
+  check(
+    'both are capture-phase',
+    p.listeners.every((l) => l.capture === true),
+    JSON.stringify(p.listeners.map((l) => l.capture)),
+  );
+}
+
+console.log('\nfocus tracking');
+{
+  const p = newPage();
+  p.run(inject);
+
+  const input = p.el('input', { type: 'text', name: 'mrn' });
+  p.focus(input);
+  check('focusin on an input is tracked', p.window.__BOSS_FOCUSED_FIELD === input);
+
+  const div = p.el('div');
+  p.fire('focusin', div);
+  check('focusin on a non-field leaves the previous field in place', p.window.__BOSS_FOCUSED_FIELD === input);
+}
+
+console.log('\nnormal focus transitions');
+{
+  const p = newPage();
+  p.run(inject);
+  const input = p.el('input');
+  const textarea = p.el('textarea');
+  p.document.activeElement = input;
+  check('accessor falls back to the active input before focusin', p.window.__BOSS_GET_FOCUSED_FIELD().type === 'text');
+  p.focus(input);
+  p.fire('focusout', input);
+  eq('blur schedules the context-menu grace period', p.timers.map((t) => t.ms), [500]);
+  check('blur retains the field until the timer runs', p.window.__BOSS_FOCUSED_FIELD === input);
+  p.focus(textarea);
+  eq('focus-transfer timer completes without errors', p.runTimers(), []);
+  check('the old blur timer preserves the newly focused textarea', p.window.__BOSS_FOCUSED_FIELD === textarea);
+  eq('focused textarea reports its DOM type', p.window.__BOSS_GET_FOCUSED_FIELD().type, 'textarea');
+  p.fire('focusout', textarea);
+  p.document.activeElement = p.document._root;
+  eq('blur-to-body timer completes without errors', p.runTimers(), []);
+  check('blur to the body clears the retained field', p.window.__BOSS_FOCUSED_FIELD === null);
+  eq('accessor returns null when no field is focused', p.window.__BOSS_GET_FOCUSED_FIELD(), null);
+}
+
+console.log('\nre-injection into one document installs one set of listeners');
+// The host re-runs injectPageHelpers on every main-frame NavigationFinished, and for a
+// single-page app that is a route change WITHIN one document - so without a guard the same
+// document accrues another pair of capture-phase listeners per route, permanently. The
+// sibling collector guards exactly this case with its own started-flag, and this script
+// now carries the equivalent.
+{
+  const p = newPage();
+  p.run(inject);
+  const afterFirst = p.listeners.length;
+  p.run(inject);
+  const afterSecond = p.listeners.length;
+  eq('listeners after one injection', afterFirst, 2);
+  eq('listeners after a second injection into the same document', afterSecond, 2);
+  check(
+    'the sibling collector guards this the same way, so the shape is house style',
+    collectorHasReinjectionGuard(),
+  );
+
+  // The guard's early return does not disarm the document: focus recorded after a
+  // same-document re-injection is still tracked, and nothing was retained for it to clear.
+  const input = p.el('input', { type: 'text', name: 'mrn' });
+  check('the re-injection left nothing retained to clear', p.window.__BOSS_FOCUSED_FIELD === null);
+  p.focus(input);
+  check('focus after a same-document re-injection is still tracked', p.window.__BOSS_FOCUSED_FIELD === input);
+}
+
+console.log('\na failed injection leaves the document retryable (flag claimed last)');
+// The sibling writes the same rule down: the started-flag is claimed LAST, once the listeners
+// and accessor exist. Claimed at the top, a throw anywhere in between would leave it standing
+// with no listeners and no accessor, and no later navigation could repair the document.
+// The fake page makes document.addEventListener throw to stand in for any mid-script fault;
+// the script has no try/catch, so the throw surfaces and the flag must be unset, so a retry
+// re-runs the whole body.
+{
+  const p = newPage();
+  let threw = false;
+  const origAdd = p.document.addEventListener;
+  p.document.addEventListener = function (type, fn, capture) {
+    if (type === 'focusout') throw new Error('boom');
+    return origAdd.call(p.document, type, fn, capture);
+  };
+  try {
+    p.run(inject);
+  } catch (e) {
+    threw = true;
+  }
+  check('a mid-script fault surfaces rather than being swallowed', threw);
+  eq('the flag is not claimed when the listeners fail', p.window.__bossFieldDetectionStarted, undefined);
+  eq('and the failed attempt installed nothing past the first listener', p.listeners.length, 1);
+}
+
+console.log('\nre-injection releases a retained field the route change detached');
+// A same-document route change can tear the old DOM down without firing focusout - focus
+// moves to the body silently, so the 500ms clear never runs. The unguarded code reset
+// __BOSS_FOCUSED_FIELD on every injection; without that release the accessor would serve
+// the detached field's value for the life of the document, and the tagName-only check
+// cannot tell a dead node from a live one without isConnected.
+{
+  const p = newPage();
+  p.run(inject);
+  const form = p.append(p.document._root, p.el('form'));
+  const pwd = p.append(form, p.el('input', { type: 'password', name: 'pwd', value: 'shh' }));
+  p.focus(pwd);
+  check('the live field is retained while it is focused', p.window.__BOSS_FOCUSED_FIELD === pwd);
+  check('and the live field reads as connected', pwd.isConnected === true);
+
+  // The route change: the old form leaves the document, and the re-injection lands.
+  form.parentElement.children.length = 0;
+  form.parentElement = null;
+  p.document.activeElement = p.document._root;
+  p.run(inject);
+
+  eq('the detached field reads as not connected', pwd.isConnected, false);
+  eq('the detached field is released on the re-injection', p.window.__BOSS_FOCUSED_FIELD, null);
+  eq('and the accessor no longer serves its value', p.window.__BOSS_GET_FOCUSED_FIELD(), null);
+}
+
+console.log('\nthe page console is not narrated with field identity');
+// Logging a field's name or id on every focus put the user's form identity into a surface
+// the page itself can read back, for the life of the document, and multiplied it by every
+// re-injection. Injection is silent too: one line per navigation said nothing a caller needed.
+{
+  const p = newPage();
+  p.logs.length = 0;
+  p.run(inject);
+  eq('injecting the script logs nothing', p.logs.length, 0);
+  p.fire('focusin', p.el('input', { type: 'password', name: 'pwd' }));
+  eq('and focusing a password field logs nothing', p.logs.length, 0);
+}
+
+console.log('\nwhat the page-reachable accessor returns');
+// window.__BOSS_GET_FOCUSED_FIELD is a plain main-world global - no isolated world is used
+// anywhere in this repo. Recorded here because the sibling collector's KDoc names value,
+// placeholder, id, className and aria-label as the exact fields it refuses to read, citing
+// a healthcare deployment where the input value is the patient MRN. A same-origin page can
+// already read its inputs; this accessor grants no new read capability. It is also writable
+// by the page, so its returned metadata is not a trusted security boundary.
+{
+  const p = newPage();
+  p.run(inject);
+
+  const form = p.append(p.document._root, p.el('form', { action: 'https://example.test/login' }));
+  const input = p.append(
+    form,
+    p.el('input', {
+      type: 'password',
+      name: 'pwd',
+      id: 'patient-4417',
+      placeholder: 'Patient MRN',
+      value: 'hunter2',
+      class: 'form-control secret',
+      autocomplete: 'current-password',
+      'aria-label': 'Patient MRN',
+    }),
+  );
+  p.fire('focusin', input);
+
+  const got = p.window.__BOSS_GET_FOCUSED_FIELD();
+  eq('the live field value is returned', got.value, 'hunter2');
+  eq('as are id, className, placeholder and ariaLabel', [got.id, got.className, got.placeholder, got.ariaLabel], [
+    'patient-4417',
+    'form-control secret',
+    'Patient MRN',
+    'Patient MRN',
+  ]);
+  eq('and the owning form action', got.formAction, 'https://example.test/login');
+}
+
+console.log('\nnull-safety of the focusout handler');
+// document.activeElement is nullable per spec (a detached document, or teardown between the
+// blur and the 500ms timer). Dereferencing .tagName on it unguarded threw out of the deferred
+// clear, which left __BOSS_FOCUSED_FIELD pointing at the blurred field - the one case the
+// clear exists for. A null activeElement means focus went nowhere, so the field is cleared.
+{
+  const p = newPage();
+  p.run(inject);
+  const input = p.el('input', { type: 'text', name: 'mrn' });
+  p.fire('focusin', input);
+  p.fire('focusout', input);
+  p.document.activeElement = null;
+
+  // A second blur queues another independent timer task. Both must run without throwing.
+  p.fire('focusout', input);
+  const errors = p.runTimers();
+  eq('no null-activeElement timer fails', errors.length, 0);
+  check('and the blurred field is released', p.window.__BOSS_FOCUSED_FIELD === null);
+}
+
+console.log('\nthe enumeration script returns rows');
+// findAllFormFields runs this script and then completes with a list it never wrote to, so
+// the Kotlin returns an empty list whatever the page contains. That the script itself
+// produces data is what makes the discard a loss rather than a no-op.
+// Follow-up: parse the result, or drop the function.
+{
+  const p = newPage();
+  const form = p.append(p.document._root, p.el('form'));
+  p.append(form, p.el('input', { type: 'text', name: 'user', id: 'u', placeholder: 'User', autocomplete: 'username' }));
+  p.append(form, p.el('input', { type: 'password', name: 'pwd', id: 'p', placeholder: 'Password', autocomplete: 'current-password' }));
+  p.append(form, p.el('textarea', { name: 'notes', id: 'n', placeholder: 'Notes' }));
+
+  const rows = p.run(enumerate);
+  eq('every input and textarea is reported', rows.length, 3);
+  eq('names, in document order', rows.map((r) => r.name), ['user', 'pwd', 'notes']);
+  eq('a textarea retains its browser DOM type', rows[2].type, 'textarea');
+}
+
+console.log('\ncross-language key coupling');
+// The injected script emits these keys; parseFieldInfoJson pulls them back out with one
+// hand-written regex per key. A rename on either side yields "" for that field silently.
+{
+  const p = newPage();
+  p.run(inject);
+  const input = p.el('input', { type: 'text' });
+  p.focus(input);
+  const emitted = Object.keys(p.window.__BOSS_GET_FOCUSED_FIELD()).sort();
+  eq('the Kotlin extracts exactly the keys the script emits', kotlinParsedKeys(), emitted);
+}
+
+console.log('\nDEFECT: the extract regex is not a JSON parser');
+// parseFieldInfoJson matches "key":"([^"]*)" against the JSON.stringify output. [^"]* stops
+// at the first quote, which for an escaped one is the escape's own - so a value containing a
+// double quote is truncated and keeps a trailing backslash.
+// Follow-up: decode with a JSON parser.
+{
+  const json = JSON.stringify({ placeholder: 'Say "hi"', name: 'greeting' });
+  const got = kotlinExtractRegex('placeholder').exec(json);
+  eq('an unremarkable placeholder does not survive the round trip', got && got[1], 'Say \\');
+  const clean = kotlinExtractRegex('name').exec(json);
+  eq('a value with no quote in it is fine', clean && clean[1], 'greeting');
+  const escaped = JSON.stringify({ placeholder: 'line\nnext\\end' });
+  eq('escape sequences remain encoded', kotlinExtractRegex('placeholder').exec(escaped)[1], 'line\\nnext\\\\end');
+  const spoofed = JSON.stringify({ placeholder: 'a", "name":"admin', name: 'real' });
+  eq('a quoted value cannot forge the name key', kotlinExtractRegex('name').exec(spoofed)[1], 'real');
+}
+
+console.log(
+  failures === 0 ? '\nAll form-field detector checks passed.' : `\n${failures} check(s) FAILED.`,
+);
+process.exit(failures === 0 ? 0 : 1);

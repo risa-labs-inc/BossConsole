@@ -245,6 +245,13 @@ message NodeUpdated {
   string node_id = 1;
   map<string, string> changed_properties = 2;
   WidgetModifier modifier = 3;  // Updated modifier (null = no change)
+  // Keys whose entries must be deleted. Removal cannot use an empty-string
+  // sentinel in changed_properties because empty is a valid value for text,
+  // labels, selections and event ids. Added as field 4 so older receivers
+  // safely ignore it and older senders continue to decode. Receivers apply
+  // removals before changes, so changed_properties wins for conflicting keys;
+  // senders should emit disjoint collections.
+  repeated string removed_properties = 4;
 }
 
 message NodeMoved {

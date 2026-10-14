@@ -38,6 +38,8 @@ class AuthBrandSiteViewScopeTest {
             "BrowserViewState(browser, viewScope, window)" in source,
             "the brand page view should run in its supervised child scope (viewScope)",
         )
+        assertTrue("authBrandViewScope(scope)" in source, "keep upstream's native failure isolation")
+        assertTrue("remember(browser, window, viewScope)" in source, "reattach when the view scope changes")
     }
 
     @Test
@@ -45,7 +47,7 @@ class AuthBrandSiteViewScopeTest {
         // The parenting, not just the supervisor: an unparented `SupervisorJob()` would isolate failures
         // and still leak exactly like #629.
         assertTrue(
-            "SupervisorJob(scope.coroutineContext[Job])" in source,
+            "SupervisorJob(parent.coroutineContext[Job])" in source,
             "the view's supervisor must be a child of the composition's job",
         )
         assertTrue(

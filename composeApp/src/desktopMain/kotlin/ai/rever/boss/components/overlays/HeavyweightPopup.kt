@@ -3,7 +3,6 @@ package ai.rever.boss.components.overlays
 import ai.rever.boss.plugin.browser.LocalAwtWindow
 import ai.rever.boss.plugin.ui.BossPopupAnchoring
 import ai.rever.boss.window.ApplyBossWindowIcon
-import ai.rever.boss.window.BossWindowIcon
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -27,7 +26,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Window
 
 /**
  * Heavyweight overlay window for HARDWARE_ACCELERATED browser mode.
@@ -108,15 +106,10 @@ fun HeavyweightPopup(
             }
         }
 
-    Window(
+    OverlayWindow(
         onCloseRequest = onDismissRequest,
         state = state,
-        undecorated = true,
-        transparent = true,
-        alwaysOnTop = true,
         focusable = focusable,
-        resizable = false,
-        icon = BossWindowIcon.painter,
         onKeyEvent = { event ->
             if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
                 onDismissRequest()
@@ -125,7 +118,7 @@ fun HeavyweightPopup(
                 false
             }
         },
-    ) {
+    ) { window ->
         EnsureOverlayWindowTransparent(window, kind = "popup")
         ApplyBossWindowIcon(window)
         RegisterOpenPopup()

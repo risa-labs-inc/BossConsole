@@ -105,6 +105,24 @@ class McpToolSandboxTest {
         assertTrue(destructiveAssessment.reason.contains("destructive command pattern"))
     }
 
+    @Test
+    fun `mcp terminal tools are rated like the other shell tools`() {
+        val evaluator = DefaultMcpRiskEvaluator()
+
+        // open_terminal / terminal_open start a real shell; their `command` argument must be
+        // risk-rated the way the identical string through run_in_panel is, so the approval
+        // dialog cannot show a LOW risk for arbitrary command execution.
+        for (name in listOf("open_terminal", "terminal_open")) {
+            val benign = McpToolArgs(mapOf("command" to "ls -la"), """{"command":"ls -la"}""")
+            assertEquals(McpRiskLevel.HIGH, evaluator.evaluateRisk(name, benign).level, "$name benign")
+
+            val destructive =
+                McpToolArgs(mapOf("command" to "rm -rf /tmp/test"), """{"command":"rm -rf /tmp/test"}""")
+            val assessment = evaluator.evaluateRisk(name, destructive)
+            assertEquals(McpRiskLevel.CRITICAL, assessment.level, "$name destructive")
+        }
+    }
+
     // ---------------------------------------------------------------------
     // Sandbox Execution & Policy Gate Integration Tests
     // ---------------------------------------------------------------------

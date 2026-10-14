@@ -1,11 +1,22 @@
 name: 🔨 Build & Test
 
 on:
+  # PRs validate dev/develop integration; main pushes validate the merged tree.
+  # dev pushes run ubuntu only (see build-test's matrix): they seed the shared
+  # Gradle caches that PRs into dev restore from, without enqueueing the macOS
+  # and Windows work a later dev -> main push runs anyway.
+  # For a branch without a PR, use workflow_dispatch. See docs/ci-validation.md.
   push:
-    branches: [ main, develop, dev ]
+    branches: [main, dev]
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, dev, develop]
   workflow_dispatch:
+
+# Only superseded PR validation is disposable. Push/manual runs get unique
+# groups so a new commit cannot cancel validation used by a release.
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   JAVA_VERSION: '17'
@@ -33,8 +44,24 @@ jobs:
       - name: 🧪 Claude review authorization tests
         run: node --test .github/scripts/test-claude-review.cjs
 
+      - name: Plugin publisher HTTP fixtures
+        run: |
+          BOSS_TEST_PWSH=$(command -v pwsh)
+          export BOSS_TEST_PWSH
+          python3 scripts/test/test-publish-plugin.py
+
+      - name: macOS launcher appearance tests
+        run: python3 scripts/test/test-prepare-macos-appearance.py
+
       - name: Headless CLI launcher tests
         run: bash scripts/test/test-headless-cli.sh
+
+      - name: 🧪 boss.bat :urlencode injection regression (#1057)
+        # The shipped Windows CLI shim interpolated the CLI argument into a
+        # single-quoted PowerShell string; one quote in any argument executed
+        # attacker PowerShell. Source-shape checks run everywhere; the live
+        # probes need cmd.exe and skip where it is absent.
+        run: pwsh -NoProfile -File scripts/test/test-boss-bat-urlencode.ps1
 
       - name: 🧪 Release publish — TUS slice tests
         # Guards the byte-accurate chunk slicing in the release publish path
@@ -103,6 +130,16 @@ jobs:
         # property names against the Kotlin, which are hand-matched across two files and
         # two languages and drift into a gesture that silently does nothing.
         run: node scripts/test/test-swipe-nav.js
+
+      - name: 🧪 Form field detector
+        # FormFieldDetector is JavaScript inside a Kotlin string too, and it is the one with
+        # no Kotlin test at all - so until now nothing read it, by grep or by execution, while
+        # it was injected into the main frame. This runs both of its scripts against
+        # a fake DOM. It also pins the keys the script emits against the ones parseFieldInfoJson
+        # picks back out: those are hand-matched across two languages in one file, and a
+        # rename on either side does not fail, it silently yields an empty string for that
+        # field forever.
+        run: node scripts/test/test-form-field-detector.js
 
       - name: ✍️ No new em-dashes in prose
         # House style is a spaced hyphen. Scoped to ADDED lines on purpose: the
@@ -192,15 +229,27 @@ jobs:
     needs: version-check
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # macOS and Windows run on PRs into main, pushes to main and manual runs.
+        # PRs that don't target main, and dev pushes (cache seeding), skip them:
+        # hosted macOS and Windows runners run few jobs at once.
+        os: ${{ fromJSON(((github.event_name == 'pull_request' && github.base_ref != 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/dev')) && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
 
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v7
 
+      - name: 🧪 boss.bat live cmd.exe probes (Windows)
+        # The script-tests job runs this script on Ubuntu, where only its
+        # source-shape checks can run. Here the live probes and their mutation
+        # checks run on the real cmd.exe (#1617). A few seconds, and it
+        # runs before JDK and Gradle setup so a failure reports first.
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: ./scripts/test/test-boss-bat-urlencode.ps1
+
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@v6.0.1
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
@@ -208,7 +257,12 @@ jobs:
       - name: 🎯 Setup Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          cache-read-only: false
+          # Only pushes (main, dev) write the shared caches; PRs and manual runs restore
+          # them but never write. PR and dispatch caches are scoped to their own ref, so
+          # no other run can read them, and at ~1 GB each they pushed the repo past
+          # GitHub's 10 GB cap and evicted the shared dev/main entries (14 of 20 recent
+          # PR runs started from an empty cache).
+          cache-read-only: ${{ github.event_name != 'push' }}
 
       - name: 🧹 Stop Kotlin Daemon (Windows)
         if: matrix.os == 'windows-latest'
@@ -217,19 +271,28 @@ jobs:
           ./gradlew --stop || true
         shell: bash
 
-      - name: 🧪 Run Tests
-        run: |
-          echo "🧪 Running tests on ${{ matrix.os }}"
-          ./gradlew test --continue
-        env:
-          # boss-plugin-api-core resolution from GitHub Packages (settings/composeApp repos)
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Windows-specific: disable daemon to avoid file handle issues (KT-55959)
-          GRADLE_OPTS: ${{ matrix.os == 'windows-latest' && '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.caching=true -Dkotlin.daemon.jvm.options=-Xmx2g' || '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true' }}
+      - name: Install packaged capture helper dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ pkg-config libx11-dev libxcomposite-dev libxres-dev libxdamage-dev libxrender-dev libsystemd-dev
 
-      - name: 🔨 Build Application
+      - name: Native macOS address shortcut smoke
+        if: runner.os == 'macOS'
+        shell: bash
+        run: ./gradlew :composeApp:desktopTest --tests '*MacAddressKeyboardShortcutSmokeTest' -PskipLint --no-daemon --console=plain
+        env:
+          BOSS_TEST_NATIVE_TOOLBAR: '1'
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🔨 Build and Test Application
+        shell: bash
         run: |
           echo "🔨 Building application for ${{ matrix.os }}"
+          # Normal JVM builds never execute this release dependency. Verify both
+          # cache serialization and restoration before a packaging-only bug ships.
+          # --rerun-tasks also exercises the Windows/Linux helper after restoration.
+          for pass in 1 2; do
+            ./gradlew :composeApp:prepareAppCaptureResources --configuration-cache --configuration-cache-problems=fail --rerun-tasks -PskipLint
+          done
           # detekt and ktlintCheck are authoritative in the code-quality job;
           # skip the redundant per-OS runs the plugins wire into check
           # (3x waste + confusing signal).
@@ -239,20 +302,19 @@ jobs:
           # only the umbrella task and left 351 ktlint tasks running per OS,
           # which is how a formatting slip failed this job instead of (just)
           # code-quality.
-          ./gradlew build -PskipLint --stacktrace
+          # Keep the union of the old task requests, including explicit JVM
+          # test tasks and build -> check -> allTests -> desktopTest. One graph
+          # avoids another configuration pass and single-use daemon startup.
+          tasks=(test build)
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            tasks+=(createExecutableJar)
+          fi
+          ./gradlew "${tasks[@]}" -PskipLint --continue --stacktrace
         env:
           # boss-plugin-api-core resolution from GitHub Packages (settings/composeApp repos)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Windows-specific: disable daemon to avoid file handle issues (KT-55959)
           GRADLE_OPTS: ${{ matrix.os == 'windows-latest' && '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.caching=true -Dkotlin.daemon.jvm.options=-Xmx2g' || '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.caching=true' }}
-
-      - name: 🏗️ Create Executable JAR
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          echo "🏗️ Creating executable JAR"
-          ./gradlew createExecutableJar
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 📊 Upload Test Results
         uses: actions/upload-artifact@v7
@@ -277,14 +339,13 @@ jobs:
 
   code-quality:
     runs-on: ubuntu-latest
-    needs: version-check
 
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v7
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@v6.0.1
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
@@ -292,7 +353,12 @@ jobs:
       - name: 🎯 Setup Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          cache-read-only: false
+          # Only pushes (main, dev) write the shared caches; PRs and manual runs restore
+          # them but never write. PR and dispatch caches are scoped to their own ref, so
+          # no other run can read them, and at ~1 GB each they pushed the repo past
+          # GitHub's 10 GB cap and evicted the shared dev/main entries (14 of 20 recent
+          # PR runs started from an empty cache).
+          cache-read-only: ${{ github.event_name != 'push' }}
 
       - name: 🔍 Static Analysis (detekt + ktlint)
         run: |
@@ -300,7 +366,7 @@ jobs:
           # detekt is baselined per module: existing debt is frozen in
           # detekt-baseline.xml files, only NEW violations fail this step.
           # ktlintCheck gates formatting since the format-the-world PR.
-          ./gradlew detekt ktlintCheck
+          ./gradlew detekt ktlintCheck :composeApp:dependencies --continue
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -322,45 +388,36 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🔒 Dependency Check
-        run: |
-          echo "🔒 Checking dependencies"
-          ./gradlew :composeApp:dependencies
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   compatibility-test:
     runs-on: ubuntu-latest
-    needs: version-check
 
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v7
 
       - name: ☕ Setup JDK
-        uses: actions/setup-java@v6.0.0
+        uses: actions/setup-java@v6.0.1
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
 
       - name: 🎯 Setup Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          # Same policy as build-test: pushes write, PRs and manual runs only read.
+          cache-read-only: ${{ github.event_name != 'push' }}
 
       - name: 🧪 Test Version System
         run: |
           echo "🧪 Testing centralized version system"
           
-          # Test version increment tasks
+          # Display the configured version and compile its generated constants.
           echo "📋 Current version info:"
-          ./gradlew showVersion
+          # One invocation still exercises every original compatibility task.
+          ./gradlew showVersion generateVersionConstants :composeApp:compileKotlinDesktop
           
-          echo "🔄 Testing version increment (dry run):"
-          echo "- Patch increment test"
           ORIGINAL_VERSION=$(grep "^app.version=" version.properties | cut -d'=' -f2)
           echo "Original version: $ORIGINAL_VERSION"
-          
-          # Test that version system works
-          ./gradlew generateVersionConstants
           
           # Verify generated constants exist
           if [ -f "composeApp/build/generated/source/version/ai/rever/boss/utils/VersionConstants.kt" ]; then
@@ -370,15 +427,6 @@ jobs:
             echo "❌ Version constants not generated"
             exit 1
           fi
-
-      - name: 🔄 Test Auto-Update Integration
-        run: |
-          echo "🔄 Testing auto-update system integration"
-          
-          # Compile to ensure Version.CURRENT works with generated constants
-          ./gradlew :composeApp:compileKotlinDesktop
-          
-          echo "✅ Auto-update integration test passed"
 
   boss-ai-tests:
     name: BOSS AI contracts
@@ -394,8 +442,8 @@ jobs:
   database-tests:
     name: 🧪 Database (pgTAP)
     runs-on: ubuntu-latest
-    needs: [version-check, boss-ai-tests]
-    if: ${{ !cancelled() && needs.version-check.result == 'success' }}
+    needs: [boss-ai-tests]
+    if: ${{ !cancelled() }}
 
     steps:
       - name: Require BOSS AI contract checks
@@ -411,6 +459,31 @@ jobs:
           # API from shared runners and intermittently fails with "rate limit exceeded".
           # Pinning skips that lookup. Bump as needed.
           version: 2.109.0
+
+      # `supabase db start` pulls postgres plus the realtime, storage and auth init images, and
+      # `supabase test db` pulls pg_prove. `supabase/setup-cli` pins the CLI to ghcr.io
+      # (SUPABASE_INTERNAL_IMAGE_REGISTRY), and when GitHub's shared runner pool is busy ghcr.io
+      # refuses those pulls with `toomanyrequests` (a pool-wide limit, so signing in doesn't help,
+      # see #1583 / #1585). Pull the same images from ECR Public first and tag them with the
+      # ghcr.io names the CLI resolves. The CLI checks the local image cache before pulling, so it
+      # never touches ghcr.io. Needs no secrets, so fork PRs get it too.
+      # The tags below match the images pinned by CLI 2.109.0 and the services enabled in
+      # supabase/config.toml (db major_version, realtime, storage, auth). Revisit the list when
+      # either changes. If it drifts, or ECR Public is down, the CLI pulls whatever is missing
+      # itself, which is no worse than before.
+      - name: 📦 Pre-pull Supabase images from ECR Public
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          for img in postgres:17.6.1.140 realtime:v2.112.1 storage-api:v1.61.7 gotrue:v2.192.0 pg_prove:3.36; do
+            src="public.ecr.aws/supabase/$img"
+            for attempt in 1 2 3 4; do
+              if docker pull --quiet "$src"; then break; fi
+              if [ "$attempt" = 4 ]; then echo "::warning::could not pull $src; the CLI will fall back to ghcr.io"; continue 2; fi
+              sleep $((attempt * 15))
+            done
+            docker tag "$src" "ghcr.io/supabase/$img"
+          done
 
       - name: 🚀 Start local Postgres (applies migrations)
         run: supabase db start
@@ -432,13 +505,20 @@ jobs:
         timeout-minutes: 2
         run: python3 scripts/test/test-boss-ai-concurrency.py
 
+      - name: Verify domain quota across PostgreSQL sessions
+        timeout-minutes: 2
+        run: python3 scripts/test/test-domain-claim-concurrency.py
+      - name: Verify BOSS AI ticket single-spend across PostgreSQL sessions
+        timeout-minutes: 2
+        run: python3 scripts/test/test-boss-ai-ticket-concurrency.py
+
       - name: 🧹 Stop Supabase
         if: always()
         run: supabase stop --no-backup || true
 
   build-summary:
     if: ${{ !cancelled() }}
-    needs: [version-check, build-test, code-quality, compatibility-test, database-tests, boss-ai-tests]
+    needs: [version-check, script-tests, build-test, code-quality, compatibility-test, database-tests, boss-ai-tests]
     runs-on: ubuntu-latest
 
     steps:
@@ -454,6 +534,7 @@ jobs:
           # Job status
           echo "### 📋 Job Results" >> $GITHUB_STEP_SUMMARY
           echo "- **Version Check**: ${{ needs.version-check.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Shell Script Tests**: ${{ needs.script-tests.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Build & Test**: ${{ needs.build-test.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Code Quality**: ${{ needs.code-quality.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Compatibility Test**: ${{ needs.compatibility-test.result }}" >> $GITHUB_STEP_SUMMARY
@@ -461,7 +542,7 @@ jobs:
           echo "- **BOSS AI contracts**: ${{ needs.boss-ai-tests.result }}" >> $GITHUB_STEP_SUMMARY
 
           # Overall status
-          if [[ "${{ needs.build-test.result }}" == "success" && "${{ needs.code-quality.result }}" == "success" && "${{ needs.compatibility-test.result }}" == "success" && "${{ needs.database-tests.result }}" == "success" && "${{ needs.boss-ai-tests.result }}" == "success" ]]; then
+          if [[ "${{ needs.version-check.result }}" == "success" && "${{ needs.script-tests.result }}" == "success" && "${{ needs.build-test.result }}" == "success" && "${{ needs.code-quality.result }}" == "success" && "${{ needs.compatibility-test.result }}" == "success" && "${{ needs.database-tests.result }}" == "success" && "${{ needs.boss-ai-tests.result }}" == "success" ]]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "🎉 **Overall Status**: ✅ SUCCESS" >> $GITHUB_STEP_SUMMARY
           else

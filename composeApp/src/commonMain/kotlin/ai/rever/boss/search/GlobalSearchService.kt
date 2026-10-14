@@ -1,10 +1,13 @@
 package ai.rever.boss.search
 
+import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
+import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.formatShortcutLabel
 import ai.rever.boss.plugin.api.PluginSearchResult
 import ai.rever.boss.plugin.api.SearchResultAction
+import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
 import ai.rever.boss.run.RunConfigurationManager
 import ai.rever.boss.topofmind.TopOfMindStateHolder
 import ai.rever.boss.utils.logging.BossLogger
@@ -14,10 +17,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import java.io.File
 
 private val logger = BossLogger.forComponent("GlobalSearchService")
 
@@ -32,27 +33,6 @@ private val logger = BossLogger.forComponent("GlobalSearchService")
  * - Plugin-contributed search results
  */
 object GlobalSearchService {
-    private val fileIndexer = FileIndexer()
-
-    private val _searchResults = MutableStateFlow<List<SearchResult>>(emptyList())
-    val searchResults: StateFlow<List<SearchResult>> = _searchResults.asStateFlow()
-
-    private val _isSearching = MutableStateFlow(false)
-    val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
-
-    private val _activeCategory = MutableStateFlow(SearchCategory.ALL)
-    val activeCategory: StateFlow<SearchCategory> = _activeCategory.asStateFlow()
-
-    /**
-     * The file indexer's isIndexing state.
-     */
-    val isIndexing: StateFlow<Boolean> = fileIndexer.isIndexing
-
-    /**
-     * The currently indexed project path.
-     */
-    val indexedPath: StateFlow<String?> = fileIndexer.indexedPath
-
     /**
      * Maximum number of results per category.
      *
@@ -107,45 +87,13 @@ object GlobalSearchService {
     }
 
     /**
-     * Index a project directory for file searching.
-     *
-     * If switching to a different project, the old index is automatically cleared
-     * to prevent memory buildup from multiple indexed projects.
-     *
-     * @param projectPath The root directory to index
-     * @param forceReindex If true, re-index even if already indexed
-     */
-    suspend fun indexProject(
-        projectPath: String,
-        forceReindex: Boolean = false,
-    ) {
-        // Clear old index when switching projects to prevent memory leak
-        val currentPath = fileIndexer.indexedPath.value
-        if (currentPath != null && currentPath != projectPath) {
-            logger.debug(
-                LogCategory.FILE,
-                "Clearing old index before switching projects",
-                mapOf("oldPath" to currentPath, "newPath" to projectPath),
-            )
-            fileIndexer.clearIndex()
-        }
-        fileIndexer.indexProject(projectPath, forceReindex)
-    }
-
-    /**
-     * Set the active search category for filtering.
-     */
-    fun setActiveCategory(category: SearchCategory) {
-        _activeCategory.value = category
-    }
-
-    /**
      * Search across all data sources matching the given query.
      *
      * Searches are run in parallel across all categories for better performance
      * with large datasets. Also queries registered search providers from plugins.
      *
-     * @param query The search query
+     * @param rawQuery The search query
+     * @param indexedFiles The file snapshot owned by this dialog project session
      * @return every match from every source, in no particular order. [getFilteredResults] is what
      *   orders them - by category, then score - and is the only order anything draws or arrows
      *   through.
@@ -153,6 +101,7 @@ object GlobalSearchService {
     suspend fun search(
         rawQuery: String,
         windowId: String?,
+        indexedFiles: List<IndexedFile>,
     ): List<SearchResult> {
         // Trimmed once, here, so all nine sources agree. proseScore trimmed its own needle and the
         // fuzzy sources did not, which made trailing whitespace change the SHAPE of the results
@@ -161,52 +110,44 @@ object GlobalSearchService {
         // the same asymmetry proseScore's trim was added to avoid, pointing the other way.
         val query = rawQuery.trim()
         if (query.isBlank()) {
-            _searchResults.value = emptyList()
             return emptyList()
         }
 
-        _isSearching.value = true
+        // Read ONCE, and shared by the two sources that need it. Both used to call
+        // SearchSources.tools(windowId) from their own async, which did the slot flatten twice
+        // per keystroke and, worse, let them see different snapshots: a plugin registering
+        // between the two reads yields a Tool row whose signpost was filtered out, or the
+        // reverse. searchSettings' KDoc promises the two agree, so they have to read the same
+        // list rather than two lists that usually match.
+        val windowTools = SearchSources.tools(windowId)
 
-        try {
-            // Read ONCE, and shared by the two sources that need it. Both used to call
-            // SearchSources.tools(windowId) from their own async, which did the slot flatten twice
-            // per keystroke and, worse, let them see different snapshots: a plugin registering
-            // between the two reads yields a Tool row whose signpost was filtered out, or the
-            // reverse. searchSettings' KDoc promises the two agree, so they have to read the same
-            // list rather than two lists that usually match.
-            val windowTools = SearchSources.tools(windowId)
+        val results =
+            withContext(Dispatchers.Default) {
+                // Run all searches in parallel for better performance
+                coroutineScope {
+                    val searchResults =
+                        listOf(
+                            async { isolated("files") { searchFiles(query, indexedFiles) } },
+                            async { isolated("tabs") { searchTabs(query) } },
+                            // Includes bookmarks from plugin
+                            async { isolated("plugins") { searchPluginProviders(query) } },
+                            async { isolated("runConfigs") { searchRunConfigs(query) } },
+                            async { isolated("commands") { searchCommands(query) } },
+                            async { isolated("tools") { searchTools(query, windowTools) } },
+                            async { isolated("settings") { searchSettings(query, windowTools) } },
+                            async { isolated("mcp") { searchMcpTools(query) } },
+                            async { isolated("pages") { searchRecentPages(query) } },
+                        ).awaitAll().flatten()
 
-            val results =
-                withContext(Dispatchers.Default) {
-                    // Run all searches in parallel for better performance
-                    coroutineScope {
-                        val searchResults =
-                            listOf(
-                                async { isolated("files") { searchFiles(query) } },
-                                async { isolated("tabs") { searchTabs(query) } },
-                                // Includes bookmarks from plugin
-                                async { isolated("plugins") { searchPluginProviders(query) } },
-                                async { isolated("runConfigs") { searchRunConfigs(query) } },
-                                async { isolated("commands") { searchCommands(query) } },
-                                async { isolated("tools") { searchTools(query, windowTools) } },
-                                async { isolated("settings") { searchSettings(query, windowTools) } },
-                                async { isolated("mcp") { searchMcpTools(query) } },
-                                async { isolated("pages") { searchRecentPages(query) } },
-                            ).awaitAll().flatten()
-
-                        // Deliberately NOT sorted here. getFilteredResults is what orders results
-                        // for every reader - category first, then score - and sorting again on the
-                        // way in only invited the belief that this list is the drawn order. It is
-                        // not; it is the unordered union of the sources.
-                        searchResults
-                    }
+                    // Deliberately NOT sorted here. getFilteredResults is what orders results
+                    // for every reader - category first, then score - and sorting again on the
+                    // way in only invited the belief that this list is the drawn order. It is
+                    // not; it is the unordered union of the sources.
+                    searchResults
                 }
+            }
 
-            _searchResults.value = results
-            return results
-        } finally {
-            _isSearching.value = false
-        }
+        return results
     }
 
     /**
@@ -260,7 +201,7 @@ object GlobalSearchService {
     /**
      * Get results filtered by the active category, in the order they are drawn.
      *
-     * **Category first, score second.** `_searchResults` is sorted by score alone, which is the
+     * **Category first, score second.** The source union is sorted by score alone, which is the
      * right order for one category and the wrong one for "All": the dialog draws "All" grouped
      * into sections, walking [SearchCategory] in declaration order, and it numbers rows as it goes.
      * The keyboard indexes into THIS list. While the two orders disagreed, the highlighted row and
@@ -272,10 +213,10 @@ object GlobalSearchService {
      *
      * A no-op for a single category, where the ordinal is constant and score order survives.
      */
-    fun getFilteredResults(): List<SearchResult> {
-        val category = _activeCategory.value
-        val results = _searchResults.value
-
+    fun getFilteredResults(
+        results: List<SearchResult>,
+        category: SearchCategory,
+    ): List<SearchResult> {
         val inCategory =
             if (category == SearchCategory.ALL) {
                 results
@@ -291,29 +232,54 @@ object GlobalSearchService {
     /**
      * Get result counts by category.
      */
-    fun getResultCounts(): Map<SearchCategory, Int> {
-        val results = _searchResults.value
-        return SearchCategory.entries.associateWith { category ->
+    fun getResultCounts(results: List<SearchResult>): Map<SearchCategory, Int> =
+        SearchCategory.entries.associateWith { category ->
             if (category == SearchCategory.ALL) {
                 results.size
             } else {
                 results.count { it.category == category }
             }
         }
-    }
+
+    /**
+     * Index in [relativePath] where the file name starts, for either platform's separator.
+     *
+     * [IndexedFile.relativePath] is produced by relativizing two absolute paths, so on Windows it
+     * arrives joined with `\` and a bare `lastIndexOf('/')` returns -1. The match ranges below are
+     * then rebased against 0 instead of the file name's first character, which underlines the wrong
+     * characters - or, once a range lands past the name's length, underlines nothing at all.
+     *
+     * `/` is checked ALONGSIDE [File.separatorChar] rather than instead of it. On a POSIX host the
+     * two are the same character, so that host's behaviour is unchanged; on Windows `/` is not a
+     * legal file-name character, so it cannot split a name by accident. Deliberately not a bare
+     * `lastIndexOf('\\')` on every platform: a backslash IS a legal POSIX file-name character, and
+     * that would split `dir/we\ird.kt` inside its own name. [ContentSearchService] reaches for
+     * [File.separatorChar] in this package for the same reason.
+     *
+     * [separator] defaults to the host's and is only passed explicitly by tests. Because the rule
+     * is deliberately platform-dependent, a Windows-shaped path proves nothing when fed to a POSIX
+     * host - the shift there is correctly zero - so the parameter is what lets the Windows case be
+     * asserted on every runner rather than only on a Windows one.
+     */
+    internal fun fileNameStartIn(
+        relativePath: String,
+        separator: Char = File.separatorChar,
+    ): Int = maxOf(relativePath.lastIndexOf(separator), relativePath.lastIndexOf('/')) + 1
 
     /**
      * Search files using fuzzy matching.
      */
-    private fun searchFiles(query: String): List<SearchResult.FileResult> {
-        val files = fileIndexer.indexedFiles.value
-        if (files.isEmpty()) {
+    private fun searchFiles(
+        query: String,
+        indexedFiles: List<IndexedFile>,
+    ): List<SearchResult.FileResult> {
+        if (indexedFiles.isEmpty()) {
             return emptyList()
         }
 
         val results = mutableListOf<SearchResult.FileResult>()
 
-        for (file in files) {
+        for (file in indexedFiles) {
             val nameMatch = FuzzyMatcher.match(query, file.name, file.lowerName)
 
             if (nameMatch != null && nameMatch.score >= MIN_SCORE) {
@@ -331,7 +297,7 @@ object GlobalSearchService {
 
             val pathMatch = FuzzyMatcher.match(query, file.relativePath, file.relativePath.lowercase())
             if (pathMatch != null && pathMatch.score >= MIN_SCORE) {
-                val fileNameStart = file.relativePath.lastIndexOf('/') + 1
+                val fileNameStart = fileNameStartIn(file.relativePath)
                 val adjustedRanges =
                     pathMatch.matchRanges
                         .filter { it.start >= fileNameStart || it.end > fileNameStart }
@@ -361,33 +327,71 @@ object GlobalSearchService {
     }
 
     /**
-     * Search open tabs.
+     * Search open tabs: by title (fuzzy), and by a browser tab's URL or an editor tab's file path
+     * (substring, via [proseScore] - the same reasoning [searchRecentPages] gives for a page's URL
+     * applies here, since both are long enough for a short query to match by accident as a fuzzy
+     * subsequence).
+     *
+     * Only [FluckTabInfo.currentUrl] and [EditorTabInfo.filePath] are populated on the result - a
+     * tab of neither type (terminal, diff, …) still matches on title alone, with both left null.
      */
-    private fun searchTabs(query: String): List<SearchResult.TabResult> {
-        val tabs = TopOfMindStateHolder.activeTabs.value
-        if (tabs.isEmpty()) {
-            return emptyList()
-        }
-
-        val results = mutableListOf<SearchResult.TabResult>()
-
-        for (tab in tabs) {
-            val title = tab.tabInfo.title
-            val titleMatch = FuzzyMatcher.match(query, title, title.lowercase())
-
-            if (titleMatch != null && titleMatch.score >= MIN_SCORE) {
-                results.add(
+    private suspend fun snapshotSearchTabs(): List<SearchResult.TabResult> =
+        withContext(Dispatchers.Main) {
+            // The holder is a snapshot - refreshed when the search dialog opens and by the plugin
+            // adapter's ~2s poll - so a tab closed since the last refresh is still listed here, and
+            // returning it offers activation of a tab that no longer exists: a phantom result the
+            // caller acts on and then retries. The registry is live state rather than a snapshot -
+            // a closed window unregisters and a closed tab has no location - so an entry with no
+            // live location must not come back as actionable.
+            TopOfMindStateHolder.activeTabs.value.mapNotNull { tab ->
+                if (SplitViewStateRegistry.getState(tab.windowId)?.findTabLocation(tab.tabInfo.id) == null) {
+                    null
+                } else {
                     SearchResult.TabResult(
-                        title = title,
+                        title = tab.tabInfo.title,
                         tabId = tab.tabInfo.id,
                         workspaceName = tab.workspaceName,
                         windowId = tab.windowId,
                         panelId = tab.panelId,
                         tabType = tab.tabInfo.typeId.typeId,
-                        url = null, // Would need FluckTabInfo check
-                        filePath = null, // Would need EditorTabInfo check
-                        score = titleMatch.score + 30, // Bonus for tabs (currently visible)
-                        matchRanges = titleMatch.matchRanges,
+                        url = (tab.tabInfo as? FluckTabInfo)?.currentUrl?.takeIf { it.isNotBlank() },
+                        filePath = (tab.tabInfo as? EditorTabInfo)?.filePath?.takeIf { it.isNotBlank() },
+                        score = 0,
+                        matchRanges = emptyList(),
+                    )
+                }
+            }
+        }
+
+    private suspend fun searchTabs(query: String): List<SearchResult.TabResult> {
+        // Only immutable values cross back to the search dispatcher. Matching stays off Main.
+        val tabs = snapshotSearchTabs()
+        if (tabs.isEmpty()) {
+            return emptyList()
+        }
+
+        val queryLower = query.lowercase()
+        val results = mutableListOf<SearchResult.TabResult>()
+
+        for (tab in tabs) {
+            val title = tab.title
+            val url = tab.url
+            val filePath = tab.filePath
+
+            val titleMatch = FuzzyMatcher.match(query, title, title.lowercase())
+            val titleScore = titleMatch?.score?.takeIf { it >= MIN_SCORE }
+            val urlScore = url?.let { proseScore(query, queryLower, it) }
+            val filePathScore = filePath?.let { proseScore(query, queryLower, it) }
+
+            val bestScore = listOfNotNull(titleScore, urlScore, filePathScore).maxOrNull()
+            if (bestScore != null) {
+                results.add(
+                    tab.copy(
+                        score = bestScore + 30, // Bonus for tabs (currently visible)
+                        // Only ever highlights the title: a URL/file-path-only hit has nothing in
+                        // the title to underline, and TabResultItem never renders these fields' own
+                        // ranges - matching searchRecentPages, which carries no ranges for a URL hit.
+                        matchRanges = titleMatch?.matchRanges ?: emptyList(),
                     ),
                 )
             }
@@ -442,52 +446,120 @@ object GlobalSearchService {
 
     /**
      * Convert a PluginSearchResult to a SearchResult.
+     *
+     * Every known category maps to the SearchResult type its rows and activation handler
+     * understand - previously only "bookmarks" produced a result and every other category
+     * silently vanished, so a plugin's file or command hits read as "no results" to whoever
+     * asked. An unknown category, or a known one missing the fields its type needs to be
+     * actionable, is dropped with a WARN naming the value instead.
      */
     private fun convertPluginSearchResult(result: PluginSearchResult): SearchResult? {
-        // Map category string to SearchCategory
-        val category =
-            when (result.category.lowercase()) {
-                "bookmarks" -> SearchCategory.BOOKMARKS
-                "files" -> SearchCategory.FILES
-                "tabs" -> SearchCategory.TABS
-                "run configs", "run_configs" -> SearchCategory.RUN_CONFIGS
-                "commands" -> SearchCategory.COMMANDS
-                else -> SearchCategory.BOOKMARKS // Default to bookmarks for plugin results
-            }
-
-        // Convert match ranges
         val matchRanges = result.matchRanges.map { MatchRange(it.start, it.end) }
-
-        return when (category) {
-            SearchCategory.BOOKMARKS -> {
-                val url =
-                    when (val action = result.action) {
-                        is SearchResultAction.OpenUrl -> action.url
-                        else -> null
-                    }
-                val filePath =
-                    when (val action = result.action) {
-                        is SearchResultAction.OpenFile -> action.path
-                        else -> null
-                    }
-
-                SearchResult.BookmarkResult(
-                    title = result.title,
-                    bookmarkId = result.id,
-                    collectionId = result.metadata["collectionId"] ?: "",
-                    collectionName = result.metadata["collectionName"] ?: result.providerId,
-                    tabType = result.metadata["tabType"] ?: "browser",
-                    url = url,
-                    filePath = filePath,
-                    score = result.score,
-                    matchRanges = matchRanges,
-                )
-            }
-
-            else -> {
-                null
-            } // Other categories handled by dedicated search methods
+        return when (result.category.lowercase()) {
+            "bookmarks" -> pluginBookmarkResult(result, matchRanges)
+            "files" -> pluginFileResult(result, matchRanges)
+            "tabs" -> pluginTabResult(result, matchRanges)
+            "run configs", "run_configs" -> pluginRunConfigResult(result, matchRanges)
+            "commands" -> pluginCommandResult(result)
+            else -> dropPluginResult(result, "unknown category")
         }
+    }
+
+    private fun pluginBookmarkResult(
+        result: PluginSearchResult,
+        matchRanges: List<MatchRange>,
+    ) = SearchResult.BookmarkResult(
+        title = result.title,
+        bookmarkId = result.id,
+        collectionId = result.metadata["collectionId"] ?: "",
+        collectionName = result.metadata["collectionName"] ?: result.providerId,
+        tabType = result.metadata["tabType"] ?: "browser",
+        url = (result.action as? SearchResultAction.OpenUrl)?.url,
+        filePath = (result.action as? SearchResultAction.OpenFile)?.path,
+        score = result.score,
+        matchRanges = matchRanges,
+    )
+
+    /**
+     * A plugin "files" result needs a real path for `onFileSelect` to open; one that names
+     * no file is unactionable, so it is dropped and logged rather than drawn as a dead row.
+     */
+    private fun pluginFileResult(
+        result: PluginSearchResult,
+        matchRanges: List<MatchRange>,
+    ): SearchResult.FileResult? {
+        val path =
+            (result.action as? SearchResultAction.OpenFile)?.path
+                ?: result.metadata["path"]
+                ?: result.metadata["filePath"]
+                ?: return dropPluginResult(result, "a files result with no path")
+        return SearchResult.FileResult(
+            name = result.title,
+            path = path,
+            relativePath = result.metadata["relativePath"] ?: path,
+            score = result.score,
+            matchRanges = matchRanges,
+        )
+    }
+
+    /**
+     * A plugin "tabs" result activates through the host's tab ids, which live in metadata;
+     * a row whose ids do not resolve no-ops on select, which the tab-select handler already logs.
+     */
+    private fun pluginTabResult(
+        result: PluginSearchResult,
+        matchRanges: List<MatchRange>,
+    ) = SearchResult.TabResult(
+        title = result.title,
+        tabId = result.metadata["tabId"] ?: result.id,
+        workspaceName = result.metadata["workspaceName"] ?: result.providerId,
+        windowId = result.metadata["windowId"] ?: "",
+        panelId = result.metadata["panelId"] ?: "",
+        tabType = result.metadata["tabType"] ?: "browser",
+        url = (result.action as? SearchResultAction.OpenUrl)?.url,
+        filePath = (result.action as? SearchResultAction.OpenFile)?.path,
+        score = result.score,
+        matchRanges = matchRanges,
+    )
+
+    private fun pluginRunConfigResult(
+        result: PluginSearchResult,
+        matchRanges: List<MatchRange>,
+    ) = SearchResult.RunConfigResult(
+        name = result.title,
+        configId = result.metadata["configId"] ?: result.id,
+        language = result.metadata["language"] ?: "",
+        filePath =
+            (result.action as? SearchResultAction.OpenFile)?.path
+                ?: result.metadata["filePath"] ?: "",
+        configType = result.metadata["configType"] ?: "",
+        score = result.score,
+        matchRanges = matchRanges,
+    )
+
+    private fun pluginCommandResult(result: PluginSearchResult) =
+        SearchResult.CommandResult(
+            actionId = result.metadata["actionId"] ?: result.id,
+            description = result.subtitle?.takeIf { it.isNotBlank() } ?: result.title,
+            shortcut = result.metadata["shortcut"],
+            score = result.score,
+        )
+
+    private fun dropPluginResult(
+        result: PluginSearchResult,
+        reason: String,
+    ): Nothing? {
+        logger.warn(
+            LogCategory.SYSTEM,
+            "Dropping a plugin search result",
+            mapOf(
+                "providerId" to result.providerId,
+                "category" to result.category,
+                "resultId" to result.id,
+                "reason" to reason,
+            ),
+        )
+        return null
     }
 
     /**
@@ -532,7 +604,11 @@ object GlobalSearchService {
      * Search commands/actions from KeymapActions.
      */
     private fun searchCommands(query: String): List<SearchResult.CommandResult> {
-        val allActionIds = KeymapActions.getAllActionIds()
+        // BossConsole#700: an id with no Spotlight-reachable dispatch route (the editor verbs,
+        // the debug external-link entry) must not be offered as a selectable command at all -
+        // reporting it "unavailable" only after selection is the weaker fix the issue explicitly
+        // asks to avoid.
+        val allActionIds = KeymapActions.getAllActionIds().filterNot { it in SPOTLIGHT_UNSUPPORTED_COMMAND_IDS }
         val settings = KeymapSettingsManager.currentSettings.value
         val results = mutableListOf<SearchResult.CommandResult>()
 
@@ -731,24 +807,4 @@ object GlobalSearchService {
         modifiers: List<String>,
         key: String,
     ): String = formatShortcutLabel(modifiers, key)
-
-    /**
-     * Clear search results.
-     */
-    fun clearResults() {
-        _searchResults.value = emptyList()
-    }
-
-    /**
-     * Clear the file index.
-     */
-    fun clearIndex() {
-        fileIndexer.clearIndex()
-        _searchResults.value = emptyList()
-    }
-
-    /**
-     * Get the count of indexed files.
-     */
-    fun getIndexedFileCount(): Int = fileIndexer.getFileCount()
 }

@@ -11,11 +11,75 @@ sealed class DiffOperation {
         val nodeId: String,
     ) : DiffOperation()
 
-    data class NodeUpdated(
+    /**
+     * Patch a node without replacing its identity or children.
+     *
+     * [changedProperties] and [removedProperties] are deliberately separate. An empty string is a
+     * valid widget value, so using it as a deletion sentinel makes a real clear operation
+     * indistinguishable from removing the property. If a hand-built operation puts a key in both,
+     * the changed value wins. The three-argument JVM constructor remains available for plugins
+     * compiled against the original SDK shape.
+     */
+    class NodeUpdated(
         val nodeId: String,
         val changedProperties: Map<String, String>,
         val newModifier: WidgetModifier?,
-    ) : DiffOperation()
+        val removedProperties: Set<String>,
+    ) : DiffOperation() {
+        /** The constructor descriptor shipped by the original SDK. */
+        constructor(
+            nodeId: String,
+            changedProperties: Map<String, String>,
+            newModifier: WidgetModifier?,
+        ) : this(nodeId, changedProperties, newModifier, emptySet())
+
+        operator fun component1(): String = nodeId
+
+        operator fun component2(): Map<String, String> = changedProperties
+
+        operator fun component3(): WidgetModifier? = newModifier
+
+        operator fun component4(): Set<String> = removedProperties
+
+        /**
+         * Retains the original copy descriptor, including its generated `copy$default` bridge.
+         * A copy made through that API preserves this update's removals.
+         */
+        fun copy(
+            nodeId: String = this.nodeId,
+            changedProperties: Map<String, String> = this.changedProperties,
+            newModifier: WidgetModifier? = this.newModifier,
+        ): NodeUpdated = NodeUpdated(nodeId, changedProperties, newModifier, removedProperties)
+
+        fun copyWithRemovedProperties(
+            nodeId: String = this.nodeId,
+            changedProperties: Map<String, String> = this.changedProperties,
+            newModifier: WidgetModifier? = this.newModifier,
+            removedProperties: Set<String> = this.removedProperties,
+        ): NodeUpdated = NodeUpdated(nodeId, changedProperties, newModifier, removedProperties)
+
+        override fun equals(other: Any?): Boolean =
+            other is NodeUpdated &&
+                nodeId == other.nodeId &&
+                changedProperties == other.changedProperties &&
+                newModifier == other.newModifier &&
+                removedProperties == other.removedProperties
+
+        override fun hashCode(): Int {
+            var result = nodeId.hashCode()
+            result = 31 * result + changedProperties.hashCode()
+            result = 31 * result + (newModifier?.hashCode() ?: 0)
+            result = 31 * result + removedProperties.hashCode()
+            return result
+        }
+
+        override fun toString(): String =
+            "NodeUpdated(" +
+                "nodeId=$nodeId, " +
+                "changedProperties=$changedProperties, " +
+                "newModifier=$newModifier, " +
+                "removedProperties=$removedProperties)"
+    }
 
     data class NodeMoved(
         val nodeId: String,
@@ -74,17 +138,16 @@ object WidgetDiffEngine {
             for ((key, value) in newNode.properties) {
                 if (oldNode.properties[key] != value) changedProps[key] = value
             }
-            for (key in oldNode.properties.keys) {
-                if (!newNode.properties.containsKey(key)) changedProps[key] = ""
-            }
+            val removedProperties = oldNode.properties.keys - newNode.properties.keys
 
             val modifierChanged = oldNode.modifier != newNode.modifier
-            if (changedProps.isNotEmpty() || modifierChanged) {
+            if (changedProps.isNotEmpty() || removedProperties.isNotEmpty() || modifierChanged) {
                 ops.add(
                     DiffOperation.NodeUpdated(
                         id,
                         changedProps,
                         if (modifierChanged) newNode.modifier else null,
+                        removedProperties,
                     ),
                 )
             }
@@ -174,7 +237,13 @@ object WidgetDiffEngine {
 
                 is DiffOperation.NodeUpdated -> {
                     val node = nodes[op.nodeId] ?: continue
-                    val newProps = node.properties.toMutableMap().apply { putAll(op.changedProperties) }
+                    val newProps =
+                        node.properties.toMutableMap().apply {
+                            op.removedProperties.forEach(::remove)
+                            // An explicit value wins over a contradictory removal in a hand-built or
+                            // malformed wire operation. diff() itself always emits disjoint sets.
+                            putAll(op.changedProperties)
+                        }
                     nodes[op.nodeId] =
                         node.copy(
                             properties = newProps,

@@ -133,6 +133,9 @@ kotlin {
 
                 // Decompose for ComponentContext
                 api(libs.decompose)
+                // Keep Decompose's transitive Essenty modules on the host's selected version.
+                api(libs.essenty.back.handler)
+                api(libs.essenty.instance.keeper)
                 api(libs.essenty.lifecycle)
 
                 // Coroutines

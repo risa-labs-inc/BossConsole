@@ -217,6 +217,8 @@ object CrashHandler {
                     name.endsWith("ClosedChannelException") ||
                     name.endsWith("CancellationException") ||
                     name == "io.github.jan.supabase.auth.exception.TokenExpiredException" ||
+                    isStaleRealtimeRejoin(t) ||
+                    isRealtimeHeartbeatRace(t) ||
                     (
                         t is java.io.IOException && (
                             msg.contains("Broken pipe", ignoreCase = true) ||

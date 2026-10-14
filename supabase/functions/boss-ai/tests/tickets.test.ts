@@ -28,7 +28,21 @@ Deno.test("exchange tickets bind identity, expire, are single-use and service-on
     const issue = () => scalar("SELECT public.boss_ai_create_exchange_ticket()->>'ticket' AS value")
     const consume = (ticket: string) =>
       scalar("SELECT public.boss_ai_consume_exchange_ticket($1) AS value", [ticket])
+    await db.exec(
+      await Deno.readTextFile(
+        new URL(
+          "../../../migrations/20260924231000_boss_ai_token_eligibility.sql",
+          import.meta.url,
+        ),
+      ),
+    )
+    const eligible = (id: string | null) =>
+      scalar("SELECT public.boss_ai_token_eligible($1) AS value", [id])
+    assertEquals(await eligible(user), true)
+    assertEquals(await eligible(null), false)
+    assertEquals(await eligible("00000000-0000-0000-0000-000000000099"), false)
     await db.exec("SET ROLE authenticated")
+    await assertRejects(() => eligible(user))
     await assertRejects(issue)
     await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)", [user])
     const ticket = await issue()
@@ -41,6 +55,7 @@ Deno.test("exchange tickets bind identity, expire, are single-use and service-on
       1,
     )
     await db.exec("SET ROLE service_role")
+    assertEquals(await eligible(user), true)
     assertEquals(await consume(ticket), user)
     assertEquals(await consume(ticket), null)
     assertEquals(await consume("0".repeat(64)), null)
@@ -51,14 +66,17 @@ Deno.test("exchange tickets bind identity, expire, are single-use and service-on
     assertEquals(await consume(expired), null)
     const revoked = await issue()
     await db.exec(`DELETE FROM public.test_permissions WHERE user_id='${user}'`)
+    assertEquals(await eligible(user), false)
     assertEquals(await consume(revoked), null)
     await assertRejects(issue)
     await db.exec(`INSERT INTO public.test_permissions VALUES('${user}')`)
     const banned = await issue()
     await db.exec(`UPDATE auth.users SET banned_until=now()+interval '1 hour' WHERE id='${user}'`)
+    assertEquals(await eligible(user), false)
     assertEquals(await consume(banned), null)
     await assertRejects(issue)
     await db.exec(`UPDATE auth.users SET banned_until=NULL, is_anonymous=true WHERE id='${user}'`)
+    assertEquals(await eligible(user), false)
     await assertRejects(issue)
     await db.exec(`UPDATE auth.users SET is_anonymous=false WHERE id='${user}'`)
     for (let i = 0; i < 8; i++) await issue()
@@ -66,6 +84,7 @@ Deno.test("exchange tickets bind identity, expire, are single-use and service-on
     await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)", [other])
     assertEquals(await consume(await issue()), other)
     await db.exec("SET ROLE anon")
+    await assertRejects(() => eligible(user))
     await assertRejects(issue)
     await assertRejects(() => consume(ticket))
   } finally {

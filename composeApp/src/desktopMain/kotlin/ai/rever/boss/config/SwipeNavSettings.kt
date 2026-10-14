@@ -3,10 +3,12 @@ package ai.rever.boss.config
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -103,6 +105,9 @@ object SwipeNavSettingsManager {
         parseSwipeNavEnabled(envOverride())
             ?: _settings.value.enabled
 
+    /** Installed by application startup; settings-only consumers never create native resources. */
+    internal var onEnabledChanged: ((Boolean) -> Unit)? = null
+
     fun set(enabled: Boolean) {
         _settings.value = SwipeNavSettings(enabled)
         persist(_settings.value)
@@ -111,6 +116,7 @@ object SwipeNavSettingsManager {
 
     /** Publish for the plugin half. Skipped when the environment owns the key, as elsewhere. */
     fun publish() {
+        onEnabledChanged?.invoke(isEnabled())
         if (envDecides()) {
             logger.info(LogCategory.BROWSER, "Swipe gesture setting ignored; the environment owns $KEY")
             return
@@ -125,6 +131,14 @@ object SwipeNavSettingsManager {
             } else {
                 SwipeNavSettings()
             }
+        } catch (e: SerializationException) {
+            // A corrupt or half-written file must not stop the app booting over a gesture.
+            logger.warn(
+                LogCategory.BROWSER,
+                "Could not read swipe settings; using the default",
+                decodeFailure(e),
+            )
+            SwipeNavSettings()
         } catch (
             @Suppress("TooGenericExceptionCaught") e: Exception,
         ) {
@@ -132,6 +146,10 @@ object SwipeNavSettingsManager {
             logger.warn(LogCategory.BROWSER, "Could not read swipe settings; using the default", error = e)
             SwipeNavSettings()
         }
+
+    internal fun reloadForTest() {
+        _settings.value = loadSync()
+    }
 
     private fun persist(value: SwipeNavSettings) {
         try {

@@ -55,6 +55,12 @@ class ForceUnloadTest {
                 """.trimIndent().toByteArray(),
             )
             out.closeEntry()
+            val classPath = LockedFixturePlugin::class.java.name.replace('.', '/') + ".class"
+            out.putNextEntry(JarEntry(classPath))
+            requireNotNull(javaClass.classLoader.getResourceAsStream(classPath)) {
+                "fixture class $classPath missing from the test classpath"
+            }.use { it.copyTo(out) }
+            out.closeEntry()
         }
         return jar.absolutePath
     }
@@ -90,9 +96,9 @@ class ForceUnloadTest {
     }
 }
 
-/** Loadable fixture: the plugin classloader is parent-first, so the manifest's
- *  mainClass resolves to this test-classpath class. Top-level because the
- *  manifest validator rejects nested-class names (the `$`). */
+/** Loadable fixture: its bytes are packed into the jar, so the manifest's
+ *  mainClass resolves child-first. Top-level because the manifest validator
+ *  rejects nested-class names (the `$`). */
 class LockedFixturePlugin : Plugin {
     override val pluginId = "com.example.locked.fixture"
     override val displayName = "Locked Fixture"

@@ -411,6 +411,9 @@ async function readBoundedArrayBuffer(resp: Response, label: string): Promise<Ar
   // boundary is identical on both the pre-download check and this buffer guard.
   const declared = Number(resp.headers.get("content-length") || "0")
   if (Number.isFinite(declared) && declared >= LARGE_JAR_THRESHOLD) {
+    // Cancel so the remainder of the body isn't transferred, matching the
+    // declare-then-refuse guards on the range paths.
+    try { await resp.body?.cancel() } catch { /* ignore */ }
     throw new Error(`${label} declares ${declared} bytes, at/over the ${LARGE_JAR_THRESHOLD}-byte cap`)
   }
   const buf = await resp.arrayBuffer()
@@ -424,11 +427,36 @@ async function readBoundedArrayBuffer(resp: Response, label: string): Promise<Ar
  * Download a byte range from a URL.
  * Returns the bytes and the total file size (from Content-Range header).
  */
+// Hard cap on any single range fetch or in-memory buffer during remote-JAR
+// inspection (#914). The central directory and the plugin.json entry are both
+// tiny by design; a crafted JAR whose CD declares multi-GB sizes must not turn
+// the reader into a per-request OOM on the ~256MB edge isolate.
+const MAX_CD_FETCH_BYTES = 4 * 1024 * 1024 // central directory: generous vs. any real CD
+const MAX_ENTRY_FETCH_BYTES = 512 * 1024 // plugin.json: the host bounds manifest reads at 512KB (#858)
+const MAX_ENTRY_BYTES_DECLARED = 512 * 1024 // refuse the entry outright above the manifest bound
+// EOCD probe (#914): the first read fetches the last 65KB to find the EOCD,
+// but a server that ignores Range returns the full body. Cap the read so a
+// misbehaving or hostile host cannot turn the probe into a multi-GB buffer.
+const MAX_EOCD_PROBE_BYTES = 1 * 1024 * 1024 // 1MB: well above any real EOCD + zip64 locator
+
+/**
+ * Bounded range fetch: refuses (throws) instead of buffering when a declared
+ * size exceeds the cap, so attacker-controlled CD fields can never size the
+ * request or the buffer.
+ */
 async function downloadRange(
   url: string,
   start: number,
-  end: number
+  end: number,
+  maxBytes: number,
 ): Promise<{ data: Uint8Array; totalSize: number }> {
+  const span = end - start + 1
+  if (!Number.isSafeInteger(span) || span <= 0) {
+    throw new Error(`Refusing an invalid range fetch: ${start}-${end}`)
+  }
+  if (span > maxBytes) {
+    throw new Error(`Refusing a ${span}-byte range fetch above the ${maxBytes}-byte cap`)
+  }
   const response = await fetch(url, {
     headers: {
       "User-Agent": "BOSS-Plugin-Store/1.0",
@@ -440,7 +468,24 @@ async function downloadRange(
     throw new Error(`Range request failed: ${response.status}`)
   }
 
+  // Declare-then-refuse, same as readBoundedArrayBuffer: a server that
+  // ignores Range (200) or lies about the span usually still declares the
+  // real body size in Content-Length, so refuse before materializing it.
+  const declared = Number(response.headers.get("content-length") || "0")
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    // Cancel so the remainder of the body isn't transferred.
+    try { await response.body?.cancel() } catch { /* ignore */ }
+    throw new Error(`Range response declares ${declared} bytes, above the ${maxBytes}-byte cap`)
+  }
+
   const data = new Uint8Array(await response.arrayBuffer())
+  // The server may ignore the Range header (200) or lie about honoring it:
+  // never buffer more than the caller's cap regardless of what arrived. This
+  // post-read bound stays: a missing or lying Content-Length (or a
+  // content-encoded body) skips the declared check entirely.
+  if (data.length > maxBytes) {
+    throw new Error(`Range response returned ${data.length} bytes, above the ${maxBytes}-byte cap`)
+  }
 
   // Parse total size from Content-Range: bytes 0-999/12345
   let totalSize = data.length
@@ -501,7 +546,29 @@ export async function extractManifestFromRemoteJar(
     throw new Error(`Range request for EOCD failed: ${tailResp.status}`)
   }
 
+  // Declare-then-refuse: a server ignoring Range (200) answers with the whole
+  // file and says so in Content-Length, so refuse before buffering it. The
+  // post-read cap below stays for responses that declare nothing or lie.
+  const tailDeclared = Number(tailResp.headers.get("content-length") || "0")
+  if (Number.isFinite(tailDeclared) && tailDeclared > MAX_EOCD_PROBE_BYTES) {
+    // Cancel so the remainder of the body isn't transferred.
+    try { await tailResp.body?.cancel() } catch { /* ignore */ }
+    throw new Error(
+      `EOCD probe declares ${tailDeclared} bytes, above the ${MAX_EOCD_PROBE_BYTES}-byte cap`,
+    )
+  }
+
   const tailData = new Uint8Array(await tailResp.arrayBuffer())
+
+  // A server that ignores Range returns the whole body here; refuse above the
+  // probe cap so a hostile host cannot turn this into an OOM. Match the same
+  // shape downloadRange uses for its post-read cap so both bounds read the same
+  // way in tests and logs.
+  if (tailData.length > MAX_EOCD_PROBE_BYTES) {
+    throw new Error(
+      `EOCD probe returned ${tailData.length} bytes, above the ${MAX_EOCD_PROBE_BYTES}-byte cap`,
+    )
+  }
 
   // The tail starts at this absolute offset in the file
   const tailOffset = totalSize - tailData.length
@@ -554,7 +621,7 @@ export async function extractManifestFromRemoteJar(
       z64Data = tailData
       z64Base = zip64EocdAbs - tailOffset
     } else {
-      const { data } = await downloadRange(downloadUrl, zip64EocdAbs, zip64EocdAbs + 55)
+      const { data } = await downloadRange(downloadUrl, zip64EocdAbs, zip64EocdAbs + 55, MAX_CD_FETCH_BYTES)
       z64Data = data
       z64Base = 0
     }
@@ -587,7 +654,7 @@ export async function extractManifestFromRemoteJar(
     cdBaseOffset = 0
   } else {
     // Need a separate range request for the central directory
-    const { data } = await downloadRange(downloadUrl, cdOffset, cdOffset + cdSize - 1)
+    const { data } = await downloadRange(downloadUrl, cdOffset, cdOffset + cdSize - 1, MAX_CD_FETCH_BYTES)
     cdData = data
     cdBaseOffset = 0
   }
@@ -603,6 +670,7 @@ export async function extractManifestFromRemoteJar(
 
     const compressionMethod = cdView.getUint16(offset + 10, true)
     let compressedSize: number = cdView.getUint32(offset + 20, true)
+    const uncompressedSize: number = cdView.getUint32(offset + 24, true)
     const fileNameLength = cdView.getUint16(offset + 28, true)
     const extraFieldLength = cdView.getUint16(offset + 30, true)
     const commentLength = cdView.getUint16(offset + 32, true)
@@ -632,6 +700,12 @@ export async function extractManifestFromRemoteJar(
           // Each field appears only if its corresponding main value was 0xFFFFFFFF.
           let q = p + 4
           const uncompressedMain = cdView.getUint32(offset + 24, true)
+          // uncompressedSize is deliberately read but NOT resolved: a
+          // 0xFFFFFFFF sentinel already exceeds MAX_ENTRY_BYTES_DECLARED, so
+          // the declared-size guard below refuses the entry before any
+          // inflate. Resolving the real u64 here would only ever widen what
+          // reaches the inflate loop — a "completeness" fix in the wrong
+          // direction.
           if (uncompressedMain === 0xffffffff) q += 8
           if (compressedSize === 0xffffffff) {
             const lo = cdView.getUint32(q, true)
@@ -665,12 +739,20 @@ export async function extractManifestFromRemoteJar(
     if (fileName !== manifestPath) continue
 
     // Step 3: fetch just this file's local header + data
-    // Local header is 30 bytes + filename + extra, then compressed data
+    // Local header is 30 bytes + filename + extra, then compressed data.
+    // The declared compressedSize is attacker-controlled (#914): a crafted CD
+    // claiming ~2GB for plugin.json must be refused here, not buffered.
+    if (compressedSize > MAX_ENTRY_BYTES_DECLARED) {
+      throw new Error(
+        `plugin.json declares ${compressedSize} compressed bytes, above the ${MAX_ENTRY_BYTES_DECLARED}-byte manifest bound`
+      )
+    }
     const fetchSize = 30 + fileNameLength + 256 + compressedSize // 256 extra for safety
     const { data: localData } = await downloadRange(
       downloadUrl,
       localHeaderOffset,
-      localHeaderOffset + fetchSize - 1
+      localHeaderOffset + fetchSize - 1,
+      MAX_ENTRY_FETCH_BYTES
     )
     const localView = new DataView(localData.buffer, localData.byteOffset, localData.byteLength)
     const lhFnLen = localView.getUint16(26, true)
@@ -682,18 +764,45 @@ export async function extractManifestFromRemoteJar(
     if (compressionMethod === 0) {
       content = new TextDecoder().decode(fileData)
     } else if (compressionMethod === 8) {
+      // Deflate-bomb bound (#914): the CD's declared uncompressedSize is
+      // attacker-controlled, and a <30KB compressed entry can inflate to GBs.
+      // Refuse above the manifest bound up front, then enforce a hard counter
+      // on the actual decompressed bytes so a LYING size cannot OOM the isolate.
+      if (uncompressedSize > MAX_ENTRY_BYTES_DECLARED) {
+        throw new Error(
+          `plugin.json declares ${uncompressedSize} uncompressed bytes, above the ${MAX_ENTRY_BYTES_DECLARED}-byte manifest bound`
+        )
+      }
       const ds = new DecompressionStream("deflate-raw")
       const writer = ds.writable.getWriter()
-      writer.write(fileData)
-      writer.close()
+      // Detach the writer promises: cancelling the readable half errors the
+      // writable half, and an unhandled rejection here would tear down the
+      // isolate on exactly the bomb input this guard exists for.
+      writer.write(fileData).catch(() => {})
+      writer.close().catch(() => {})
       const reader = ds.readable.getReader()
       const chunks: Uint8Array[] = []
       let len = 0
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        chunks.push(value)
         len += value.length
+        if (len > MAX_ENTRY_BYTES_DECLARED) {
+          // Cancel the stream so we stop emitting inflated bytes. The cancel
+          // can reject on a stream that has already errored; swallow that
+          // rather than let the rejection escape past our throw below as an
+          // unhandled rejection.
+          try {
+            await reader.cancel()
+          } catch {
+            // The cancel is best-effort: the throw on the next line is the
+            // signal the caller sees, and the stream is already past its bound.
+          }
+          throw new Error(
+            `plugin.json inflated past the ${MAX_ENTRY_BYTES_DECLARED}-byte manifest bound`
+          )
+        }
+        chunks.push(value)
       }
       const result = new Uint8Array(len)
       let pos = 0
@@ -824,8 +933,12 @@ async function extractFileFromZip(
       try {
         const ds = new DecompressionStream("deflate-raw")
         const writer = ds.writable.getWriter()
-        writer.write(fileData)
-        writer.close()
+        // Detach the writer promises like the remote-JAR reader does: a
+        // malformed deflate stream rejects the writable half, and an
+        // unhandled rejection escapes the try/catch as an isolate-level
+        // fault instead of the "Failed to decompress" error below.
+        writer.write(fileData).catch(() => {})
+        writer.close().catch(() => {})
 
         const reader = ds.readable.getReader()
         const chunks: Uint8Array[] = []
@@ -887,8 +1000,12 @@ async function extractFileFromZipLinear(
         try {
           const ds = new DecompressionStream("deflate-raw")
           const writer = ds.writable.getWriter()
-          writer.write(fileData)
-          writer.close()
+          // Detach the writer promises like the remote-JAR reader does: a
+          // malformed deflate stream rejects the writable half, and an
+          // unhandled rejection escapes the try/catch as an isolate-level
+          // fault instead of the "Failed to decompress" error below.
+          writer.write(fileData).catch(() => {})
+          writer.close().catch(() => {})
 
           const reader = ds.readable.getReader()
           const chunks: Uint8Array[] = []

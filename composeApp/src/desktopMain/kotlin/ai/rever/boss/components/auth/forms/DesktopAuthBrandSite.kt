@@ -21,6 +21,7 @@ import com.teamdev.jxbrowser.navigation.event.LoadFinished
 import com.teamdev.jxbrowser.view.compose.BrowserView
 import com.teamdev.jxbrowser.view.compose.BrowserViewState
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -178,7 +179,7 @@ private fun BrandPageView(
     // Retain MainScope's failure isolation while making the view a child of the composition.
     val viewScope =
         remember(scope) {
-            CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
+            authBrandViewScope(scope)
         }
     DisposableEffect(viewScope) {
         onDispose { viewScope.cancel() }
@@ -194,12 +195,10 @@ private fun BrandPageView(
     // exception here escapes composition and takes the whole sign-in screen with it, which is the one
     // outcome this panel must never cause. Falling through leaves the art, like every other failure.
     //
-    // The view uses a supervised child of the composition, not a fresh `MainScope()`: nothing cancelled that one,
-    // so every sign-in screen - and every re-attach when `browser` or `window` changed - left a live
-    // scope and whatever the view had launched into it behind. JxBrowser's own `rememberBrowserViewState`
-    // pairs composition ownership with `close()` when the state is forgotten; our child also isolates failures.
+    // Keep upstream's supervised failure handling, and close a replaced view when its browser or window changes.
+    // JxBrowser's rememberBrowserViewState also closes the state when it is forgotten.
     val state =
-        remember(browser, window) {
+        remember(browser, window, viewScope) {
             runCatching { BrowserViewState(browser, viewScope, window) }
                 .onFailure { e ->
                     logger.warn(
@@ -225,3 +224,17 @@ private fun BrandPageView(
     }
     BrowserView(state = state, modifier = Modifier.fillMaxSize())
 }
+
+/** Own view work under the composition while isolating native view failures from its other jobs. */
+internal fun authBrandViewScope(parent: CoroutineScope): CoroutineScope =
+    CoroutineScope(
+        SupervisorJob(parent.coroutineContext[Job]) +
+            Dispatchers.Main +
+            CoroutineExceptionHandler { _, throwable ->
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Unhandled exception in BrowserViewState scope",
+                    error = throwable,
+                )
+            },
+    )

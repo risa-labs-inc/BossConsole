@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { ChallengeType } from "../types/challenge.ts"
 import { normalizeBase64Url } from "./base64.ts"
+import { maskEmail, maskPasskeyId, maskUserId } from "./logging.ts"
 import { COSE_ALG_ES256 } from "./webauthn.ts"
 
 /**
@@ -254,7 +255,7 @@ export async function storePasskeyInDB(
   supabase: SupabaseClient,
   passkey: Omit<PasskeyRecord, 'id' | 'created_at' | 'active'>
 ) {
-  console.log('storePasskeyInDB called with credential:', passkey.credential_id)
+  console.log('storePasskeyInDB called with credential:', maskPasskeyId(passkey.credential_id))
 
   try {
     const insertData = {
@@ -410,7 +411,7 @@ export async function recordPasskeyUse(
   }
 
   if (rowsOf(data).length === 0) {
-    console.error('❌ Signature counter was already advanced past', signCount, 'for passkey', passkeyId)
+    console.error('❌ Signature counter was already advanced past', signCount, 'for passkey', maskPasskeyId(passkeyId))
     return { success: false, advanced: false, error: 'Signature counter did not advance' }
   }
 
@@ -418,7 +419,7 @@ export async function recordPasskeyUse(
 }
 
 export async function getUserPasskeys(supabase: SupabaseClient, userId: string) {
-  console.log('Getting passkeys for user:', userId)
+  console.log('Getting passkeys for user:', maskUserId(userId))
 
   try {
     const { data, error } = await supabase
@@ -444,7 +445,7 @@ export async function findPasskeyByCredentialId(
   supabase: SupabaseClient,
   credentialId: string
 ) {
-  console.log('Finding passkey by credential ID:', credentialId)
+  console.log('Finding passkey by credential ID:', maskPasskeyId(credentialId))
 
   // credential_id is stored canonicalised (unpadded base64url), so a client that
   // emits standard base64 or padding still resolves to the same row. Everything
@@ -466,7 +467,7 @@ export async function findPasskeyByCredentialId(
         .single()
 
       if (!error && data) {
-        console.log('Found passkey for user:', data.user_id)
+        console.log('Found passkey for user:', maskUserId(data.user_id))
         return { success: true, passkey: data }
       }
 
@@ -490,7 +491,7 @@ export async function findUserByEmail(
   supabase: SupabaseClient,
   email: string
 ) {
-  console.log('Finding user by email:', email)
+  console.log('Finding user by email:', maskEmail(email))
 
   try {
     const { data, error } = await supabase
@@ -505,11 +506,11 @@ export async function findUserByEmail(
     const user = data && data.length > 0 ? data[0] : null
 
     if (!user) {
-      console.log('User not found with email:', email)
+      console.log('User not found with email:', maskEmail(email))
       return { success: false, error: 'User not found' }
     }
 
-    console.log('Found user:', user.id)
+    console.log('Found user:', maskUserId(user.id))
     return { success: true, user }
   } catch (error) {
     console.error('Exception finding user:', error)
@@ -532,7 +533,7 @@ export async function getUserWithEmail(
   supabase: SupabaseClient,
   userId: string
 ) {
-  console.log('Getting user with email for user ID:', userId)
+  console.log('Getting user with email for user ID:', maskUserId(userId))
 
   try {
     const { data: userData, error: userError } = await supabase
@@ -549,7 +550,7 @@ export async function getUserWithEmail(
       }
     }
 
-    console.log('Found user email:', userData.email)
+    console.log('Found user email:', maskEmail(userData.email))
     return {
       success: true,
       user: {

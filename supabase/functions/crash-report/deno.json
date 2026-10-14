@@ -1,6 +1,7 @@
 {
   "imports": {
-    "@hono/zod-openapi": "npm:@hono/zod-openapi@^0.18.4"
+    "@hono/zod-openapi": "npm:@hono/zod-openapi@^0.18.4",
+    "@std/assert": "jsr:@std/assert@^1.0.19"
   },
   "compilerOptions": {
     "lib": ["deno.window", "deno.unstable"],

@@ -42,12 +42,14 @@ class PluginClassLoaderResourceLifecycleTest {
     private val hostOnlyPath = "composeResources/probe/host-only.txt"
 
     @Test
-    fun `active resources remain child first with parent fallback`() {
+    fun `active non-shared resources resolve from the plugin jar only`() {
         withLoader { loader ->
+            // Own copy wins for a colliding name, and a name only the parent
+            // carries stays missing: non-shared resources never delegate.
             assertEquals("plugin", contents(loader.getResource(manifestPath)))
-            assertEquals(listOf("plugin", "host"), contents(loader.getResources(manifestPath)))
-            assertEquals("host-only", contents(loader.getResource(hostOnlyPath)))
-            assertEquals(listOf("host-only"), contents(loader.getResources(hostOnlyPath)))
+            assertEquals(listOf("plugin"), contents(loader.getResources(manifestPath)))
+            assertNull(loader.getResource(hostOnlyPath))
+            assertTrue(Collections.list(loader.getResources(hostOnlyPath)).isEmpty())
         }
     }
 
@@ -87,10 +89,14 @@ class PluginClassLoaderResourceLifecycleTest {
     }
 
     @Test
-    fun `service discovery retains the plugin during unloading and finds nothing after close`() {
+    fun `service discovery only ever sees the plugin provider`() {
         withLoader { loader ->
+            // META-INF/services is a non-shared path: the host's descriptor is
+            // invisible in every state, so no host provider can be discovered
+            // - and a descriptor that could be seen but whose class could not
+            // load would surface as ServiceConfigurationError, not a provider.
             val active = ServiceLoader.load(ResourceProbeService::class.java, loader).toList()
-            assertEquals(listOf("plugin", "host"), active.map { it.source() })
+            assertEquals(listOf("plugin"), active.map { it.source() })
             assertSame(loader, active.first().javaClass.classLoader)
 
             loader.markUnloading()
@@ -131,7 +137,7 @@ class PluginClassLoaderResourceLifecycleTest {
     }
 
     @Test
-    fun `active enumeration still removes duplicate parent URLs`() {
+    fun `active enumeration returns only the plugin copy of a non-shared resource`() {
         val jar = jar("duplicate", mapOf(manifestPath to "plugin"))
         URLClassLoader(arrayOf(jar), javaClass.classLoader).use { parent ->
             PluginClassLoader("resource-dedup", arrayOf(jar), parent).use { loader ->

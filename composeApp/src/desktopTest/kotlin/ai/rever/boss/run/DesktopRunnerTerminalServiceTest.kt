@@ -2,6 +2,7 @@ package ai.rever.boss.run
 
 import ai.rever.boss.components.events.RunnerTerminalEventBus
 import ai.rever.boss.ipc.IpcEventBridge
+import ai.rever.boss.plugin.api.SIDEBAR_TERMINAL_ID
 import ai.rever.boss.plugin.run.Language
 import ai.rever.boss.plugin.run.RunConfiguration
 import ai.rever.boss.plugin.run.RunConfigurationType
@@ -11,7 +12,6 @@ import ai.rever.boss.plugin.run.RunnerTerminalStopEvent
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.test.AfterTest
@@ -21,6 +21,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Clock
+import kotlin.time.Instant
 
 /**
  * BossConsole#486 review, round 3: `rerunRunner`'s `withContext(NonCancellable)` guarantees the
@@ -46,6 +48,7 @@ class DesktopRunnerTerminalServiceTest {
     private val windowId = "cancel-test-window"
     private val windowA = "cancel-test-window-a"
     private val windowB = "cancel-test-window-b"
+    private val windowC = "cancel-test-window-c"
     private val config =
         RunConfiguration(
             id = "cancel-test-config",
@@ -59,6 +62,103 @@ class DesktopRunnerTerminalServiceTest {
         )
     private val originalSettings = RunnerSettingsManager.currentSettings.value
 
+    @Test
+    fun `runner terminal ids remain distinct within one clock millisecond`() {
+        val fixedClock =
+            object : Clock {
+                override fun now(): Instant = Instant.fromEpochMilliseconds(1_700_000_000_000)
+            }
+        val ids = List(10_000) { mintRunnerTerminalId(config.id, fixedClock) }
+
+        assertEquals(ids.size, ids.toSet().size)
+        assertTrue(ids.all { it.matches(Regex("runner-cancel-test-config-1700000000000-[0-9a-f]{16}")) })
+    }
+
+    @Test
+    fun `closing one window preserves a shared run in the surviving window`() =
+        runBlocking {
+            val terminalId = RunnerTerminalService.openRunnerTerminal(config, windowA) {}
+            RunnerTerminalService.openRunnerTerminal(config, windowB) {}
+
+            RunnerTerminalService.cleanupWindow(windowA)
+
+            assertFalse(RunnerTerminalService.isConfigRunningInWindow(windowA, config.id))
+            assertTrue(RunnerTerminalService.isConfigRunningInWindow(windowB, config.id))
+            assertTrue(RunnerTerminalService.isConfigRunning(config.id))
+            assertEquals(terminalId, RunnerTerminalService.configToTerminal.value[config.id])
+            assertEquals(config.id, RunnerTerminalService.getConfigForTerminal(terminalId))
+
+            RunnerTerminalService.cleanupWindow(windowB)
+
+            assertFalse(RunnerTerminalService.isConfigRunning(config.id))
+            assertNull(RunnerTerminalService.configToTerminal.value[config.id])
+            assertNull(RunnerTerminalService.getConfigForTerminal(terminalId))
+        }
+
+    @Test
+    fun `closing one sidebar config preserves the other windows ownership`() =
+        runBlocking {
+            RunnerTerminalService.registerSidebarRun(windowA, config.id, config.command, null, config.name)
+            RunnerTerminalService.registerSidebarRun(windowB, config.id, config.command, null, config.name)
+
+            RunnerTerminalService.removeConfig(windowA, config.id)
+
+            assertFalse(RunnerTerminalService.isConfigRunningInWindow(windowA, config.id))
+            assertTrue(RunnerTerminalService.isConfigRunningInWindow(windowB, config.id))
+            assertTrue(RunnerTerminalService.isConfigRunning(config.id))
+            assertEquals(SIDEBAR_TERMINAL_ID, RunnerTerminalService.configToTerminal.value[config.id])
+            assertEquals(config.id, RunnerTerminalService.getConfigForTerminal(SIDEBAR_TERMINAL_ID))
+        }
+
+    @Test
+    fun `a failed sidebar open restores the terminal state used by main panel fallback`() =
+        runBlocking {
+            val terminalId = RunnerTerminalService.openRunnerTerminal(config, windowA) {}
+
+            val opened =
+                RunnerTerminalService.openInSidebarTerminal(
+                    windowId = windowA,
+                    configId = config.id,
+                    command = config.command,
+                    workingDirectory = null,
+                    tabTitle = config.name,
+                    isRerun = false,
+                )
+
+            assertFalse(opened, "the test requires the terminal plugin to be absent")
+            assertTrue(RunnerTerminalService.isConfigRunningInWindow(windowA, config.id))
+            assertTrue(RunnerTerminalService.isConfigRunning(config.id))
+            assertEquals(terminalId, RunnerTerminalService.configToTerminal.value[config.id])
+            assertEquals(config.id, RunnerTerminalService.getConfigForTerminal(terminalId))
+            assertNull(RunnerTerminalService.getConfigForTerminal(SIDEBAR_TERMINAL_ID))
+        }
+
+    @Test
+    fun `a failed sidebar open restores the exact prior window owners`() =
+        runBlocking {
+            val terminalId = RunnerTerminalService.openRunnerTerminal(config, windowA) {}
+            RunnerTerminalService.openRunnerTerminal(config, windowB) {}
+
+            val opened =
+                RunnerTerminalService.openInSidebarTerminal(
+                    windowId = windowC,
+                    configId = config.id,
+                    command = config.command,
+                    workingDirectory = null,
+                    tabTitle = config.name,
+                    isRerun = false,
+                )
+
+            assertFalse(opened, "the test requires the terminal plugin to be absent")
+            assertTrue(RunnerTerminalService.isConfigRunningInWindow(windowA, config.id))
+            assertTrue(RunnerTerminalService.isConfigRunningInWindow(windowB, config.id))
+            assertFalse(RunnerTerminalService.isConfigRunningInWindow(windowC, config.id))
+            assertTrue(RunnerTerminalService.isConfigRunning(config.id))
+            assertEquals(terminalId, RunnerTerminalService.configToTerminal.value[config.id])
+            assertEquals(config.id, RunnerTerminalService.getConfigForTerminal(terminalId))
+            assertNull(RunnerTerminalService.getConfigForTerminal(SIDEBAR_TERMINAL_ID))
+        }
+
     @AfterTest
     fun tearDown() =
         runBlocking {
@@ -66,6 +166,7 @@ class DesktopRunnerTerminalServiceTest {
             RunnerTerminalService.cleanupWindow(windowId)
             RunnerTerminalService.cleanupWindow(windowA)
             RunnerTerminalService.cleanupWindow(windowB)
+            RunnerTerminalService.cleanupWindow(windowC)
             RunnerSettingsManager.updateSettings(originalSettings)
         }
 
@@ -262,21 +363,9 @@ class DesktopRunnerTerminalServiceTest {
             // No ipcBridge needed: this test asserts on service state, not on the emitted events.
 
             val originalId = RunnerTerminalService.openRunnerTerminal(config, windowA) {}
-            // Both IDs are minted from System.currentTimeMillis() for the same config.id, so back
-            // to back mints can collide and produce the identical string - which would make the
-            // "stale" removeTerminal call below legitimately current. On Windows the clock tick
-            // is commonly ~15 ms, so a burst of fast mints can all share one tick; this file
-            // runs on the windows-latest leg (only ARM64 is excluded). Re-mint until they
-            // differ, pausing a beat after each collision so a slow clock can advance; the loop
-            // is bounded, so a truly stalled clock fails loudly. Each mint is a real sidebar
-            // rerun, which preserves originalId's reverse-map entry.
-            var replacementId = ""
-            var mints = 0
-            do {
-                replacementId = RunnerTerminalService.rerunRunner(config, windowA) {}
-                mints++
-                if (replacementId == originalId) delay(20)
-            } while (replacementId == originalId && mints < 100)
+            // The replacement must have its own identity even when both runs start in one
+            // clock millisecond. The original reverse-map entry survives a sidebar rerun.
+            val replacementId = RunnerTerminalService.rerunRunner(config, windowA) {}
             assertNotEquals(
                 originalId,
                 replacementId,

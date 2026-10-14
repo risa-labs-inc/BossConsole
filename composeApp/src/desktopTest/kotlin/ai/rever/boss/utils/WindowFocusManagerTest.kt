@@ -133,9 +133,11 @@ class WindowFocusManagerTest {
 
         tracker.snapshotRegistration("window-a", isFocused = false)
         assertFalse(tracker.isFocused("window-a"))
+        assertNull(tracker.activeWindowFlow.value)
 
         tracker.snapshotRegistration("window-a", isFocused = true)
         assertTrue(tracker.isFocused("window-a"))
+        assertEquals("window-a", tracker.activeWindowFlow.value)
     }
 
     @Test
@@ -150,6 +152,7 @@ class WindowFocusManagerTest {
 
         assertFalse(tracker.isFocused("window-a"))
         assertTrue(tracker.isFocused("window-b"))
+        assertEquals("window-b", tracker.activeWindowFlow.value)
     }
 
     @Test
@@ -158,9 +161,11 @@ class WindowFocusManagerTest {
         val listener = tracker.createListener("window-a")
 
         listener.windowGainedFocus(null)
+        assertEquals("window-a", tracker.activeWindowFlow.value)
         listener.windowLostFocus(null)
 
         assertFalse(tracker.isFocused("window-a"))
+        assertNull(tracker.activeWindowFlow.value)
     }
 
     @Test

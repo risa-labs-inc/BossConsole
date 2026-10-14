@@ -2,14 +2,17 @@ package ai.rever.boss.config
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.VersionConstants
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
 /**
@@ -34,7 +37,11 @@ data class BrowserEngineSettings(
  */
 object BrowserEngineSettingsManager {
     private val logger = BossLogger.forComponent("BrowserEngineSettingsManager")
-    private val settingsFile = BossDirectories.resolve("browser-engine-settings.json")
+
+    /** Also guarded by the native toolkit agent's manifest: a pin change must invalidate it. */
+    const val SETTINGS_FILE_NAME = "browser-engine-settings.json"
+
+    private val settingsFile = BossDirectories.resolve(SETTINGS_FILE_NAME)
     private val json =
         Json {
             prettyPrint = true
@@ -44,6 +51,10 @@ object BrowserEngineSettingsManager {
 
     private val _currentSettings = MutableStateFlow(loadSync())
     val currentSettings: StateFlow<BrowserEngineSettings> = _currentSettings.asStateFlow()
+
+    internal fun reloadForTest() {
+        _currentSettings.value = loadSync()
+    }
 
     /** The engine version the app should install and run: user pin, else the bundled JxBrowser version. */
     val effectiveVersion: String
@@ -89,6 +100,13 @@ object BrowserEngineSettingsManager {
                 } else {
                     BrowserEngineSettings()
                 }
+            } catch (e: SerializationException) {
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Error loading browser engine settings, using defaults",
+                    decodeFailure(e),
+                )
+                BrowserEngineSettings()
             } catch (e: Exception) {
                 logger.warn(LogCategory.BROWSER, "Error loading browser engine settings, using defaults", error = e)
                 BrowserEngineSettings()
@@ -111,7 +129,7 @@ object BrowserEngineSettingsManager {
             // effectiveVersion, and a failed write only costs us the cleanup.
             runCatching {
                 settingsFile.parentFile?.mkdirs()
-                settingsFile.writeText(json.encodeToString(BrowserEngineSettings.serializer(), normalized))
+                settingsFile.atomicWriteText(json.encodeToString(BrowserEngineSettings.serializer(), normalized))
             }.onSuccess {
                 // Only claim the cleanup happened when it actually did — otherwise
                 // this line reads as confirmation during triage while the pin is
@@ -142,7 +160,7 @@ object BrowserEngineSettingsManager {
             _currentSettings.value = normalized
             try {
                 settingsFile.parentFile?.mkdirs()
-                settingsFile.writeText(json.encodeToString(BrowserEngineSettings.serializer(), normalized))
+                settingsFile.atomicWriteText(json.encodeToString(BrowserEngineSettings.serializer(), normalized))
                 logger.debug(LogCategory.BROWSER, "Browser engine settings saved")
             } catch (e: Exception) {
                 logger.warn(LogCategory.BROWSER, "Error saving browser engine settings", error = e)

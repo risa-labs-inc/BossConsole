@@ -1,12 +1,22 @@
 # Secret Auto-Fill Integration with Fluck Browser
 
 **Issue**: #56
-**Status**: ✅ Implemented
+**Status**: shipped, and since moved out of this repository into a browser plugin
 **Version**: 8.12.20+
 
 ## Overview
 
 This feature integrates BOSS's secret management system with the Fluck browser, enabling automatic credential filling similar to password manager browser extensions. Users can right-click on login form fields to access and auto-fill stored credentials.
+
+**Read the Architecture section before this one if you came here to change the code.** What the
+user sees is still as described below, but the implementation no longer lives here: the host
+detects the focused field and publishes it through the plugin API, and a plugin owns the menu,
+the matching and the fill. Everything except Architecture, the Domain Matching checklist under
+Testing, and the Code Files list under References was written against the original host-side
+implementation, so treat file names, line numbers and internal details in those other sections
+as historical: the fill-modes, clipboard and framework-compatibility bullets under Features
+describe that original implementation, and what the installed plugin offers today is the
+plugin's to define.
 
 ## Features
 
@@ -30,184 +40,70 @@ This feature integrates BOSS's secret management system with the Fluck browser, 
 
 ## Architecture
 
-### Components
+The feature is no longer implemented in this repository. The host detects which form field
+the user right-clicked and publishes it across the plugin API; a browser plugin owns the menu,
+the secret matching, the selection dialog and the fill. Five of the eight Kotlin files this
+document used to describe are gone, and two of the three survivors have no production caller.
 
-#### 1. Form Field Detection (`FormFieldDetector.kt`)
-**Location**: `composeApp/src/desktopMain/kotlin/ai/rever/boss/components/plugin/tab_types/fluck/FormFieldDetector.kt`
+### What this repository still owns
 
-Injects JavaScript into browser pages to:
-- Track focused form fields
-- Identify field types (username, password, email, text)
-- Extract field metadata (name, id, placeholder, autocomplete)
+| Piece | Where | State |
+|---|---|---|
+| focused-field detection | `BrowserHandleImpl.getFormFieldInfoFromJS` (`composeApp/src/desktopMain/kotlin/ai/rever/boss/plugin/browser/BrowserHandleImpl.kt`) | live, the only path that runs |
+| the field-type heuristics on that result | `FormFieldInfoJson.kt` (`composeApp/src/desktopMain/kotlin/ai/rever/boss/plugin/browser/FormFieldInfoJson.kt`) | live, `FormFieldInfoJsonTest` pins the precedence |
+| the published field type | `FormFieldInfo` / `FormFieldType` in `plugin-platform/plugin-api-browser/src/commonMain/kotlin/ai/rever/boss/plugin/browser/BrowserHandle.kt` | live |
+| the menu carrier | `BrowserContextMenuInfo.formFieldInfo`, same file | live |
+| injected page helper | `FormFieldDetector.injectFormDetectionScript` (`.../plugin/browser/FormFieldDetector.kt`) | injected on every navigation; its readers are dead, see below |
+| domain scoring | `WebsiteMatchingUtil` (`composeApp/src/commonMain/kotlin/ai/rever/boss/utils/WebsiteMatchingUtil.kt`) | no production caller; kept honest by four regression tests |
+| the old view model | `BrowserSecretIntegrationViewModel` (`.../components/plugin/tab_types/fluck/`) | declared, never constructed |
 
-**Key Methods**:
-```kotlin
-fun injectFormDetectionScript(browser: Browser)
-suspend fun getCurrentFocusedField(browser: Browser): FormFieldInfo?
-```
+### How a right-click reaches a plugin today
 
-**Detection Heuristics**:
-1. Input type attribute (`type="password"`, `type="email"`)
-2. Autocomplete attribute (`autocomplete="username"`)
-3. Field name/id patterns (contains "user", "login", "pass")
-4. Placeholder text patterns
-5. ARIA labels
+1. `BrowserHandleImpl` handles the native context-menu event. Chromium reports the click target,
+   so nothing is injected for this.
+2. The lookup runs only when `BrowserContextMenuInfo.isEditable` is true, and that flag is
+   `isMainFrame && contentTypes.contains(EDITABLE)`: Chromium resolves it against the click
+   target, and it is main-frame-only, so a right-click on an input inside an iframe never
+   attempts the lookup at all - the menu arrives with `formFieldInfo = null` not because the
+   lookup failed but because it was never tried (the `iFrame support` item under Technical
+   Improvements is the open work). When it does run, `getFormFieldInfoFromJS` executes a
+   self-contained script over `document.activeElement` and returns a `FormFieldInfo`, or null
+   when the click was not on an `INPUT` or `TEXTAREA`. It reads
+   `document.activeElement` directly and does **not** use the globals
+   `FormFieldDetector` installs. There are more null cases than that: the lookup races a
+   500 ms timeout, and on timeout the menu is delivered with `formFieldInfo = null` - the
+   menu opens without the auto-fill entries rather than never opening; the same happens
+   if the script throws or the frame is already gone.
+3. The result is attached as `BrowserContextMenuInfo.formFieldInfo` and delivered to whichever
+   plugin registered the context-menu callback.
+4. Everything after that - matching a stored secret to the site, drawing the menu, the selection
+   dialog, and writing the value into the page - belongs to the browser plugin, which lives in
+   the `boss-plugin-fluck-browser` repository rather than here.
 
-#### 2. Website Matching (`WebsiteMatchingUtil.kt`)
-**Location**: `composeApp/src/commonMain/kotlin/ai/rever/boss/utils/WebsiteMatchingUtil.kt`
+The KDoc on `getFormFieldInfoFromJS` records the one behaviour worth knowing at this boundary: it
+describes whatever has focus, so a page that calls `preventDefault()` on mousedown can leave focus
+elsewhere and the menu then describes the previously focused field.
 
-Handles domain extraction and secret matching:
-- **Hostname normalization** (removes a leading www, preserves other subdomains)
-- **Exact and dot-boundary matching** with confidence scores
-- **No suffix guessing**: full hostnames remain distinct, including under multipart and private suffixes
+### Two things that are present but not fully wired
 
-**Scoring System**:
-```
-Exact match (google.com == google.com):      1.0
-Subdomain match (login.google.com):          0.9
-Blank or unrelated domains:                  0.0
-```
+`FormFieldDetector` installs `window.__BOSS_FOCUSED_FIELD` and `window.__BOSS_GET_FOCUSED_FIELD`
+on every main-frame navigation, and defines `getCurrentFocusedField` and `findAllFormFields` to
+read them. **Nothing in this repository calls either function**, and the live path above does not
+use the globals. The nested `FormFieldDetector.FormFieldInfo` and `FormFieldDetector.FieldType` are
+likewise a separate pair of types from the published `FormFieldInfo` and `FormFieldType` that
+plugins actually receive; do not confuse the two when reading this file.
 
-The scorer rejects substring and shared-token matches. The extractor preserves full hostnames,
-so `google.com.mx` and `apple.com.mx`, or `victim.github.io` and `attacker.github.io`, remain
-distinct. A secret saved for `accounts.google.com` is not suggested on `login.google.com`.
-Save it explicitly for `google.com` to share it with those subdomains. The scorer still allows
-parent/subdomain matches in either direction and does not validate public suffixes; saving a
-secret against a broad suffix would deliberately broaden its matches. This is not a complete
-public-suffix policy. Existing entries saved for a specific sibling host stop matching other
-siblings; entries explicitly saved for the parent continue matching its subdomains.
+`WebsiteMatchingUtil` is reached only from `BrowserSecretIntegrationViewModel`, which nothing
+constructs. Its scoring rules are still pinned by `WebsiteMatchingAuthorRegressionTest`,
+`WebsiteMatchingBoundaryRegressionTest`, `WebsiteMatchingHostnameRegressionTest` and
+`WebsiteMatchingUtilTest`, so the behaviour is specified even though no caller depends on it.
 
-Display names retain hosts with more than two labels in full, so `accounts.google.com` and
-`google.com.evil.com` cannot be reduced to an ambiguous or impersonated brand label. Exact
-known hosts such as `google.com` retain their brand spelling; simple generic domains such as
-`example-site.com` retain the existing `Example Site` formatting.
+### Gone
 
-This section describes the host utility. Current Fluck plugin matching is implemented in
-the separate `boss-plugin-fluck-browser` repository; the host ViewModel construction below
-is an integration example, not evidence that the current plugin uses this utility.
-
-**Key Methods**:
-```kotlin
-fun extractMainDomain(url: String): String?
-fun matchSecretsForDomain(domain: String, secrets: List<SecretEntry>): List<MatchedSecret>
-fun calculateMatchScore(secretWebsite: String, currentDomain: String): MatchScore
-```
-
-#### 3. Form Field Injection (`FormFieldInjector.kt`)
-**Location**: `composeApp/src/desktopMain/kotlin/ai/rever/boss/components/plugin/tab_types/fluck/FormFieldInjector.kt`
-
-Injects credentials into browser forms:
-- **JavaScript injection** for field filling
-- **Event dispatching** for framework compatibility
-- **Multiple fill strategies** for username/password detection
-
-**Fill Strategies for Username**:
-1. Check if focused field is username-like
-2. Find by `autocomplete="username"` or `autocomplete="email"`
-3. Find by `type="email"`
-4. Find by name/id containing "user", "login", "email"
-5. Find first text input in form with password field
-
-**Fill Strategies for Password**:
-1. Check if focused field is password type
-2. Find by `autocomplete="current-password"`
-3. Find by `type="password"`
-4. Find by name/id containing "pass"
-
-#### 4. Context Menu Builder (`SecretContextMenuBuilder.kt`)
-**Location**: `composeApp/src/desktopMain/kotlin/ai/rever/boss/components/plugin/tab_types/fluck/SecretContextMenuBuilder.kt`
-
-Builds the right-click context menu:
-- **Top matched secrets** (up to 5) with icons
-- **"Show All Secrets"** option for full list
-- **"Add New Secret"** for quick creation
-- **Website-specific icons** (Google, GitHub, etc.)
-
-#### 5. State Management (`BrowserSecretIntegrationViewModel.kt`)
-**Location**: `composeApp/src/commonMain/kotlin/ai/rever/boss/components/plugin/tab_types/fluck/BrowserSecretIntegrationViewModel.kt`
-
-Manages integration state:
-- **Loads all user secrets** on initialization
-- **Tracks current URL** and matched secrets
-- **Manages dialog states** (show all, quick create)
-- **Handles secret reload** after creation
-
-**State Properties**:
-```kotlin
-currentUrl: String
-currentDomain: String?
-allSecrets: List<SecretEntry>
-matchingSecrets: List<SecretEntry>
-showSecretMenu: Boolean
-showAllSecretsDialog: Boolean
-showQuickCreateDialog: Boolean
-```
-
-#### 6. Secret Selection Dialog (`SecretSelectionDialog.kt`)
-**Location**: `composeApp/src/desktopMain/kotlin/ai/rever/boss/components/plugin/tab_types/fluck/SecretSelectionDialog.kt`
-
-Full-featured secret browser:
-- **Search bar** for filtering secrets
-- **Matched secrets** highlighted at top
-- **Password visibility** toggle
-- **Tags display** for organization
-- **Click to fill** credentials
-
-#### 7. Quick Create Dialog (`QuickCreateSecretDialog` in `SecretDialogs.kt`)
-**Location**: `composeApp/src/commonMain/kotlin/ai/rever/boss/components/plugin/panels/right_top/SecretDialogs.kt`
-
-Streamlined secret creation:
-- **Pre-filled website** from current domain
-- **Essential fields** only (website, username, password, tags)
-- **Quick save** and auto-reload
-- **Help text** for advanced options
-
-### Integration Points
-
-#### JxBrowserCompose.kt Modifications
-**Location**: `composeApp/src/desktopMain/kotlin/ai/rever/boss/components/plugin/tab_types/fluck/JxBrowserCompose.kt`
-
-**Changes**:
-1. **State Management** (lines 162-165):
-   ```kotlin
-   val secretViewModel = remember { BrowserSecretIntegrationViewModel() }
-   var focusedFieldInfo by remember { mutableStateOf<FormFieldDetector.FormFieldInfo?>(null) }
-   ```
-
-2. **Initialization** (lines 167-170):
-   ```kotlin
-   LaunchedEffect(Unit) {
-       secretViewModel.initialize()
-   }
-   ```
-
-3. **Script Injection** on page load (lines 254-259):
-   ```kotlin
-   secretViewModel.onUrlChanged(currentUrl)
-   FormFieldDetector.injectFormDetectionScript(browser)
-   ```
-
-4. **Right-click Handler** (lines 885-888):
-   ```kotlin
-   coroutineScope.launch {
-       focusedFieldInfo = FormFieldDetector.getCurrentFocusedField(browser)
-   }
-   ```
-
-5. **Conditional Context Menu** (lines 507-654):
-   ```kotlin
-   val contextMenuItems = remember(...) {
-       if (focusedFieldInfo != null) {
-           SecretContextMenuBuilder.buildSecretMenu(...)
-       } else {
-           // Default context menu
-       }
-   }
-   ```
-
-6. **Dialogs** (lines 1046-1097):
-   - SecretSelectionDialog
-   - QuickCreateSecretDialog
+`FormFieldInjector.kt`, `SecretContextMenuBuilder.kt`, `SecretSelectionDialog.kt`,
+`SecretDialogs.kt` and `JxBrowserCompose.kt` no longer exist. Earlier revisions of this document
+described their contents and quoted line numbers inside `JxBrowserCompose.kt`; that wiring, the
+host-side dialogs and the host-side fill went with them when the feature moved into a plugin.
 
 ## User Workflow
 
@@ -247,7 +143,7 @@ Streamlined secret creation:
 ## Security Considerations
 
 ### Data Protection
-- **Encrypted storage** via SecretService (AES + base64)
+- **Encrypted storage** via SecretService (server-side pgcrypto, decrypted on the server)
 - **No plaintext** credential storage in memory longer than necessary
 - **Secure transmission** to browser via HTTPS Supabase connection
 
@@ -272,11 +168,18 @@ Streamlined secret creation:
 - [ ] Clicking a secret fills both username and password
 - [ ] Filled values trigger form validation
 
-**Domain Matching**:
+**Domain Matching** (these are `WebsiteMatchingUtil`'s scoring rules; the matching the
+app actually ships is the browser plugin's):
 - [ ] Exact domain match (google.com)
 - [ ] Subdomain match (login.google.com)
-- [ ] Common subdomain removal (accounts.google.com → google.com)
-- [ ] Two-part TLD handling (example.co.uk)
+- [ ] A secret saved for accounts.google.com is NOT suggested on login.google.com
+- [ ] A secret saved for google.com IS suggested on login.google.com (save it against the
+      parent domain to share it with those subdomains)
+- [ ] Sibling hosts under a two-part TLD do not match: a secret saved for example.co.uk is
+      NOT suggested on google.co.uk (pinned by `WebsiteMatchingBoundaryRegressionTest`);
+      there is no registrable-domain or public-suffix guessing
+- [ ] A secret saved against a broad suffix (co.uk) IS suggested on every host under it:
+      the scorer does not validate public suffixes, so save it against the specific host
 - [ ] Localhost handling
 
 **Secret Management**:
@@ -372,22 +275,29 @@ Streamlined secret creation:
 ## References
 
 ### Code Files
-- `FormFieldDetector.kt` (320 lines)
-- `WebsiteMatchingUtil.kt` (270 lines)
-- `FormFieldInjector.kt` (330 lines)
-- `SecretContextMenuBuilder.kt` (260 lines)
-- `BrowserSecretIntegrationViewModel.kt` (180 lines)
-- `SecretSelectionDialog.kt` (430 lines)
-- `SecretDialogs.kt` (+180 lines for QuickCreateSecretDialog)
-- `JxBrowserCompose.kt` (modified, +55 lines)
+
+Still here:
+
+- `composeApp/src/desktopMain/kotlin/ai/rever/boss/plugin/browser/BrowserHandleImpl.kt` - the live path, `getFormFieldInfoFromJS`
+- `composeApp/src/desktopMain/kotlin/ai/rever/boss/plugin/browser/FormFieldInfoJson.kt` - parses the field info that path returns, `FormFieldInfoJsonTest` pins the heuristics
+- `plugin-platform/plugin-api-browser/src/commonMain/kotlin/ai/rever/boss/plugin/browser/BrowserHandle.kt` - `FormFieldInfo`, `FormFieldType`, `BrowserContextMenuInfo.formFieldInfo`
+- `composeApp/src/desktopMain/kotlin/ai/rever/boss/plugin/browser/FormFieldDetector.kt` - injected page helper, readers unused
+- `composeApp/src/commonMain/kotlin/ai/rever/boss/utils/WebsiteMatchingUtil.kt` - no production caller
+- `composeApp/src/commonMain/kotlin/ai/rever/boss/components/plugin/tab_types/fluck/BrowserSecretIntegrationViewModel.kt` - never constructed
+
+Gone, and named here only so a search for them stops at this line rather than in the history:
+`FormFieldInjector.kt`, `SecretContextMenuBuilder.kt`, `SecretSelectionDialog.kt`,
+`SecretDialogs.kt`, `JxBrowserCompose.kt`.
+
+The rest of the implementation is in the browser plugin, in the `boss-plugin-fluck-browser` repository.
 
 ### External Dependencies
-- **JxBrowser 8.8.0**: Browser rendering and JavaScript execution
+- **JxBrowser**: Browser rendering and JavaScript execution; the pinned version is in `gradle/libs.versions.toml`
 - **Supabase**: Secret storage and retrieval
 - **Compose Desktop**: UI framework
 
 ---
 
-**Last Updated**: 2025-10-26
+**Last Updated**: 2026-09-22
 **Author**: Claude Code
-**Reviewer**: (Pending code review)
+**Reviewer**: swept 2026-09-22 (codeq)

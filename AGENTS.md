@@ -25,6 +25,79 @@ BOSS (Business Operating System Service) is a desktop application built with Kot
 
 **IMPORTANT**: Do NOT run `./gradlew run` in a blocking/foreground way just to test - the user runs and tests the app themselves. **Exception:** launching the app **in a dedicated bottom split pane is allowed** (backgrounded so it doesn't wedge the pane).
 
+### Testing automatic app updates
+
+On macOS, closing the last main window keeps BOSS running in the Dock. A Dock click
+or File > New Window opens a window again; explicit Quit ends the application.
+
+Automatic Updates in Settings downloads new releases and prepares installation after
+manual quit. On macOS it also installs when no main windows remain, including when
+the download finishes after the last window closes. That idle update relaunches
+with `--no-window`, keeping BOSS in the Dock until a Dock click or New Window request.
+Explicit Quit installs the staged update and leaves BOSS closed. Release distributions default this on;
+Gradle development runs default it off. Explicit preferences are saved. Update
+banners and prompts stay hidden in automatic mode; progress and errors remain in
+Settings. The next start of a newer version shows a one-time success toast.
+
+Build a separate older distribution for installation testing:
+
+```bash
+./gradlew :composeApp:createDistributable -PtestAutoUpdate=true
+```
+
+This uses v1.0.0, enables automatic updates by default, stores updater preferences in
+`composeApp/build/auto-update-test-settings`, and writes the distribution under
+`composeApp/build/compose-auto-update-test/binaries/main/app/`. On macOS, manually
+launch `BOSS.app` from that directory. Quit manually to let the helper install, then
+open it again after installation finishes. Closing all main windows instead tests
+the idle install and windowless relaunch. The incoming release must support
+`--no-window` to remain windowless after installation. Native Quit requests remain
+pending through Compose cleanup and then complete, so BOSS does not cancel macOS logout,
+restart, or shutdown. Do not use `run` for installation testing:
+the updater refuses automatic installation from a Gradle development process.
+
+### Automatic plugin updates
+
+Settings > Updates has an independent Automatic Plugin Updates switch. It defaults
+on in packaged release builds and off in Gradle development runs. Preferences persist.
+Every eligible plugin is included by default. The per-plugin list stores explicit opt-outs,
+so newly installed plugins update automatically too. Opt-outs are rechecked before activation.
+The worker starts after workspace restoration, uses compatible store candidates, and
+waits for all plugin tabs and mounted panels to close. It rechecks views after download;
+a reopened view defers installation again. Downloads use `.part` files until admitted.
+Failed promoted artifacts are quarantined; a `.rejected-update` marker fences startup
+selection if a live loader prevents removal. Host and Toolbox updates/installVersion
+share SHA-256 plugin-ID file locks under `.plugin-update-locks`; never delete lock files.
+Both participants claim a process gate before opening a lease descriptor. Their
+String-only system properties use keys `boss.plugins.updateLease.protocol3.` followed
+by SHA-256 of the UTF-8 canonical lock-file path, with UUID String ownership tokens.
+Capture the Properties object and computed key once per acquisition. Properties.putIfAbsent
+admits exactly one owner; every existing value is busy, including foreign values. Never
+replace an occupied value. Remove only the exact owning String token after confirmed
+successful channel closure. No host/plugin objects or access contexts enter global state;
+Properties.store/list remain string-compatible. Keep this protocol identical to Toolbox's
+PluginUpdateProcessRegistry and PluginUpdateLease. Closing a second same-process descriptor
+can release the holder's POSIX OS lock, so busy contenders must never open it. isOpen=false
+alone is not proof after a failed native close; any uncertain close retains its token across
+repeated closes and requires restarting BOSS. Registry mutation, clearing properties, or
+System.setProperties by arbitrary in-process code is outside this cooperative protocol;
+plugins already share JVM/file access. Both host and Toolbox releases must use protocol 3
+for the shared guarantee. Persistent disk lock names remain SHA-256 of the plugin ID.
+Ordinary idle plugins reload without restarting BOSS; native plugins, disabled plugins,
+plugins with loaded dependents, and multiwindow updates are staged for the next manual
+start. Disabled plugins remain disabled. Protected API/runtime ids use their existing
+host-managed lifecycle. Activation failures attempt to restore the previous JAR; status
+and errors appear in Settings. Supabase Realtime is the primary trigger, with a six-hour
+fallback and a local 30-second check for views closing. Three failed attempts pause
+that release for this process; a new release gets a fresh budget. Busy views and another
+installer's lock do not consume attempts.
+
+Toolbox honors the optional `boss.plugins.autoUpdate.enabled` JVM property to suppress
+manual update toasts in automatic mode. The `boss.plugins.autoUpdate.optOuts` property
+keeps manual prompts available for explicitly excluded plugins. Its companion change needs to ship too; older
+Toolbox builds may still show a manual prompt. Turning the mode off stops pending work
+before activation; already-staged updates apply at the next manual start.
+
 ### `composeApp` test home isolation
 
 Every `composeApp` `Test` task points `user.home` at its own fresh
@@ -34,6 +107,32 @@ real home can evict entries from a developer's project picker and a reused test 
 runs race a stale `recent-projects.json` load. This guarantee is deliberately module-local;
 moving a test that reads `BossDirectories.rootDir` to another module requires equivalent isolation
 there.
+
+### A `@Test` that returns a value never runs
+
+`fun x() = runBlocking { ...; assertIs<T>(y) }` returns whatever its last expression does, and JUnit
+Jupiter does not execute a `@Test` method that returns a value: it reports a WARNING-level discovery
+issue, which Gradle does not print, and counts the method nowhere. Nine `composeApp` tests sat
+unexecuted that way, four of them the MCP approval gate's fail-closed guarantees, and one no longer
+described the code by the time it first ran (#1667). Declare an expression-bodied test `(): Unit =`,
+or write `runBlocking<Unit>`, as `plugin-loader`'s tests already do.
+
+Every module's Gradle `Test` task now sets `junit.platform.discovery.issue.severity.critical=WARNING`
+(root `build.gradle.kts`), `buildSrc` sets it in its own build file because it is a separate build
+the root never reaches, and `composeApp` repeats it in
+`src/desktopTest/resources/junit-platform.properties` so an IDE run meets it too. A discovery issue
+aborts discovery for the whole engine: every test in the module disappears and a single
+`initializationError` names the method. If a toolchain bump introduces an unrelated warning, relax
+the property to `ERROR` in that module's own `build.gradle.kts`, which wins over the root; do not
+delete it.
+
+**The property is only read by JUnit Platform 1.13 and later.** On an older platform it is silently
+ignored, the guard does nothing, and a passing test run looks exactly the same as a working guard.
+That is why `buildSrc` imports the root version catalog and pins `platform(junit-bom)` to
+`libs.versions.junit.jupiter` (#1709): its only other test dependency, `kotlin("test")`, resolves
+JUnit through Gradle's embedded Kotlin (Platform 1.10), and the guard there was inert until the pin.
+The BOM is not a redundant dependency; removing it restores the inert guard. To check a module, run
+a throwaway `@Test fun probe() = 42` and confirm the run fails with "must not return a value".
 
 ### Running commands in a visible terminal pane
 
@@ -70,6 +169,28 @@ For a bottom split use `panel: horizontal_split`. Reuse a pane across calls by p
 - Decompose for navigation
 - Supabase + Edge Functions
 - BossTerm for terminal integration (bundled in the `terminal-tab` plugin)
+
+## Remote UI property patches are tri-state
+
+`WidgetDiffEngine` must distinguish three operations on a widget property: leave it alone, set it
+to a string, and remove it. An empty string cannot mean removal. It is a valid value for text,
+labels, selections and event ids, and the builder emits both omitted optional properties and
+present empty required properties.
+
+`DiffOperation.NodeUpdated.changedProperties` therefore carries assignments, while
+`removedProperties` carries deletes. The wire mirrors that split through additive
+`NodeUpdated.removed_properties`
+field 4, introduced with IPC 1.2.0. `apply` removes first and then applies changed values, so an
+explicit set wins if a malformed or hand-built patch names one key in both collections. Encoders
+sort removed keys for deterministic bytes. Older receivers safely ignore field 4; they retain a
+stale property until a full tree arrives, which is the existing failure rather than a new one.
+
+`NodeUpdated` is a manually implemented plain class rather than a data class now because
+`boss-ui-sdk` is published to external runtimes. Keep its original three-argument constructor,
+`component1` through `component3`, `copy`, and generated `copy$default` JVM descriptors. New code
+that needs to alter the removal set uses the four-argument constructor or
+`copyWithRemovedProperties`. `WidgetDiffEngineTest` reflects the old descriptors so a refactor
+cannot silently break an already-built runtime.
 
 ## Plugin dependencies are resolved at install time
 
@@ -209,6 +330,17 @@ stops at the first failure, leaving what came before it. The dependency still lo
 manager directly rather than `loadPlugin`, and for the same reason as before: answering one
 question must never produce a second dialog. What changed is that the first question now covers
 the whole closure, where it used to cover one plugin and stay silent about the rest.
+
+A plugin pack consents through `pack_plan` rather than this dialog, and the same rule holds:
+`pack_plan` resolves each install's closure with the same `planFor` and returns the extra ids as
+`alsoInstalls`, with `closureComplete: false` plus `unresolved`, `cyclic` or `truncated` when the
+walk could not see all of it. `pack_apply` installs the order its own fresh plan resolved and is
+handed that order rather than re-walking the store, so the installs cannot exceed the closure
+that apply's own plan resolved - a walk repeated at install time could follow store rows that
+changed in between. That bounds the install to the plan, not to what the operator saw: the
+`pack_apply` approval dialog shows the raw pack arguments, so a direct `pack_apply` with no
+earlier `pack_plan` has no closure in its consent. Showing the closure in that dialog is a
+recorded follow-up.
 
 Three properties of the plan are worth knowing before touching it. The plugin the user was asked
 about is always in the plan and always last, even if it turns out to be present, because the
@@ -359,6 +491,25 @@ collector. Routing among BossWindows does not change this Settings placement lim
 **A raised offer is not a shown dialog.** `PluginDependencyEventBus.report` drops silently when a
 prompt for that plugin is already queued, so `offerIfMissing` returning true is not proof anything
 appeared. The press therefore logs whatever happens, matching the bookmarks shelf's call site.
+
+## The tools menu shows a scrollbar only when it scrolls
+
+`ToolLauncherDialog`'s grid is capped at `VISIBLE_ROWS`, and its scrollbar is pinned visible while
+there are more rows than that. It reads as one pattern with the Top of Mind plugin's Space picker,
+which does the same job and now uses the same tile vocabulary and the same 0.7 alpha.
+
+Two traps, both hit while wiring this:
+
+- **`Modifier.scrollbar` has no fits-the-viewport guard**, unlike `lazyListScrollbar`, which
+  refuses to draw. Given content that fits it computes `contentLength == viewport` and a
+  FULL-LENGTH thumb, so pinning `alpha` unconditionally paints a permanent bar down a grid with
+  nothing to scroll. Anything pinning that alpha has to gate it.
+- **The gate cannot be a scroll-state read.** `ScrollState.maxValue` starts at `Int.MAX_VALUE` and
+  holds it until the scrollable has measured, so `maxValue > 0` is true on every first
+  composition; `canScrollForward` is `value < maxValue`, so it is true then as well. Both were
+  tried and both drew a bar under three tiles - a probe printed 2147483647. Gate on layout
+  arithmetic instead, which is right on the first frame: here, the row count against
+  `VISIBLE_ROWS`, rounded UP so 13 tools in 4 columns is 4 rows.
 
 ## Retiring a plugin into another one
 
@@ -512,6 +663,11 @@ null for every plugin, silently - that has happened before with `mcpToolRegistry
 implementation lives in `desktopMain` (it speaks HTTP), so `DefaultPlugin` reads it through
 `BrokeredCredentialAccess`, a commonMain holder that `main.kt` populates at startup.
 
+It happened a second time with `registerSearchProvider`: neither wrapper forwarded it, so no
+plugin's search provider ever reached global search. `PluginContextWrapperForwardingTest` now
+fails when either wrapper does not declare a `PluginContext` member. It matches by name, so it
+cannot tell a wrong forward from a right one, and a third wrapper has to be added to it.
+
 ### AI credentials are not configured here
 
 `OPENAI_API_KEY` used to be listed above as a `local.properties` key that enabled AI
@@ -564,11 +720,123 @@ the JxBrowser license and Supabase settings baked in by the
 `generateEmbeddedConfig` Gradle task, which reads env vars (CI secrets) or
 local.properties at build time and emits a git-ignored classpath resource.
 
+### `BOSS_SESSION_IMPORT`: handing a session to a headless BOSS
+
+A headless BOSS (one container per Optimist user, a Hunt agent seat) has nobody to sign in at
+its window. The host signs the user in elsewhere and drops that sign-in's refresh token in a
+file; BOSS adopts it as its own session (`refreshSession` then `importSession`). Code:
+`SessionFileImporter` and `DesktopSessionFileImport` in `desktopMain/.../services/auth`.
+
+- **The variable** names an absolute path. Unset, blank or relative means the hook is off and
+  nothing changes. It is read with `System.getenv` only, deliberately **not** through
+  `ConfigLoader`, so `local.properties`, system properties and `env_vars` cannot turn it on. Keep
+  it that way: whoever controls this path controls which account BOSS is signed in as.
+- **When it acts**: only while there is no live session, i.e. `NotAuthenticated`, or
+  `RefreshFailure` with an expired session (a container restarted after its session lapsed). It
+  polls every 500 ms, slowing to every 2 s after a minute with no file, and stops on sign-in.
+- **Format**: exactly `{"refresh_token":"<non-blank string>"}`, UTF-8, at most 16 KiB. Any other
+  key (even a harmless one such as `expires_at`) makes the file malformed.
+- **Checks**: a regular file, not a symlink (read with `NOFOLLOW_LINKS`); owned by the
+  process's numeric UID (`unix:uid`, compared with `/proc/self`; on macOS, where there is no
+  `/proc`, by owner name); mode exactly `0600`; the parent directory owned by the same UID and not
+  group or world writable. Only the immediate parent is checked, so pick a directory whose whole
+  path is private.
+- **Stability**: the file is read only when its inode, size and mtime are unchanged across two
+  consecutive polls and its mtime is at least one poll interval old, so a write still in progress
+  is never read. A writer stalled mid-write for longer than that can still lose the token, which
+  is why the contract below renames into place.
+- **Single use**: a file that passes is deleted before any network call, and a token that cannot
+  be deleted is never presented. It is consumed even if the import then fails (invalid JSON, auth
+  error); the host must write a new one to retry. Nothing read from the file is ever logged.
+- **A refused file is left in place** and the reason logged once (`Session import file refused
+  and left in place`, with e.g. `mode is not 0600` or `is owned by uid 65534, not the process uid
+  1000`). Fixing the file (or replacing it) is picked up on a later poll. A refusal that repeats
+  slows the poll like an absent file.
+- **Session recovery**: `CoreAuthService` does not clear a session that replaced the one it was
+  recovering (`SessionRecoveryPolicy.replacedSince`), so a handoff that lands while recovery's
+  refresh of the old token is in flight survives that refresh's rejection. The guard is one-directional:
+  a rejection that lands before the handoff's `importSession` still clears the old session, and
+  the import then lands on top of it.
+
+**Writer contract.** Create the file owner-only and rename it into place, in the same directory:
+
+```sh
+umask 077
+printf '{"refresh_token":"%s"}' "$rt" > "$BOSS_SESSION_IMPORT.tmp"
+mv -f "$BOSS_SESSION_IMPORT.tmp" "$BOSS_SESSION_IMPORT"   # rename(2), atomic
+```
+
+The importer only looks at the exact path, so the `.tmp` sibling is never picked up. A writer
+that cannot rename still works if it creates the file `0600` from the start and finishes within
+one poll; `printf > f && chmod 600 f` is refused until the `chmod` lands, then imported.
+
+**Where to put it**: a private tmpfs, so the token never reaches persistent disk or an image
+layer. `$XDG_RUNTIME_DIR` (`/run/user/$UID`, 0700) on a systemd host; in a container, a dedicated
+mount such as `--tmpfs /run/boss:mode=0700,uid=<uid>` with
+`BOSS_SESSION_IMPORT=/run/boss/session.json`. `/tmp` itself (1777) is refused. A bind mount under
+rootless Docker or a user namespace can show the file as `nobody`/65534; that is refused with the
+UID mismatch in the log.
+
 ### Supabase Deployment
 ```bash
 supabase functions deploy <function-name> --project-ref pcnwqamqdnsadranufjv --no-verify-jwt
 supabase link --project-ref pcnwqamqdnsadranufjv  # First time
 ```
+
+### fluck.risaboss.com (`fluck-web`)
+
+A sign-in page for the owner's Fluck web chats. The Fluck plugin heartbeats
+`fluck_web_upsert_instance` (as the user, every 30 s) into `public.fluck_web_instances`; the
+`fluck-web` function signs the user in (Google, Apple, magic link with `create_user: false`),
+lists `fluck_web_list_instances()`, and on Open mints a 60 s single-use ticket with
+`fluck_web_mint_ticket` and embeds `<endpoint_url>/#/t/<ticket>` in a full-viewport iframe
+(`#fluckframe`, as `live-sessions` embeds its viewer), so the address bar stays on
+fluck.risaboss.com. The Fluck redeems the ticket with `fluck_web_consume_ticket` as its own
+signed-in user, so a ticket minted by another account can never be redeemed; it keeps its session
+token in the frame's sessionStorage (no third-party cookie) and allows framing only by
+`https://fluck.risaboss.com`. Opening from the list pushes `?instance=<id>` (never the ticket):
+browser Back closes the frame, and a reload reopens that Fluck with a fresh ticket; switch and
+sign-out drop `?instance`. A load that may auto-open (`?instance`, or exactly one Fluck online,
+which opens at once with no countdown) starts in `body.launching`: a copy of the web chat's own boot screen (the name, centred, its
+`--bg`/`--text-3`, system font), so handing over to the frame changes no pixel; no portal chrome
+until the frame is up or the page has to ask. The frame posts `{type:"fluck-signed-out"}` (close, reload the
+list), `{type:"fluck-switch"}` (close, show the list) and `{type:"fluck-title", title}` (sets
+`document.title`, capped, text only); the page accepts them only from the frame's window and the
+endpoint's origin and ignores anything else. Backwards compatibility: a framing-capable Fluck first
+posts `{type:"fluck-hello"}` (before redeeming the ticket); with no hello within 8 s the page
+assumes an older Fluck that refuses framing, closes the frame and navigates top-level to the same
+URL (replacing its entry with `?list=1` first), so the portal can ship before every Fluck frames. CSP adds `frame-src https:`; the portal itself keeps
+`frame-ancestors 'none'`. No message content is stored. Security follows
+`live-sessions` (nonce CSP, no CORS, `__Secure-` cookies, cross-site refusal, token rotation), plus
+an exact-Origin and CSRF-nonce check on `POST /api/open`. Endpoints must be bare https origins (a
+table CHECK and a second check in the function). A Cloudflare Worker
+(`infra/cloudflare/fluck-web-alias`) proxies the vanity host onto the function.
+
+Deploy is manual. Nothing below runs in CI:
+
+```bash
+supabase link --project-ref pcnwqamqdnsadranufjv           # once
+supabase db push                                           # 20261006120000_fluck_web_instances.sql
+ALIAS_SECRET=$(openssl rand -hex 32)                        # shared by the function and the Worker
+supabase secrets set --project-ref pcnwqamqdnsadranufjv \
+  FLUCK_WEB_PUBLIC_BASE_URL=https://fluck.risaboss.com FLUCK_WEB_PUBLIC_BASE_PATH=/ \
+  FLUCK_WEB_AUTH_PUBLIC_URL=https://api.risaboss.com FLUCK_WEB_ALIAS_SECRET=$ALIAS_SECRET
+supabase functions deploy fluck-web --project-ref pcnwqamqdnsadranufjv --no-verify-jwt
+supabase functions deploy redirect --project-ref pcnwqamqdnsadranufjv --no-verify-jwt   # Fluck web arm
+cd infra/cloudflare/fluck-web-alias && npx wrangler login
+echo "$ALIAS_SECRET" | npx wrangler secret put FLUCK_WEB_ALIAS_SECRET && npx wrangler deploy
+curl -sf https://fluck.risaboss.com/ -o /dev/null -w '%{http_code}\n'   # 200; 503 alias_unverified = secrets differ
+```
+
+The function trusts the Worker (serves the page, keys rate limits on the visitor's IP) only when
+`X-Fluck-Web-Alias-Secret` matches `FLUCK_WEB_ALIAS_SECRET` (32+ chars). Direct hits on
+`api.risaboss.com/functions/v1/fluck-web/` are always redirected to the vanity host.
+
+Dashboard, by hand: Auth -> URL Configuration -> Redirect URLs, add `https://fluck.risaboss.com/auth`;
+Auth -> Email Templates -> Magic Link, paste `supabase/templates/email/magic-link.html` (it gained a
+`$fluck` branch). Without the redirect URL GoTrue silently falls back to `boss://auth/verify`.
+Tests: `supabase/tests/fluck_web_instances_test.sql` (pgTAP, `supabase test db`) and
+`cd supabase/functions/fluck-web && deno test --allow-all`.
 
 ### Decoding Supabase payloads
 
@@ -670,6 +938,18 @@ came from `docs/release-notes/`.
 
 ## Logging
 
+### Resource cleanup
+
+Use `ai.rever.boss.utils.CleanupRunner` for independent synchronous teardown actions
+when one plugin callback or native release failure could skip remaining cleanup.
+Claim resource ownership before callbacks, preserve release order and the owning
+thread, and keep native browser drains before releasing their profiles. The helper
+logs each failed action and continues; it does not schedule cleanup or make an owner
+idempotent. Its `destroyLifecycle` method advances after a failed pause/stop only
+when Essenty changed state, and never redelivers a destroyed lifecycle. Keep startup,
+normal actions, and cancellation from suspended operations outside this guard.
+Simple dialogs with only Compose state need no extra cleanup wrapper.
+
 Use structured logging via `BossLogger` (SLF4J backend):
 
 ```kotlin
@@ -683,8 +963,28 @@ logger.error(LogCategory.NETWORK, "Request failed", error = exception)
 
 **Security**: Always use `LogSanitizer` for sensitive data:
 - `maskEmail()`, `maskToken()`, `maskCredentialId()`, `maskUserId()`, `maskUriParams()`
+- A local file that fails to decode: log `decodeFailure(e)` as the data, never the decoder's
+  message by any route (`error = e`, `e.message`, `e.toString()`). kotlinx puts the file's content in
+  the exception message, and `decodeFailure` keeps only the exception type, the offset and the JSON
+  path, with map keys masked. Catch `SerializationException` before `Exception` or
+  `IllegalArgumentException`, which it extends. Supabase payloads use `sanitizeSupabaseFailure`
+  (see below). This is the rule for new and converted call sites; older decode sites that still log
+  the exception are tracked in #1711.
 
 **Config**: Set `BOSS_LOG_LEVEL` env var or `boss.log.level` system property (TRACE/DEBUG/INFO/WARN/ERROR)
+
+**Log file**: off unless asked for. `BOSS_LOG_FILE=/path/to/boss.log` (or `boss.log.file`) turns on a
+size-rotated file (10 MB, five backups) that receives entries at `BOSS_LOG_FILE_LEVEL` (or
+`boss.log.file.level`) and above, default ERROR. `BOSS_LOG_FILE=off` or a level of `OFF` disables it even if a
+default is ever switched on. The file threshold is applied after the console level, so it can only narrow: with the
+console at INFO and the file at DEBUG, the file gets INFO. Blank is unset at every step, an
+unrecognised level falls through to the next source rather than to INFO. File and console receive the same
+entries; callers must use `LogSanitizer` before logging sensitive data, since `BossLogger` does not sanitize them.
+`BossLogger.configureFromEnvironment()` in
+`main.kt` is the only host entry point; `configure()` has no host caller. Flipping
+`FILE_LOGGING_ON_BY_DEFAULT` in `BossLogger` makes it default-on at `~/.boss/logs/boss.log` for every
+install; that switch is deliberately one constant, because whether to default on was raised on #394 and
+is a policy call.
 
 ## Browser native disposal
 
@@ -719,6 +1019,47 @@ the next managed-profile creation. This is not a guaranteed shutdown flush. This
 is not an engine-abort mechanism and does not coordinate external raw-JxBrowser
 callers or engine-level forced closure.
 
+## JxBrowser's native libraries swap the process's malloc zones when they load
+
+On macOS the FIRST of JxBrowser's JNI libraries to load (normally `libtoolkit`) makes PartitionAlloc
+the default malloc zone in a static initializer, briefly unregistering the system zone; a `free()` on
+another thread in that gap is an uncatchable SIGTRAP at `libtoolkit+0x4c9f4`. Later libraries
+(`libipc`, `libawt_toolkit`) see PartitionAlloc already registered and do not swap again (measured
+with an interposer). Two layers close the window:
+
+- **The native agent** (`native/toolkit-preload-agent`, built by `prepareToolkitPreloadAgent`, shipped
+  as `$APPDIR/resources/toolkit-preload/libbosstoolkitpreload.dylib` and named by `-agentpath` in the
+  launcher). It loads the toolkit from `Agent_OnLoad`, when the only threads are the launcher's two
+  idle ones, so nothing can free during the swap. It decides nothing: it loads what
+  `ToolkitPreloadManifest` recorded on the previous launch, and only while every file that decision
+  read is unchanged. 9.5.37 still crashed because the JVM's own C2 compiler thread freed mid-swap,
+  which no Java-side ordering can prevent.
+- **`ChromiumToolkitPreload`**, the in-JVM preload on the main thread before AppKit. It still runs
+  every launch (a no-op after the agent), covers the launches the agent skips, and writes the
+  manifest for the next one. Its KDoc is the canonical account; keep detail there.
+
+Rules for anyone touching it:
+
+- **Preload only from the directory `FluckEngine.resolveEngineDir` boots.** A second copy from
+  another path does not swap again, but it registers duplicate Objective-C classes (including
+  `NSWindowSwizzler`), so the agent skips on ANY doubt rather than guess.
+- **Anything the engine decision starts reading must be guarded in the manifest**
+  (`ToolkitPreloadManifest.inputsFor`), or the agent can load an engine this launch would not pick.
+- **A packaged launcher must never name an agent it does not carry**: a missing `-agentpath` library
+  stops the JVM from starting. `verifyToolkitPreloadAgent` fails the build for that, and
+  `Agent_OnLoad` always returns `JNI_OK`.
+- **JxBrowser must stay in the host class loader.** A plugin that bundled JxBrowser would get
+  `already loaded in another classloader` for a library the host preloaded.
+- **Known gaps:** the first launch after an install, engine change or app update has no valid
+  manifest and keeps only the in-JVM preload; a first-run download-then-boot gets no preload, so
+  packaged macOS relaunches after the download (`ChromiumBootstrap.onEngineDownloadComplete`)
+  instead of booting with AppKit running (9.5.39 crashed there on a fresh install), carrying
+  queued `boss://` links and files across in `RelaunchHandoff` (replayed as `EXTERNAL`); a
+  native allocation failure is still a `brk #0` (only moving JxBrowser out of process fixes that).
+  Off switch for both layers: `BOSS_TOOLKIT_PRELOAD=false`.
+- **Re-measure after a JxBrowser bump.** Check the zone swap still sits in a static initializer and
+  still happens only once per process before trusting any of the above.
+
 ## Browser telemetry, and how to turn it off
 
 The integrated browser reports which sites BOSS is used with and how - page views,
@@ -749,6 +1090,9 @@ restart. There is no Settings row and no per-site exclusion.
   `window.__bossInteractionStarted`. The sanitizers bound what can be *smuggled*
   through; nothing bounds a site lying about its own usage. Treat these as
   indicative, not as measurements, wherever a site has an incentive to lie.
+- **A page can observe the current trackpad gesture token.** The injected swipe bridge exposes
+  the process-wide contact id and begin epoch while fingers are down. It does not expose deltas,
+  but a page can poll the bridge and infer that a trackpad contact is active.
 - **Every project the user opens is now on the bus, not only plugin-initiated ones.**
   `ProjectChangeEvent` used to be published from `ProjectDataProviderImpl.selectProject`
   alone, so a path reached plugins only when a plugin had asked for the switch. It is
@@ -758,8 +1102,12 @@ restart. There is no Settings row and no per-site exclusion.
   bridge. Project paths routinely contain usernames, so this widens *when* a filesystem
   path reaches every installed plugin, not *what* - the same install-time-gating stance
   as the bus above applies. In particular, `boss://` links can originate outside BOSS and
-  every non-terminal deep link currently bypasses `DeepLinkOrigin` confirmation, so an
+  a deep link that would start a terminal command, and a plugin action link, consult
+  `DeepLinkOrigin`; project/file deep links still do not, so an
   externally opened project link can trigger this broadcast without operator confirmation.
+  Plugin action links are the exception: external and in-process-plugin requests are held for
+  confirmation before their registered handler runs, including when they arrive before any
+  window exists, in which case they wait for the first one.
   It is recorded here because this paragraph is the canonical list of what a third-party
   plugin can observe.
 - **`PluginContext.projectSearchProvider` is the first UNGATED WRITE surface.**
@@ -771,11 +1119,15 @@ restart. There is no Settings row and no per-site exclusion.
   paths outside it, canonical and symlink-checked. A plugin that needs project
   search should be vetted the same way one that subscribes to the bus is.
 
+- **`WorkspaceContextMcpProvider` exposes open file paths and browser URLs to MCP agents under explicit permission and policy gates.**
+  Where `IntrospectionMcpToolProvider` intentionally emits magnitudes only (counts of tabs/terminals, deliberately refusing to disclose file paths or browser URLs), `get_workspace_context` and `get_active_editor_file` exist specifically to let operator-attached AI coding agents inspect active workspace context, locate open files, and reference current browser URLs. `get_workspace_context` inventories tabs across all Spaces (current and preserved workspaces across all open windows). To prevent ungated exposure of background workspace paths and cross-window URLs to untrusted callers, both tools require the `workspace.context` permission (which admin status bypasses under the standard RBAC rules) and are enrolled in `McpMutatingToolCatalog.KNOWN_MUTATING_TOOLS` as sensitive reads, routing invocations through the approval-requiring ASK default so operator approval remains mandatory.
+
 ## Two-finger swipe navigation (macOS)
 
 A two-finger horizontal trackpad swipe navigates back/forward. It is detected **inside the page**
 (`BrowserSwipeNavScript` + `swipe-nav.js`), because under `HARDWARE_ACCELERATED` the browser is a
-native surface and neither Compose nor AWT sees the wheel. JxBrowser's
+native surface and Compose does not see the wheel. JxBrowser's AWT callback sees deltas but has
+already lost the native finger and momentum phases. JxBrowser's
 `enableOverscrollHistoryNavigation` does NOT provide this - measured 2026-08-28, it does nothing for
 a trackpad in either rendering mode, because it is a touchscreen feature.
 
@@ -784,17 +1136,35 @@ vertical measured as a path length and horizontal as net displacement. Chrome's 
 are fractions of the trackpad from `NSTouch.normalizedPosition`, which a page cannot see, so those
 carry over as the same fractions of the commit distance.
 
-**It commits at the end of the gesture, not on crossing the commit distance** - and "end of
-gesture" is literally `GESTURE_GAP_MS` (120ms) with no wheel event, because AWT does not surface
-NSEvent's scroll phases and a time gap is the only segmentation signal there is. So it is not
-release: holding past the line and simply STOPPING, fingers still down, commits after 120ms too.
-The window in which reversing still cancels is 120ms of continuous motion, not "until you lift".
-The decision reads the LAST horizontal position, so easing back below the line cancels.
+**It commits on a real CoreGraphics Ended phase, never on an inactivity timeout.** A listen-only
+session event tap assigns each finger sequence an id and accumulates its final point deltas. The
+page latches that id while deciding scroll ownership; only the matching native release can decide.
+A stationary hold therefore remains cancellable indefinitely. Cancelled phases reset without
+navigating, and momentum has no active finger id and is ignored. Native final displacement magnitude is
+authoritative at release (the page chooses direction) so renderer/native queue reordering cannot hide a late easing-back or
+reversal. If Input Monitoring preflight fails the feature fails closed and Settings shows how to
+grant access; this path never requests permission itself. The observer is started off the UI thread
+only while the effective setting is enabled. Disabling cancels claimants immediately and releases
+the native source and tap within the bounded run-loop poll. Re-enabling retries permission/setup;
+run-loop failures cancel the contact, clean up resources and report a distinct failure state.
+Availability reads and browser registration do not start native observation.
 
-That makes `GESTURE_GAP_MS` do three jobs at once: segmenting one gesture from the next, setting a
-floor on commit latency, and (as the minimum possible gap between two gesture ends) bounding
-`SWIPE_NAV_DEBOUNCE_MS` from above. Raising or lowering it touches all three, and
-`BrowserSwipeNavTest` reads it out of the script so the third one fails loudly.
+`boss.browser.swipe.phase` remains compatible: `id:active:beganAtEpochMs[:previousTerminatedAtEpochMs]`
+or `id:ended|cancelled:netX:verticalPath:nativeRejected:reversed`. The fifth terminal field is the
+native reducer's verdict, not the page's. Active publication occurs only at
+contact begin, not on every movement. `boss.browser.swipe.terminals` additionally retains the last
+32 terminal records, separated by semicolons, published before the next active contact. Companion
+fluck-browser#45 reconciles by contact ID both before handling a new wheel and in its watchdog.
+Reads are non-destructive across surfaces; missing/evicted evidence cancels. These deltas are native
+CoreGraphics point deltas, not a guarantee of CSS-pixel or Compose-unit equivalence. Physical
+trackpad calibration still needs to cover browser zoom, slow drags and the separately tuned home
+surface. `SwipeNavParityTest` runs shared sample fixtures through the native reducer and the actual
+page script, including the host-generated release statement; it also pins cancellation constants.
+
+One cross-process ordering limit remains: the cutoff rejects AWT events stamped at or before the
+previous native termination, but cannot identify an old OS event that AWT dispatch stamps only
+after the new contact begins. Arbitrarily delayed dispatch still needs real backlog testing
+before adding a custom FIFO between the CoreGraphics tap and JxBrowser's input callback.
 
 **Past the commit distance, vertical drift stops cancelling** (`reachedCommit`). Vertical is a path
 length and only ever grows, so every event after the crossing was one more chance to cancel a swipe
@@ -803,24 +1173,8 @@ easing back or reversing can still cancel. Native swipe-back behaves the same wa
 
 **Two host-side windows, for two different things** (`BrowserSwipeNavBridge.kt`).
 `SWIPE_NAV_DEBOUNCE_MS` (32ms, any direction) catches a double-dispatch bug in the bridge.
-`SWIPE_NAV_REPEAT_MS` (400ms, same direction only) is the paused-drag guard: a slow drag that
-hesitates past `GESTURE_GAP_MS` with the fingers down is two gestures to the script and would
-navigate back twice. That guard cannot live in the page - the first commit navigates the tab and
-the script's state dies with the document. The cost is that two intentional same-direction swipes
-under 400ms apart become one; that is the deliberate trade, because a dropped swipe is retryable
-and an extra step back may not be, since the forward entry need not survive a redirect. A reversal
-is never held for the repeat window.
-
-**Momentum phase costs latency and nothing else.** A `CGEvent` tap on this hardware (measured
-2026-09-02) shows macOS emitting momentum-phase scroll for 180-870ms after the fingers lift,
-carrying 325-2500px of horizontal travel. Whether Chromium forwards those to the renderer as
-`wheel` events is NOT confirmed: if it does, each one re-arms the end-of-gesture timer and a flick
-commits at end-of-momentum instead of at release. It cannot change the ANSWER - a tail runs the
-flick's own direction, so it can neither reverse nor ease back, and `reachedCommit` is what closed
-the remaining path, a tail's `deltaY` tripping the vertical tiers. Synthetic phase-tagged events
-cannot settle the forwarding question - `CGEventPost` from another process never reaches the
-layered native browser surface, and does not even enter the session event stream - so it needs one
-real flick against a recording `wheel` listener.
+`SWIPE_NAV_REPEAT_MS` (400ms, same direction only) remains defense in depth against duplicate
+bridge delivery across a navigation. A reversal is held only for the shorter debounce window.
 
 **Off switch**: `Settings > Browser > Trackpad`, stored in `~/.boss/swipe-nav.json`, or
 `BOSS_BROWSER_SWIPE_NAV=false` (also `0` / `no` / `off`). The environment wins, and the Settings row
@@ -867,7 +1221,9 @@ is now gated - packaging relies on those.
 `implementation(projects.pluginPlatform.pluginWorkspaceTypes)`, so its POM pins the sibling at the
 current project version. `publish-maven-central.yml` takes a free-form `packages` input, and
 dispatching bookmark-types alone would ship a POM requiring a `plugin-workspace-types` version that
-does not exist on Central. `all` is safe - workspace-types publishes first. BossConsole#81 tracks the
+does not exist on Central. Bookmark id generation also calls `UniqueIdsKt` at runtime, so an older
+workspace-types jar cannot substitute for the sibling version. `all` is safe - workspace-types
+publishes first. BossConsole#81 tracks the
 durable guard: diffing public members against the api jar `plugin-api-core` already downloads,
 covering all eight duplicated packages rather than this one field.
 
@@ -895,7 +1251,11 @@ covering all eight duplicated packages rather than this one field.
 
 ## Deep Links
 
-App registers `boss://` protocol for authentication callbacks from external browsers.
+App registers `boss://` protocol for authentication callbacks from external browsers. That
+includes `boss://auth/callback`, the Google / Apple sign-in return, which is acted on only
+while a sign-in this process started is waiting (`OAuthSignInService`). Linux registers the
+scheme at startup through `LinuxProtocolHandler`, as Windows does through
+`WindowsProtocolHandler`.
 
 Because the scheme is registered with the OS, a `boss://` link is not evidence
 that the operator asked for anything - any program that can ask the OS to open a
@@ -909,11 +1269,51 @@ URL produces the same input. Entry points therefore tag each link with a
   Also the default for an unstated origin, so a new caller that forgets to say
   gets the cautious handling.
 
-Only `boss://terminal?command=` consults it today: an `OPERATOR_CLI` command runs
-as before, anything else is shown to the operator for confirmation first (the
-`boss` shell shim converts to a `boss://` URL and opens it via the OS, so its
-`terminal -c` still works, with one confirmation). Other hosts - including
-`boss://plugin?id=…&action=…` - are unchanged.
+Three hosts consult it. The first two share a reason - each can type a command
+into a shell - and the third reaches a plugin's own code instead:
+
+- `boss://terminal?command=`: an `OPERATOR_CLI` command runs as before, anything
+  else is shown to the operator for confirmation first (the `boss` shell shim
+  converts to a `boss://` URL and opens it via the OS, so its `terminal -c` still
+  works, with one confirmation).
+- `boss://workspace?path=`: a Space's terminal tabs run their `initialCommand`
+  when it is applied, so an `EXTERNAL` load of a Space that carries any is held
+  (`spaceLoadDisposition`) and `SpaceLoadApprovalDialog` lists every command
+  before anything loads. A Space with no terminal commands, and the operator's
+  own `boss workspace`, load as before. The origin rides on
+  `CLICommand.LoadWorkspace` through the cold-start readiness queue to
+  `WorkspaceLoadEvent.requiresConfirmation`, because only the window parses the
+  file and so only it knows whether there is anything to confirm.
+- `boss://plugin?id=…&action=…`: the link dispatches into a plugin's registered
+  `DeepLinkActionHandler`, which is a program the operator did not ask to run, so an
+  `EXTERNAL` request is held (`pluginActionDisposition`) and
+  `PluginActionApprovalDialog` shows the handler, the action and the parameter KEYS -
+  never a parameter value, which is attacker-chosen text. Malformed prompt tokens are
+  refused outright.
+
+No other host consults it.
+
+A terminal request with no usable window is refused. A **plugin action** with no usable
+window is instead *retained* by `PluginActionEventBus` until some window claims it, because
+that is the ordinary cold-start path rather than an edge case: `CliBootstrap.dispatchPostLock`
+runs an argv link before `application {}` builds the first window, so refusing there meant a
+link clicked while BOSS was not running was never put to the operator at all. A retained
+request has not run and still cannot run without a confirmation, so this widens nothing. The
+registry is bounded (`MAX_PENDING`); a request arriving when it is full is refused, not
+dropped silently. Every open window is offered every retained request and
+`shouldClaimPluginAction` decides whose it is - the window it resolved to, or any window once
+that one has closed - so exactly one window shows it. A window claims one request at a time,
+only while nothing is on screen (`PluginActionApprovalQueue.canClaim`), as the dependency bus
+does, so every other request stays retained for the next window. Closing a window after its
+prompt appears can still abandon that one claimed request. Because the window's own queue
+holds only the prompt on screen, the prompt's "(n pending)" counts that one plus every request
+still retained on the bus (`pluginActionBacklog`), so a flood of links is visible. The wiring
+lives in `PluginActionApprovalPrompt`, not inline in `BossAppDialogs`, so a test drives the real
+count. A retained request carries no age and does not expire: the registry is bounded and a
+request reaches its handler only through the prompt, so a prompt shown long after the link was
+clicked still fails closed rather than acting on its own. That is a recorded decision, not an
+oversight - a TTL, or the arrival time in the prompt text, would make a late prompt easier for
+the operator to place.
 
 **Single-instance channel**: `SingleInstanceManager` publishes
 `~/.boss/run/single-instance` (owner-only) with the channel endpoint and a token
@@ -922,10 +1322,12 @@ Linux) or a loopback port (Windows). Every request must present the token,
 "another instance is running" means something answered on the channel rather than
 a pid existing, and a descriptor nobody answers on is reclaimed.
 
-A forwarded plugin action (`boss://plugin?id=...&action=...`) is acknowledged
-only when its handler reports true. Missing ids, missing handlers, declined
-and throwing handlers report failure. The channel waits up to five seconds;
-a timeout reports an unknown outcome and cancels dispatch if it is still queued.
+A forwarded operator-origin plugin action (`boss://plugin?id=...&action=...`) is
+acknowledged only when its handler reports true. An external action is acknowledged when
+it is queued for confirmation, before anything runs. Missing ids, refused actions, missing
+handlers, declined and throwing operator-origin handlers report failure. The channel waits
+up to five seconds for a direct dispatch; a timeout reports an unknown outcome and cancels it
+if it is still queued.
 An already-running synchronous handler cannot be interrupted. Startup therefore
 never retries plugin actions automatically, even after a lost response; auth and
 other open requests retain their existing retries. Panel-open links still only
@@ -1109,6 +1511,162 @@ It replaced a `swift <tempfile>` shell-out per call, which needed Xcode installe
 and so could not work at all on most machines; the Swift scripts remain only as a
 fallback for URL schemes if `Native.load` fails.
 
+## The quick switcher belongs to a plugin now
+
+`Ctrl+Space` used to set `BossAppState.showTopOfMindDialog` and the host drew its own
+`TopOfMindDialog`. Both are **deleted**. It now dispatches `open-quick-switcher` at the Top of Mind
+plugin and opens that plugin's panel, exactly as the workspace button already did with
+`open-workspace-picker`; both helpers live in `components/plugin/TopOfMindActions.kt`.
+
+**The panel id is `PanelId("top-of-mind", 5)`.** The removed `TOP_OF_MIND` constant used
+`PanelId("topofmind", 2)` - a different id string from the one the plugin registers - so opening by
+it matched nothing at all, silently. Only the `panelId` and `pluginId` are compared, so the order
+is carried for honesty rather than for matching.
+
+**When `dispatch` returns false there is no fallback dialog, and that is the point.** Falling back
+would hide the fact that the plugin is missing behind a switcher that looks fine but sees only this
+window. `openTopOfMindQuickSwitcher` instead says why, reusing what already exists rather than
+adding a second install path:
+
+| State | What happens |
+|---|---|
+| not installed | `MissingPluginOffer.offerIfMissing`, which raises the host's store-backed `MissingDependencyDialog`. It is `userInitiated`, so a keypress re-asks after a previous dismissal. |
+| installed, switched off | An **Enable** button, through `MissingHandlerPluginEventBus` - the host's only enable-offering dialog. Installing something already installed cannot fix it. |
+| installed and running, no handler | A status line: an older plugin build, update it in the Toolbox. |
+| anything else | A status line naming the state (no access, incompatible, still starting). |
+
+The decision is `pluginSectionAbsence`, the same pure function `PluginSettingsUnavailableNotice`
+uses, **moved from `settings/sections/` (desktopMain) into `components/plugin/` (commonMain)** so
+both callers share one ordering. That ordering is the part worth not copying: permissions first
+because an inaccessible plugin is recorded DISABLED too, and incompatible/disabled before installed
+because `MissingPluginOffer.isInstalled` counts both as installed. `servesNoPanel` is passed `true`
+from the keypress path and reads there as "serves no such action" - reached only after `dispatch`
+has already said no.
+
+Two things the enable path knows that the install path does not. `MissingHandlerPluginBus` remembers
+a "Not now" for the session and drops every later report, so `wasDeclined` is asked first and a
+declined plugin falls through to the status line rather than to silence. And its `tabTypeId` field
+carries the action name here, which only feeds its log lines and the collector's "has it registered
+since?" re-check against `TabRegistry` - no tab type is called `open-quick-switcher`, so that
+re-check can never suppress the prompt.
+
+**The host still does not depend on the plugin.** api -> host is forced (`ActiveTabsProvider` is
+`@HostImplemented`) and plugin -> host is forced (`minBossVersion`); a host that required the plugin
+would close a cycle. It builds and runs without it and merely declines to do the job itself.
+
+`TopOfMindStateHolder` and `TabCollector` **stay**: `GlobalSearchService` reads the holder, and the
+plugin api's new `ActiveTabsProvider.allWindowTabs` is derived from it, with
+`refreshAllWindowTabs()` calling `TabCollector.refreshGlobalState`. That is deliberately the only
+cross-window tab walk - `ApiActiveTabsProviderAdapter` is per window, so an adapter collecting its
+own would have N windows each walking every other window's split trees on their own schedule.
+
+## One pane, one name
+
+`ActiveTabData.splitPosition` reaches every plugin with the name the window's own vertical tab bar
+prints on that pane's group header - "Left", "Top right", "Pane 3". It had carried a comment
+promising exactly those values since it was declared and was **never populated**, so every consumer
+saw null and invented its own naming from the saved `SplitConfig`: a different source of truth,
+which describes the tree rather than the screen (so a nested pane came out "TOP > LEFT" where the
+bar says "Top left") and goes stale the moment a pane is split without saving.
+
+`paneGlyphs` in `PaneGlyph.kt` is the normalisation both sides share. The answer for one pane
+depends on all of them, so it takes the whole set; `WindowVerticalTabBar` had the only copy, and a
+second one in `SplitViewState` is precisely how the two names would drift. `splitPositionsFor` then
+applies the bar's own two rules - a `panelName` the user gave beats the derived position, and an
+unmeasured pane falls through to "Pane N" - and answers nothing at all for a lone pane, because a
+position there claims a divider that does not exist.
+
+**A workspace running behind the one on screen answers too.** Its panes were never composed, so
+there are no measured rectangles; the rectangles come from its split tree with every divider
+assumed centred, which cannot change the answer - `paneLabel` asks only which edges a pane touches
+and which axis it spans, and no divider position changes either. So a workspace names its panes
+identically before and after it comes on screen. That path deliberately does **not** consult
+`panelName`: panel ids are unique only within one tree (every workspace's first pane is `main`), so
+a name given to one pane would be returned for the pane of that name in every other workspace.
+
+## Dropping a tab into a pane, at a position
+
+The window's vertical bar registers one rectangle per PANE (`RegisterGroupBounds` carves the
+scrolling column into slices), so "dropping anywhere in a pane targets that pane" has always
+worked. What it did not carry was a POSITION: `tabBarTargetAt` answered
+`TabDropTarget.ExistingPanel(panelId)` for any pane but the drag's source, which appended and drew
+no line, so the only way to say where a tab should sit was to move it and then reorder it.
+
+`ExistingPanel` now carries a nullable `targetIndex`, and the slot comes from the SAME arithmetic a
+reorder uses - `reorderIndexFor` over `tabBounds`, filtered to the target pane. Five things about
+that:
+
+- **The rectangles are the target pane's, not the source's.** Tab bounds are keyed
+  `panelId:tabId`, so a pane other than the source has its own measured rows to compare against.
+  Reading the source's is the bug the test `the index comes from the target pane's rows` pins.
+- **Null means append, and it has to stay expressible.** Three drops name a pane and no position
+  in it: the centre of a panel's content area, a sidebar panel dragged out onto one
+  (`ProcessPendingPromoteToTab`), and a bar whose tabs have not been measured yet. Defaulting
+  those to 0 would land the tab at the head of a list the user never pointed at.
+- **The index is carried through UNADJUSTED.** A reorder's is nudged down when the source sat
+  earlier in the same list, because removing the tab shifts everything after it. A cross-pane move
+  takes nothing out of the destination, so the slot the indicator drew is the slot the tab lands
+  in.
+- **`insertionEdgeFor` is the drawing rule, and it is pure.** Every slot is drawn by the row
+  BENEATH it, and the one slot with no row beneath - past the end - rides the last row's trailing
+  edge, so a boundary two rows touch is never drawn twice. `InsertionEdgeTest` asserts that as a
+  property over a whole list ("every slot is drawn exactly once") rather than case by case,
+  because a doubled boundary and a lost final slot each satisfy every individual case.
+- **The pane fill and the line say different things.** The fill (`PanelDropZoneOverlay`) is which
+  pane will take the tab; the line is where in it. Both are wanted, and the line is read through
+  one `derivedStateOf` inside each ROW rather than off `dropTarget` in the bar's body - this bar
+  renders every tab in the window, and `dropTarget` changes at pointer rate. The fill needed the
+  same treatment for the same reason: `ExistingPanel` used to be constant while the pointer moved
+  within one pane, and `RenderSplitNode` read it in its body, so a pane's whole subtree - its tab
+  content included - would now recompose every time the pointer crossed a row. It collapses to
+  `PanelDropHighlight`, three answers that change a handful of times in a drag, read inside the
+  overlay. That moved the overlay to `components/overlays/`, where an overlay belongs and where
+  the package name has no underscores for detekt's `PackageNaming` to reject.
+
+**Pinning still follows the line, and that is not automatic.** `BossMainWindowPanel` draws the
+indicator deliberately AFTER the pinned `SectionBreak`, so a line below the separator means the tab
+lands unpinned. That holds for an arriving tab because `TabDropHandler` adopts it (which appends,
+there being no adopt-at-index on `BossTabsComponent`) and then calls
+`SplitViewState.reorderWithinPanel` - the same helper `moveTabToWorkspace` uses for a named pane -
+which goes through `BossTabsComponent.moveTab` and therefore through `pinnedCountAfterMove`. Reach
+`TabsNavigation.moveTab` directly and the count silently stops matching the separator. The reorder
+runs AFTER `selectTab`, because `TabsNavigation.moveTab` carries `activeIndex` along with the tab
+it moves; selecting afterwards would need the post-move index, which is what the call establishes.
+
+Today the two cannot actually coexist - `showSections` is `!several`, so a multi-pane bar draws no
+separator at all - but the ordering is what makes the rule true if they ever do.
+
+**A tab gesture owns its cleanup (#690).** Both `BossTabButton` and `TabFaviconChip` run
+inside `withDragSession`, whose `finally` clears an interrupted gesture even when pointer input
+is cancelled or restarted without an end/cancel callback. Ownership is the exact `DraggingTabInfo`
+instance, not the tab id: a tab can appear on multiple surfaces and can start a new drag before an
+old handler finishes. Never clear window-wide drag state from a tab-id-only disposal hook.
+
+**A collapsed pane springs open under a dragged tab**, after the same 550ms the Top of Mind panel
+gives its own headers (`SPRING_LOAD_DELAY_MS`, a second constant on purpose: nothing links the two
+repositories at compile time). A pane that is not being worked in shows one row plus a favicon
+summary, so the tabs a drop would land between are not on screen to aim at, and
+`TabBarGroup.hoverGroup` is wired to a real pointer hover which a captured drag does not produce.
+Four properties, each a decision:
+
+- **The delay is what makes dragging PAST a group free.** An ordinary drag crosses every group
+  between the tab and its destination, and reflowing at each one would move the target out from
+  under the pointer.
+- **It goes through `TabGroupExpansion.hover`**, the same sticky choice a resting pointer makes,
+  rather than a second notion of "this group is open" for the bar to reconcile.
+- **The pointer and the drag are re-checked AFTER the wait.** Snapshot invalidation and
+  recomposition are not synchronous, so the effect's own key can be stale even though it is what
+  cancelled every earlier attempt.
+- **It only ever OPENS.** Nothing collapses a group, and `barExited` is suppressed while a drag is
+  in flight for the same reason: a group that re-closed on exit would take with it the tabs that
+  were the reason to open it. Only panes that are not already expanded are candidates, so a spring
+  never closes a group the user opened.
+
+One difference from the plugin worth knowing: the plugin gives its collapsed summary row no index,
+because that row stands for whichever tab the pane is showing rather than the tab at position zero.
+The host's single collapsed row carries its true model index (`TabBoundInfo.actualIndex`), so a
+drop on it lands next to the tab that was on screen and needs no exception.
+
 ## A missing plugin no longer fails silently
 
 Browser, editor and terminal tabs are plugin-provided. `addTab` logged "Dropped
@@ -1145,9 +1703,739 @@ literal table: the mapping lives in each plugin's `plugin.json` and when the
 plugin is absent there is no manifest to read. It keys on the **type string**, not
 the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 
+## The built-in layouts are TEMPLATES, and picking one materialises it
+
+`PredefinedWorkspaces.allWorkspaces` is the eight layouts BOSS ships, not eight Spaces. Seven are
+parameterised - `{projectPath}`, `{gitRemoteUrl}`, `{currentFile}` and `{claudeContinueFlag}` stand
+in for a project nobody has chosen yet - and applying one resolved those placeholders on the way to
+building its tabs and threw the answers away, so the Space list still said `{projectPath}`
+afterwards and the layout on screen belonged to no Space at all.
+
+**Two different questions, and conflating them is a bug in either direction.**
+
+| | Browser Only | the other seven |
+|---|---|---|
+| a layout BOSS ships (`PredefinedWorkspaces.allIds`) | yes | yes |
+| has placeholders left to substitute (`requiresProject()`) | no | yes |
+
+Being a **TEMPLATE** is the first row: identity, "one of the eight we ship", which is what the Space
+picker groups on. Being **MATERIALISED** on pick is the second: shape, which is what `spaceToOpen`
+gates on. They agree on seven and disagree on Browser Only, a single browser panel on a fixed URL.
+Answering the first question with the second put one of the shipped layouts in with the user's own
+Spaces; answering the second with the first would try to name a copy of it after a project the
+layout does not reference.
+
+`spaceToOpen` (`components/workspaces/WorkspaceTemplate.kt`) is the one door every pick goes
+through, and it MATERIALISES a template: substitutes the placeholders, sets `projectPath`, names it
+`"<Template> (<project>)"`, mints a fresh `LayoutWorkspace.generateId()`, saves it, and hands the
+copy back for the caller to load and apply. Four call sites, deliberately all of them - the Top of
+Mind Space picker (through `SplitViewOperationsImpl.applyWorkspace`), the host's own Space button
+and menu (through `WorkspaceSwitch.resolve`), the home screen's cards
+(`BossAppEventBusEffects`) and the startup "which Space" prompt (`BossAppDialogs`) - because a
+template picked from the fourth of those is the same gesture as one picked from the first.
+
+- **Templates are the SET of built-in ids, and it cannot be a prefix test.**
+  `PredefinedWorkspaces.allIds` is derived from `allWorkspaces`, so a ninth built-in joins by
+  existing; all eight ids are named constants so one can be referred to. `LayoutWorkspace.generateId()`
+  mints `workspace-<epoch millis>-<entropy>`, so a saved Space carries the same `workspace-` prefix as a
+  built-in and `startsWith("workspace-")` would call every Space a template. The NAME is not the key
+  either - a user can save a Space called "Claude Code".
+- **There is deliberately NO `isTemplate` field on `LayoutWorkspace`.** It is the plugin api type,
+  and a new constructor parameter on it rejects every already-built plugin (see the `@JvmOverloads`
+  note on `PanelConfig`). The id it already carries is enough.
+- **Materialising is gated on `requiresProject()`, which is untouched**, and Browser Only must keep
+  answering false to it: `shouldApplyOnFreshStart` declines a layout that needs a project, so if
+  that flipped a new install with no project would come up on an empty window instead of on a
+  browser. Two tests depend on it. The template notion was added alongside it, not over it.
+- **A materialised Space is never a template again by construction**: it gets a fresh
+  `generateId()`, which is not in `allIds`.
+- **The substitution is `WorkspacePlaceholders.processPlaceholders`, not a second pass.** Per-field,
+  and the split is `createTabFromWorkspaceConfig`'s: `initialCommand` is shell content so
+  `{projectPath}` is substituted SHELL-QUOTED there and raw in `url`, `filePath` and
+  `workingDirectory`. Backwards either way is a real bug - an unquoted path with a space in it makes
+  `cd /Users/me/My Project` two arguments, and a quoted one in a `filePath` opens a file whose name
+  contains the quotes. Mutation-verified: swapping the two flags fails two named tests.
+- **The NAME carries the project because a Space's FILE is keyed by name.** `WorkspaceManager`
+  writes to `generateFileName(name)`, so a name without the project would make "Claude Code"
+  against a second project overwrite the first one's file. (The in-memory list is keyed by id -
+  see the next section.)
+- **With no project selected nothing is materialised.** The template is applied exactly as before
+  and a status message says why - the wording the home screen used to refuse the click with, which
+  is now `spaceToOpen`'s rather than a copy of the rule in one call site. A project picker at that
+  moment is a second dialog on top of the one the user just used, and is not built.
+- **Picking Browser Only applies it directly and saves no copy**, which is a decision rather than a
+  gap. There is nothing to put in the copy's name: the seven others are named for the project their
+  placeholders resolve against, this layout references no project, and naming it after whichever
+  project the window happens to have selected would claim a connection the layout does not have. The
+  alternatives are a counter ("Browser Only 2") or an epoch, both of which put a Space in the user's
+  list that they did not ask for and that says nothing about itself, on every pick. Applying the
+  shipped layout is what the tile looks like it does. The picker's section hint is worded to promise
+  neither behaviour for that reason.
+- **An explicit save while on a built-in creates the user's own copy** rather than writing over the
+  shipped entry - see the next section, which is the one rule in the save path this used to want.
+- **The plugin only GROUPS.** Top of Mind's picker has a Templates section, which needs the id set
+  over the api's own types, so `SpaceTemplates.kt` there repeats the eight ids and says so. The
+  drift is the mild direction: a built-in this repo ships and that list does not name shows under
+  Spaces, a tile in the wrong section and nothing else, because the host still owns both applying
+  and materialising. Nothing about those decisions lives on that side - resolving `{gitRemoteUrl}`
+  forks `git` in the project directory, which no plugin can do.
+
+## A saved Space is identified by its id, not its name
+
+`loadAllWorkspaces` deduped saved files against the shipped list **by name**:
+
+```kotlin
+// Only add if not already in predefined list
+if (allWorkspaces.none { ws -> ws.name == workspaceWithId.name }) { … }
+```
+
+Two distinct defects fell out of that one line, and the second is not about templates at all.
+
+- **A save made while the current Space was a built-in was silently discarded on relaunch.** The
+  save wrote the built-in's own id and name, so it landed as `Claude_Code.json` and this dropped it
+  in favour of the shipped entry at the next launch. The Save button exists so a modification
+  survives, so a save that vanishes is the button not working. Reachable on Browser Only always, and
+  on the other seven whenever no project was selected.
+- **A user's own Space vanished if its name happened to match a built-in.** Hand-roll one called
+  "Codex" and it was gone at the next launch, with nothing at all to say it had happened. Nothing to
+  do with templates, and worse than the first because there was no hint.
+
+Both close in `SavedSpaceMerge.kt`:
+
+- **`mergeSavedWorkspaces` dedupes by ID.** A saved file with an id of its own is a distinct Space
+  whatever it is called, so the shipped "Codex" and a user's "Codex" both stand.
+- **`savedCopyOfSlot` stops a save producing a slot's id in the first place.** Saving while the
+  current Space is a shipped layout creates the user's own copy: a fresh `generateId()` and the
+  layout's own name. The shipped entry stays pristine in Templates, which is what a template is
+  for. A name the user TYPED into "Save Space..." is honoured - only the id is forced.
+- **The manager's in-memory list update is keyed by id too.** By name, saving a Space of the user's
+  called "Codex" replaced the SHIPPED Codex in that list, so Templates lost a tile for the rest of
+  the session; and a rename appended a second entry rather than updating the one it renamed, since
+  the new name matched nothing.
+
+### What happens to a file whose id EQUALS a built-in id
+
+These exist on disk right now - the old auto-save wrote the built-in's own id and name every two
+seconds while you worked in one. **Checked rather than reasoned about:**
+`~/Documents/BOSS/workspaces` on the machine this was written on held four
+(`Browser_Only`, `Claude_Code`, `Code_Review`, `Gemini`), fully substituted, up to six tabs, and
+**every one of them was already being dropped on every launch** by the name dedupe.
+
+They are **ADOPTED** as distinct Spaces: id `<built-in id>-saved`, **the file's own name**, and the
+shipped layout stays where it is. The two alternatives are both worse:
+
+- **Dropping** them by id preserves exactly today's behaviour and loses layouts the user may have
+  meant to keep - and there is no way to tell an auto-save dump from a deliberate save, because the
+  old code wrote both identically.
+- **Replacing** the shipped entry takes the pristine template out of the Templates section, which is
+  the section's whole purpose, and files a fully substituted layout under a built-in id - so the
+  picker would call the user's own work a template.
+
+Nobody's disk gets worse: the alternative for these files today is oblivion. Run against a copy of
+that real directory, the merge leaves the eight shipped layouts and Last Session exactly as they
+were and adds `Code Review`, `Browser Only`, `Claude Code` and `Gemini` - the names their files
+carry, with no suffix. See the next section.
+
+Three properties of the adoption worth keeping:
+
+- **The derived id is deterministic, not generated.** A `generateId()` there would mint a different
+  id for the same file on every launch, so nothing could refer to that Space across a restart - the
+  session set records ids, and so does every preserved-state key.
+- **It cannot be mistaken for either kind of id.** No built-in id ends in `-saved`, and
+  `generateId()` produces `workspace-<epoch millis>-<entropy>`, so an adopted id is recognisable as one. The
+  plugin's template set is the eight literal ids, so an adopted Space files under Spaces.
+- **Nothing is rewritten on disk.** The migration is in memory, so a launch that reads a legacy file
+  cannot half-write anything, and the file keeps the name the user sees in the folder.
+
+Two saved files claiming one id keep the **newer** `timestamp` - reachable by hand-copying a file,
+and reachable through the adoption itself once the user re-saves an adopted Space.
+
+`SavedSpaceMergeTest` round-trips through a real `WorkspaceFileManager` on a temp directory, because
+the defect lived in the seam between writing and reading: the write was fine and the read threw it
+away, so a test on either half alone passes against the bug. Restoring the name dedupe fails
+`a saved Space named exactly like a built-in survives a reload`; dropping the new-id-on-save fails
+`a save made while on a built-in is still there after a reload`; both together - the code as it
+shipped - fail eight.
+
+Everything that was still keyed by name is id-keyed now - see the next section.
+
+## A name is identity; "unsaved" is state
+
+The Space button and the Open Space dialog showed `Code Review (unsaved)`. Wrong twice over: those
+four Spaces are real files on disk, and a name carrying a save-state word sat directly beside the
+dot and save button that report the actual state. The word was changed three times - `(saved)`,
+`(custom)`, `(unsaved)` - instead of being removed, which was the wrong fix each time.
+
+**Why the suffix was load-bearing, and why deleting it alone would have been data loss.**
+`WorkspaceFileManagerCommon.generateFileName` derived the path by sanitising the display NAME, and
+`DesktopWorkspaceFileManager` atomically replaces whatever sits there. One name was one file, so two
+Spaces sharing a name shared a file and the second save destroyed the first layout while both rows
+stayed in the list. A suffix on derived names made that collision improbable.
+
+It was **already reachable with no suffix in sight**, which is what settled fixing the path rather
+than the word: `materialisedTemplateName` minted a fresh id with no uniqueness check, so
+materialising one template twice against one project gave two ids and one file, and a name typed
+into "Save Space..." bypassed `uniqueWorkspaceName` entirely.
+
+### The path is the id
+
+`WorkspaceFileManagerCommon.fileNameForId` - copied from `WorkspaceServiceImpl.persistToDisk`, which
+has written `<id>.json` all along. A generated id has entropy, so accidental collisions are very
+unlikely, and the name is free to be whatever the user wants.
+
+- **Nothing is rewritten or renamed on disk by an upgrade.** `loadAllWorkspaces` already read every
+  file's id out of its contents, so it now records an `id -> fileName` map as it scans and
+  `fileNameFor` prefers it. A Space read out of `Code_Review.json` keeps saving into
+  `Code_Review.json`; only a NEW Space gets `<id>.json`. Same in-memory-migration discipline as
+  `mergeSavedWorkspaces`, and for the same reason: a launch that half-wrote would be worse than any
+  naming.
+- **A rename no longer moves a file.** Writing the renamed Space to the same path IS the rename,
+  where the name-derived path needed a write-then-delete pair that left the old file behind whenever
+  the write failed.
+- **`generateFileName` survives as a reader only**, for the legacy paths already on disk.
+- **A reserved-path collision disappears as a class.** `generateFileName("Last Session Set")`
+  resolved to `Last_Session_Set.json`, so a Space with that name overwrote the session record and
+  was then skipped on load, and nothing refused the name. Ids are `workspace-*` or `last-session`,
+  so no id can land there.
+- **The id is sanitised too**, because it is a path component now and one read out of a hand-edited
+  file is arbitrary text.
+
+### Everything else is keyed on the id
+
+`isUserOwnedSpace(id)` replaced four copies of `allWorkspaces.any { it.name == … }`, and
+`deletableWorkspaces` is the one filter both `WorkspaceButton` call sites use. `deleteWorkspaceById`
+and `renameWorkspaceById` are the real implementations; the name-keyed forms resolve a name to ONE
+Space and delegate, because those signatures are the plugin api's shape. The delete dialog selects
+by id and reports an id - it selected by NAME, so two Spaces sharing one ticked together and the
+delete resolved to whichever the list found first, a way to destroy the wrong Space by pointing at
+the right one.
+
+Three duplicate-name failures that the path change alone does not cover, all now id-keyed:
+
+- `deleteWorkspace` **filtered the list by name**, so BOTH rows vanished while one file was deleted
+  and `onWorkspaceDeleted` fired once - the second Space gone from every list with its tabs never
+  torn down and its file still on disk.
+- `renameWorkspace` **mapped every matching row** to one value.
+- `importWorkspace` wrote the file and then declined to add a row when the name matched anything
+  already listed, so Open from File appeared to do nothing at all.
+
+And two name equalities on the session record, which was a live bug independent of naming: the
+watcher **re-stamped a Space merely CALLED "Last Session" with the record's identity** and never
+wrote its file again, and the startup restore would have loaded that Space instead of the record.
+Both read `id == LAST_SESSION_ID` now, which is also why `reservedNameRefused` could go: a Space may
+be called "Last Session" and be an ordinary Space.
+
+### The suffix is gone
+
+An adopted Space and a saved copy both take the plain name. `uniqueWorkspaceName` stays for genuine
+**user-vs-user** collisions, and the two paths that bypassed it - a typed name and
+`materialisedTemplateName` - go through it now.
+
+**It numbers against other SPACES only** (`savedSpaceNames`), never against the shipped layouts. A
+Space is allowed to be called "Code Review" while the shipped Code Review exists, because they are
+two sections of the picker. Numbering against the shipped names is not hypothetical: the first run
+of the round trip turned all four recovered Spaces into "Code Review 2".
+
+### Verified on a copy of the real directory
+
+`RecoveredSpacesRoundTripTest` runs against a copy of `~/Documents/BOSS/workspaces`, never the
+directory itself, and skips when the fixture is absent so CI stays green. Five files load; the merge
+produces the eight templates, the record, and four Spaces named `Code Review`, `Browser Only`,
+`Claude Code`, `Gemini`. All six source files stayed byte-identical (SHA-256 compared before and
+after), and its second test saves a recovered Space and asserts the write landed on
+`Gemini.json` - the file it was loaded from - with no second file created.
+
+Two failing-before tests justify the track, in `SpaceNameIsNotAPathTest`:
+
+- **two Spaces with one name both survive a save and reload with their own layouts.** Restoring the
+  name-derived path fails it, by destroying one layout.
+- **a Space named exactly like a template is the user's, so it can be deleted and renamed.**
+  Restoring the name-keyed deletable filter fails it.
+
+Re-adding the suffix to the adopted name fails `a Space adopted from a legacy file keeps the name
+the file carries` and the round trip. One mutation attempt did NOT fail anything and had to be
+replaced: `isUserOwnedSpace` takes only an id, so a faithful reproduction of the old veto has to be
+made on `deletableWorkspaces`, where the row's name is in scope.
+
+## Unsaved Spaces, and the save button in the vertical bar
+
+There was no dirty tracking in the app, only the bookkeeping for one:
+`TabTreeState.modifiedWorkspaces` was written from three places and READ FROM NONE, a leftover of
+the deleted host-side Top of Mind. It is gone; the state lives on `WorkspaceManager` now, where the
+vertical bar can watch it.
+
+- **`WorkspaceManager.unsavedWorkspaces` is a `Map<windowId, Set<workspaceId>>`, and the per-window
+  part is not optional.** Two windows run different Spaces and each one's layout is its own; one
+  flat set would light the Save button in a window with nothing to save the moment the other window
+  was edited. The window reports, exactly as it already reports which Spaces it is running through
+  `setWindowWorkspaces`, because the live layout only exists in its `SplitViewState`.
+- **The flag is DERIVED from both halves, so nothing has to remember to clear it.** The layout
+  watcher in `BossAppStartupEffects` recomputes on every extract, and a second collector recomputes
+  on every change to `workspaceManager.workspaces` - which is where a successful write lands. So
+  the File menu's Save Space and the bar's own button turn the affordance off by writing the file,
+  and neither calls a "mark saved". The saved side is read through `savedCopyOf`, off `workspaces`,
+  and deliberately NOT off `currentWorkspace` - a distinction that is now load-bearing twice over.
+  `updateCurrentWorkspace` writes the live layout into `currentWorkspace` BEFORE a save is
+  attempted, so comparing against it would read clean when a write was queued rather than when it
+  landed; and since the watcher stopped writing named Spaces, `currentWorkspace` runs ahead of the
+  file on purpose (see below), which is exactly the difference the mark is about.
+
+### The comparison, which was measured rather than reasoned
+
+`saved != live` is PERMANENTLY TRUE, and `WorkspaceDirtyStateTest` drives the real extractor and the
+real applier to prove each normalisation. What the first run printed:
+
+```
+two extracts of an UNCHANGED window
+  id        workspace-1788834771145   vs   workspace-1788834771152
+  timestamp 1788834771145             vs   1788834771152
+  layout    equal
+
+the SAME Space, extracted right after applying it
+  saved panel ids   [main, split--1997346227960953891]
+  live  panel ids   [main, split-2247261763438958480]
+  tabs, pinned counts and split shape all equal
+```
+
+So `comparable()` strips exactly four things, and each one is a false positive rather than
+leniency:
+
+- **`id` and `timestamp`**, because `extractCurrentWorkspace` mints a `generateId()` and reads the
+  clock on every call - it is a snapshot of a layout, not a Space.
+- **`name` and `description`**, because the extractor always writes "Current" / "Current layout
+  workspace" where the saved copy carries the Space's own. They are the saved Space's identity;
+  the live layout has no opinion about them.
+- **Panel ids, renumbered by POSITION**, because `applyWorkspace` throws the saved ids away
+  (`clearAllPanels()` then `splitPanel`, which mints one per pane) and maps panes back by position
+  in the tree. A saved id is a record of the session that wrote it and can never match the session
+  reading it. Renumbered rather than dropped: two panes in one tree have to stay distinguishable,
+  or a tab moved from the left pane to the right would compare equal to where it started.
+- **`breadcrumbConfig`**, the one reasoned entry: nothing in the app reads or writes it, so the
+  extractor can only ever produce the default, and a hand-edited file carrying anything else would
+  be permanently unsaved with no way for the user to clear it.
+
+What is NOT normalised, each with a test: the split shape, which pane holds which tab and in what
+order, each pane's `pinnedCount`, and `projectPath`. Three mutations are verified - dropping the
+panel-id renumbering, keeping the timestamp, and treating a missing saved copy as clean - and each
+fails a named test.
+
+### The affordance
+
+`SpaceRow` in `app/SpaceSaveAffordance.kt` wraps the vertical bar's Space button and puts a save
+button beside it while there is something to save. It presses
+`MenuActionsHandler.triggerSaveWorkspace(windowId)`, which is the File menu's own Save Space, so
+there is one save path rather than two.
+
+- **Window-local identity, success-only rebind.** Both window entry points resolve the Space
+  identity from the invoking window's `SplitViewState.currentWorkspaceId`
+  (`spaceSnapshotForSave`), never from the process-global `WorkspaceManager.currentWorkspace`,
+  and rebind that id only from the manager's success callback after the bytes have landed. The
+  File-menu/bar path updates the current Space in place; presses received during an in-flight
+  write are coalesced into one follow-up save using the latest layout, provided the same window
+  state is still registered when the first write settles. The `WorkspaceButton` "Save Space..."
+  dialog is a second entry point with different semantics - a named save that mints a new Space
+  and then rebinds the same window. An overlapping named-save submission is ignored rather than
+  replayed, because replaying it could mint a second Space with a numbered name. In both paths,
+  success, failure, callback exceptions and window deregistration must release the in-flight
+  latch. The plugin's `WorkspaceDataProvider` save still resolves identity from the
+  process-global value (the provider carries no window id) and rebinds no window; that is
+  API-shaped, out of scope here, and must not be read as "Save Space is window-local" covering it.
+
+- **The Space button takes the Row's WEIGHT and the save button does not.** A `Row` measures its
+  unweighted children first, so the save button's 24dp is taken out before the 130dp label gets
+  anything. The other way round is the failure `HostActionsFlowRow` measured: a `Row` too narrow
+  for its children hands the LAST one zero width rather than clipping it, so the button silently is
+  not there at a width the user can reach by dragging. `SpaceSaveAffordanceLayoutTest` mounts the
+  row at the bar's 120dp floor and asserts the button's SIZE, not only its position, because a
+  zero-width rect at the origin is inside every bounds check that will ever be written. Dropping
+  the weight fails that test.
+- **Sized against `BossActionButton` in COMPACT mode**: a 24dp target around a 13dp glyph, which is
+  the bar's own leading-icon size, not the 20dp `iconSize` an icon-only top bar button gets.
+- **The Space is marked too, on its GLYPH rather than its label.** The label is capped at 130dp
+  with an ellipsis, so a marker appended to the text is the first thing a project-length Space name
+  truncates away. `signalText`, not `signal`: it is drawn as a glyph, and `signal` is the fill
+  token, held to no text contrast floor. The hint says it in words as well, because a colour is not
+  a sentence.
+- **The STATE has its own mark, and the description leads with it.** A floppy glyph labelled "Save
+  this space" is what a save button looks like whether or not anything has changed, so the one thing
+  the affordance exists to say was carried only by its presence. There is a filled dot between the
+  Space button and the save button now - the editor vocabulary for "modified", the same mark the
+  Space menu prints beside a running Space, and unmistakably not something to press - and the
+  description reads "Unsaved changes - press to save this space". Same `signalText` as the glyph at
+  6dp, so the three marks read as one thing saying one thing rather than three announcements. No
+  `contentDescription` on the dot: a screen reader would otherwise hear the state twice.
+- **A window with NO Space loaded reads as saved, deliberately.** It is a short-lived state - the
+  layout watcher writes the first change out as "Last Session" and the manager then has a current
+  Space - so lighting a button there would be a control that appears and vanishes on a new window.
+  "Never saved at all" is still covered for any Space that has an id, by `isUnsaved`'s
+  null-saved-copy branch: a template applied as-is has a list entry that still says `{projectPath}`
+  and no file matching the layout on screen.
+- **Last Session is ALWAYS marked unsaved, and getting that backwards hid the whole feature.**
+  See the next section: it is the state every launch lands in.
+
+### The watcher could not see a tab being added
+
+`snapshotFlow { extractCurrentWorkspace(…) }` re-emits when a **Compose snapshot** read inside it
+changes. Three kinds of layout state are Compose state and were observed all along: the split tree
+(`SplitViewState._rootNode`), each pane's `_pinnedCount`, and each tab's own `title`, `currentUrl`
+and `workingDirectory`. The fourth is not: `BossTabsComponent.tabsState` is a **Decompose `Value`**,
+and `WorkspaceExtractor` reads it as `node.tabsComponent.tabsState.value` - a plain property read
+that registers no snapshot read at all.
+
+So adding a tab changed nothing the watcher was watching. Nothing re-extracted, so the Space was
+never marked unsaved and nothing reached the Last Session record. Closing, reordering, pinning and
+a cross-pane move are the same blind spot; pinning turned out to be covered already, because
+`_pinnedCount` is `mutableStateOf`, so the affected set is exactly the ones that change the tab
+LIST: add, close, reorder, and move between panes (including the `detachTab`/`adoptTab` transfer).
+
+`SplitViewState.tabListChanges()` is the missing subscription. The bridge is the one the app already
+uses for this same `Value` - `subscribeAsState()` in `BossBottomBar` and `BossMainWindowPanel`
+inside a composition, a `callbackFlow` over `Value.subscribe` outside one - and the watcher now
+merges two sources, each the plain observation of its own kind of state.
+
+- **Observing the source, not counting mutations.** A revision counter would have to be bumped in
+  `addTab`, `removeTab`, `moveTab`, `reorderWithinPanel`, `detachTab` and `adoptTab`, and one
+  missed call site is this same silent bug again. The subscription cannot miss a mutation, because
+  the mutation is what publishes it.
+- **The outer half re-subscribes.** It is a `snapshotFlow` over the panel list, so a pane created by
+  a split gets a subscription too; a one-shot subscribe would leave every tab added to a new split
+  invisible. That is its own named test, and reducing the outer flow to `flowOf` fails it.
+- **`.conflate()`**, because a cross-pane move publishes twice, once either side, and the watcher
+  needs one re-extract rather than two.
+
+**A unit test on `isUnsaved` cannot catch this and did not.** Both halves were right in isolation -
+the extractor reads the tabs, the comparison notices the difference - and the SUBSCRIPTION between
+them was missing, which is exactly why it shipped with tests passing. `TabListChangesTest` collects
+the real flow against a real `SplitViewState` and mutates it. Unsubscribing the tab source fails
+four named tests, `adding a tab is observed` among them.
+
+**The bigger consequence, which is older than the save button.** This same flow is the only
+in-session writer of `Last_Session.json` (the other writer is the shutdown coordinator). So a tab
+added was NOT in the recovery record until some later tree, pin or title change happened to trigger
+an extract. Bounded twice over, which is why it was never reported as data loss:
+
+- **A clean exit is unaffected.** `LastSessionCoordinator` extracts fresh at teardown and writes
+  blocking, so closing the window, Cmd+Q, `quitForUpdate` and SIGTERM all record a complete layout.
+  Only a hard kill - SIGKILL, a native crash - never reaches the shutdown hook, and that is exactly
+  the case the record exists for.
+- **A window with a live browser or terminal re-extracted anyway**, because those update their
+  titles constantly and a title IS snapshot state. A window of editor tabs, whose titles are
+  static, is where the record went stale.
+
+Repaired by the same one change, since it is one flow; nothing was done to Last Session itself.
+
+### Last Session is a slot, not a document
+
+The mark used to be suppressed on Last Session, reasoning that the watcher keeps the record current
+so the file really does hold what is on screen. **True about the file and wrong about the user**, and
+wrong in the state that matters most: every launch restores Last Session as the current Space
+(`BossAppStartupEffects` finds the record by `LAST_SESSION_NAME` and loads it), so the affordance
+could never appear on a fresh launch, and the mark cleared itself inside the settle window - the
+exact defect already fixed once for named Spaces, surviving in the most visible place there is.
+
+**The record existing is not the same as the user's work being saved.** `last-session` is one
+app-level slot, overwritten on every layout change and by every window; nothing in it is
+addressable, nameable, or safe from the next session. Treating "the record matches the screen" as
+"saved" conflates a crash-recovery buffer with a document.
+
+- **`spaceIsUnsaved` answers Last Session unconditionally**, and the manager's per-window set is
+  left honest about DISK. Those are different questions and they disagree exactly here: `isUnsaved`
+  compares the live layout against a file that really does match it. Putting the exception in the
+  affordance's rule rather than in `reportUnsaved` keeps `savedCopyOf`-derived state from lying.
+- **Unconditional, rather than "only once the layout changed since the restore".** The earlier
+  argument against lighting a control the instant a window opens was about FLICKER - the no-Space
+  state lasts about two seconds and then goes away by itself, and a control that appears and
+  vanishes is noise. This mark is stable: it stays until the user saves, which is the action it
+  offers. The alternative needs a frozen per-window baseline captured at restore and reset on every
+  switch, which is more state in order to say "nothing is saved" slightly later.
+- **A window with NO Space still reads saved.** That one is the real flicker case, and the branch
+  above takes over the moment the watcher gives it a current Space.
+
+### Saving out of a slot
+
+`isSpaceSlot` is now the eight shipped layouts **and** `last-session`, and `savedCopyOfSlot` writes
+a new Space for either - a fresh `generateId()` and a name that collides with nothing.
+
+- **`"Last Session"` can never become a saved Space's name**, however it is asked for.
+  `loadAllWorkspaces` resolves the record BY NAME, so a second claim on it would make which one
+  restores a matter of scan order. `reservedNameRefused` drops it even when the user types it, and
+  a name is derived instead.
+- **The derived name differs by kind of slot**, because they have different things to say. A
+  shipped layout gives `"<Name> (saved)"`, since a copy of Claude Code is recognisably that. Last
+  Session gives `"Workspace <epoch seconds>"` - the convention the save path ALREADY uses for a
+  window with no current Space, so there is one answer to "keep this unnamed thing" rather than
+  two. `"Last Session (saved)"` would name the copy after a slot rather than after anything the
+  user recognises.
+- **A name the user typed still wins** (the "Save Space..." dialog asks), the reserved one aside.
+- **The result is an ordinary document**: a `generateId()` id, so it is not a slot and not a
+  template, it appears under Spaces, and its mark comes from the manager's set like any other
+  Space's.
+- **Known, and the judgement call:** `"Workspace 1788845279"` is not a nice name. Routing the bar's
+  button to the naming dialog instead would need a second save path - `WorkspaceButton` owns its
+  save dialog as an internal `remember` - and "one save path" is the property that keeps the File
+  menu, the bar and the plugin agreeing. The Space menu can rename it.
+
+**Last Session keeps recording afterwards**, which is the trade this must not make: after the save
+the window is in a named Space, and `layoutWatcherWrite` still returns the record as the only file
+it writes. Pinned by a test that follows the whole sequence - restore, edit, save out, edit again -
+and asserts the record still holds the layout on screen.
+
+`LastSessionIsNotADocumentTest` carries the headline, and **its second clause is the bug**: a test
+that only checks the instant after a tab is added passes against the old code, because `isUnsaved`
+was briefly true before the watcher rewrote the record. So it runs the watcher's write and asks
+again. Restoring the suppression fails it, and fails "reads unsaved even before anything is
+touched" too.
+
+### The watcher does not write a named Space any more
+
+The layout watcher used to write the Space you were working in two seconds after every change. That
+made "unsaved" a state that lasted two seconds and cleared itself, which is a save button that can
+never usefully be pressed - so the affordance above needed the auto-save changed rather than the
+comparison. Editor semantics now: the buffer is dirty until you save, and the file stays at its
+last explicit save. **An explicit save is the only thing that writes a named Space** - the bar's
+button and the File menu, both through `MenuActionsHandler.triggerSaveWorkspace`.
+
+`layoutWatcherWrite` (`components/workspaces/LayoutWatcherWrite.kt`) owns the decision and returns
+two things that have to agree:
+
+- **`record`** is the Last Session record, and the only file the watcher touches. It is written on
+  the same cadence as before (`LAYOUT_SETTLE_MS`), whichever Space is on screen - which is
+  **stronger than what it replaced, not weaker**. Before, working in a named Space wrote that Space
+  and left `Last_Session.json` stale from whenever the window last had no Space; the recovery record
+  now tracks the live layout the whole time. It is the only thing between an unsaved layout and a
+  crash, because the multi-Space set is written at shutdown and a hard kill never reaches that.
+- **`current`** is what the manager should hold as the window's current Space: the live layout under
+  the identity it already has. This is the dependency that is easy to lose along with the write.
+  `WorkspaceDataProvider` gives a plugin no way to reach the split tree, so Top of Mind's Save
+  button saves whatever the manager holds - and dropping the `updateCurrentWorkspace` would have
+  made that button silently save the layout as of load time. So the in-memory copy still tracks the
+  live layout; only the file write went away. A named Space keeps its own id, name and description,
+  so the watcher can never rename the Space someone is working in.
+
+`WorkspaceManager.saveLastSessionRecord` is the write. It refreshes the list entry (because
+`savedCopyOf` reads that list to answer "what is on disk") and deliberately does NOT touch
+`currentWorkspace`, which is the caller's to set.
+
+**What depended on the old behaviour, checked before removing it.** Nothing reads a named Space's
+file except the switch path, and only when there is no preserved tree to restore instead: applying a
+Space tries `restorePreservedState` first, so switching away and back within a session uses the live
+tree either way. The rebuild-from-file case is reached when the user answered CLOSE to the
+keep-or-close prompt (`WorkspaceSwitchAction`, default ASK), which is a user saying to throw that
+layout away - editor semantics again. `exportWorkspace` serialises whatever it is handed and reads
+no file. The Space picker's tiles draw the SAVED `SplitConfig`, so an unsaved split now shows as
+saved for longer - a cost that plugin's own docs already state, with the floors view as the live
+picture.
+
+`LayoutWatcherWriteTest` models the disk as a map keyed by NAME, which is how `WorkspaceManager`
+keys a write, so "which file did that write land on" is answerable. It pins that a named Space is
+still unsaved after the watcher has run and across repeated intervals, that an explicit save is what
+clears it, and that the Last Session record does hold the live layout. Reinstating the old write is a
+mutation that fails five of them.
+
+## Last Session is a SET of Spaces, not one Space
+
+A window RUNS several Spaces at once and shows one of them: `SplitViewState.preserveCurrentState`
+keeps the whole split tree of each, with live browsers and terminals in it. The session record was
+ONE `LayoutWorkspace` stamped `last-session`, so a restart brought back whichever Space happened to
+be on screen and silently dropped the rest.
+
+`LastSessionSet` (`components/workspaces/LastSessionSet.kt`) records every Space the window was
+running plus which one was showing. `restoreLastSessionSet` (`app/LastSessionSetRestore.kt`) brings
+them all back.
+
+- **ADDITIVE, in its own file.** `Last_Session_Set.json`, beside the Spaces. Not a field on
+  `LayoutWorkspace` (the plugin api type, member-checked against 33 plugin repos) and not a change
+  to `Last_Session.json`, which an installed build has on disk right now and which must keep
+  restoring.
+- **The old file goes on being written, unchanged, every session.** `saveLastSessionBlocking` is
+  untouched, so after a new-format save the directory holds BOTH: `Last_Session.json` with the
+  layout that was on screen, and `Last_Session_Set.json` with all of them. Three things follow, all
+  deliberate: a downgrade still restores the Space that was showing, the "Last Session" entry is
+  available when explicitly enabled, and restore reads the SET first and falls back to the
+  single file when there is none.
+- **A set is written for one or more Spaces.** Even one Space needs its own identity restored;
+  `Last_Session.json` stamps its copy with `last-session` and cannot preserve that identity.
+  Empty sessions or an invalid active id delete the set. `sessionSetOf` and `isRestorable`
+  share this rule. The layout watcher now refreshes the set alongside the legacy recovery file,
+  so a crash cannot prefer an older identity-preserving snapshot over newer edits.
+- **The Last Session picker entry is opt-in.** Settings → Spaces → Session Restore has
+  `enableLastSessionSpace`, default false (including existing files with no field). UI and plugin
+  pickers consume `visibleWorkspaces`; `workspaces` retains recovery records for internal use.
+  Named Spaces restore unchanged. Legacy snapshots with no original identity are kept as a
+  normal Recovered Space instead of losing their tabs. The original recovery file is retained.
+- **Still ONE writer, still app-level (Issue #19).** `LastSessionCoordinator` allows exactly one
+  window to produce the session record per session - every window's dispose used to write its own
+  layout into the one record, so closing a secondary window overwrote the primary's. That has not
+  changed: the set is a second write under the SAME claim, in `writeLastSession`, so the two files
+  are produced together by one window and cannot describe different sessions. A separate writer for
+  the set would have reintroduced #19 by another route.
+- **The active Space is restored LAST.** Applying a Space replaces what is on screen, so the last
+  apply is what is left showing; `restoreOrder` puts everything else first. Each Space is preserved
+  before the next is applied - the ordinary apply-then-preserve pair a workspace switch performs, so
+  a restored Space is a running Space in every sense and switching back to it restores a tree rather
+  than rebuilding a layout. There is no second mechanism.
+- **The preserve reads `splitViewState.currentWorkspaceId`, not the previous iteration.**
+  `preserveCurrentState` stores under the id it is CURRENTLY holding while its arguments describe
+  the workspace being left, so an apply that threw halfway - which leaves the split state holding
+  the id it had reached - would otherwise file its partial tree under the previous Space's name.
+- **One Space failing does not take the rest**, and above all not the active one, which is applied
+  last. Each apply is guarded and logged.
+- **Only the FIRST apply restores the project.** Every entry carries the WINDOW's project, because a
+  window has one at a time and every extracted tab already holds real absolute paths - so nothing in
+  the restore depends on a per-Space path, and what it decides is which project the window comes
+  back in. Selecting it must happen before any tabs are built, since `applyWorkspace` resolves the
+  directory its terminals open in from the window's selection.
+- **`WorkspaceManager.loadAllWorkspaces` skips the set file by NAME.**
+  `WorkspaceFileManager.listWorkspaces` is "every `*.json` in the directory" and the manager reads
+  each as a Space, so without the skip the set is deserialized as one on every launch, fails and
+  logs a warning for ever. `LastSessionSetTest` asserts that the set IS listed by the scan, so the
+  reason for the skip cannot be forgotten.
+- **`WorkspaceFileManager.writeDocumentBlocking` is one verb for write and remove**, `content =
+  null` meaning absent. The caller has one intention - make the record on disk be the truth - and
+  the class was at detekt's function ceiling.
+
+Known limit: a Space in the set whose id is not in `workspaceManager.workspaces` when the next
+`workspaces` emission arrives has its preserved state dropped by
+`SplitViewState.cleanupDeletedWorkspaces`, which removes preserved trees for Spaces that no longer
+exist. In practice every id in a set came from that list, since a Space has to have been opened to
+be running; the case that reaches it is a Space whose file was deleted while it was running, where
+dropping it is the existing behaviour.
+
+## A BOSS theme belongs to a Space
+
+Entering a Space re-skins the whole app. `WorkspaceManager.loadWorkspace` is the one door - every
+way in goes through it (the Space button and its menu, the picker, `WorkspaceSwitch`, deep links,
+the CLI, a plugin's `WorkspaceDataProvider`, the fresh-start default, both session restores) - and
+it calls `BossThemeController.select` with whatever that Space resolves to.
+
+**Hung off `loadWorkspace`, not off a collector on `currentWorkspace`.** That flow is also written
+by a save and by a rename, neither of which is entering anywhere; a collector would re-theme on
+both. With two windows on different Spaces the last switch wins, which is accepted and is what
+`currentWorkspace` itself has always done.
+
+**`BossThemeController.select`, never `AppThemeSettingsManager.select`.** The latter validates,
+selects AND writes `app-theme-settings.json`; calling it on every switch would destroy the baseline
+the user picked in Settings, and after two switches there would be nothing left to fall back to for
+a Space that names no theme. A Space theme is an **override layered over** that baseline, which is
+why the two writes land in different files. On restart the Settings theme is applied first
+(`AppThemeSettingsManager.ensureInitialized`) and the session restore then enters its Spaces, the
+one left showing having the last word.
+
+**Resolution is `spaceThemeId`**: the Space's own override, then the baked template default, then
+the Settings baseline - skipping, at every level, any id this build does not know, because
+`BossThemeController.select` no-ops on an unknown id and would leave whatever the last Space set.
+
+**Persistence is a side document, `Space_Themes.json`, not a field on `LayoutWorkspace`.** That data
+class is the plugin api type, member-checked against 33 plugin repos. Same reasoning and same verb
+as `Last_Session_Set.json` (`WorkspaceFileManager.writeDocumentBlocking` / `loadDocument`), and the
+same gotcha: `loadAllWorkspaces` lists every `*.json` and reads each as a Space, so the new file is
+skipped **by name** exactly as `LAST_SESSION_SET_FILE` is.
+
+**Template defaults are BAKED (`TEMPLATE_SPACE_THEMES`), not written out**, so shipping a different
+default for a template later reaches everyone who has not chosen otherwise and needs no migration.
+Which is also why `withSpaceTheme` **removes** an entry that merely restates the current default -
+writing it down would pin that template for that user for ever, silently.
+
+Two of the eight are forced rather than chosen: Claude Code carries `UNIX_DEFAULT_ID` and Browser
+Only carries `WINDOWS_DEFAULT_ID`, because those are the layouts each platform opens with and
+anything else would flip a first run off its platform default the instant it entered its own
+default Space. Daylight is on none of them - its recorded contrast debt is exactly why it is not
+the Windows default, and a baked template theme is met without being chosen.
+
+Setting one is `Options > Space Theme` on the Space button (`spaceThemeMenuItems`). A submenu row
+draws one trailing icon, so the row that is showing gets a check and every other row gets its own
+signal colour - filled for a dark theme, a ring for a light one, because Blueprint and Blueprint
+Light share an identical `#0F5BFF` signal and hue cannot separate them.
+
+**A materialised Space inherits its template's theme**, written through `setSpaceTheme` in
+`WorkspaceTemplate.materialisedAndSaved` before the Space is entered. Without it, picking a
+template FLASHED: the pick enters the template and applies its baked default, then `spaceToOpen`
+materialises a new Space with a fresh `generateId()` and enters that, and a fresh id is neither a
+built-in nor an override, so it fell to the Settings baseline. Two Spaces entered back to back, not
+a race. Written down rather than re-derived, so the new Space owns its theme and a later change to
+a shipped template's default cannot silently move it. The no-project path needs nothing: it applies
+the template as itself, keeping the template's own id.
+
+That pick used to enter a THIRD Space. `WorkspaceButton`'s menu row called `loadWorkspace` before
+handing to `onOpenWorkspace`, which is `WorkspaceSwitch.request` and does the whole job itself - so
+the row was entering the picked Space and then the switch entered what it materialised. It also lied
+to the switch, which reads `currentWorkspace` as the Space being LEFT: pre-setting it to the one
+being entered made `leaving.id == workspace.id` and skipped the keep-or-close question outright.
+That line is gone rather than made to agree.
+
+**The disk read is a SEED, and `spaceThemesAssigned` is what stops it landing on a decision.**
+`loadSpaceThemes` is asynchronous, and the template inheritance assigns in the first moments of a
+manager's life - so the file used to overwrite that assignment, silently and only sometimes.
+Merging the two maps instead would fix a set and break a CLEAR, since a cleared key is absent from
+both and the file would put it back.
+
+**Spaces materialised before this shipped keep no inherited theme, and that is accepted rather
+than migrated.** Nothing records which template a Space came from: `LayoutWorkspace` carries no
+provenance and the name is a string a user can also type, so a migration would have to guess, and
+guessing wrong assigns a theme nobody chose - worse than the neutral baseline it has now. They are
+one right-click away from the theme their owner wants.
+
+Plugins see the result through `ActiveTabsProvider.workspaceAccents`, a
+`StateFlow<Map<String, Color>>` served from `WorkspaceManager.spaceAccents` and keyed over every
+Space the app knows; `availableThemes` and `setWorkspaceTheme` let a panel offer the choice, and
+`workspaceThemeId` says which one a Space resolves to. That last one is not a duplicate of the
+accents flow: a tint wants a COLOUR and wants it live, a picker wants an IDENTITY when it opens -
+and Blueprint and Blueprint Light share an accent exactly, so a picker marking by colour ticks
+both.
+
+## The product word is "Space", the code word is `workspace`
+
+What a person reads in BOSS is a **Space**. What the code calls it is still `workspace`,
+everywhere. That split is deliberate: do not "finish the rename".
+
+**Renamed (display only)**: button and menu labels, dialog titles and bodies, tooltips, content
+descriptions, empty states, toasts, the Settings sidebar entry and its section titles and option
+descriptions, the Shortcuts category and its action descriptions, and MCP tool descriptions.
+
+**Kept as `workspace`**, each because changing it breaks something real:
+
+- **Identifiers** - `workspaceId`, `WorkspaceManager`, `LayoutWorkspace`, `WorkspaceDataProvider`,
+  `moveTabToWorkspace`, packages, files, classes, parameters. The plugin api under
+  `plugin-platform/` is consumed by 33 plugin repos and is binary-checked
+  (`WorkspaceStableFieldTest`, `PanelConfigBinaryCompatTest`); a member rename rejects every plugin.
+- **Action and permission ids** - `"workspace.save"` and anything of that shape. Matched as strings.
+- **Persisted keys and paths** - `BOSS/workspaces`, `workspace-settings.json`, serialized field
+  names, ids like `"workspace-claude-code"` and `"last-session"`.
+- **Workspace NAMES**, including defaults - `"Default Workspace"`, `"My Workspace"`,
+  `"Last Session"`, and the generated `"Workspace <epoch>"` with its `"Saved workspace"`
+  description. `WorkspaceDataProvider.deleteWorkspace(name)` and `WorkspaceManager` match by NAME,
+  so renaming a default orphans lookups against files already on a user's disk. This is the trap
+  that looks most like a UI string: check what a string is USED for before changing it.
+- **`boss://` hosts and parameter names**, the `boss workspace` CLI subcommand and its `--help`
+  prose (help that names a different word than the command it documents is worse than the old
+  word), MCP tool NAMES (`tabs_list`, `tab_move`), and `LogCategory.WORKSPACE`.
+- **Log message text.** Operator-facing diagnostics that people grep across versions, sitting
+  right beside the identifiers.
+
+**Settings search keeps the old word.** `workspaceEntries()` and `startupEntries()` in
+`SettingsSearchEntries.kt` carry `"workspace"`/`"workspaces"` keywords next to the new "Space"
+labels, plus a `sectionLevel` catch-all, so a year of habit still finds the page.
+`SettingsSearchIndexDriftTest` scans the sources, so a renamed `SettingsSection(title = ...)` has
+to be renamed in the index in the same commit.
+
+**Comments were left alone**, apart from two that quote a label that changed. A comment sitting
+next to `workspaceId` while saying "space" reads worse than either word on its own. Note that
+detekt baseline signatures embed KDoc and string text, so editing a comment inside a baselined
+declaration invalidates its baseline entry.
+
+Two user-visible strings deliberately still say "workspace", because there the word is generic
+English rather than the Space concept: the auth brand headline "The governed workspace for AI
+agents" (`AuthBrandArt.kt` and `auth-brand/index.html`) and the Toolbox wizard's "Customize your
+workspace by selecting the tools you need." Tools install app-wide, not into a Space.
+
 ## Documentation
 
+- [Create and publish plugins](https://github.com/risa-labs-inc/BossConsole/wiki/Create-and-Publish-a-Plugin) - Toolbox/Tool Creator, coding agents, GitHub repositories and publish keys. Hosted BOSS grants `plugins.create` + `api_key.create` to `user`; refresh the session after a grant.
+
+- [Authenticated IPC rollout](docs/authenticated-ipc-rollout.md): paired runtime release, ownership, and credential lifetime.
+
 - [MCP for agent-less operators](docs/mcp-agentless-operators.md) - Toolbox kill-switches and attach path
+- [Secret references in MCP tool calls](docs/MCP_SECRET_REFERENCES.md) - the guarantee, its non-goals, the pipeline and the invariants
 
 - [Core Subsystems](docs/SUBSYSTEMS.md) - Auth, UI, keyboard shortcuts, threading, default applications, runner, BossTerm
 - [BossEditor](docs/BOSSEDITOR.md) - External editor dependency, LSP, PSI, editor features
@@ -1157,20 +2445,34 @@ the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 - [RBAC Guide](docs/RBAC_GUIDE.md) - Role-based access control
 - [Role Creation](docs/ROLE_CREATION_GUIDE.md) - Creating and managing roles
 - [Windows Deep Link](docs/WINDOWS_DEEP_LINK_SETUP.md) - Windows protocol handler setup
+- [Google and Apple sign-in](docs/OAUTH_SIGN_IN_SETUP.md) - PKCE flow over `boss://auth/callback`, provider setup, Apple secret rotation
 - [Release Rebuild](docs/RELEASE_REBUILD_GUIDE.md) - Re-running release builds
-
-
-
 ### Governed MCP invocation (#371)
 
 The host policy applies to registry invocation; it does not isolate installed JVM
-plugins. Unknown tool names default to ALLOW. Known mutations default to ASK with
+plugins. The mutating gate is a fail-closed OR: the host's name signals - known
+mutating names, then known suffixes - are final, and the provider's own
+`McpToolDefinition.readOnly` declaration is consulted only after them, so a
+`readOnly = false` declaration makes an innocently named tool mutating while a
+`readOnly = true` claim can never launder a name the host already knows (#804).
+`null` preserves the name-only answer bit for bit, which is why existing callers
+compile and behave unchanged. `readOnly` defaults to `true` in the plugin API, so
+this catches an honest plugin declaring side effects and is deliberately not a
+defence against a hostile one that lies. Unknown tool names default to ALLOW while
+the provider declares (or defaults to) `readOnly = true`. Known mutations default to ASK with
 a 45-second timeout. Each queued prompt is delivered to exactly one window and
 window teardown denies its owned request. Session trust is process-wide and can
-be cleared using “Revoke MCP session trust” in the bottom bar; restore the bar if
-it is hidden. The approval dialog offers Always Allow and Always Deny, which save
-a tool-wide rule for all agents and arguments across restarts. Saved rules can be
-reviewed and reset from “Persisted MCP policies” in the bottom bar; a reset removes
+be reviewed and revoked per tool (or all at once) from “Session trust” in the bottom bar's MCP access menu; restore the bar if
+it is hidden. Session trust is keyed to the exact provider the operator approved (#815): a same-named
+tool from a different provider gets its own ASK instead of inheriting the grant - the tool-name squat.
+McpSessionTrust keeps the (providerId, toolName) identity the engine uses everywhere else: a name-only
+grant would hand an unvetted plugin the approval its sibling earned, and trusting less than the operator
+meant is the fail-closed direction. Revocation stays name-wide as the operator escape hatch:
+revokeSessionTrust(toolName, providerId = null) still clears every provider's trust for that name, and
+over-removing trust fails closed. The approval dialog's “Always, for this tool” scope (Always allow / Always deny) saves
+a tool-wide rule for all agents and arguments across restarts (except that a saved allow does not cover a shell
+call the risk evaluator rates CRITICAL - see the destructive-shell gate under the workspace/terminal tools below). Saved rules can be
+reviewed and reset from “Tool policies” in the bottom bar's MCP access menu; a reset removes
 the rule and clears that tool's session trust, so the tool uses the configured default
 policy (ASK for known mutations in the shipped defaults). Unrelated DENYs remain intact.
 A failed reset keeps the previous durable rule visible and clears the selected session
@@ -1179,9 +2481,9 @@ POLICY_PERSIST_FAILED and withhold the current execution. A queued approval cann
 replace a newer DENY or reset: each reset invalidates older authorizations before their
 final approval boundary, including queued once/session/persistent grants. Calls already
 authorized to execute are not cancelled. Reset remains host UI only, not an MCP tool.
-“Trust This Plugin” persists a provider-wide ALLOW covering every tool that provider
+“Trust plugin” (the “Always, for every tool from this plugin” scope) persists a provider-wide ALLOW covering every tool that provider
 contributes - weaker than an explicit tool-specific rule, reviewed and reset from
-“Trusted plugins” in the bottom bar rather than “Persisted MCP policies”. The same
+“Trusted plugins” in the MCP access menu rather than “Tool policies”. The same
 reset-invalidates-queued-grants guarantee applies to it: the write rechecks the
 prompting tool's and provider's revocation state, plus DENY, under the policy lock, so a reset landing
 while the dialog is open refuses the write and withholds that call instead of persisting
@@ -1190,16 +2492,400 @@ write that fails for a genuine disk error (not a stale-dialog refusal) still run
 already-approved call, falling back to session trust for that one tool only - a
 deliberate asymmetry, since the operator already approved the call in hand and a disk
 fault should not retroactively withhold it.
+The approval dialog asks for a scope once (just this call, this session, always for this tool,
+always for every tool from this plugin) and answers with one Deny / Allow pair whose labels name
+the effect; there is no session or provider-wide deny, so under those scopes Deny reads “Deny
+once”. The bottom bar shows all three consent surfaces (session trust, tool policies, trusted
+plugins) behind one “MCP access” item, badged in the alert colour while session trust is live.
+The "Always, for this tool" scope says in the dialog that it is keyed by tool name, so it also
+covers a replacement plugin shipping a tool of that name - the one place the operator is told.
 Provider trust also covers tools added by later versions and replacement plugins claiming
 that provider id. Already queued sibling prompts still ask. Explicit tool ASK rules
 still override provider ALLOW. The Trusted plugins UI lists ALLOW rules only; hand-edited
 provider DENY rules currently require policy-file editing to remove.
+
+Plugin provider ids changed from `provider` to `plugin::provider` in #958. A persisted raw
+provider DENY remains authoritative at runtime for every scoped provider with that suffix:
+assigning the old key to one plugin is ambiguous, while dropping it would fail open. Do not copy
+that raw DENY into scoped policy entries; derived copies outlive revocation of the rule the
+operator actually set. Revoking the raw rule must immediately lift its inherited effect. Legacy
+raw ALLOW does not cross the namespace, because that would restore the provider-id aliasing the
+namespace was added to prevent. Keep this compatibility rule asymmetric.
+
+**YOLO mode** makes any call whose policy resolves to ASK run without prompting, for every tool
+and provider, CRITICAL-risk ones and tools registered later included - secret-bearing calls
+excepted: YOLO answers for the tool, never for the vault. Any user can turn it on,
+behind one confirmation (`McpYoloConfirmation`, composed per window in `BossAppDialogs` and
+raised through `McpYoloPrompt`), from either of two places: **MCP access → YOLO mode...** in the
+bottom bar, or the **Tools → MCP YOLO Mode** checkbox in the application menu. The menu item is
+not a convenience: the bar can be hidden (`showBottomBar`, and Focus mode hides it by default),
+and a live global bypass must keep an indicator and an off switch that survive that. Its
+checkmark is the indicator and unchecking turns the mode off; in the bar it reads "MCP: YOLO"
+in the alert colour with "Turn off YOLO mode" first in the menu.
+
+- **It replaces only the prompt.** `policyFor` is untouched, so explicit tool or provider DENY,
+  an unreadable policy file, the kill switch and RBAC still refuse first, a secret-bearing call
+  keeps its prompt, and a revoke or DENY landing mid-flight still stops the call at
+  `confirmInvocation`. `McpYoloModeTest` drives the real registry to pin this.
+- **In memory only** (`McpPolicyEngine.yoloMode`), off at every launch. Prompts already queued
+  when it is turned on still ask.
+- **Audited in the ledger, both the calls and the switch.** Each call it lets through is
+  `YOLO_ALLOWED` with `policyApplied = ASK`. Turning it on or off writes a `YOLO_ENABLED` /
+  `YOLO_DISABLED` marker (tool `yolo_mode`, provider `host`) through `McpToolRegistryCore
+  .setYoloMode`, so a window in which calls could run unattended is in the hash-chained record
+  even if nothing was invoked. Markers do not count as calls (`countsAsCall = false`), and the
+  bar's last-call line skips them (`isGovernanceEvent`). Always switch through
+  `McpToolRegistryImpl.setYoloMode`, never `policyEngine.setYoloMode` directly, or the marker is
+  lost.
+- **A deployment can refuse it**: `BOSS_MCP_YOLO_DISABLED=true` (also `1` / `yes` / `on`) or
+  `-Dboss.mcp.yolo.disabled=true` hides both entry points and makes turning it on a logged no-op.
+  Read once at startup (`McpYoloGate`). Turning it off is never refused.
+
 Preserve a backup before manual recovery of a damaged policy;
 the fault flow withholds all tools until recovery. No automatic quarantine UI is
 provided. Ledger redaction is bounded and best effort, not a guarantee for secrets
 under arbitrary keys. Queue overflow and cancellation before/after dispatch have
 distinct ledger dispositions. Risk classification from #336 feeds this same policy and approval path; there is
 no second sandbox prompt. Explicit policies and session trust retain precedence.
-HIGH/CRITICAL names use the mutating default, while unknown names remain allowed
+HIGH/CRITICAL risk names use the mutating default alongside catalog-mutating
+and provider-declared mutating names, while everything else remains allowed
 by default. Risk reasons and sanitized arguments appear together in the existing
 approval dialog. #362 is closed pending extraction into a management plugin.
+
+The workspace/terminal lifecycle tools (`WorkspaceMcpToolProvider`: open_workspace,
+create_workspace, open_terminal, close_workspace and their aliases) are declared
+`readOnly = false`, so the ASK default above is their confirmation layer - the role the
+`DeepLinkOrigin` prompt plays for `boss://terminal?command=`. An operator "Always Allow"
+on `open_terminal` therefore runs later invocations unconfirmed, i.e. as strong as an
+unconfirmed external deep link; the command still passes the shape check and the shell
+risk evaluation (HIGH, CRITICAL for destructive patterns) on every call.
+
+A saved ALLOW - "Always, for this tool", a trusted plugin or session trust - does not cover a
+shell call the evaluator rates CRITICAL: that call is asked again every time (#1577), with the
+prompt marked escalated. On an escalated prompt "Always, for this tool" is deny-only ("Always
+deny this tool"): the allow button stays "Allow once" whatever scope is selected, and the registry
+applies any broader approval of an escalated call as once, logging the downgrade. A saved DENY is
+never overridden, so it is the durable answer there (#1624). Shell tools are rated on every
+string in their arguments. Arguments nested past MAX_MCP_ARGUMENT_DEPTH rate CRITICAL without being
+parsed (every parse on the invoke path checks the same depth guard first); arguments too wide to
+scan fully rate CRITICAL on the part that was not inspected. The call's ledger row carries
+`escalated: true` when this gate overrode a saved ALLOW, so a call that YOLO mode then answered
+(`YOLO_ALLOWED`) can be told apart from a routine call under the same ALLOW (#1655). It does not
+mark every destructive call: under the default ASK policy there is no ALLOW to override, and a
+destructive call YOLO answers there records `escalated: false`. `format` counts only as a
+command (the first word of a command, or with a drive such as `d:` anywhere after it, switches
+first or not), not as the text `format ` anywhere, which rated `--format json`, `clang-format` and
+prose typed through `send_input` CRITICAL.
+
+### Secret references at the governance boundary
+
+`{{secret:<id>}}` in a governed tool's arguments is resolved by the host inside
+`McpToolRegistryCore.invoke`, after the operator approves and before the handler runs. The full
+contract is [docs/MCP_SECRET_REFERENCES.md](docs/MCP_SECRET_REFERENCES.md); the decisions a
+later change is most likely to want to undo are recorded here so they are undone knowingly.
+
+- **Non-disclosure, not non-exfiltration.** The claim is that the value never enters the
+  LLM-facing path (arguments, result, approval dialog, ledger, host log). It is not that an
+  authorized tool cannot forward it. Plugins are in-process and already hold the vault through
+  `PluginContext.secretDataProvider`, so references add no plugin-side exposure. Do not let
+  docs or PR text drift toward the stronger claim.
+- **`invoke` is an enforcement boundary for governed traffic, not a security boundary for the
+  process.** BossTerm's built-ins and terminal-tab's `run_in_sidebar`/`cli` never reach it (#495);
+  a reference typed there is never resolved.
+- **A secret-bearing call always asks.** The secret policy sits above session trust, above a
+  tool or provider ALLOW and above YOLO mode in the precedence, and `secretBearingCalls` has
+  only ASK and DENY. There
+  is no ALLOW on purpose: a flagship governance primitive must not ship with its own bypass. An
+  operator who wants fewer prompts is asking for a per-(tool, secret) grant with its own review
+  and revocation surface, which is a separate design.
+- **The vault is read once, before the prompt.** The operator must see which secret (website,
+  username, field) the tool would receive, and that metadata comes from the same RPC as the
+  value. A second read after approval would be theatre. The value is delivered only after
+  `confirmApproval`'s revocation fence passes.
+- **All or nothing.** One malformed or unresolvable reference refuses the whole call before any
+  prompt. A handler must never receive placeholder text it might mistake for a value; that is
+  also why `secretReferencesEnabled = false` refuses rather than passes through.
+- **Substitution rewrites the JSON tree and rebuilds `McpToolArgs` through `parseMcpToolArgs`**,
+  so the scalar map and the raw JSON a handler may parse itself cannot disagree. Reference markers
+  in keys refuse the call; keys are never substituted.
+- **The scrubber is defense in depth and is switchable** (`resultScrubbingEnabled`). It replaces
+  exact, JSON-escaped and percent-encoded forms of values of 8+ characters; it cannot see a hash,
+  a base64 encoding or a case change, and the docs table says so. The invariant tests run with it
+  off to prove the rest of the pipeline holds without it. It runs before the result cap so a cut
+  cannot land inside a value.
+- **The ledger stores references.** `sanitizedArgs` is built from the ORIGINAL arguments, and
+  `secretRefs` lists `<id>.<field>`. `SECRET_FORBIDDEN` and `SECRET_UNRESOLVED` are "withheld"
+  in the activity log's exhaustive `when`, the same bucket as `QUEUE_FULL`.
+- **UUID ids only, three fields only.** The grammar is anchored and brace-free so it is linear;
+  TOTP is deliberately not a field (a six-digit code cannot be scrubbed, and nothing consumes one
+  through a tool today).
+- **The RBAC gate mirrors the plugin's.** A non-admin needs `secret.read`, the permission the
+  secret-manager plugin puts on `secret_get`; the AI-provider tag refusal mirrors that plugin's
+  `aiProviderRefusal`. Neither can be reached through a reference that could not be reached
+  through the plugin.
+
+## Process log authority and lifetime
+
+Process logs are host-owned infrastructure, not an OS sandbox. Log setup fails closed
+before spawning when the log root crosses an unapproved symlink, the filesystem cannot
+provide persistent Windows ACLs, or the native platform is unsupported. No child is
+started with unprotected fallback logs. Operators must use a supported private local
+log directory; setup failures must not expose credential-bearing environment values.
+
+Each process id shares one rotating writer across overlapping generations. Drain
+lifetimes follow the owned parent, not descendant EOF. After parent exit, each pipe
+drains only its observed remaining snapshot (at most 1 MiB); later descendant output
+is outside this log contract. Closing the read end can give a later descendant write
+EPIPE/SIGPIPE and terminate a native descendant that has not disabled SIGPIPE. Recording failure does not stop draining a live parent's
+output. Idle polling backs off to 100 ms and resets to 1 ms after output, so a busy
+small pipe does not pay a fixed 10 ms delay between batches. Retention is bounded
+per process id, not across all distinct process ids.
+
+**The bottom bar's "MCP: `<tool>`" status line is clickable into an activity log of the last 100
+calls this session.** Before this it was the only visibility into MCP activity at all - every
+call before the current one, and the policy/approval decision behind it, was reachable only by
+opening the rotated ledger file in a text editor. The dialog is a read-only view over
+`McpOperationLedger.recentOperations`, scoped to calls that actually reached the policy engine -
+`McpOperationLedger`'s own KDoc records that an unregistered, unpermitted or kill-switch-disabled
+tool call is refused before that, so this is not a view over every MCP invocation attempt.
+Retention is described as finite and best-effort (the active ledger file plus up to 5 rotated
+backups, and a write failure there is logged rather than retried), not a guarantee older calls
+are still on disk. The ledger writes on a daemon thread fed by a bounded queue: a row keeps
+`hash == null` until the write lands, so the dialog renders it "queued for write" while its id
+is in `pendingWriteIds`, "not persisted" once it is counted in `droppedWrites`, and nothing once
+the chained copy arrives - a dropped or failed write never enters the hash chain, which is what
+keeps `verify` contiguous instead of reporting a drop as a LINK_BROKEN tamper verdict. The
+shutdown sequence drains the queue (`flushing MCP operation ledger on exit`) before the logger
+stops. Unsuccessful calls are broken down by `McpUnsuccessfulCategory` - denied,
+cancelled, withheld (approval queue overflow or a host disk fault that stopped the call from running) or failed - through an exhaustive `when` over `McpApprovalDisposition` rather
+than a `setOf`-based membership check, so a disposition the enum grows later is a compile error
+here rather than silently counted as a tool fault.
+
+This is host UI for now; #416 is where activity/history UI and its ownership are meant to move
+into a dynamic plugin. Should that move happen, the read surface it needs must be
+**host-implemented and permission-gated** (an `mcp.activity.read`-shaped permission, the way MCP
+tool calls already gate on `project.replace` and similar), never a member added to the ungated
+`PluginContext.applicationEventBus`/`projectSearchProvider` surface this file documents elsewhere
+- an ungated ledger read would hand any installed plugin every *other* plugin's tool names,
+sanitized arguments and error snippets, and this file's own sanitizer caveat ("bounded and best
+effort, not a guarantee for secrets under arbitrary keys") is acceptable for an operator-only host
+dialog and not for a cross-plugin observation channel. Until that move happens, keeping this host
+UI is also the stronger guarantee for a second reason: a governance viewer that can be disabled or
+uninstalled by the plugins it governs is weaker than one that ships with the host.
+
+The idle activity entry appears only while MCP tools are exposed (existing history remains reachable).
+The viewer uses the ledger instance's actual optional persistence path. Its tooltip follows the host
+heavyweight overlay route. Width and height follow the originating window, with a fixed-cap fallback
+while window metadata is not yet measured; Close stays outside the scrolling body.
+
+**The "Tool policies" entry of the bottom bar's MCP access menu also lets an operator set a rule
+*proactively*, for a registered tool without a saved rule.** It is present even with zero saved
+rules. Allow requires a second confirming tap
+and shows the tool's risk assessment first, the same way the approval dialog's own
+"Always Allow" does, since it is the same durable, tool-name-wide grant. The write goes
+through `McpPolicyEngine.setToolPolicyIfAbsent`, not the reactive approval path's
+`setToolPolicy` - the proactive contract is "add a rule only while this tool still has
+none of its own," and `expectedRevocation`/`providerId` (captured when the tool was
+offered as a candidate, via `mcpProactivePolicyCandidates` /
+`McpToolIdentity.expectedRevocation`) alone cannot enforce that: `revocationVersion`
+only moves on a revoke, so an intervening explicit ASK or ALLOW made through the
+reactive approval dialog for this same tool never trips it, and a `preserveDeny`-style
+guard would let the proactive write silently clobber that decision. `setToolPolicyIfAbsent`
+re-checks `toolName !in rules` under the same lock the write itself takes, atomically, so
+any rule present at write time - not only a DENY - refuses the write instead. The same
+lock also refuses provider DENY and unreadable-policy faults, preserving damaged files
+for manual recovery. Refused writes refresh candidates and require a fresh confirmation;
+storage failures get separate feedback. Stable DENY and damaged-file refusals are explained
+inside the dialog, including backup/recovery guidance. Confirmation is tied to the full candidate snapshot.
+These privileged writes remain beside host policy enforcement. #416 tracks the separate
+observation/plugin architecture; this PR does not expose a policy writer to plugins.
+
+The MCP tool policies dialog also groups currently registered, enabled tools by
+provider into sections. All allows the section, View selects tools declared
+read-only except names the mutating catalog rejects - the same single `isMutating` call the invoke
+gate uses, so section buckets and the gate can never disagree - and HIGH/CRITICAL risk tools,
+Edit selects the remaining
+tools, and Custom uses individual checkboxes. Applying a preset denies tools
+outside its selection; existing tool rules are replaced only after the operator
+confirms the displayed counts and scope. These are explicit tool-name rules,
+not provider trust: future tools are not automatically granted access.
+`McpPolicyEngine.setSectionPolicies` writes the reviewed section atomically,
+checks every prior rule and tool/provider revocation stamp, refuses provider DENY
+and unreadable policy files, and invalidates queued grants after a
+successful save, dropping session trust only for the (providerId, toolName)
+pairs the write changed (#815); other providers' same-named grants survive.
+Keep these checks when changing section UI; sequential calls to
+`setToolPolicy` would permit partial application and stale overwrites. Individual
+reset controls remain available below the sections.
+
+The section/global confirmation UI uses the same default-risk evaluator as the
+engine. HIGH/CRITICAL grants and replacements of an existing DENY display each
+tool's risk and require Review followed by Confirm. Failed writes retain the
+staged choices and retry action; successful or stale writes refresh revocation
+snapshots. Current saved rules (including ASK/default) are visible in expanded
+rows, and the summary distinguishes rules being replaced from new denials.
+Global None is a distinct deny-all preset, not Custom; Edit is the label at both
+levels. Search by plugin display name also matches its saved tool rules.
+
+## Process-wide plugin registrations belong to window lifetimes
+
+`DefaultPlugin` routes MCP/search providers, panel menus, settings pages, deep-link actions,
+shortcut providers and status-bar items through `WindowRegistrations`. The newest window's
+registration serves every window; unregistering it restores the newest surviving owner.
+Disabling or dynamically unregistering in one window therefore leaves another window's
+registration available. Per-window action dispatch is not implemented by this arbitration.
+
+Each window has a lifetime token. Release fences later registrations and snapshots admitted
+slots under a short owner lock; publication checks the fence under its slot lock. Plugin
+callbacks never run under the owner lock, and disposal does not wait on unowned slots.
+Restoring a shared id re-queries tools()/shortcuts() on the closing thread, so a slow surviving
+provider can delay that close. Replacement warnings and snapshot-at-registration semantics
+are intentional. Global access filters still apply independently of registration ownership.
+
+### Plugin Dev Staging & Launchpad Invariants
+
+- **Protected Plugins Overrule Dev JARs Unconditionally**:
+  When deduplicating or resolving dev vs. standard plugins, `isSystemPlugin` and `requiresRestartInsteadOfHotReload` plugins MUST NEVER be superseded by a dev JAR, regardless of file modification timestamps (`lastModified`). Never rely solely on additive bonuses (`versionBonus + lastModified`) without penalizing or filtering dev JARs on protected identities.
+
+- **Reload Forward & Rollback State Completeness**:
+  Hot-reload must support both active (`LOADED`) and inactive (`DISABLED`) plugins symmetrically:
+  - If a plugin was disabled prior to reload (`wasEnabled = false`), forward reload must install with `enabled = false` and accept `state == DISABLED` as an expected successful outcome.
+  - If the active user lacks RBAC permissions, forward reload must accept `state == DISABLED && !canAccess(manifest)` as a valid outcome.
+  - Rollback must restore `wasEnabled = false` and reinstall `v1.jar` in `DISABLED` state without uninstallation.
+
+- **Archive Traversal & Stream Bounds**:
+  Never trust `ZipEntry.size` alone for decompression limits, as `size == -1` in streaming ZIPs. Always enforce hard byte caps on the incoming `InputStream` (e.g. `readNBytes(MAX + 1)` or explicit counter bounds) to prevent heap exhaustion.
+
+- **Test Veracity Rules**:
+  - In deduplication tests, ALWAYS test with dev JAR `lastModified` strictly greater than standard JAR `lastModified` to mirror real-world compiler outputs.
+  - Test the public reload pipeline (`DevPluginReloader.reload`) end-to-end rather than calling internal rollback helpers in isolation.
+
+### Health snapshots and intentional disables
+
+Sandbox disabled state alone is not evidence of watchdog failure: operator disable
+and failed registration also set it. `pluginHealthSnapshot` derives watchdog stops
+only from otherwise healthy rows and shares that set with row decoration and CLI
+findings. Manager errors take precedence over disabled state, so a failed
+registration stays visible while an ordinary disabled plugin is not degraded.
+
+Password import and secret request validation reject empty passwords, not
+whitespace-only passwords: whitespace can be the original credential. Never trim
+password values. Bitwarden JSON null encryption flags are treated like an absent
+flag; true or malformed non-null values remain rejected. KeePass format sniffing
+inspects at most 4096 characters; full XML parsing still enforces its own limits.
+
+Dev reload resolves staged JARs with manifest identity validation, matching startup.
+The scaffold wrapper source/hash is recorded in `resources/launcher/README.md`;
+update it with the pinned distribution checksum and scaffold validation together.
+
+### Dev #935 persistence and audit contracts
+
+- MCP ledger hashes detect retained-record edits and broken adjacency, not authenticity: no secret key is used, and complete rewrites or tail truncation are not detectable. Ledger files are owner-only. `boss mcp ledger verify|tail|search` reads local disk; it is not an ungated plugin MCP read surface.
+- `atomicWriteText` pins POSIX files to 0600. The separate `writeModeFile` writer for `env_vars` preserves existing permissions; that rule does not apply to all state writers.
+- Chromium's constructed GitHub backup URL uses the catalog checksum. Primary and backup must contain identical artifact bytes; checksum mismatch fails closed. No pinned catalog hash means no install, and the version picker offers only checksum-backed archives for the current platform. See `docs/dev-935-release-checklist.md` for deployment checks.
+- Browser print is a direct-native exception to the usual AWT ownership rule after macOS manual verification. Pending AWT cancellation is best-effort, not a cross-thread exactly-once guarantee; do not copy this pattern for destructive actions.
+
+## Native Commit dialog repository binding
+
+`CommitDialogRepository` captures the owning window's project when the native Commit dialog
+opens. All its stage, unstage, commit and amend-message reads pass that explicit path. A
+`windowId` only selects which status UI to refresh; it does not select the repository for
+Git commands. Never replace the path with the process-global Git project. A changed or missing
+window project refuses commands, preserving the draft until the dialog is closed. Keep the
+local in-flight guard so a pending command cannot be submitted twice or have its draft edited.
+`CommitDialogRepositoryTest` exercises the dialog adapter with two real disposable repositories
+and the global deliberately pointed at the other one.
+
+Commit dialog sign-off is Git-owned: pass the checkbox flag to `git commit --signoff`,
+never construct a trailer from the OS username. This uses the selected repository
+committer identity and Git trailer deduplication for ordinary commits and amend.
+Keep the original four-argument suspend `GitService.commit` overload and its defaults
+for already compiled callers; it delegates with sign-off disabled.
+
+## Recent-page loads respect dismissal
+
+RecentBrowserPagesManager registers a load ticket before launching startup IO. Clear and removal
+predicates update that ticket alongside the in-memory mutation; publication filters only loaded
+rows, preserving newer recorded visits. Keep the guard lock away from disk IO and pass the same
+ticket through browser-history bootstrap. Release tickets after loading; they are transient
+startup coordination, not permanent URL tombstones. Tests using the singleton must await its
+initial load, drain writes, and restore both page/dismissal flows before restoring settingsFile.
+
+### Run scan publication ownership
+
+Run configurations retain a process-wide detected list. Scans from different windows may
+overlap, but only the latest request owns its results, error, and busy state. A short
+`scanLock` protects ownership and publication, never filesystem traversal. `clearDetected`
+invalidates pending publication and clears scan status; it does not cancel detector work.
+Cancellation propagates without becoming a scan error. The internal scanner overload lets
+`RunConfigurationScanOwnershipTest` control completion order on the real manager without
+mutating a global detector or reading a user's project.
+
+
+## Native glass themes
+
+Liquid Glass Light/Dark are additional Blueprint palettes; existing platform defaults and
+Space-theme resolution stay unchanged. Glass coverage/style/tint live in app-theme-settings.json,
+independently of palette selection. Only the main macOS window installs a native backdrop;
+Windows/Linux retain opaque palettes. Browser surfaces and plugin-owned opaque backgrounds stay
+opaque. Do not change shared theme colors globally to alpha: dialog windows have no backdrop.
+
+`MacWindowGlass` follows BossTerm's NSGlassEffectView (macOS 26) / NSVisualEffectView approach.
+Use the existing AppKit main-queue dispatcher and exact Skiko NSWindow handle. Never replace
+AWT's contentView, use Auto Layout on it, or use a struct-return objc_msgSend mapping. Java stays
+undecorated/transparent on macOS so Skia retains alpha; AppKit restores the native frame and lights.
+The controller owns/releases only its backdrop, reattaches after frame changes, and respects Reduce
+Transparency. Close it with the window. `LocalWindowGlass` becomes installed only after success;
+failed/unsupported installation paints opaque without overwriting saved preferences. Native toolbar
+background and Compose chrome use the same tint. Menus and dialogs retain opaque theme tokens.
+
+`BOSS_TEST_NATIVE_GLASS=1 ./gradlew :composeApp:desktopTest --tests '*MacWindowGlassSmokeTest'`
+is an opt-in macOS smoke test using its own small unfocusable window. It verifies native install,
+light/clear updates, and detach; it does not establish visual correctness of an entire app layout.
+
+`MacSidebarToolbar` must keep a unique identifier for each controller lifetime. AppKit implicitly
+synchronizes item insertions/removals among toolbars with the same identifier, even when user
+customization is disabled. Each window's active tab supplies different items, so a shared identifier
+can ask another window's delegate for an unavailable item and abort the process in AppKit.
+`BOSS_TEST_NATIVE_TOOLBAR=1 ./gradlew :composeApp:desktopTest --tests '*MacSidebarToolbarSmokeTest'`
+checks independent item lists, updates, and closing one of two owned unfocusable windows.
+
+The vertical sidebar uses `SidebarGlass` washes only while the native backdrop is active.
+`IntegratedSidebarSurface` keeps the rounded outline; full-window glass tint belongs to the root.
+`WindowVerticalTabBar.surfacePainted` prevents duplicate fills for sidebar-only coverage. Favorites,
+selection fills and inset hairline separators follow BossTerm's sidebar treatment; do not change
+shared palette tokens, menu surfaces, or the non-glass layout to achieve this.
+
+Fullscreen glass has an owned `MacFullscreenBackdrop` behind the effect view. It reads the
+current display's wallpaper through NSWorkspace, caches the still image while windowed, and
+aspect-fills a CALayer in fullscreen; unreadable/dynamic-only wallpapers get a theme-colored
+fallback. Keep the controller alive across fullscreen transitions so the windowed image survives
+when a fullscreen Space has no desktop-image URL. Do not capture the user's screen, replace AWT's
+contentView, or leave the wallpaper view attached after exiting fullscreen or disabling glass.
+
+Native browser navigation follows `BrowserTabOwnership` for the active tab, with the composed
+browser registry as a fallback for other browser surfaces. Home removes BrowserHandle.Content
+from composition, so ActiveBrowserRegistry alone cannot drive its address field. Bind tab ownership
+when the plugin identifies its handle through setFullscreenHandler, and unbind by handle ID on
+transport failure/disposal so old cleanup cannot remove a replacement. This is host-only state;
+do not add plugin ABI requirements or keep an invisible browser view mounted behind Home.
+
+Host glass follows BossTerm's separate 50% tint / 50% background-opacity defaults.
+GlassAppSurfaces paints the combined main ink fill `1 - (1 - opacity) * (1 - tint)`
+through the title bar and content, excluding the rounded sidebar geometry. The sidebar paints
+its own tint once, including its header extension. This follows BossTerm's root drawBehind /
+sidebar cutout: never flatten the sidebar into the main fill or stack both fills beneath it.
+Scoped ink/panel tokens retain RGB but have zero alpha; MaterialTheme's background alpha
+remains the plugin capability signal. Opaque plugins and browser pages retain their own fills.
+
+Native NSWindow background stays clear in glass mode, including fullscreen. The Space selector keeps its Space name. A separate native NSTextField toolbar item immediately
+after it shows the focused terminal tab's live title and disappears on other tabs.
+GlassSurfaceRenderingTest renders the actual integrated sidebar and verifies that both surfaces
+continue through their headers without tint overlap, in both palettes.
+
+## Tab inventory before a Space is assigned
+
+The current split tree may contain live tabs while `currentWorkspaceId` is null. Both tab
+inventories must include that tree using a window-local `unsaved-window-<windowId>` identity,
+without assigning or persisting a workspace. Browser lookup matches the shared `TabInfo.id`;
+dynamic browser tabs are not instances of the host's built-in `FluckTabInfo`.

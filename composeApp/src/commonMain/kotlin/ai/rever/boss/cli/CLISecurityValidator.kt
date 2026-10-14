@@ -1,0 +1,334 @@
+package ai.rever.boss.cli
+
+/**
+ * Security validation utilities for CLI operations.
+ *
+ * Prevents path traversal attacks, command injection, and other security issues.
+ * Based on security validation from UpdateScriptGenerator.kt:72-104
+ */
+object CLISecurityValidator {
+    /**
+     * Validates URL format.
+     * For backward compatibility - use normalizeAndValidateUrl() for new code.
+     */
+    fun isValidUrl(url: String): Boolean = url.startsWith("http://") || url.startsWith("https://")
+
+    /**
+     * Normalizes and validates a URL.
+     * Adds https:// prefix if missing for domain-like strings.
+     *
+     * @param url The URL to normalize and validate
+     * @return The normalized URL with proper protocol, or null if invalid
+     *
+     * Examples:
+     * - "google.com" -> "https://google.com"
+     * - "https://google.com" -> "https://google.com"
+     * - "http://example.com" -> "http://example.com"
+     * - "invalidurl" -> null (no domain detected)
+     */
+    fun normalizeAndValidateUrl(url: String): String? {
+        val trimmed = url.trim()
+
+        // Empty URL is invalid
+        if (trimmed.isEmpty()) {
+            return null
+        }
+
+        // Already has protocol - validate and return as-is
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            return trimmed
+        }
+
+        // Check if it looks like a domain (contains at least one dot)
+        // This prevents random strings from being treated as URLs
+        if (!trimmed.contains('.')) {
+            return null
+        }
+
+        // Basic validation: shouldn't contain spaces or most special chars
+        if (trimmed.contains(' ') || trimmed.contains('\n') || trimmed.contains('\r')) {
+            return null
+        }
+
+        // Add https:// prefix (modern standard)
+        return "https://$trimmed"
+    }
+
+    /**
+     * Longest path BOSS will try to open.
+     *
+     * Well past any real filesystem limit (4096 on Linux, 1024 on macOS, 32767
+     * for a Windows extended path) and a bound on what a caller can make the app
+     * hold and canonicalise, since `boss://file` is reachable by any program that
+     * can ask the OS to open a URL.
+     */
+    private const val MAX_OPEN_TARGET_PATH_LENGTH = 32_768
+
+    /**
+     * Validates a path that will be **read**, never handed to a shell.
+     *
+     * Separate from [isValidPath] because that one's rules are the right rules
+     * for a path that ends up inside a command line and the wrong rules for a
+     * file the user just double-clicked in Finder. `isValidPath` rejects any
+     * path containing `..`, `$`, `&`, `;`, `|` or a backtick, so a real file
+     * called `Q&A notes.md`, `pay$.sh` or anything under a directory with an
+     * ampersand in its name could not be opened at all - it failed the check and
+     * the open was dropped with a log line and no window.
+     *
+     * The dropped rules bought nothing on this path. There is no shell, so shell
+     * metacharacters are ordinary filename characters; and `..` cannot be a
+     * traversal defence when every caller may pass an absolute path anyway, so
+     * canonicalising is both stricter and correct. What remains is what actually
+     * matters: no NUL (which truncates the path in any native call underneath),
+     * and a path that resolves.
+     *
+     * Callers still check `exists()`, `isFile()` and `canRead()` afterwards;
+     * this decides only whether the string is a usable path at all.
+     */
+    fun isValidOpenTargetPath(path: String): Boolean {
+        if (path.isBlank()) return false
+        if (path.length > MAX_OPEN_TARGET_PATH_LENGTH) return false
+        if (path.contains('\u0000')) return false
+
+        // canonicalFile resolves `..` and symlinks and throws on a path the
+        // filesystem cannot represent, which is the honest way to reject the
+        // shapes the `..` test was reaching for.
+        return try {
+            java.io
+                .File(path)
+                .canonicalFile
+            true
+        } catch (_: java.io.IOException) {
+            false
+        } catch (_: SecurityException) {
+            false
+        }
+    }
+
+    /**
+     * Validates file path for security.
+     * Prevents path traversal attacks and other malicious patterns.
+     *
+     * For a path that is only going to be **read** (opening a file in the
+     * editor), use [isValidOpenTargetPath]: these rules assume the path may
+     * reach a shell and reject legal filenames that never would.
+     */
+    fun isValidPath(path: String): Boolean {
+        // Check for null bytes
+        if (path.contains('\u0000')) {
+            return false
+        }
+
+        // Check for path traversal
+        if (path.contains("..")) {
+            return false
+        }
+
+        // Check for shell metacharacters
+        val dangerousChars = listOf(';', '&', '|', '`', '$', '\n', '\r')
+        if (dangerousChars.any { path.contains(it) }) {
+            return false
+        }
+
+        return true
+    }
+
+    private val RESTRICTED_POSIX_ROOTS =
+        listOf(
+            "/etc",
+            "/sys",
+            "/proc",
+            "/dev",
+            "/boot",
+            "/bin",
+            "/sbin",
+            "/usr/bin",
+            "/usr/sbin",
+            "/usr/libexec",
+            "/system",
+            "/library",
+            "/private/etc",
+            "/private/var/db",
+        )
+
+    private val RESTRICTED_WINDOWS_DIRECTORIES =
+        listOf(
+            "windows",
+            "winnt",
+            "program files",
+            "program files (x86)",
+            "system volume information",
+            "recovery",
+        )
+
+    /**
+     * Resolves `.` and `..` segments in a list of path segments.
+     * Preserves leading `..` only for relative paths.
+     */
+    private fun resolveSegments(
+        segments: List<String>,
+        isAbsolute: Boolean,
+    ): List<String> {
+        val resolved = mutableListOf<String>()
+        for (segment in segments) {
+            if (segment.isEmpty() || segment == ".") continue
+            if (segment == "..") {
+                if (resolved.isNotEmpty() && resolved.last() != "..") {
+                    resolved.removeAt(resolved.size - 1)
+                } else if (!isAbsolute) {
+                    resolved.add("..")
+                }
+            } else {
+                resolved.add(segment)
+            }
+        }
+        return resolved
+    }
+
+    private fun stripWindowsDevicePrefix(path: String): String {
+        val hasPrefix =
+            path.startsWith("\\\\?\\") ||
+                path.startsWith("\\\\.\\") ||
+                path.startsWith("//?/") ||
+                path.startsWith("//./")
+        val isDrive = path.length >= 6 && path[4].isLetter() && path[5] == ':'
+        return if (hasPrefix && isDrive) path.substring(4) else path
+    }
+
+    /**
+     * Normalizes a path string by converting backslashes to forward slashes,
+     * stripping duplicate separators, and resolving `.` and `..` segments purely
+     * in memory without filesystem dependencies.
+     *
+     * Note: [isValidPath] already rejects any path containing `..`, so the `..`-resolution
+     * here only changes an answer for a caller that consults [isRestrictedSystemPath] before
+     * [isValidPath] - as the MCP open_workspace path check does. A caller that runs
+     * [isValidPath] alone (the MCP open_terminal handler) refuses `/home/x/../../etc` through
+     * the generic `..` rule instead, with the generic message (#1651).
+     *
+     * Returns `""` for blank input and for input longer than [MAX_OPEN_TARGET_PATH_LENGTH]:
+     * it is not a path this function will normalize. [isRestrictedSystemPath] does not read
+     * that `""` as "not restricted" for the over-long case.
+     */
+    fun normalizePath(path: String): String {
+        val trimmed = path.trim()
+        if (trimmed.isEmpty() || trimmed.length > MAX_OPEN_TARGET_PATH_LENGTH) return ""
+
+        val p = stripWindowsDevicePrefix(trimmed)
+        val isWindowsDrive = p.length >= 2 && p[1] == ':' && p[0].isLetter()
+        val prefix = if (isWindowsDrive) p.substring(0, 2).uppercase() else ""
+        val remainder = if (isWindowsDrive) p.substring(2) else p
+        val isAbsolute = remainder.startsWith('/') || remainder.startsWith('\\')
+
+        val segments = remainder.split('/', '\\')
+        val resolved = resolveSegments(segments, isAbsolute)
+        val joined = resolved.joinToString("/")
+
+        return when {
+            prefix.isNotEmpty() -> if (isAbsolute) "$prefix/$joined" else "$prefix$joined"
+            isAbsolute -> "/$joined"
+            else -> joined
+        }
+    }
+
+    /**
+     * Checks whether [path] targets a restricted operating system directory or
+     * root path that should never be accessed or opened as a workspace.
+     */
+    fun isRestrictedSystemPath(path: String): Boolean {
+        val trimmed = path.trim()
+        // The two inputs normalizePath refuses. Blank names no directory at all (callers refuse
+        // it on their own: not absolute), so it is not restricted. Over-long fails closed: where
+        // it points is unknown, and "/etc/" + "./".repeat(16_500) must not read as "not
+        // restricted" (#1651).
+        if (trimmed.isEmpty() || trimmed.length > MAX_OPEN_TARGET_PATH_LENGTH) return trimmed.isNotEmpty()
+        val normalized = normalizePath(trimmed)
+
+        val isRoot = normalized == "/" || (normalized.length == 3 && normalized.endsWith(":/"))
+        val lower = normalized.lowercase()
+        val isPosixRestricted =
+            RESTRICTED_POSIX_ROOTS.any { root ->
+                lower == root || lower.startsWith("$root/")
+            }
+        val isWindowsRestricted =
+            if (lower.length >= 3 && lower[1] == ':' && lower[2] == '/') {
+                val afterDrive = lower.substring(3)
+                RESTRICTED_WINDOWS_DIRECTORIES.any { winDir ->
+                    afterDrive == winDir || afterDrive.startsWith("$winDir/")
+                }
+            } else {
+                false
+            }
+
+        return isRoot || isPosixRestricted || isWindowsRestricted
+    }
+
+    /**
+     * Longest terminal command BOSS will type into a shell — well past anything
+     * a person writes by hand, and a bound on what a caller can make the app
+     * hold. Commands that must be confirmed are held to the tighter
+     * [TERMINAL_CONFIRM_MAX_COMMAND_LENGTH], which is what the prompt can show in
+     * full.
+     */
+    private const val MAX_COMMAND_LENGTH = 4096
+
+    /**
+     * Checks that a terminal command is well formed: one non-empty line of
+     * printable text, no longer than [MAX_COMMAND_LENGTH].
+     *
+     * This is a shape check, not a judgement about what the command does. An
+     * allow-list of commands would rule out the legitimate use — `boss terminal
+     * -c` exists precisely to run whatever the operator types — without ruling
+     * out much else, so **who asked** is decided separately by
+     * [ai.rever.boss.utils.DeepLinkOrigin]: only a request the operator made
+     * themselves runs without a prompt.
+     *
+     * Control, format, and Unicode line-separator characters are rejected
+     * because the command is written into a shell followed by a single Enter — an embedded line break would submit
+     * further lines that nothing ever displayed, so keeping the command to one
+     * line is what makes the text shown equal to the text that runs. The NUL
+     * byte the previous check looked for is one of them.
+     */
+    fun isValidCommand(command: String): Boolean =
+        command.isNotBlank() &&
+            command.length <= MAX_COMMAND_LENGTH &&
+            !command.hasHiddenDisplayCharacter()
+}
+
+internal val HIDDEN_DISPLAY_CHARACTERS =
+    setOf(
+        CharCategory.CONTROL,
+        CharCategory.FORMAT,
+        CharCategory.LINE_SEPARATOR,
+        CharCategory.PARAGRAPH_SEPARATOR,
+    )
+
+/** True for characters that can make reviewed one-line text differ from its underlying value. */
+internal fun String.hasHiddenDisplayCharacter(): Boolean {
+    var index = 0
+    var hidden = false
+    while (index < length && !hidden) {
+        val character = this[index]
+        hidden =
+            character.category in HIDDEN_DISPLAY_CHARACTERS ||
+            (index + 1 < length && isSupplementaryFormatCharacter(character, this[index + 1]))
+        index += if (character.isHighSurrogate() && index + 1 < length && this[index + 1].isLowSurrogate()) 2 else 1
+    }
+    return hidden
+}
+
+/** Supplementary-plane `Cf` ranges in the Unicode tables supported by this Kotlin target. */
+internal fun isSupplementaryFormatCharacter(
+    high: Char,
+    low: Char,
+): Boolean {
+    if (!high.isHighSurrogate() || !low.isLowSurrogate()) return false
+    val codePoint = 0x10000 + ((high.code - 0xD800) shl 10) + (low.code - 0xDC00)
+    return codePoint == 0x110BD ||
+        codePoint == 0x110CD ||
+        codePoint in 0x13430..0x1343F ||
+        codePoint in 0x1BCA0..0x1BCA3 ||
+        codePoint in 0x1D173..0x1D17A ||
+        codePoint == 0xE0001 ||
+        codePoint in 0xE0020..0xE007F
+}

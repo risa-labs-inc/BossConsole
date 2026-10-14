@@ -13,9 +13,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /** A per-browser daemon executor whose drain signal follows actual execution, not caller cancellation. */
 internal class DrainingBrowserExecutor(
@@ -29,6 +31,38 @@ internal class DrainingBrowserExecutor(
         { task -> Thread(task, threadName).apply { isDaemon = true } },
     ) {
     private val drained = CompletableDeferred<Unit>()
+    private val pendingCount = AtomicInteger()
+    private val runningCount = AtomicInteger()
+
+    val pending: Int get() = pendingCount.get()
+    val inFlight: Int get() = runningCount.get()
+
+    override fun execute(command: Runnable) {
+        // Count before submission: dequeueing must never create a false idle observation.
+        pendingCount.incrementAndGet()
+        try {
+            super.execute {
+                runningCount.incrementAndGet()
+                try {
+                    command.run()
+                } finally {
+                    runningCount.decrementAndGet()
+                    pendingCount.decrementAndGet()
+                }
+            }
+        } catch (rejected: RejectedExecutionException) {
+            // The only failure `execute` declares. Catching RuntimeException here would also
+            // swallow a bug in the accounting itself and report it as a rejected submission.
+            pendingCount.decrementAndGet()
+            throw rejected
+        }
+    }
+
+    override fun shutdownNow(): List<Runnable> {
+        val discarded = super.shutdownNow()
+        pendingCount.addAndGet(-discarded.size)
+        return discarded
+    }
 
     init {
         allowCoreThreadTimeOut(true)

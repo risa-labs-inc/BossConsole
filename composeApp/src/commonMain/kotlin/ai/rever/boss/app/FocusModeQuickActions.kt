@@ -120,6 +120,9 @@ internal fun focusQuickActionsVisible(
 
 /** Where the host's own actions belong right now. Mutually exclusive by construction. */
 internal enum class FocusQuickActionsPlacement {
+    /** Native toolbar owns the actions; no content overlay or sidebar copy is needed. */
+    TITLE_BAR,
+
     /** Nowhere: the top bar is up and still owns them. */
     NONE,
 
@@ -249,8 +252,11 @@ internal fun focusQuickActionsPlacement(
      */
     panelFootAvailable: Boolean = false,
     railActionsFit: Boolean = true,
+    titleBarAvailable: Boolean = false,
 ): FocusQuickActionsPlacement =
     when {
+        titleBarAvailable -> FocusQuickActionsPlacement.TITLE_BAR
+
         !focusQuickActionsVisible(settings, topBarHidden, showTopBar) -> FocusQuickActionsPlacement.NONE
 
         // Rail first, unchanged: where there is a right rail these have always gone in it, and it

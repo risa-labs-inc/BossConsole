@@ -16,6 +16,7 @@ import com.github.ajalt.clikt.parameters.arguments.optional
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
+import com.github.ajalt.clikt.parameters.types.int
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -191,6 +192,7 @@ class BossStatusCommand : CliktCommand(name = "status") {
                     val heapPct = mem["heapPercent"]?.jsonPrimitive?.contentOrNull ?: "?"
                     appendLine("  JVM Memory:     ${used}MB / ${max}MB ($heapPct%)")
                 }
+                healthSummaryOf(element)?.let { appendLine("  Health:         $it") }
             } catch (_: Exception) {
                 appendLine(rawJson)
             }
@@ -202,16 +204,20 @@ class BossStatusCommand : CliktCommand(name = "status") {
  * Usage:
  *   boss mcp list [--json]
  *   boss mcp invoke <tool_name> [-a|--args <json>] [--stdin]
+ *   boss mcp ledger <verify|tail|search|secrets> [--json]
  */
 @Suppress("TooManyFunctions")
 class BossMcpCommand : CliktCommand(name = "mcp") {
     override fun help(context: Context) = "Discovers and invokes MCP tools in the running BOSS Console"
 
     val action by argument(
-        help = "Action to perform: list, describe (or info), invoke (or call)",
-        completionCandidates = CompletionCandidates.Fixed("list", "describe", "info", "invoke", "call"),
+        help = "Action to perform: list, describe (or info), invoke (or call), ledger",
+        completionCandidates =
+            CompletionCandidates.Fixed("list", "describe", "info", "invoke", "call", "ledger"),
     ).optional()
-    val tool by argument(help = "Tool name to describe or invoke").optional()
+    val tool by argument(
+        help = "Tool name to describe or invoke, or the ledger action: verify, tail, search, secrets",
+    ).optional()
     val args by option("-a", "--args", help = "JSON arguments string for the tool").default("{}")
     val stdin by option("--stdin", help = "Read JSON arguments from standard input").flag(default = false)
     val timeout by option(
@@ -227,6 +233,27 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
     ).flag(default = false)
     val json by option("--json", help = "Output response in raw JSON format").flag(default = false)
 
+    // `boss mcp ledger` reads the durable ledger off disk instead of over IPC, so it takes a file
+    // path and its own filters rather than any of the arguments above.
+    val ledgerFile by option("--file", help = "Ledger file to read (default: ~/.boss/mcp-calls.jsonl)")
+    val ledgerLines by option("-n", "--lines", help = "Records to print for 'tail' (default: 20)").int().default(20)
+    val ledgerLimit by option("--limit", help = "Records to print for 'search' (default: 50)").int().default(50)
+    val ledgerTool by option("--tool", help = "Only records for this exact tool name")
+    val ledgerDisposition by option(
+        "--disposition",
+        help = "Only unsuccessful calls in this category: denied, cancelled, withheld, failed",
+    )
+    val ledgerSecret by option(
+        "--secret",
+        help = "Only calls that referenced this secret id, or <id>.<field> for one field",
+    )
+    val ledgerProvider by option(
+        "--provider",
+        help = "Only records from this provider: a host provider id, a plugin id, or <pluginId>::<providerId>",
+    )
+    val ledgerFrom by option("--from", help = "Only records at or after this time (epoch ms, date, or ISO-8601)")
+    val ledgerTo by option("--to", help = "Only records at or before this time (epoch ms, date, or ISO-8601)")
+
     override fun run() {
         when (val act = action?.lowercase()) {
             null, "list" -> {
@@ -241,11 +268,99 @@ class BossMcpCommand : CliktCommand(name = "mcp") {
                 handleInvoke()
             }
 
+            "ledger" -> {
+                handleLedger()
+            }
+
             else -> {
-                echo("Unknown mcp action: '$act'. Supported actions: list, describe, invoke", err = true)
+                echo("Unknown mcp action: '$act'. Supported actions: list, describe, invoke, ledger", err = true)
                 throw ProgramResult(1)
             }
         }
+    }
+
+    /**
+     * `boss mcp ledger <verify|tail|search|secrets>` - reads `~/.boss/mcp-calls.jsonl` and its
+     * rotated backups off disk.
+     *
+     * Local rather than IPC on purpose. The running app can only answer from its in-memory ring
+     * buffer, which holds the last 100 calls and is not the audit trail; these read the file
+     * itself, so they also work with BOSS closed.
+     */
+    private fun handleLedger() {
+        val ledgerAction = tool?.trim()?.lowercase()
+        if (ledgerAction.isNullOrEmpty()) {
+            fail("Missing ledger action. Usage: boss mcp ledger <verify|tail|search|secrets> [--json]")
+        }
+        val outcome =
+            when (ledgerAction) {
+                "verify" -> {
+                    McpLedgerCli.verify(ledgerFile, json)
+                }
+
+                "tail" -> {
+                    McpLedgerCli.tail(ledgerFile, ledgerLines, ledgerQuery(), json)
+                }
+
+                "search" -> {
+                    McpLedgerCli.search(ledgerFile, ledgerLimit, ledgerQuery(), json)
+                }
+
+                "secrets" -> {
+                    McpLedgerSecrets.secrets(ledgerFile, ledgerQuery(), json)
+                }
+
+                else -> {
+                    fail(
+                        "Unknown ledger action: '$ledgerAction'. Supported actions: verify, tail, search, secrets",
+                    )
+                }
+            }
+        when (outcome) {
+            is McpLedgerOutcome.Ok -> echo(outcome.text)
+            is McpLedgerOutcome.Failed -> fail(outcome.message)
+        }
+    }
+
+    /** The filters `tail`, `search` and `secrets` share, failing on a value that cannot be read. */
+    private fun ledgerQuery(): McpLedgerQuery {
+        val category =
+            if (ledgerDisposition.isNullOrBlank()) {
+                null
+            } else {
+                McpLedgerCli.parseCategory(ledgerDisposition)
+                    ?: fail(
+                        "Unknown --disposition '$ledgerDisposition'. Expected one of: " +
+                            McpLedgerCli.categoryLabels(),
+                    )
+            }
+        val secret =
+            if (ledgerSecret.isNullOrBlank()) {
+                null
+            } else {
+                McpLedgerSecrets.parseSelector(ledgerSecret)
+                    ?: fail(
+                        "Cannot read --secret '$ledgerSecret'. Expected a secret id (a UUID), " +
+                            "optionally followed by .password, .username or .notes",
+                    )
+            }
+        return McpLedgerQuery(
+            tool = ledgerTool?.trim()?.takeIf { it.isNotEmpty() },
+            category = category,
+            secret = secret,
+            provider = ledgerProvider?.trim()?.takeIf { it.isNotEmpty() },
+            fromMillis = ledgerTime(ledgerFrom, endOfDay = false),
+            toMillis = ledgerTime(ledgerTo, endOfDay = true),
+        )
+    }
+
+    private fun ledgerTime(
+        raw: String?,
+        endOfDay: Boolean,
+    ): Long? {
+        if (raw.isNullOrBlank()) return null
+        return McpLedgerCli.parseTime(raw, endOfDay)
+            ?: fail("Cannot read time '$raw'. Use epoch milliseconds, YYYY-MM-DD, or ISO-8601.")
     }
 
     private fun handleList() {
@@ -555,6 +670,16 @@ class BossCompletionCommand : CliktCommand(name = "completion") {
 }
 
 /**
+ * Plugin developer tools and lifecycle management.
+ * Subcommands (init, validate, link) provide scaffolding, validation, and hot-linking.
+ */
+class BossPluginCommand : CliktCommand(name = "plugin") {
+    override fun help(context: Context) = "Plugin developer tools and lifecycle management"
+
+    override fun run() = Unit
+}
+
+/**
  * Configures Clikt command structure.
  */
 fun createBossCLI(): BossCommand =
@@ -565,8 +690,20 @@ fun createBossCLI(): BossCommand =
         BossFolderCommand(),
         BossTerminalCommand(),
         BossStatusCommand(),
+        BossDoctorCommand(),
         BossMcpCommand(),
+        BossPackCommand().subcommands(
+            BossPackPlanCommand(),
+            BossPackApplyCommand(),
+            BossPackStatusCommand(),
+        ),
+        BossProjectDetectCommand(),
         BossCompletionCommand(),
+        BossPluginCommand().subcommands(
+            BossPluginInitCommand(),
+            BossPluginValidateCommand(),
+            BossPluginLinkCommand(),
+        ),
     )
 
 /** Configure before any BOSS logger initializes, keeping machine-readable stdout clean. */

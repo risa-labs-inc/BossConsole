@@ -46,6 +46,10 @@ actual object PluginLoaderDelegateSetup {
         val delegate = PluginLoaderDelegateImpl(dynamicPluginManager)
         context.registerPluginAPI(delegate)
 
+        dynamicPluginManager.restartDependentPlugin = { id ->
+            delegate.resetPluginInstances(id)
+        }
+
         // Menu reloads use the manager directly, so they need the installer's current path too.
         // The manager invokes this lookup on IO before it unloads the running plugin.
         dynamicPluginManager.persistedReloadJarPath = { pluginId ->

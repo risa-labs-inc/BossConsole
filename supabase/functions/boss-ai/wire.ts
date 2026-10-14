@@ -1,5 +1,24 @@
 import { HttpError } from "./auth.ts"
 
+const MAX_TOOL_CALLS_PER_MESSAGE = 128
+const MAX_TOOL_DESCRIPTION_LENGTH = 4_096
+const MAX_TOOL_SCHEMA_LENGTH = 65_536
+
+function boundedToolSchema(value: unknown): void {
+  const pending: { value: unknown; depth: number }[] = [{ value: object(value), depth: 0 }]
+  let visited = 0
+  while (pending.length) {
+    const next = pending.pop()!
+    if (++visited > 8_192 || next.depth > 32) throw invalid()
+    if (next.value && typeof next.value === "object") {
+      const children = Object.values(next.value)
+      if (children.length + pending.length + visited > 8_192) throw invalid()
+      for (const child of children) pending.push({ value: child, depth: next.depth + 1 })
+    }
+  }
+  if (JSON.stringify(value).length > MAX_TOOL_SCHEMA_LENGTH) throw invalid()
+}
+
 export type Obj = Record<string, unknown>
 export interface Model {
   id: string
@@ -7,6 +26,8 @@ export interface Model {
   capabilities: string[]
   context_length: number
   max_output_tokens: number
+  /** Operator-set upstream routing (OpenRouter `provider`); never caller-supplied. */
+  provider_routing?: unknown
 }
 export interface Connection {
   base_url: string
@@ -37,6 +58,17 @@ function functionCall(value: unknown): Obj {
     call.type !== "function" || typeof call.id !== "string" ||
     typeof f.name !== "string" || typeof f.arguments !== "string"
   ) throw invalid()
+  // BossConsole#1251: tool-call `arguments` must be an object or the empty
+  // string that some upstreams return for a no-argument call. Other strings
+  // are malformed requests that the upstream
+  // would reject, but only after the reservation has been charged for
+  // the full context length. Fail closed here so the bad call never
+  // reaches the dispatch path.
+  try {
+    if (f.arguments !== "") object(JSON.parse(f.arguments))
+  } catch {
+    throw invalid()
+  }
   return call
 }
 
@@ -107,7 +139,54 @@ export function upstreamKey(
   return key
 }
 
-export function requestBody(input: Obj, model: Model, type: Connection["api_type"]): Obj {
+function isOpenRouter(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl)
+    return url.protocol === "https:" && url.hostname === "openrouter.ai"
+  } catch {
+    return false
+  }
+}
+
+const ROUTING_LISTS = ["order", "only", "ignore"]
+const ROUTING_FLAGS = ["allow_fallbacks", "require_parameters"]
+const ROUTING_SORTS = ["price", "throughput", "latency"]
+
+// Operator-set OpenRouter `provider` object, rebuilt from an allow-list. A malformed row,
+// or routing on a non-OpenRouter connection, fails closed before reaching the upstream.
+// Mirrors public.boss_ai_provider_routing_valid().
+export function providerRouting(value: unknown, baseUrl: string): Obj | undefined {
+  if (value === null || value === undefined) return undefined
+  const misconfigured = () =>
+    new HttpError(503, "configuration", "BOSS AI is temporarily unavailable.")
+  if (typeof value !== "object" || Array.isArray(value)) throw misconfigured()
+  const out: Obj = {}
+  for (const [key, entry] of Object.entries(value as Obj)) {
+    if (ROUTING_LISTS.includes(key)) {
+      if (
+        !Array.isArray(entry) || entry.length < 1 || entry.length > 32 ||
+        entry.some((slug) => typeof slug !== "string" || !/^[a-z0-9][a-z0-9._/-]{0,63}$/.test(slug))
+      ) throw misconfigured()
+      out[key] = [...entry]
+    } else if (ROUTING_FLAGS.includes(key)) {
+      if (typeof entry !== "boolean") throw misconfigured()
+      out[key] = entry
+    } else if (key === "sort") {
+      if (typeof entry !== "string" || !ROUTING_SORTS.includes(entry)) throw misconfigured()
+      out[key] = entry
+    } else throw misconfigured()
+  }
+  if (!Object.keys(out).length) return undefined
+  if (!isOpenRouter(baseUrl)) throw misconfigured()
+  return out
+}
+
+export function requestBody(
+  input: Obj,
+  model: Model,
+  type: Connection["api_type"],
+  baseUrl: Connection["base_url"],
+): Obj {
   const allowed = new Set([
     "model",
     "messages",
@@ -183,6 +262,16 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
       m.tool_calls !== undefined &&
       (!Array.isArray(m.tool_calls) || !model.capabilities.includes("tools"))
     ) throw invalid()
+    // BossConsole#1251: cap tool_calls per message. A single message
+    // with thousands of tool_calls multiplies the JSON.parse cost
+    // in `functionCall` (now mandatory) and produces a request the
+    // upstream would reject at the wire size anyway. This is a BOSS policy
+    // bound that stops the obvious amplifier; it is not an upstream limit.
+    // Keep it high enough to replay the broker's own parallel-call responses.
+    if (
+      Array.isArray(m.tool_calls) &&
+      m.tool_calls.length > MAX_TOOL_CALLS_PER_MESSAGE
+    ) throw invalid()
     if (Array.isArray(m.tool_calls)) m.tool_calls.forEach(functionCall)
     if (
       m.role === "tool" && (m.content === null ||
@@ -198,6 +287,8 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
     throw invalid()
   }
   const common: Obj = { model: model.upstream_model, stream: input.stream === true, store: false }
+  const provider = providerRouting(model.provider_routing, baseUrl)
+  if (provider) common.provider = provider
   for (const key of ["temperature", "top_p"]) {
     if (input[key] !== undefined) {
       if (typeof input[key] !== "number" || !Number.isFinite(input[key])) throw invalid()
@@ -215,9 +306,16 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
       const f = object(t.function)
       onlyKeys(t, ["type", "function"])
       onlyKeys(f, ["name", "description", "parameters", "strict"])
-      if (f.description !== undefined && typeof f.description !== "string") throw invalid()
+      // Host policy bounds each description/schema as well as the 128-tool list.
+      // The overall 4 MiB request-body cap remains the aggregate bound.
+      if (f.description !== undefined) {
+        if (
+          typeof f.description !== "string" ||
+          f.description.length > MAX_TOOL_DESCRIPTION_LENGTH
+        ) throw invalid()
+      }
       if (f.strict !== undefined && typeof f.strict !== "boolean") throw invalid()
-      if (f.parameters !== undefined) object(f.parameters)
+      if (f.parameters !== undefined) boundedToolSchema(f.parameters)
       if (
         t.type !== "function" || typeof f.name !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(f.name)
       ) throw invalid()
@@ -256,7 +354,7 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
         (schema.description !== undefined && typeof schema.description !== "string") ||
         (schema.strict !== undefined && typeof schema.strict !== "boolean")
       ) throw invalid()
-      object(schema.schema)
+      boundedToolSchema(schema.schema)
     }
     if (type === "openai_chat") common.response_format = format
     else {common.text = {
@@ -268,7 +366,10 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
   if (type === "openai_chat") {
     if (tools) common.tools = tools
     if (common.stream) common.stream_options = { include_usage: true }
-    return { ...common, messages, max_completion_tokens: max }
+    const cached = takesCacheControl(model.upstream_model, baseUrl)
+      ? withPromptCache(messages)
+      : messages
+    return { ...common, messages: cached, max_completion_tokens: max }
   }
   const items: Obj[] = []
   for (const m of messages) {
@@ -303,6 +404,54 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
   return { ...common, input: items, max_output_tokens: max, truncation: "disabled" }
 }
 
+// Upstreams that cache only where the request marks it. OpenRouter forwards `cache_control` to
+// them; every other upstream caches automatically or not at all, and gets the request unchanged.
+function takesCacheControl(upstreamModel: string, baseUrl: string): boolean {
+  const id = upstreamModel.toLowerCase()
+  return isOpenRouter(baseUrl) && (id.startsWith("anthropic/") || id.startsWith("google/gemini"))
+}
+
+const EPHEMERAL = { type: "ephemeral" }
+
+// Two breakpoints: the first system message (with the tools ahead of it, the stable prefix every
+// turn repeats) and the newest user message (the conversation so far). Messages are copied, never
+// edited in place, and only text parts carry the mark.
+export function withPromptCache(messages: Obj[]): Obj[] {
+  const system = messages.findIndex((m) => m.role === "system" || m.role === "developer")
+  let user = -1
+  messages.forEach((m, i) => {
+    if (m.role === "user") user = i
+  })
+  return messages.map((m, i) => (i === system || i === user) ? markLastText(m) : m)
+}
+
+function markLastText(m: Obj): Obj {
+  if (typeof m.content === "string") {
+    if (!m.content) return m
+    return { ...m, content: [{ type: "text", text: m.content, cache_control: EPHEMERAL }] }
+  }
+  if (!Array.isArray(m.content)) return m
+  const parts = m.content as Obj[]
+  let last = -1
+  parts.forEach((p, i) => {
+    if (p.type === "text" && typeof p.text === "string" && p.text) last = i
+  })
+  if (last < 0) return m
+  return { ...m, content: parts.map((p, i) => i === last ? { ...p, cache_control: EPHEMERAL } : p) }
+}
+
+// The cache and reasoning breakdowns the gateway prices with, passed through when the upstream
+// reports them as non-negative integers. Totals stay prompt + completion: accounting is unchanged.
+function details(source: unknown, keys: string[]): Obj | undefined {
+  if (!source || typeof source !== "object") return undefined
+  const out: Obj = {}
+  for (const key of keys) {
+    const v = (source as Obj)[key]
+    if (Number.isSafeInteger(v) && Number(v) >= 0) out[key] = v
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
 export function usage(value: unknown, responses = false): Obj | null {
   if (!value || typeof value !== "object") return null
   const u = value as Obj
@@ -312,10 +461,20 @@ export function usage(value: unknown, responses = false): Obj | null {
     !Number.isSafeInteger(prompt) || !Number.isSafeInteger(completion) || Number(prompt) < 0 ||
     Number(completion) < 0 || !Number.isSafeInteger(Number(prompt) + Number(completion))
   ) return null
+  const promptDetails = details(
+    u[responses ? "input_tokens_details" : "prompt_tokens_details"],
+    ["cached_tokens", "cache_write_tokens"],
+  )
+  const completionDetails = details(
+    u[responses ? "output_tokens_details" : "completion_tokens_details"],
+    ["reasoning_tokens"],
+  )
   return {
     prompt_tokens: prompt,
     completion_tokens: completion,
     total_tokens: Number(prompt) + Number(completion),
+    ...(promptDetails ? { prompt_tokens_details: promptDetails } : {}),
+    ...(completionDetails ? { completion_tokens_details: completionDetails } : {}),
   }
 }
 

@@ -15,13 +15,14 @@ import kotlin.test.assertTrue
  * Two classes that exist BOTH in the test's own classpath (so the host/parent
  * loader can supply them) and in the synthetic plugin jar these tests build (so
  * the plugin loader can define its own copy). That duplication is the whole
- * point: it is what makes the silent parent fallback observable — without the
- * fix, asking a closed plugin loader for [OwnedByPluginB] hands back the
- * PARENT's copy instead of failing, and the plugin ends up with two class
- * graphs spliced together.
+ * point: it is what makes the parent fallback observable — without the sandbox,
+ * asking a plugin loader for [OwnedByPluginB] hands back the PARENT's copy
+ * instead of failing, and after close it would splice two class graphs
+ * together.
  *
  * They are deliberately dependency-free and live in a package that is NOT in
- * [PluginClassLoader.defaultSharedPackages], so they take the child-first path.
+ * [PluginClassLoader.defaultSharedPackages], so they take the child-first path
+ * and may not resolve against the host at all.
  */
 class OwnedByPluginA
 
@@ -81,16 +82,15 @@ class PluginClassLoaderUnloadFallbackTest {
     // --- the legitimate case, which must keep working exactly as before ------
 
     @Test
-    fun `an open loader still falls back to the parent for a class it does not carry`() {
+    fun `an open loader refuses a host class outside the shared packages`() {
         val loader = loaderOver(OwnedByPluginA::class.java)
 
-        val resolved = loader.loadClass(OwnedByPluginB::class.java.name)
-
-        assertSame(
-            OwnedByPluginB::class.java,
-            resolved,
-            "an ACTIVE loader must keep delegating a genuine miss to the parent",
-        )
+        // [OwnedByPluginB] is resolvable through the parent - it is right there
+        // on the test classpath - but its package is not shared, so a plugin
+        // must not reach it by name.
+        assertFailsWith<ClassNotFoundException> {
+            loader.loadClass(OwnedByPluginB::class.java.name)
+        }
         loader.close()
     }
 
@@ -205,20 +205,20 @@ class PluginClassLoaderUnloadFallbackTest {
     }
 
     @Test
-    fun `a class the plugin never carried is refused too once the loader is closed`() {
+    fun `a class the plugin never carried is refused while open and after close`() {
         val loader = loaderOver(OwnedByPluginA::class.java)
-        // Resolvable from the parent while open...
-        assertSame(OwnedByPluginB::class.java, loader.loadClass(OwnedByPluginB::class.java.name))
+        // Non-shared names are refused while ACTIVE, not just after teardown.
+        assertFailsWith<ClassNotFoundException> {
+            loader.loadClass(OwnedByPluginB::class.java.name)
+        }
 
         loader.close()
 
-        // ...and refused once closed. Note this direct loadClass() call does not
-        // register this loader as an initiating loader for B, so the
+        // ...and still refused once closed. This direct loadClass() call does
+        // not register this loader as an initiating loader for B, so the
         // findLoadedClass early return does not cover it. In production a
         // JVM-resolved host class WOULD be registered and would keep resolving
-        // after close — only first-time names reach the refusal. What this pins
-        // is the discriminator: after close, "not in the plugin jar" and "the
-        // jar is shut" are indistinguishable, so state is the only safe signal.
+        // after close — only first-time names reach the refusal.
         assertFailsWith<ClassNotFoundException> {
             loader.loadClass(OwnedByPluginB::class.java.name)
         }

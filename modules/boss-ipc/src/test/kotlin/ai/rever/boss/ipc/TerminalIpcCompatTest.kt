@@ -13,18 +13,16 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * Locks the terminal-proto scaffolding and the 1.0.x ↔ 1.1.x compatibility
- * envelope.
+ * Locks the terminal-proto scaffolding and cross-minor compatibility envelope.
  *
  * Two responsibilities:
- *  1. Pin the cross-version compatibility behaviour at the 1.0.x ↔ 1.1.x
- *     boundary so a future minor bump cannot silently break plugin loading.
+ *  1. Pin the cross-version compatibility behaviour at a minor boundary
+ *     so a future minor bump cannot silently break plugin loading.
  *  2. Round-trip the reserved terminal grid / cursor / shell-event proto
  *     messages to confirm `services/terminal.proto` still generates
  *     correctly. The host does not implement the matching RPCs today
- *     (see issue #743) — `IpcVersion.CURRENT` is intentionally 1.0.0 —
- *     but the bindings remain so re-enabling the streaming surface in a
- *     future minor bump is a one-line change.
+ *     (see issue #743). Global IPC version changes are not a capability
+ *     signal for this reserved surface.
  */
 class TerminalIpcCompatTest {
     @Test

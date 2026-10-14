@@ -40,8 +40,15 @@ expect object URLHandlerService {
      * If the app is not ready yet, queues the URL for later processing.
      *
      * @param url The http/https URL to open
+     * @param requiresConfirmation True when the URL must be shown to the
+     *   operator and confirmed before a tab is opened for it, because the
+     *   request came from somewhere other than the operator's own invocation
+     *   of BOSS (see `DeepLinkOrigin`)
      */
-    fun handleURL(url: String)
+    fun handleURL(
+        url: String,
+        requiresConfirmation: Boolean,
+    )
 
     /**
      * Handle multiple URLs at once
@@ -49,6 +56,10 @@ expect object URLHandlerService {
      * Useful if the OS passes multiple URLs to open simultaneously.
      *
      * @param urls List of URLs to open
+     * @param requiresConfirmation Whether every URL requires operator approval
      */
-    fun handleURLs(urls: List<String>)
+    fun handleURLs(
+        urls: List<String>,
+        requiresConfirmation: Boolean,
+    )
 }

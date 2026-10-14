@@ -328,7 +328,7 @@ class KeymapHandlerTest {
         assertTrue(handler.isBound("test.action"))
     }
 
-    // ==================== KEY RELEASE & REPEAT SEMANTICS TESTS ====================
+    // ==================== KEY PRESS, RELEASE & REPEAT SEMANTICS TESTS ====================
 
     @OptIn(androidx.compose.ui.InternalComposeUiApi::class)
     private fun createKeyEvent(
@@ -349,7 +349,7 @@ class KeymapHandlerTest {
         )
 
     @Test
-    fun `handleKeyEvent on KeyDown consumes event without executing action`() {
+    fun `handleKeyEvent on KeyDown consumes event and executes the action`() {
         val binding =
             KeyBinding(
                 actionId = "test.action",
@@ -370,12 +370,12 @@ class KeymapHandlerTest {
             }
 
         assertTrue(handled, "KeyDown matching shortcut should be consumed")
-        assertFalse(executed, "KeyDown must not execute the action yet")
-        assertTrue(handler.hasPendingShortcut, "Handler should have pending shortcut armed")
+        assertTrue(executed, "KeyDown must execute the action (BossConsole#1568)")
+        assertTrue(handler.hasPendingShortcut, "Handler should hold the chord until release")
     }
 
     @Test
-    fun `handleKeyEvent on KeyUp after matching KeyDown executes action exactly once`() {
+    fun `handleKeyEvent on KeyUp after matching KeyDown is consumed without executing again`() {
         val binding =
             KeyBinding(
                 actionId = "test.action",
@@ -402,8 +402,8 @@ class KeymapHandlerTest {
             }
 
         assertTrue(handled, "KeyUp should be handled")
-        assertEquals(1, executionCount, "Action must be executed exactly once on KeyUp")
-        assertFalse(handler.hasPendingShortcut, "Pending shortcut should be cleared after execution")
+        assertEquals(1, executionCount, "Action must be executed exactly once, by the KeyDown")
+        assertFalse(handler.hasPendingShortcut, "The held chord should be cleared on release")
     }
 
     @Test
@@ -431,7 +431,7 @@ class KeymapHandlerTest {
             assertTrue(handled, "Auto-repeat KeyDown should be consumed")
         }
 
-        assertEquals(0, executionCount, "Auto-repeat KeyDown events must not execute action")
+        assertEquals(1, executionCount, "Only the first KeyDown may execute; repeats must not")
 
         // Release primary key
         val keyUp = createKeyEvent(Key.N, KeyEventType.KeyUp, meta = true)
@@ -442,52 +442,35 @@ class KeymapHandlerTest {
             }
 
         assertTrue(handled, "KeyUp should be handled")
-        assertEquals(1, executionCount, "Action must execute exactly once upon release")
+        assertEquals(1, executionCount, "The release must not execute again")
     }
 
     @Test
-    fun `releasing modifier alone cancels pending chord without executing action`() {
-        val binding =
-            KeyBinding(
-                actionId = "test.action",
-                key = "N",
-                modifiers = listOf("Cmd"),
-                context = ShortcutContext.GLOBAL,
-                enabled = true,
-            )
-
+    fun `releasing the modifier before the key neither cancels nor re-executes the chord`() {
+        val binding = KeyBinding(actionId = "test.action", key = "N", modifiers = listOf("Cmd"))
         val handler = KeymapHandler.from(KeymapSettings.fromBindings(listOf(binding)))
-        var executed = false
-
-        val keyDown = createKeyEvent(Key.N, KeyEventType.KeyDown, meta = true)
-        handler.handleKeyEvent(keyDown, ShortcutContext.GLOBAL) {
-            executed = true
+        var executionCount = 0
+        val execute: (String) -> Boolean = {
+            executionCount++
             true
         }
-        assertTrue(handler.hasPendingShortcut)
 
-        // Release Meta/Cmd modifier alone
+        val keyDown = createKeyEvent(Key.N, KeyEventType.KeyDown, meta = true)
+        assertTrue(handler.handleKeyEvent(keyDown, ShortcutContext.GLOBAL, execute))
+        assertEquals(1, executionCount)
+
+        // Fast typing: Cmd comes up a few ms before N (BossConsole#1568).
         val modifierKeyUp = createKeyEvent(Key.MetaLeft, KeyEventType.KeyUp, meta = false)
-        val handled =
-            handler.handleKeyEvent(modifierKeyUp, ShortcutContext.GLOBAL) {
-                executed = true
-                true
-            }
+        assertFalse(handler.handleKeyEvent(modifierKeyUp, ShortcutContext.GLOBAL, execute))
+        assertFalse(handler.hasPendingShortcut, "The held record is dropped on modifier release")
 
-        assertFalse(handled, "Modifier release alone should not be consumed as action")
-        assertFalse(executed, "Modifier release must not execute the action")
-        assertFalse(handler.hasPendingShortcut, "Pending shortcut must be cancelled on modifier release")
-
-        // Subsequent primary key up should do nothing
+        // A bare auto-repeat of the still-held key stays swallowed and runs nothing.
+        assertTrue(
+            handler.handleKeyEvent(createKeyEvent(Key.N, KeyEventType.KeyDown), ShortcutContext.GLOBAL, execute),
+        )
         val keyUp = createKeyEvent(Key.N, KeyEventType.KeyUp, meta = false)
-        val keyUpHandled =
-            handler.handleKeyEvent(keyUp, ShortcutContext.GLOBAL) {
-                executed = true
-                true
-            }
-
-        assertTrue(keyUpHandled, "The claimed primary release stays consumed after cancellation")
-        assertFalse(executed)
+        assertTrue(handler.handleKeyEvent(keyUp, ShortcutContext.GLOBAL, execute), "The release stays consumed")
+        assertEquals(1, executionCount, "The chord ran exactly once")
     }
 
     @Test
@@ -515,7 +498,9 @@ class KeymapHandlerTest {
         handler.clearPendingShortcut()
         assertFalse(handler.hasPendingShortcut)
 
-        // Subsequent key up should not trigger action
+        // The key-down already ran the action; a key up after clearing is not claimed.
+        assertTrue(executed)
+        executed = false
         val keyUp = createKeyEvent(Key.N, KeyEventType.KeyUp, meta = true)
         val handled =
             handler.handleKeyEvent(keyUp, ShortcutContext.GLOBAL) {
@@ -528,7 +513,7 @@ class KeymapHandlerTest {
     }
 
     @Test
-    fun `updated bindings replace matcher and context changes cancel a held action`() {
+    fun `updated bindings replace matcher and a context change does not re-run a held chord`() {
         val binding = KeyBinding(actionId = "test.action", key = "N", modifiers = listOf("Cmd"))
         val handler = KeymapHandler(KeymapSettings.fromBindings(listOf(binding)))
         handler.updateSettings(KeymapSettings.fromBindings(listOf(binding.copy(key = "T"))))
@@ -558,7 +543,25 @@ class KeymapHandlerTest {
                 execute,
             ),
         )
-        assertEquals(0, calls)
+        assertEquals(1, calls, "only the new binding's KeyDown ran it")
+    }
+
+    @Test
+    fun `a chord the executor does not handle is neither consumed nor held`() {
+        val binding = KeyBinding(actionId = "test.action", key = "N", modifiers = listOf("Cmd"))
+        val handler = KeymapHandler(KeymapSettings.fromBindings(listOf(binding)))
+        var calls = 0
+        val decline: (String) -> Boolean = {
+            calls++
+            false
+        }
+        val keyDown = createKeyEvent(Key.N, KeyEventType.KeyDown, meta = true)
+        assertFalse(handler.handleKeyEvent(keyDown, ShortcutContext.GLOBAL, decline), "matches the AWT path")
+        assertFalse(handler.hasPendingShortcut)
+        assertFalse(handler.handleKeyEvent(keyDown, ShortcutContext.GLOBAL, decline), "not a swallowed repeat")
+        assertEquals(2, calls)
+        val keyUp = createKeyEvent(Key.N, KeyEventType.KeyUp, meta = true)
+        assertFalse(handler.handleKeyEvent(keyUp, ShortcutContext.GLOBAL, decline))
     }
 
     @Test
@@ -579,7 +582,7 @@ class KeymapHandlerTest {
                 ),
             )
         }
-        assertTrue(calls.isEmpty())
+        assertEquals(listOf("N", "T"), calls, "each chord runs on its own KeyDown; the repeat N does not")
         for (key in listOf(Key.N, Key.T)) {
             assertTrue(
                 handler.handleKeyEvent(

@@ -96,6 +96,11 @@ expect class UpdateService() {
 
     suspend fun installUpdate(downloadPath: String): InstallOutcome
 
+    suspend fun scheduleUpdate(downloadPath: String): InstallOutcome
+
+    /** Arm the existing macOS helper to relaunch in the Dock after an idle update. */
+    fun armIdleRelaunch(downloadPath: String): Boolean
+
     /**
      * Delete a staged download the user decided not to install.
      *

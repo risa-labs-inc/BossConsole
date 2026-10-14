@@ -60,10 +60,23 @@ export function getRpId(): string {
 }
 
 /**
+ * Display names for the relying parties this deployment serves, keyed by rpId.
+ *
+ * This value lands in `rp.name`, which the OS passkey prompt renders inside a
+ * trusted system dialog — so it is derived here from the allow-listed rpId and
+ * never taken from a request, where a crafted link could put arbitrary text
+ * ("Microsoft Security") into that prompt.
+ */
+const RP_ID_DISPLAY_NAMES: Record<string, string> = {
+  'api.risaboss.com': 'BOSS',
+  'localhost': 'BOSS',
+}
+
+/**
  * Get display name for the relying party
  */
-export function getRpName(): string {
-  return 'BOSS'
+export function getRpName(rpId?: string): string {
+  return (rpId ? RP_ID_DISPLAY_NAMES[rpId] : undefined) ?? 'BOSS'
 }
 
 /**

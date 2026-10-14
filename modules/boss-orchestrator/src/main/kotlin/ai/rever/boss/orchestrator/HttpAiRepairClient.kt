@@ -258,13 +258,13 @@ class HttpAiRepairClient(
 
                 val statusCode = connection.responseCode
                 if (statusCode != 200) {
-                    val error =
-                        connection.errorStream?.reader(StandardCharsets.UTF_8)?.readText()
-                            ?: "no error body"
-                    throw IOException("AI API returned HTTP $statusCode: $error")
+                    connection.errorStream?.close()
+                    throw IOException("AI API returned HTTP $statusCode")
                 }
 
-                connection.inputStream.reader(StandardCharsets.UTF_8).readText()
+                val response = connection.inputStream.use { it.readNBytes(1_048_577) }
+                if (response.size > 1_048_576) throw IOException("AI API response exceeds 1 MiB")
+                response.toString(StandardCharsets.UTF_8)
             } finally {
                 connection.disconnect()
             }

@@ -4,8 +4,10 @@ import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -60,7 +62,21 @@ actual class WorkspaceFileManager actual constructor(
                 dir.mkdirs()
             }
 
-            val actualFileName = fileName ?: WorkspaceFileManagerCommon.generateFileName(workspace.name)
+            // The ID, not the name: see WorkspaceFileManagerCommon.fileNameForId. A caller that
+            // knows the Space came from a legacy path passes it explicitly.
+            val actualFileName = fileName ?: WorkspaceFileManagerCommon.fileNameForId(workspace.id)
+
+            // Never write the literal ".json": a blank id resolves to it and an explicit
+            // fileName is not sanitised, so this is the last place the refusal can live. Every
+            // id-less Space would share that one file.
+            if (actualFileName == ".json") {
+                logger.warn(
+                    LogCategory.WORKSPACE,
+                    "Refused to save workspace to a nameless file",
+                    mapOf("workspace" to workspace.name),
+                )
+                return null
+            }
             val filePath = getWorkspaceFilePath(actualFileName)
             val file = File(filePath)
 
@@ -96,6 +112,15 @@ actual class WorkspaceFileManager actual constructor(
 
                 val json = file.readText()
                 WorkspaceSerializer.deserialize(json)
+            } catch (e: SerializationException) {
+                // A Space can contain tab URLs, project paths and terminal commands. Decoder
+                // messages quote the input document, so never attach one to a host log entry.
+                logger.warn(
+                    LogCategory.WORKSPACE,
+                    "Failed to load workspace file",
+                    mapOf("fileName" to fileName) + decodeFailure(e),
+                )
+                null
             } catch (e: Exception) {
                 logger.warn(
                     LogCategory.WORKSPACE,
@@ -117,6 +142,11 @@ actual class WorkspaceFileManager actual constructor(
 
                 dir
                     .listFiles { file ->
+                        // ".json" has no stem: it is what a blank id wrote on older builds, and
+                        // nothing produces it any more. It is still LISTED - that file is a
+                        // real Space (the last id-less import), and the load scan adopts it:
+                        // mints a stable id, saves under <id>.json, and removes the nameless
+                        // file. Filtering it here would orphan that Space silently.
                         file.isFile && file.name.endsWith(".json")
                     }?.map { file ->
                         WorkspaceFileInfo(
@@ -154,5 +184,58 @@ actual class WorkspaceFileManager actual constructor(
             }
         }
 
-    actual fun getWorkspaceFilePath(fileName: String): String = Paths.get(workspaceDirectory, fileName).toString()
+    actual fun getWorkspaceFilePath(fileName: String): String {
+        // Every read, write and delete above builds its path here, and each of them catches and
+        // logs, so a refused name surfaces as "not found" / "not saved" with a warning rather than
+        // as a file outside the directory.
+        require(WorkspaceFileManagerCommon.isBareFileName(fileName)) {
+            "Workspace file names are bare names inside the workspace directory, got '$fileName'"
+        }
+        return Paths.get(workspaceDirectory, fileName).toString()
+    }
+
+    actual fun writeDocumentBlocking(
+        fileName: String,
+        content: String?,
+    ): Boolean =
+        try {
+            val file = File(getWorkspaceFilePath(fileName))
+            if (content == null) {
+                // Absent is success: the caller wants it gone, and it is.
+                if (file.exists()) file.delete() else true
+            } else {
+                val dir = File(workspaceDirectory)
+                if (!dir.exists()) {
+                    dir.mkdirs()
+                }
+                // Atomic, for the reason saveWorkspaceBlocking is: this is the shutdown path, and
+                // an in-place write killed halfway leaves JSON that fails to parse next launch.
+                file.atomicWriteText(content)
+                true
+            }
+        } catch (e: Exception) {
+            logger.warn(
+                LogCategory.WORKSPACE,
+                "Failed to write workspace document",
+                mapOf("fileName" to fileName, "removing" to (content == null).toString()),
+                error = e,
+            )
+            false
+        }
+
+    actual suspend fun loadDocument(fileName: String): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                val file = File(getWorkspaceFilePath(fileName))
+                if (file.exists()) file.readText() else null
+            } catch (e: Exception) {
+                logger.warn(
+                    LogCategory.WORKSPACE,
+                    "Failed to read workspace document",
+                    mapOf("fileName" to fileName),
+                    error = e,
+                )
+                null
+            }
+        }
 }

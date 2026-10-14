@@ -35,7 +35,10 @@ internal fun canonicalModifiers(modifiers: List<String>): Set<String> =
  * the non-mac branch below stayed wrong.
  *
  * **On macOS the two spellings are different keys.** Cmd is Meta, Ctrl is Control, and a chord
- * naming one must not fire on the other.
+ * naming one must not fire on the other. Each primary key must also match its requested state
+ * EXACTLY: an unrequested primary held down cancels the match, so Cmd+Ctrl+W does not fire a plain
+ * Cmd+W binding and cannot shadow a more specific Cmd+Ctrl+W one. (Shift and Alt are already
+ * matched exactly by the caller; this closes the same gap for the two primary keys.)
  *
  * **Off macOS they are the same key, and that key is Control.** `KeyStroke.displayString` already
  * renders both "cmd" and "ctrl" as "Ctrl" there, and `KeyBinding.fromKeyEvent` already records
@@ -57,7 +60,12 @@ internal fun primaryModifierPressed(
 ): Boolean =
     when {
         !hasCmd && !hasCtrl -> !metaDown && !controlDown
-        isMacOS -> (hasCmd && metaDown) || (hasCtrl && controlDown)
+
+        // Each primary key must equal its requested state: the asked-for key down AND the other one
+        // up. `(hasCmd && metaDown) || (hasCtrl && controlDown)` only checked the requested key, so a
+        // Cmd chord matched while Control was also held (and vice versa).
+        isMacOS -> hasCmd == metaDown && hasCtrl == controlDown
+
         else -> controlDown
     }
 
