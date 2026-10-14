@@ -69,8 +69,13 @@ class RenderRecoveryToaster(
         fun messageFor(outcome: PluginRenderRecovery.Outcome): String =
             when (outcome) {
                 is PluginRenderRecovery.Outcome.Quarantined -> {
-                    "Paused ${outcome.plugins.joinToString()} - it kept failing to render. " +
-                        "Restart it from the panel menu."
+                    quarantineMessage(outcome.plugins)
+                }
+
+                is PluginRenderRecovery.Outcome.Settling -> {
+                    // Byte-identical to Quarantined so the per-message gate
+                    // suppresses queued faults while the first toast is visible.
+                    quarantineMessage(outcome.plugins)
                 }
 
                 is PluginRenderRecovery.Outcome.Rebuilt -> {
@@ -86,5 +91,9 @@ class RenderRecoveryToaster(
                     "A UI component failed to render and was recovered."
                 }
             }
+
+        private fun quarantineMessage(plugins: Set<String>): String =
+            "Paused ${plugins.joinToString()} - it kept failing to render. " +
+                "Restart it from the panel menu."
     }
 }

@@ -4,6 +4,7 @@ import ai.rever.boss.services.auth.CoreAuthService
 import ai.rever.boss.services.supabase.SupabaseConfig
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.LogSanitizer
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.user.UserSession
 import io.ktor.client.HttpClient
@@ -19,6 +20,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import java.net.URI
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -55,9 +57,12 @@ internal object CredentialBrokers {
 
     private const val RISA_TOKEN_URL = "https://llm.risa.inc/auth/token"
     private const val RISA_API_BASE = "https://llm.risa.inc/v1"
+    private const val RISA_HOST = "risa.inc"
 
     /** Overrides RISA's token endpoint, for pointing a dev build at a staging gateway. */
     private const val RISA_TOKEN_URL_ENV = "RISA_LLM_TOKEN_URL"
+
+    private val logger = BossLogger.forComponent("CredentialBroker")
 
     fun all(): List<CredentialBroker> =
         listOf(
@@ -70,16 +75,50 @@ internal object CredentialBrokers {
             CredentialBroker(
                 id = RISA_GLM,
                 displayName = "RISA Codex GLM",
-                tokenUrl =
-                    System
-                        .getenv(RISA_TOKEN_URL_ENV)
-                        ?.takeIf { it.isNotBlank() }
-                        ?: RISA_TOKEN_URL,
+                tokenUrl = resolveRisaTokenUrl(System.getenv(RISA_TOKEN_URL_ENV)),
                 scopedTo = RISA_API_BASE,
             ),
         )
 
     fun find(id: String): CredentialBroker? = all().firstOrNull { it.id == id }
+
+    /**
+     * The one place the override is honored: `all()` calls it, and any future caller should
+     * too rather than reading the env directly.
+     *
+     * Whatever this returns receives `Authorization: Bearer <live Supabase access token>`,
+     * so the override is accepted only when it still names the RISA gateway over TLS -
+     * https scheme and a `risa.inc` host. Anything else (http, another host, localhost, an
+     * unparseable value) falls back to the built-in endpoint: the env is how a dev build
+     * reaches staging, not a channel for a launcher or a stale export to aim the session
+     * bearer at a host of its choosing.
+     */
+    internal fun resolveRisaTokenUrl(override: String?): String {
+        val trimmed = override?.trim().orEmpty()
+        val host =
+            try {
+                URI(trimmed)
+                    .takeIf { it.scheme?.equals("https", ignoreCase = true) == true }
+                    ?.host
+            } catch (_: Exception) {
+                null
+            }
+        val normalized = host?.lowercase()?.removeSuffix(".")
+        return if (normalized != null && (normalized == RISA_HOST || normalized.endsWith(".$RISA_HOST"))) {
+            trimmed
+        } else {
+            // A blank override is the normal case and stays quiet; a non-blank value that
+            // failed validation is worth a masked warning.
+            if (trimmed.isNotEmpty()) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "$RISA_TOKEN_URL_ENV override rejected - using the built-in endpoint",
+                    mapOf("override" to LogSanitizer.describeUri(trimmed)),
+                )
+            }
+            RISA_TOKEN_URL
+        }
+    }
 }
 
 /** What a broker returned. Mirrors the api's `BrokeredCredential` without depending on it. */
@@ -134,6 +173,8 @@ internal object CredentialBrokerClient {
 
         val client =
             HttpClient(CIO) {
+                // The allowlist covers the first endpoint, never an arbitrary redirect target.
+                followRedirects = false
                 install(HttpTimeout) {
                     requestTimeoutMillis = REQUEST_TIMEOUT_MS
                     connectTimeoutMillis = CONNECT_TIMEOUT_MS

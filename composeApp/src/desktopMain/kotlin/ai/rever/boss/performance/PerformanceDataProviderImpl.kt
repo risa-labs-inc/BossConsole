@@ -14,6 +14,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.time.Instant
 
@@ -33,10 +36,11 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
 
     private val _history = MutableStateFlow<List<PerformanceSnapshotData>>(emptyList())
 
-    /** Cache child process data to avoid spawning ps every sample tick. Refresh every 5s. */
+    /** Cache child process data to avoid re-querying the OS every sample tick. Refresh every 5s. */
     @Volatile private var cachedChildProcesses: List<ChildProcessData> = emptyList()
 
     @Volatile private var childProcessCacheTime: Long = 0L
+    private val childProcessMutex = Mutex()
     private val childProcessCacheIntervalMs = 5_000L
     override val history: StateFlow<List<PerformanceSnapshotData>> = _history.asStateFlow()
 
@@ -93,7 +97,7 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
     /**
      * Convert internal PerformanceSnapshot to plugin PerformanceSnapshotData.
      */
-    private fun PerformanceSnapshot.toSnapshotData(): PerformanceSnapshotData =
+    private suspend fun PerformanceSnapshot.toSnapshotData(): PerformanceSnapshotData =
         PerformanceSnapshotData(
             timestamp = timestamp,
             heapUsedBytes = memory.heapUsedBytes,
@@ -140,12 +144,12 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
                         collectionTimeMs = collector.collectionTimeMs,
                     )
                 },
-            childProcesses = collectChildProcesses(),
+            childProcesses = childProcessMutex.withLock { withContext(Dispatchers.IO) { collectChildProcesses() } },
         )
 
     /**
      * Collect metrics from out-of-process plugin child JVMs.
-     * Uses a 5-second cache to avoid spawning ps processes every sample tick.
+     * Uses a 5-second cache to avoid re-querying the OS every sample tick.
      */
     private fun collectChildProcesses(): List<ChildProcessData> {
         val now = System.currentTimeMillis()
@@ -164,7 +168,7 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
     /**
      * Find plugin child JVMs via Java ProcessHandle API.
      * Searches all descendants of the current process for PluginProcessMainKt.
-     * Enriches with uptime from startInstant() and RSS memory from OS query.
+     * Enriches with uptime from startInstant() and RSS memory and thread count from [PluginProcessMetrics].
      */
     private fun collectViaProcessHandle(registeredProcesses: List<ChildProcessData>): List<ChildProcessData> =
         try {
@@ -180,9 +184,8 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
             val registered = registeredProcesses.associateBy { it.pid }
             val now = Instant.now()
 
-            // Batch query RSS and thread counts for all PIDs via ps
-            val pids = descendants.map { it.pid() }
-            val processMetrics = if (pids.isNotEmpty()) queryProcessMetrics(pids) else emptyMap()
+            // Batch query RSS and thread counts for all PIDs, per platform
+            val processMetrics = PluginProcessMetrics.query(descendants.map { it.pid() })
 
             descendants.mapNotNull { handle ->
                 try {
@@ -209,7 +212,7 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
                             0L
                         }
 
-                    // Get OS-level metrics (RSS memory, thread count) from ps query
+                    // OS-level metrics (RSS memory, thread count); unreadable values stay 0
                     val metrics = processMetrics[handle.pid()]
 
                     val configuredHeapMb = PerformanceSettingsManager.currentSettings.value.pluginJvmHeapMb
@@ -233,69 +236,6 @@ class PerformanceDataProviderImpl : PerformanceDataProvider {
         } catch (e: Exception) {
             logger.warn("ProcessHandle approach failed: {}", e.message)
             emptyList()
-        }
-
-    private data class OsProcessMetrics(
-        val rssBytes: Long,
-        val threadCount: Int,
-    )
-
-    /**
-     * Query RSS memory (bytes) and thread count for a batch of PIDs using two `ps` calls.
-     */
-    private fun queryProcessMetrics(pids: List<Long>): Map<Long, OsProcessMetrics> =
-        try {
-            val pidStr = pids.joinToString(",")
-
-            // Single ps call for RSS (KB)
-            val rssProcess =
-                ProcessBuilder("ps", "-o", "pid=,rss=", "-p", pidStr)
-                    .redirectErrorStream(true)
-                    .start()
-            val rssOutput = rssProcess.inputStream.bufferedReader().readText()
-            rssProcess.waitFor()
-
-            val rssMap = mutableMapOf<Long, Long>()
-            for (line in rssOutput.lines()) {
-                val parts = line.trim().split(Regex("\\s+"))
-                if (parts.size >= 2) {
-                    val pid = parts[0].toLongOrNull() ?: continue
-                    val rssKb = parts[1].toLongOrNull() ?: continue
-                    rssMap[pid] = rssKb * 1024
-                }
-            }
-
-            // Single ps -M call for all PIDs, count thread lines per PID
-            // macOS ps -M ignores -o formatting, so parse PID from output columns
-            val threadProcess =
-                ProcessBuilder("ps", "-M", "-p", pidStr)
-                    .redirectErrorStream(true)
-                    .start()
-            val threadOutput = threadProcess.inputStream.bufferedReader().readText()
-            threadProcess.waitFor()
-
-            val threadMap = mutableMapOf<Long, Int>()
-            for (line in threadOutput.lines().drop(1)) { // skip header
-                val trimmed = line.trim()
-                if (trimmed.isEmpty()) continue
-                val tokens = trimmed.split(Regex("\\s+"))
-                // PID is first token if numeric (thread lines), second token if first is username
-                val pid =
-                    tokens[0].toLongOrNull()
-                        ?: tokens.getOrNull(1)?.toLongOrNull()
-                        ?: continue
-                threadMap[pid] = (threadMap[pid] ?: 0) + 1
-            }
-
-            pids.associateWith { pid ->
-                OsProcessMetrics(
-                    rssBytes = rssMap[pid] ?: 0L,
-                    threadCount = threadMap[pid] ?: 0,
-                )
-            }
-        } catch (e: Exception) {
-            logger.debug("Failed to query process metrics: {}", e.message)
-            emptyMap()
         }
 
     /**

@@ -1,0 +1,4 @@
+<configuration>
+    <!-- Tests attach their own ListAppender to the service logger. -->
+    <root level="OFF"/>
+</configuration>

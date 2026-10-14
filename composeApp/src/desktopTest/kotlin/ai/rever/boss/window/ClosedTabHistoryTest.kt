@@ -1,5 +1,6 @@
 package ai.rever.boss.window
 
+import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.api.TabTypeId
@@ -11,6 +12,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
@@ -173,5 +175,82 @@ class ClosedTabHistoryTest {
         ClosedTabHistory.record(windowA, FakeTab("after"))
         assertEquals(1, ClosedTabHistory.depths.value[windowA])
         assertEquals("after", ClosedTabHistory.pop(windowA)?.id)
+    }
+
+    /** A live browser tab mid-session: three pages visited, sitting on the newest one. */
+    private fun browsedFluckTab() =
+        FluckTabInfo(
+            id = "fluck-1",
+            typeId = TabTypeId("fluck-tab", "test.plugin"),
+            _title = "Deep Page",
+            url = "https://example.com/start",
+            _currentUrl = "https://example.com/deep",
+            navigationHistory =
+                mutableListOf(
+                    "Start" to "https://example.com/start",
+                    "Middle" to "https://example.com/middle",
+                    "Deep Page" to "https://example.com/deep",
+                ),
+            historyIndex = 2,
+        )
+
+    @Test
+    fun `recording a browser tab retains no deep navigation history`() {
+        // The live FluckTabInfo carries every page the user visited; reopen rebuilds from
+        // currentUrl.ifEmpty { url } plus id/typeId/title and never reads the back/forward
+        // list, so the stack must not hold it (#330).
+        val live = browsedFluckTab()
+
+        ClosedTabHistory.record(windowA, live)
+
+        val retained = ClosedTabHistory.pop(windowA) as FluckTabInfo
+        assertTrue(retained.navigationHistory.isEmpty(), "the back/forward list must not survive the close")
+        assertEquals(-1, retained.historyIndex)
+        // The reopen essentials are intact.
+        assertEquals(live.id, retained.id)
+        assertEquals(live.typeId, retained.typeId)
+        assertEquals("Deep Page", retained.title)
+        assertEquals("https://example.com/deep", retained.currentUrl, "reopen returns to the page it was showing")
+
+        // And the caller's live tab was not mutilated: the entry is a copy, not a mutation.
+        assertEquals(3, live.navigationHistory.size)
+        assertEquals(2, live.historyIndex)
+        assertEquals("https://example.com/deep", live.currentUrl)
+    }
+
+    @Test
+    fun `non browser tabs are retained verbatim`() {
+        // A third-party plugin's TabInfo is one of its own classes; copying it here could hand
+        // its rebuild factory an instance from the wrong classloader, and stripping fields could
+        // drop config the factory needs. Only the browser tab has derived history to shed.
+        val tab = FakeTab("plain")
+
+        ClosedTabHistory.record(windowA, tab)
+
+        assertSame(tab, ClosedTabHistory.pop(windowA))
+    }
+
+    @Test
+    fun `clearAll leaves nothing retrievable in any window and is idempotent`() {
+        ClosedTabHistory.record(windowA, FakeTab("a"))
+        ClosedTabHistory.record(windowA, browsedFluckTab())
+        ClosedTabHistory.record(windowB, FakeTab("b"))
+
+        ClosedTabHistory.clearAll()
+
+        assertFalse(ClosedTabHistory.hasEntries(windowA))
+        assertFalse(ClosedTabHistory.hasEntries(windowB))
+        assertNull(ClosedTabHistory.pop(windowA))
+        assertNull(ClosedTabHistory.pop(windowB))
+        assertTrue(ClosedTabHistory.depths.value.isEmpty(), "no window publishes a depth anymore")
+
+        // Idempotent: sweeping already-empty state is a no-op.
+        ClosedTabHistory.clearAll()
+        assertTrue(ClosedTabHistory.depths.value.isEmpty())
+
+        // The windows outlive their history and can keep recording.
+        ClosedTabHistory.record(windowA, FakeTab("after"))
+        assertEquals("after", ClosedTabHistory.pop(windowA)?.id)
+        assertFalse(ClosedTabHistory.hasEntries(windowA))
     }
 }

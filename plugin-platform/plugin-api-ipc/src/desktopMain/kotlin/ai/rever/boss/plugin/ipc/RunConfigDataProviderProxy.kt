@@ -7,6 +7,9 @@ import ai.rever.boss.plugin.api.RunConfigurationData
 import ai.rever.boss.plugin.api.RunConfigurationDataProvider
 import ai.rever.boss.plugin.api.RunConfigurationTypeData
 import io.grpc.ManagedChannel
+import io.grpc.Status
+import io.grpc.StatusException
+import io.grpc.StatusRuntimeException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,9 +19,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.logging.Logger
 
 /**
  * IPC proxy implementation of RunConfigurationDataProvider.
+ * Execution uses the host configuration identified by [RunConfigurationData.id].
+ * Command, argument, environment and working-directory edits in the supplied copy
+ * are ignored by the host; rescan and use a currently detected configuration.
  */
 class RunConfigDataProviderProxy(
     channel: ManagedChannel,
@@ -34,6 +41,11 @@ class RunConfigDataProviderProxy(
 
     private val _lastError = MutableStateFlow<String?>(null)
     override val lastError: StateFlow<String?> = _lastError.asStateFlow()
+
+    // Host scan errors and local run failures have independent lifetimes.
+    private val errorLock = Any()
+    private var localExecutionError: String? = null
+    private var hostError: String? = null
 
     init {
         scope.launch { watchConfigurations() }
@@ -84,7 +96,14 @@ class RunConfigDataProviderProxy(
         while (scope.isActive) {
             try {
                 stub.watchLastError(Empty.getDefaultInstance()).collect { response ->
-                    _lastError.value = response.value.takeIf { it.isNotEmpty() }
+                    synchronized(errorLock) {
+                        val incomingError = response.value.takeIf { it.isNotEmpty() }
+                        // A new scan failure supersedes run feedback; a replay of the same
+                        // host snapshot must not erase a newer local execution failure.
+                        if (incomingError != null && incomingError != hostError) localExecutionError = null
+                        hostError = incomingError
+                        _lastError.value = localExecutionError ?: hostError
+                    }
                 }
                 delayMs = 1_000L
             } catch (
@@ -102,6 +121,7 @@ class RunConfigDataProviderProxy(
         projectPath: String,
         windowId: String,
     ) {
+        clearLocalExecutionError()
         try {
             stub.scanProject(
                 ScanProjectRequest
@@ -110,6 +130,8 @@ class RunConfigDataProviderProxy(
                     .setWindowId(windowId)
                     .build(),
             )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (_: Exception) {
         }
     }
@@ -126,14 +148,43 @@ class RunConfigDataProviderProxy(
                     .setWindowId(windowId)
                     .build(),
             )
+            clearLocalExecutionError()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (error: StatusException) {
+            reportExecutionFailure(error.status.code)
+        } catch (error: StatusRuntimeException) {
+            reportExecutionFailure(error.status.code)
         } catch (_: Exception) {
+            // Preserve the UI boundary for non-RPC failures without exposing exception text.
+            reportExecutionFailure(Status.Code.UNKNOWN)
+        }
+    }
+
+    private fun reportExecutionFailure(code: Status.Code) {
+        Logger
+            .getLogger(RunConfigDataProviderProxy::class.java.name)
+            .warning("Run configuration RPC failed: ${code.name}")
+        synchronized(errorLock) {
+            localExecutionError = "Run could not be started."
+            _lastError.value = localExecutionError
         }
     }
 
     override suspend fun clearError() {
+        clearLocalExecutionError()
         try {
             stub.clearError(Empty.getDefaultInstance())
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (_: Exception) {
+        }
+    }
+
+    private fun clearLocalExecutionError() {
+        synchronized(errorLock) {
+            localExecutionError = null
+            _lastError.value = hostError
         }
     }
 

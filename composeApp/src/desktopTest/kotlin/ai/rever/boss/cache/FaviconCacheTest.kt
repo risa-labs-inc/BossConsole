@@ -1,6 +1,7 @@
 package ai.rever.boss.cache
 
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import java.awt.image.BufferedImage
 import java.io.File
@@ -126,6 +127,59 @@ class FaviconCacheTest {
         assertNotNull(first)
         assertNotNull(second)
         assertTrue(first != second)
+    }
+
+    @Test
+    fun `a site's light and dark icons are kept side by side`() {
+        val darkKey = FaviconCache.saveFavicon(URL, smallIcon(RED), dir, FaviconScheme.DARK)
+        val lightKey = FaviconCache.saveFavicon(URL, smallIcon(BLUE), dir, FaviconScheme.LIGHT)
+
+        assertNotNull(darkKey)
+        assertNotNull(lightKey)
+        assertTrue(darkKey != lightKey, "a theme switch must hand the tab a new key, or it never reloads")
+        assertEquals(RED, loadedRgb(darkKey, FaviconScheme.DARK))
+        assertEquals(BLUE, loadedRgb(lightKey, FaviconScheme.LIGHT))
+    }
+
+    @Test
+    fun `a restored tab shows the icon for the theme on screen, not the one its key names`() {
+        val darkKey = FaviconCache.saveFavicon(URL, smallIcon(RED), dir, FaviconScheme.DARK)!!
+        FaviconCache.saveFavicon(URL, smallIcon(BLUE), dir, FaviconScheme.LIGHT)
+
+        assertEquals(BLUE, loadedRgb(darkKey, FaviconScheme.LIGHT))
+    }
+
+    @Test
+    fun `a key falls back to its own variant, then to the base file`() {
+        val darkKey = FaviconCache.saveFavicon(URL, smallIcon(RED), dir, FaviconScheme.DARK)!!
+        // No light icon was ever seen: the dark one is still better than none.
+        assertEquals(RED, loadedRgb(darkKey, FaviconScheme.LIGHT))
+
+        // A key saved before variants existed has no suffix and reads the base file as before.
+        val legacyKey = FaviconCache.generateCacheKey("https://legacy.example/")
+        FaviconCache.saveFavicon("https://legacy.example/", smallIcon(BLUE), dir)
+        assertEquals(BLUE, loadedRgb(legacyKey, FaviconScheme.DARK))
+    }
+
+    private fun loadedRgb(
+        key: String,
+        scheme: FaviconScheme,
+    ): Int {
+        val icon = assertNotNull(loadSchemeFavicon(key, scheme, dir))
+        val bitmap = (icon.painter as androidx.compose.ui.graphics.painter.BitmapPainter)
+        val image =
+            androidx.compose.ui.graphics
+                .ImageBitmap(16, 16)
+        androidx.compose.ui.graphics.drawscope.CanvasDrawScope().draw(
+            androidx.compose.ui.unit
+                .Density(1f),
+            androidx.compose.ui.unit.LayoutDirection.Ltr,
+            androidx.compose.ui.graphics
+                .Canvas(image),
+            androidx.compose.ui.geometry
+                .Size(16f, 16f),
+        ) { with(bitmap) { draw(size) } }
+        return image.toAwtImage().getRGB(8, 8)
     }
 
     private companion object {

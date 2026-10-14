@@ -227,7 +227,8 @@ private fun rememberImportPicker(
             }
         }
     },
-    fileExtensions = listOf("csv", "html", "htm"),
+    // csv/html for browsers and CSV managers; json for a Bitwarden export; xml for a KeePass export.
+    fileExtensions = listOf("csv", "html", "htm", "json", "xml"),
     title = "Choose a passwords or bookmarks export",
 )
 

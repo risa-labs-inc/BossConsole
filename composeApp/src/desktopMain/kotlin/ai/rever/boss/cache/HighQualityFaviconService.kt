@@ -13,7 +13,9 @@ import io.ktor.http.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
@@ -23,7 +25,7 @@ import javax.imageio.ImageIO
 /**
  * Resolves the icon for a page, from the two sources that can supply one.
  *
- * **The page's own favicon wins; Google is only a fallback.** That order is the whole correctness
+ * **The page's own artwork wins; Google is only a fallback.** That order is the whole correctness
  * of this service, and it used to be the other way round:
  *
  * - `FaviconCache` is keyed on the FULL page URL and holds what the tab itself served. Right by
@@ -43,12 +45,17 @@ import javax.imageio.ImageIO
  * the screen-capture picker. Fixing one file left a Gmail entry showing the generic G in the
  * other two.
  *
- * **What that costs, stated plainly:** the dashboard draws its result at 36dp, so a page whose
- * own favicon is 16px is now softer there than Google's 128px guess about its host was. Right
- * site over sharp icon, the same trade as dropping the 32px floor in [acceptResponse].
+ * A larger icon already in the high-quality disk cache may replace a small page icon only
+ * when its artwork matches, allowing transparent padding and monochrome theme variants.
+ * Existing HQ entries are refreshed when expired, or daily when still below the requested size.
+ * If no matching larger representation exists, the original page icon remains the fallback.
  *
- * A page whose icon this resolves from cache no longer tells Google which site it is at all,
- * which on the most-used surfaces is most of the requests this service used to make.
+ * Tab rows use a separate cache-only resolver, including stale artwork, without network requests.
+ * Home's larger cards first try original same-origin ICO/SVG artwork, then allow a public-host
+ * Google fallback if the original artwork is missing or unsuitable. Refreshing an
+ * existing HQ entry makes a new request containing only its public host, without paths, queries
+ * or credentials. Local names and IP literals use only cached artwork. Transient failures pause
+ * retries for a minute, and simultaneous tabs for one host share the cache/failure decision.
  *
  * Performance:
  * - Async HTTP with Ktor client (non-blocking), everything on [Dispatchers.IO]
@@ -62,7 +69,6 @@ object HighQualityFaviconService {
 
     // Requested, not promised: Google honours it for some hosts and serves 32px for others
     // (every google.com subdomain, among them), so a tile must cope with whatever comes back.
-    private const val ICON_SIZE = 128
     private const val REQUEST_TIMEOUT_MS = 2500L
     private const val MAX_CONCURRENT_FETCHES = 3
 
@@ -79,6 +85,9 @@ object HighQualityFaviconService {
 
     // Semaphore to limit concurrent network requests
     private val fetchSemaphore = Semaphore(MAX_CONCURRENT_FETCHES)
+
+    // Fixed stripes avoid retaining every visited hostname or a plugin's classloader indefinitely.
+    private val hostLookupLocks = Array(64) { Mutex() }
 
     // Ktor HTTP client with connection pooling. Held as the Lazy, not just its value, so close()
     // can ask whether anything ever fetched rather than starting a CIO engine at shutdown to shut
@@ -126,7 +135,10 @@ object HighQualityFaviconService {
             // The two slots cannot be swapped by accident: `pageIcon` is not `suspend` and
             // `hostGuess` is, so the compiler rejects the reversal a test would otherwise pin.
             pageIcon = ::loadStandardFavicon,
-            hostGuess = { hostIcon(it) },
+            hostGuess = { url ->
+                FaviconHost.of(url)?.let { HqFaviconDiskCache.loadOriginal(url ?: it)?.icon } ?: hostIcon(url)
+            },
+            qualityUpgrade = { pageUrl, icon -> upgradeCachedFavicon(pageUrl, icon) },
         )
 
     /**
@@ -135,22 +147,27 @@ object HighQualityFaviconService {
      * back, and inside a composable - where it used to live - it was unpinnable.
      *
      * Swapping the two calls below fails `the page's own icon wins and Google is not even asked`.
-     * The second half of that name is what a "which icon wins" assertion alone would miss: a page
-     * whose icon is already cached must not tell a third party which site it is.
+     * A cached page cannot fall through to a blind host guess. The optional quality upgrade
+     * considers only an existing HQ entry and must preserve the page's artwork.
      */
     internal suspend fun resolve(
         url: String?,
         standardCacheKey: String?,
         pageIcon: (String?) -> TabIcon.Image?,
         hostGuess: suspend (String?) -> TabIcon.Image?,
+        qualityUpgrade: suspend (String?, TabIcon.Image) -> TabIcon.Image = { _, icon -> icon },
     ): TabIcon.Image? =
         withContext(Dispatchers.IO) {
             // Each source is attempted separately, so a corrupt standard-cache entry cannot cost
             // the host guess as well. `FaviconCache.loadFavicon` catches its own exceptions today,
             // which makes this belt and braces - but "happens to be total" is not a guarantee this
             // function should be spending on the caller's behalf.
-            sourceOrNull("the page's own icon") { pageIcon(standardCacheKey) }
-                ?: sourceOrNull("Google's guess about the host") { hostGuess(url) }
+            val page = sourceOrNull("the page's own icon") { pageIcon(standardCacheKey) }
+            if (page == null) {
+                sourceOrNull("Google's guess about the host") { hostGuess(url) }
+            } else {
+                sourceOrNull("a sharper representation of the page's icon") { qualityUpgrade(url, page) } ?: page
+            }
         }
 
     /**
@@ -184,8 +201,7 @@ object HighQualityFaviconService {
      *
      * - **Fresh entry**: served, no request, and the miss memory is not even consulted.
      * - **[FaviconFetch.NoAnswer]** - a timeout, an unreachable Google, a rate-limit page where an
-     *   image should be: an expired entry is served anyway. Being offline should cost sharpness,
-     *   not the icon, and it must not be irreversible.
+     *   image should be: an expired entry is served anyway, with a short retry cooldown.
      * - **[FaviconFetch.NoIcon]** - Google answered, definitively, that this host has nothing: the
      *   entry is DROPPED. Serving it would keep showing an icon the site has removed, and since
      *   expiry does not delete, it would keep showing it until 200 entries forced an eviction.
@@ -200,43 +216,15 @@ object HighQualityFaviconService {
         url: String?,
         nowMs: Long = System.currentTimeMillis(),
         dir: File = HqFaviconDiskCache.defaultDir,
+        refreshSmallIcon: Boolean = false,
         fetch: suspend (String, String) -> FaviconFetch = { host, key ->
             fetchSemaphore.withPermit { fetchFromGoogle(host, key, dir, nowMs) }
         },
     ): TabIcon.Image? {
         val host = FaviconHost.of(url) ?: return null
-        val cacheKey = HqFaviconDiskCache.keyFor(host)
-        val cached = HqFaviconDiskCache.load(cacheKey, dir)
-
-        return when {
-            cached != null && !FaviconFreshness.isEntryExpired(cached.fetchedAtMs, nowMs) -> {
-                cached.icon
-            }
-
-            // The entry was dropped when this miss was learned, so `cached` is normally null here.
-            // It is not null when that delete FAILED - a Windows lock, a permission problem - and
-            // then a usable icon is sitting right there; returning null would show a letter for
-            // six hours with the answer on disk.
-            FaviconMissMemory.remembers(host, nowMs) -> {
-                cached?.icon
-            }
-
-            else -> {
-                when (val outcome = fetch(host, cacheKey)) {
-                    is FaviconFetch.Icon -> {
-                        outcome.icon
-                    }
-
-                    FaviconFetch.NoIcon -> {
-                        HqFaviconDiskCache.delete(cacheKey, dir)
-                        null
-                    }
-
-                    FaviconFetch.NoAnswer -> {
-                        cached?.icon
-                    }
-                }
-            }
+        val lock = hostLookupLocks[host.hashCode().ushr(1) % hostLookupLocks.size]
+        return lock.withLock {
+            resolveHostFavicon(host, nowMs, dir, refreshSmallIcon, fetch)
         }
     }
 
@@ -323,7 +311,7 @@ object HighQualityFaviconService {
                     // interpolated would append attacker-shaped parameters to a request BOSS makes
                     // to Google, and hash into a junk cache key besides.
                     parameter("domain", host)
-                    parameter("sz", ICON_SIZE)
+                    parameter("sz", FAVICON_TARGET_SIZE)
                     headers {
                         append(HttpHeaders.UserAgent, "Mozilla/5.0")
                     }
@@ -360,6 +348,8 @@ object HighQualityFaviconService {
     suspend fun clearCache() {
         HqFaviconDiskCache.clear()
         FaviconMissMemory.forget()
+        FaviconRetryMemory.clear()
+        OriginalFaviconSource.clearAttempts()
     }
 
     /**
@@ -367,5 +357,6 @@ object HighQualityFaviconService {
      */
     fun close() {
         if (httpClientLazy.isInitialized()) httpClientLazy.value.close()
+        OriginalFaviconSource.close()
     }
 }

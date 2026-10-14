@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>BossConsole encrypted media benchmark</title>
+<link rel="stylesheet" href="./benchmark.css" data-benchmark-style></head>
+<body><h1>Encrypted sharing pipeline benchmark</h1><p>Synthetic text and motion only. Keep this tab visible. No screen capture, account, relay or user content is accessed.</p>
+<label>Format <select id="format"><option>BGRA</option><option>NV12</option></select></label>
+<label>Rate <select id="fps"><option>60</option><option>30</option></select></label>
+<label>Local peers <select id="viewers"><option>1</option><option>3</option></select></label>
+<label>Pixel readback <select id="sampling"><option value="1">Every callback</option><option value="10">Every tenth callback</option><option value="0">Counters only</option></select></label>
+<button id="start">Run benchmark</button><button id="stop">Stop</button>
+<p id="status">Ready</p><div id="surfaces"></div><pre id="result"></pre><script type="module" src="./benchmark.mjs"></script></body></html>

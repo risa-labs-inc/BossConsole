@@ -20,6 +20,8 @@ if [[ "$*" == *"maven-metadata.xml"* ]]; then
     printf '<metadata><versioning><release>%s</release></versioning></metadata>\n' \
       "${MOCK_VERSION:-9.4.0}"
   fi
+elif [[ -n "${MOCK_MISSING_ARTIFACT:-}" && "$*" == *"/${MOCK_MISSING_ARTIFACT}/"* ]]; then
+  exit 22
 elif [[ "${MOCK_ARTIFACT_READY:-true}" != "true" ]]; then
   exit 22
 elif [[ "$*" != *"--head"* ]]; then
@@ -307,5 +309,19 @@ if verify_chromium_release_assets 'first.zip' 'Test release' > "$test_dir/verify
   exit 1
 fi
 echo "✓ missing_release_asset"
+
+
+for module in jxbrowser-compose jxbrowser-swing jxbrowser-kotlin; do
+  export MOCK_MISSING_ARTIFACT="$module"
+  run_watch_case "missing-$module" false artifact_not_ready true '[[]]' '[]'
+  assert_output "$test_dir/missing-$module.output" "blocked_artifact=$module"
+  if PATH="$mock_bin:$PATH" CHECK_MODE=preflight TARGET_VERSION=9.4.0 MOCK_RELEASE_PAGES='[[]]' SUPABASE_SERVICE_ROLE_KEY=test-key REQUIRED_ASSETS_FILE="$assets_file" GITHUB_OUTPUT="$test_dir/preflight-$module.output" bash "$detector" > "$test_dir/preflight-$module.log" 2>&1; then
+    echo "FAILED: preflight accepted absent $module" >&2
+    exit 1
+  fi
+  assert_output "$test_dir/preflight-$module.output" "blocked_artifact=$module"
+  echo "✓ preflight missing $module rejected"
+  unset MOCK_MISSING_ARTIFACT
+done
 
 echo "All JxBrowser release automation tests passed."

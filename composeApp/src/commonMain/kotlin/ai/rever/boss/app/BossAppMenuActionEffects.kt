@@ -2,6 +2,7 @@ package ai.rever.boss.app
 
 import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.dialogs.TabType
+import ai.rever.boss.components.home.goHome
 import ai.rever.boss.components.plugin.AvailablePluginUpdate
 import ai.rever.boss.components.plugin.DynamicPluginManager
 import ai.rever.boss.components.plugin.InstalledPluginRef
@@ -12,37 +13,48 @@ import ai.rever.boss.components.plugin.PluginUpdateBridge
 import ai.rever.boss.components.plugin.StoreVersionLookup
 import ai.rever.boss.components.plugin.StoreVersionPrompt
 import ai.rever.boss.components.plugin.UpdateCheckOutcome
+import ai.rever.boss.components.plugin.openTopOfMindQuickSwitcher
 import ai.rever.boss.components.sidebar.SidebarVisibilitySettings
 import ai.rever.boss.components.sidebar.SidebarVisibilitySettingsManager
 import ai.rever.boss.components.window_panel.NavigationDirection
 import ai.rever.boss.components.window_panel.SplitOrientation
+import ai.rever.boss.components.window_panel.SplitViewState
+import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.components.wizard.plugin.PluginWizardIntegration
+import ai.rever.boss.components.workspaces.LayoutWorkspace
+import ai.rever.boss.components.workspaces.SaveInFlightLatch
+import ai.rever.boss.components.workspaces.WorkspaceManager
 import ai.rever.boss.components.workspaces.applyWorkspace
 import ai.rever.boss.components.workspaces.extractCurrentWorkspace
+import ai.rever.boss.components.workspaces.spaceSnapshotForSave
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.focusmode.FocusModeSettingsManager
 import ai.rever.boss.plugin.browser.ActiveBrowserRegistry
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabType
 import ai.rever.boss.project.DefaultWorkingDirectory
-import ai.rever.boss.topofmind.TabTreeState
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.WindowAppearanceSettings
 import ai.rever.boss.window.WindowAppearanceSettingsManager
 import ai.rever.boss.window.WindowOperations
+import ai.rever.boss.window.WindowProjectState
 import ai.rever.boss.window.withNextDensity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
-import kotlin.time.Clock
 
 /**
  * [settings] with the strip holding the customize button switched back on, [onLeft] saying which.
@@ -67,6 +79,8 @@ internal fun withCustomizeTargetRevealed(
     } else {
         settings.copy(showRightStrip = true)
     }
+
+private val menuActionLogger = BossLogger.forComponent("BossAppMenuActionEffects")
 
 /**
  * Listeners translating [MenuActionsHandler] menu-bar events (File/View/Plugin
@@ -110,6 +124,26 @@ internal fun BossAppMenuActionEffects(
                 WindowAppearanceSettingsManager.updateSettings(restored)
             }
         }
+    }
+
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.goHomeEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) {
+                    val panelId = goHome(splitViewState, state.tabRegistry)
+                    if (panelId == null) {
+                        StatusMessageManager.showMessage(
+                            "Home needs the browser tool. Enable or install Fluck Browser from Tools.",
+                        )
+                    } else {
+                        androidx.compose.runtime.withFrameNanos { }
+                        if (splitViewState.activePanelId == panelId && splitViewState.getPanel(panelId) != null) {
+                            // A pane can close or unmount during the frame boundary.
+                            runCatching { splitViewState.focusRequesterFor(panelId).requestFocus() }
+                        }
+                    }
+                }
+            }.launchIn(this)
     }
 
     // Listen for menu actions from MenuBar (File > New Tab, etc.)
@@ -196,6 +230,16 @@ internal fun BossAppMenuActionEffects(
                     MenuActionsHandler.TabSwitchAction.PREVIOUS_POSITIONAL -> {
                         comp?.switchToPreviousTabPositional()
                     }
+                }
+            }.launchIn(this)
+    }
+
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.printBrowserEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) {
+                    ai.rever.boss.plugin.browser
+                        .printActiveBrowser(windowId)
                 }
             }.launchIn(this)
     }
@@ -288,8 +332,17 @@ internal fun BossAppMenuActionEffects(
         MenuActionsHandler.selectWorkspaceEvents
             .onEach { eventWindowId ->
                 if (eventWindowId == windowId) {
-                    state.showTopOfMindDialog = true
+                    // The switcher is the Top of Mind plugin's, not this window's: the host asks
+                    // for it and says why when nothing answers. See openTopOfMindQuickSwitcher.
+                    openTopOfMindQuickSwitcher(windowId, coroutineScope)
                 }
+            }.launchIn(this)
+    }
+
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.createSpaceEvents
+            .onEach { targetWindowId ->
+                if (targetWindowId == windowId) state.showCreateSpaceDialog = true
             }.launchIn(this)
     }
 
@@ -297,11 +350,7 @@ internal fun BossAppMenuActionEffects(
         MenuActionsHandler.applyWorkspaceEvents
             .onEach { (eventWindowId, workspace) ->
                 if (eventWindowId == windowId) {
-                    // Load workspace into manager
-                    workspaceManager.loadWorkspace(workspace)
-
-                    // Apply workspace to UI
-                    applyWorkspace(workspace, splitViewState, windowProjectState)
+                    state.pendingSpaceToOpen = workspace
                 }
             }.launchIn(this)
     }
@@ -511,34 +560,13 @@ internal fun BossAppMenuActionEffects(
 
     // Handle Save Workspace menu events
     LaunchedEffect(windowId) {
-        MenuActionsHandler.saveWorkspaceEvents
-            .onEach { eventWindowId ->
-                if (eventWindowId == windowId) {
-                    val currentConfig = workspaceManager.currentWorkspace.value
-                    if (currentConfig != null) {
-                        val currentLayout = extractCurrentWorkspace(splitViewState, windowProjectState.selectedProject.value.path)
-                        val updatedConfig =
-                            currentConfig.copy(
-                                layout = currentLayout.layout,
-                                timestamp = Clock.System.now().toEpochMilliseconds(),
-                            )
-                        workspaceManager.updateCurrentWorkspace(updatedConfig)
-                        workspaceManager.saveCurrentWorkspace()
-                        TabTreeState.markWorkspaceAsSaved(currentConfig.id)
-                        StatusMessageManager.showMessage("Workspace Saved")
-                    } else {
-                        val currentLayout = extractCurrentWorkspace(splitViewState, windowProjectState.selectedProject.value.path)
-                        val newConfig =
-                            currentLayout.copy(
-                                name = "Workspace ${Clock.System.now().toEpochMilliseconds() / 1000}",
-                                description = "Saved workspace",
-                            )
-                        workspaceManager.updateCurrentWorkspace(newConfig)
-                        workspaceManager.saveCurrentWorkspace()
-                        StatusMessageManager.showMessage("Workspace Saved")
-                    }
-                }
-            }.launchIn(this)
+        wireSaveWorkspaceMenuEffect(
+            scope = this,
+            windowId = windowId,
+            splitViewState = splitViewState,
+            windowProjectState = windowProjectState,
+            workspaceManager = workspaceManager,
+        )
     }
 
     // Handle Open Codebase menu events
@@ -589,6 +617,17 @@ internal fun BossAppMenuActionEffects(
             .onEach { eventWindowId ->
                 if (eventWindowId == windowId) {
                     state.showShortcutHelpDialog = true
+                }
+            }.launchIn(this)
+    }
+
+    // Handle Show Plugin Wizard menu events
+    LaunchedEffect(windowId) {
+        MenuActionsHandler.showTerminalOnboardingEvents
+            .onEach { eventWindowId ->
+                if (eventWindowId == windowId) {
+                    state.terminalOnboardingOwnerStarted = true
+                    state.terminalOnboardingRequestGeneration++
                 }
             }.launchIn(this)
     }
@@ -646,7 +685,9 @@ internal fun BossAppMenuActionEffects(
                         if (result.isSuccess) {
                             StatusMessageManager.showMessage("Reloaded: ${result.getOrNull()?.manifest?.displayName}")
                         } else {
-                            StatusMessageManager.showMessage("Failed to reload plugin: ${result.exceptionOrNull()?.message}")
+                            StatusMessageManager.showMessage(
+                                "Failed to reload plugin: ${result.exceptionOrNull()?.message}",
+                            )
                         }
                     }
                 }
@@ -781,4 +822,95 @@ internal fun BossAppMenuActionEffects(
                 }
             }.launchIn(this)
     }
+}
+
+/**
+ * Wires the File -> Save Space menu effect for [windowId].
+ *
+ * Extracted from [BossAppMenuActionEffects] to make the call-site wiring testable in isolation:
+ * - pins snapshot built from the invoking window's own id and layout;
+ * - coalesces overlapping save events into exactly one re-run on the latest layout;
+ * - drops re-runs after the window is deregistered;
+ * - deduplicates queued settle logic between onSaved and onFailed.
+ */
+@Suppress("LongParameterList") // Window dependencies and test seams for isolated verification
+internal fun wireSaveWorkspaceMenuEffect(
+    scope: CoroutineScope,
+    windowId: String,
+    splitViewState: SplitViewState,
+    windowProjectState: WindowProjectState,
+    workspaceManager: WorkspaceManager,
+    saveEvents: Flow<String> = MenuActionsHandler.saveWorkspaceEvents,
+    saveLatch: SaveInFlightLatch = SaveInFlightLatch(),
+    onStatusMessage: (String) -> Unit = { StatusMessageManager.showMessage(it) },
+): Job {
+    fun settleQueued(runSave: () -> Unit) {
+        saveLatch.settle {
+            if (SplitViewStateRegistry.getState(windowId) === splitViewState) {
+                runSave()
+            } else {
+                menuActionLogger.debug(
+                    LogCategory.WORKSPACE,
+                    "Queued save dropped after its window deregistered",
+                )
+            }
+        }
+    }
+
+    fun reportSaved(savedWorkspace: LayoutWorkspace) {
+        // The write finished long after the window acted; rebind only if this is
+        // still the state the window registered.
+        if (SplitViewStateRegistry.getState(windowId) === splitViewState) {
+            splitViewState.rebindCurrentWorkspace(savedWorkspace.id)
+            onStatusMessage("Space Saved")
+        } else {
+            menuActionLogger.debug(
+                LogCategory.WORKSPACE,
+                "Save finished after its window deregistered; the rebind is dropped",
+                mapOf("workspaceId" to savedWorkspace.id),
+            )
+        }
+    }
+
+    fun runSave() {
+        val liveLayout =
+            extractCurrentWorkspace(
+                splitViewState,
+                windowProjectState.selectedProject.value.path,
+            )
+        val snapshot =
+            spaceSnapshotForSave(
+                activeWorkspaceId = splitViewState.currentWorkspaceId,
+                liveLayout = liveLayout,
+                knownSpaces = workspaceManager.workspaces.value,
+                processGlobalCurrent = workspaceManager.currentWorkspace.value,
+            )
+        workspaceManager.updateCurrentWorkspace(snapshot)
+        saveLatch.begin()
+        workspaceManager.saveCurrentWorkspace(
+            name = null,
+            onSaved = { savedWorkspace ->
+                try {
+                    reportSaved(savedWorkspace)
+                } finally {
+                    // Always release the latch; rerun only while this window still owns the state.
+                    settleQueued(::runSave)
+                }
+            },
+            onFailed = { failedName ->
+                try {
+                    onStatusMessage("Could not save \"$failedName\"")
+                } finally {
+                    settleQueued(::runSave)
+                }
+            },
+        )
+    }
+
+    return saveEvents
+        .onEach { eventWindowId ->
+            if (eventWindowId == windowId && saveLatch.press()) {
+                runSave()
+            }
+        }.launchIn(scope)
 }

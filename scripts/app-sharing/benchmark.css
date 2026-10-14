@@ -1,0 +1,6 @@
+body { font: 16px system-ui; background: #17191c; color: #e9eaec; margin: 16px; }
+button, select { font: inherit; margin: 4px; padding: 6px; }
+#surfaces { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 12px; }
+#surfaces > canvas { display: none; }
+#surfaces > video { width: 100%; max-width: 560px; max-height: 40vh; min-width: 0; object-fit: contain; border: 1px solid #777; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }

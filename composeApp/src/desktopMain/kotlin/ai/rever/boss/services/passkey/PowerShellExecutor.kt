@@ -5,8 +5,6 @@ import ai.rever.boss.utils.logging.LogCategory
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
-import java.nio.file.Path
-import java.nio.file.Paths
 import java.util.concurrent.TimeUnit
 
 /**
@@ -46,36 +44,50 @@ object PowerShellExecutor {
     fun executePowerShellScript(
         scriptName: String,
         vararg args: String,
-    ): String =
-        try {
-            val scriptPath = Paths.get(powerShellScriptsDir, scriptName)
+    ): String {
+        // Reject traversal before any filesystem or process work: Paths.get(dir,
+        // "../x.ps1") resolves outside the script directory and would then be
+        // executed with -ExecutionPolicy Bypass. Must precede the lazy
+        // powerShellScriptsDir access, which can create directories.
+        ScriptFileGuard.requireSimpleName(scriptName)
 
-            if (!Files.exists(scriptPath)) {
-                throw IOException("PowerShell script not found: $scriptPath")
-            }
-
-            val command = mutableListOf("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath.toString())
-            command.addAll(args)
-
-            logger.debug(LogCategory.PASSKEY, "Executing PowerShell script", mapOf("script" to scriptName))
-
-            val process =
-                ProcessBuilder(command)
-                    .redirectErrorStream(true)
-                    .start()
-
-            val output = process.inputStream.bufferedReader().readText()
-            val exitCode = process.waitFor(30, TimeUnit.SECONDS)
-
-            if (!exitCode || process.exitValue() != 0) {
-                throw RuntimeException("PowerShell script failed with exit code: ${process.exitValue()}, output: $output")
-            }
-
-            output.trim()
+        return try {
+            runScript(scriptName, args)
         } catch (e: Exception) {
             logger.warn(LogCategory.PASSKEY, "Error executing PowerShell script", error = e)
             throw e
         }
+    }
+
+    private fun runScript(
+        scriptName: String,
+        args: Array<out String>,
+    ): String {
+        val scriptPath = ScriptFileGuard.resolveInside(File(powerShellScriptsDir), scriptName).toPath()
+
+        if (!Files.exists(scriptPath)) {
+            throw IOException("PowerShell script not found: $scriptPath")
+        }
+
+        val command = mutableListOf("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath.toString())
+        command.addAll(args)
+
+        logger.debug(LogCategory.PASSKEY, "Executing PowerShell script", mapOf("script" to scriptName))
+
+        val process =
+            ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .start()
+
+        val output = process.inputStream.bufferedReader().readText()
+        val exitCode = process.waitFor(30, TimeUnit.SECONDS)
+
+        if (!exitCode || process.exitValue() != 0) {
+            throw RuntimeException("PowerShell script failed with exit code: ${process.exitValue()}, output: $output")
+        }
+
+        return output.trim()
+    }
 
     /**
      * Find the PowerShell scripts directory in the project

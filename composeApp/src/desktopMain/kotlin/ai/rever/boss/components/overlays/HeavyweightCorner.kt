@@ -1,10 +1,10 @@
 package ai.rever.boss.components.overlays
 
 import ai.rever.boss.plugin.browser.LocalAwtWindow
+import ai.rever.boss.utils.CleanupRunner
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.ApplyBossWindowIcon
-import ai.rever.boss.window.BossWindowIcon
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -19,19 +19,21 @@ import androidx.compose.ui.awt.ComposeDialog
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogWindow
-import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.rememberWindowState
 import kotlinx.coroutines.delay
+import java.awt.Component
 import java.awt.Dialog
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
+import java.awt.event.ComponentListener
 import javax.swing.RootPaneContainer
 import kotlin.math.roundToInt
 import java.awt.Window as AwtWindow
@@ -101,10 +103,12 @@ fun HeavyweightCorner(
     inset: DpSize = DpSize.Zero,
     focusable: Boolean = false,
     regionInWindow: IntRect? = null,
+    owned: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val parent = LocalAwtWindow.current
     val density = LocalDensity.current.density
+    val layoutDirection = LocalLayoutDirection.current
     var measured by remember { mutableStateOf<DpSize?>(null) }
     val size = measured ?: initialSize
     val bounds = trackedContentPaneBounds(parent) ?: return
@@ -113,7 +117,10 @@ fun HeavyweightCorner(
     // `bounds` only changes identity on a real change (see [trackedContentPaneBounds]), and a fresh
     // array every recomposition would re-run the placement effect, and with it a native
     // setLocation, for nothing.
-    val region = remember(bounds, inset, regionInWindow) { resolveRegion(bounds, inset, regionInWindow) }
+    val region =
+        remember(bounds, inset, regionInWindow, layoutDirection) {
+            resolveRegion(bounds, inset, regionInWindow, layoutDirection)
+        }
     // The measurement ceiling is the REGION itself - the whole parent content pane - not the
     // first-frame [initialSize]. The ceiling is a hard clip, and toast text is arbitrary plugin
     // content: three wordy toasts can exceed a fixed height like 600dp, and because the window is
@@ -127,14 +134,16 @@ fun HeavyweightCorner(
     val state =
         rememberWindowState(
             size = size,
-            position = cornerPosition(region, size, alignment).let { WindowPosition(it.first.dp, it.second.dp) },
+            position =
+                cornerPosition(region, size, alignment, layoutDirection)
+                    .let { WindowPosition(it.first.dp, it.second.dp) },
         )
 
     // Assign window state from an effect, never during composition - writing it inline during
     // composition is what made the cursor overlay jitter.
-    LaunchedEffect(size, region, alignment) {
+    LaunchedEffect(size, region, alignment, layoutDirection) {
         state.size = size
-        val at = cornerPosition(region, size, alignment)
+        val at = cornerPosition(region, size, alignment, layoutDirection)
         state.position = WindowPosition(at.first.dp, at.second.dp)
     }
 
@@ -149,7 +158,8 @@ fun HeavyweightCorner(
         )
     }
 
-    // A FOCUSABLE overlay is hosted by a dialog OWNED by the parent, not by a top-level window, and
+    // Focusable overlays and explicitly owned non-focusable capture overlays use an owned dialog.
+    // Ordinary non-focusable toasts retain their existing host. Ownership provides three behaviors, and
     // the difference is three behaviours rather than a preference:
     //
     //  - **The owner stays active.** An unowned top-level window taking focus deactivates the main
@@ -166,25 +176,21 @@ fun HeavyweightCorner(
     //
     // Non-focusable callers (toasts, the focus-mode cluster) keep the top-level window they have
     // always had, so none of this can regress them.
-    if (focusable && parent != null) {
+    if ((focusable || owned) && parent != null) {
         OwnedCornerDialog(
             parent = parent,
             state = state,
+            focusable = focusable,
             content = measuringContent,
         )
         return
     }
 
-    Window(
+    OverlayWindow(
         onCloseRequest = {},
         state = state,
-        undecorated = true,
-        transparent = true,
-        alwaysOnTop = true,
         focusable = focusable,
-        resizable = false,
-        icon = BossWindowIcon.painter,
-    ) {
+    ) { window ->
         EnsureOverlayWindowTransparent(window, kind = "corner")
         ApplyBossWindowIcon(window)
         measuringContent()
@@ -245,6 +251,7 @@ private fun MeasuredAgainstCeiling(
 private fun OwnedCornerDialog(
     parent: AwtWindow,
     state: WindowState,
+    focusable: Boolean,
     content: @Composable () -> Unit,
 ) {
     DialogWindow(
@@ -253,6 +260,10 @@ private fun OwnedCornerDialog(
                 // Before anything shows it: setType throws on a displayable window, and
                 // setBackground with an alpha is ignored while the dialog is still decorated.
                 isUndecorated = true
+                // Configure Skia before its render device is created; AWT's background alone
+                // leaves an opaque clear behind rounded suggestion cards.
+                isTransparent = true
+                focusableWindowState = focusable
                 runCatching { type = AwtWindow.Type.UTILITY }
                 isResizable = false
                 background = java.awt.Color(0, 0, 0, 0)
@@ -268,9 +279,9 @@ private fun OwnedCornerDialog(
             }
             dialog.setSize(
                 state.size.width.value
-                    .toInt(),
+                    .roundToInt(),
                 state.size.height.value
-                    .toInt(),
+                    .roundToInt(),
             )
         },
     ) {
@@ -292,7 +303,7 @@ private fun OwnedCornerDialog(
  * effects below are the whole of it.
  */
 @Composable
-private fun trackedContentPaneBounds(parent: AwtWindow?): IntArray? {
+internal fun trackedContentPaneBounds(parent: AwtWindow?): IntArray? {
     var bounds by remember(parent) { mutableStateOf(contentPaneBounds(parent)) }
 
     // Track the parent. `rememberOverlayParentBounds` is keyed on the window INSTANCE, which never
@@ -331,8 +342,7 @@ private fun trackedContentPaneBounds(parent: AwtWindow?): IntArray? {
         parent?.addComponentListener(listener)
         pane?.addComponentListener(listener)
         onDispose {
-            parent?.removeComponentListener(listener)
-            pane?.removeComponentListener(listener)
+            CornerBoundsListenerCleanup.remove(parent, pane, listener)
         }
     }
 
@@ -368,6 +378,19 @@ private fun trackedContentPaneBounds(parent: AwtWindow?): IntArray? {
     }
 
     return bounds
+}
+
+/** Both registrations belong to the same overlay, even if one native removal fails. */
+internal object CornerBoundsListenerCleanup {
+    fun remove(
+        parent: Component?,
+        pane: Component?,
+        listener: ComponentListener,
+    ) {
+        val cleanup = CleanupRunner("HeavyweightCorner")
+        cleanup.run("remove parent bounds listener") { parent?.removeComponentListener(listener) }
+        cleanup.run("remove content pane bounds listener") { pane?.removeComponentListener(listener) }
+    }
 }
 
 /**

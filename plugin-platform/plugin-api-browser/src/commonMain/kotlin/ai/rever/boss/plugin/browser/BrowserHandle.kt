@@ -62,7 +62,43 @@ data class BrowserContextMenuInfo(
     val pageTitle: String = "",
     /** Form field info if right-clicked on a form field (for secret auto-fill) */
     val formFieldInfo: FormFieldInfo? = null,
-)
+) {
+    /**
+     * Frame/document token for this menu. Kept outside the primary constructor to preserve
+     * the published constructor, copy and component signatures. A copy intentionally drops
+     * this transient token; equality compares menu contents, not frame identity.
+     * Consumers need the API version introducing BrowserMenuContext; host-pinned members
+     * additionally require a minBossVersion that includes this contract.
+     */
+    var menuContext: BrowserMenuContext? = null
+        private set
+
+    /** Construct a menu with an explicit token without changing the legacy data-class ABI. */
+    constructor(
+        linkUrl: String? = null,
+        selectedText: String? = null,
+        isEditable: Boolean = false,
+        hasVideo: Boolean = false,
+        hasImage: Boolean = false,
+        imageUrl: String? = null,
+        pageUrl: String = "",
+        pageTitle: String = "",
+        formFieldInfo: FormFieldInfo? = null,
+        menuContext: BrowserMenuContext?,
+    ) : this(
+        linkUrl,
+        selectedText,
+        isEditable,
+        hasVideo,
+        hasImage,
+        imageUrl,
+        pageUrl,
+        pageTitle,
+        formFieldInfo,
+    ) {
+        this.menuContext = menuContext
+    }
+}
 
 /**
  * Callback for handling context menu requests from the browser.
@@ -140,6 +176,24 @@ const val PAGE_EVENT_BRIDGE = "__bossPageEvent"
  */
 const val PAGE_EVENT_EMIT = "emit"
 
+/**
+ * Opaque token representing the context of a single browser right-click menu invocation.
+ *
+ * Created by the host when a context menu is opened and delivered to plugins via
+ * [BrowserContextMenuInfo.menuContext]. A plugin's menu action should capture this token and
+ * pass it to the corresponding [BrowserHandle] editor command (e.g. [BrowserHandle.copySelection])
+ * to route the operation to the exact frame the user clicked on.
+ *
+ * **Not global state.** Each right-click creates a distinct token. Dismissing a menu or opening
+ * a second menu does not affect tokens from earlier invocations. An ordinary editor command
+ * (one without a menu context) uses normal focused-frame / main-frame resolution and is never
+ * influenced by any previously created menu context.
+ *
+ * Plugins may hold and pass this token but must not attempt to construct or inspect its internals.
+ * The underlying frame association is managed by the host implementation.
+ */
+interface BrowserMenuContext
+
 interface BrowserHandle {
     /**
      * Unique identifier for this browser handle.
@@ -177,6 +231,58 @@ interface BrowserHandle {
      * error / no frame). Default returns null for handles that don't support it.
      */
     suspend fun executeJavaScript(script: String): Any? = null
+
+    /**
+     * Diagnostic snapshot of queued or running work on this handle's owned browser workers.
+     * A timed-out caller can return while its native call continues running.
+     *
+     * This is not a disposal fence: admission and completion can race this read. Call [dispose]
+     * normally; the host independently stops admission and drains workers before native close.
+     * Default false for implementations without tracked workers. Synchronous operations outside
+     * those workers are not counted.
+     */
+    val hasPendingBrowserCall: Boolean get() = false
+
+    /**
+     * Suspend until [hasPendingBrowserCall] reads false, or until [timeoutMs] elapses. Returns
+     * whether it observed the handle idle.
+     *
+     * The waiting form of [hasPendingBrowserCall], for teardown code that would otherwise poll it
+     * by hand. It inherits every caveat of the snapshot it polls, and two of them matter more here
+     * than they do for a single read:
+     *
+     * - **Synchronous accessors are not counted.** Calls like `getCurrentUrl` and `getTitle` run on
+     *   the calling thread, outside the workers this counts, so a true result means no
+     *   worker-dispatched call is outstanding, not that the native layer is idle. For a teardown
+     *   gate, which is what this is for, that is the difference worth knowing.
+     * - **Work can be admitted the instant after the read**, so true is not a lock and false is not
+     *   proof that anything is still running. Use it to defer a teardown or to record why one went
+     *   ahead regardless.
+     *
+     * Observed at a poll granularity the caller cannot see, so a very short [timeoutMs] buys
+     * proportionally less certainty than a long one. The bound is the caller's dispatcher too: a
+     * congested one delays the poll, so [timeoutMs] is a floor on how long this can take, never a
+     * ceiling.
+     *
+     * Not a substitute for [dispose], which remains the correct call: the host stops admission and
+     * drains its own workers before native close, independently of this. Nothing here can interrupt
+     * a call already inside the browser, which has no interruption point.
+     *
+     * Runs on the caller's dispatcher, which must not be one of the browser workers this counts:
+     * each resumed poll is itself submitted to that worker and counted while it takes the reading,
+     * so it can never observe zero and the wait is guaranteed to spend all of [timeoutMs] and
+     * answer false.
+     *
+     * The default answers from [hasPendingBrowserCall] without waiting, so an implementation that
+     * overrides only the snapshot still reports its own pending work rather than a flat true.
+     *
+     * @param timeoutMs how long to wait. `0` means take the snapshot and answer without waiting;
+     *   `Long.MAX_VALUE` is kotlinx's "no timeout" and waits indefinitely. Deliberately not
+     *   defaulted: the right deadline is the call site's policy, and a default published to plugins
+     *   could not later be changed without silently changing behaviour for every caller that
+     *   omitted it.
+     */
+    suspend fun awaitBrowserCallsQuiescent(timeoutMs: Long): Boolean = !hasPendingBrowserCall
 
     /**
      * Get the current URL.
@@ -522,23 +628,73 @@ interface BrowserHandle {
 
     /**
      * Copy the currently selected text to the clipboard.
+     *
+     * The context-aware overload accepts [BrowserContextMenuInfo.menuContext] to target the
+     * exact frame the user right-clicked on. A null token uses ordinary focused-frame /
+     * main-frame resolution. A menu context must not affect later ordinary commands.
      */
     fun copySelection()
 
     /**
+     * Context-aware overload. The default supports ordinary commands only; an explicit token
+     * is a no-op on older implementations, never a fallback into the wrong frame. Implementors
+     * must reject stale, foreign or navigated-document tokens and must not retain ambient context.
+     * BrowserHandle is host-implemented: callers must gate this member with minBossVersion.
+     */
+    fun copySelection(menuContext: BrowserMenuContext?) {
+        if (menuContext == null) copySelection()
+    }
+
+    /**
      * Paste text from the clipboard at the current cursor position.
+     *
+     * See the context-aware [copySelection] overload for token routing.
      */
     fun paste()
 
     /**
+     * Context-aware overload. The default supports ordinary commands only; an explicit token
+     * is a no-op on older implementations, never a fallback into the wrong frame. Implementors
+     * must reject stale, foreign or navigated-document tokens and must not retain ambient context.
+     * BrowserHandle is host-implemented: callers must gate this member with minBossVersion.
+     */
+    fun paste(menuContext: BrowserMenuContext?) {
+        if (menuContext == null) paste()
+    }
+
+    /**
      * Cut the currently selected text to the clipboard.
+     *
+     * See the context-aware [copySelection] overload for token routing.
      */
     fun cut()
 
     /**
+     * Context-aware overload. The default supports ordinary commands only; an explicit token
+     * is a no-op on older implementations, never a fallback into the wrong frame. Implementors
+     * must reject stale, foreign or navigated-document tokens and must not retain ambient context.
+     * BrowserHandle is host-implemented: callers must gate this member with minBossVersion.
+     */
+    fun cut(menuContext: BrowserMenuContext?) {
+        if (menuContext == null) cut()
+    }
+
+    /**
      * Select all text on the page.
+     *
+     * See the context-aware [copySelection] overload for token routing.
      */
     fun selectAll()
+
+    /**
+     * Context-aware overload. The default supports ordinary commands only; an explicit token
+     * is a no-op on older implementations, never a fallback into the wrong frame. Implementors
+     * must reject stale, foreign or navigated-document tokens and must not retain ambient context.
+     * BrowserHandle is host-implemented: callers must gate this member with minBossVersion.
+     */
+    fun selectAll(menuContext: BrowserMenuContext?) {
+        if (menuContext == null) selectAll()
+    }
 
     // ============================================================
     // POPUP AND NEW TAB HANDLING

@@ -43,6 +43,8 @@ class PluginUpdateManagerApiFloorFailClosedTest {
         return PluginUpdateManager(
             repositoryManager = repos,
             hostApiVersion = { installedApi },
+            // Not this suite's subject - an always-accept vet keeps the pre-wire behaviour.
+            verifyDownloadedJar = { _, _ -> Result.success(Unit) },
         )
     }
 

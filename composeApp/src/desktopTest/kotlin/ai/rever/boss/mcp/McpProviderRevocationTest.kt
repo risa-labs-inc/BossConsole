@@ -39,7 +39,8 @@ class McpProviderRevocationTest {
                 toolName = "run_command",
             ),
         )
-        assertFalse("run_command" in engine.sessionTrustedTools.value)
+        // No trust was granted on this path; nothing may leak in from the refused writes above.
+        assertTrue(engine.sessionTrustedTools.value.isEmpty())
         assertFalse("p" in engine.config.value.providerRules)
         assertTrue(engine.confirmInvocation("k8s_delete", other, false, providerId = "other"))
         assertTrue(

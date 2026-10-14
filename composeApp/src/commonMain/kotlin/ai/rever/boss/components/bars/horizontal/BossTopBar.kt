@@ -1,12 +1,12 @@
 package ai.rever.boss.components.bars.horizontal
 
+import ai.rever.boss.app.ProjectOpenRequests
 import ai.rever.boss.components.bars.ChromeBar
 import ai.rever.boss.components.bars.rememberBarContextMenuItems
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.buttons.QuickActionHints
 import ai.rever.boss.components.buttons.ToolboxButton
 import ai.rever.boss.components.dialogs.CommitDialog
-import ai.rever.boss.components.dialogs.ProjectOpenModeDialog
 import ai.rever.boss.components.dialogs.ProjectSelectionDialog
 import ai.rever.boss.components.dialogs.RemoveProjectDialog
 import ai.rever.boss.components.events.PanelEventBus
@@ -37,7 +37,6 @@ import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.LocalWindowProjectState
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowGitState
-import ai.rever.boss.window.WindowOperations
 import ai.rever.boss.window.selectProjectInWindow
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -98,6 +97,7 @@ fun BossDraggableComponent.BossTopBar(
      * shows through, which is white.
      */
     startInset: Dp = 0.dp,
+    showHostActions: Boolean = true,
 ) {
     val items = rememberBarContextMenuItems(ChromeBar.TOP)
 
@@ -110,13 +110,15 @@ fun BossDraggableComponent.BossTopBar(
             // Run/debug controls (Issue #91 / #321)
             BossTopRunBar()
             Spacer(modifier = Modifier.weight(0.1f))
-            BossTopRightBar(
-                onShowSettings = onShowSettings,
-                toolbox = toolbox,
-                onShowSearch = onShowSearch,
-                onSignOut = onSignOut,
-                toolLauncher = toolLauncher,
-            )
+            if (showHostActions) {
+                BossTopRightBar(
+                    onShowSettings = onShowSettings,
+                    toolbox = toolbox,
+                    onShowSearch = onShowSearch,
+                    onSignOut = onSignOut,
+                    toolLauncher = toolLauncher,
+                )
+            }
         }
     }
     Divider(color = BossTheme.colors.line, thickness = BossChrome.dimens.dividerThickness)
@@ -459,7 +461,6 @@ fun BossDraggableComponent.BossTopLeftBar(
     val selectedProject by windowProjectState?.selectedProject?.collectAsState()
         ?: remember { mutableStateOf(Project("No Project", "", 0L)) }
     var showProjectDialog by remember { mutableStateOf(false) }
-    var projectToOpen by remember { mutableStateOf<Project?>(null) }
     var deletedProjectName by remember { mutableStateOf<String?>(null) }
     var projectToRemove by remember { mutableStateOf<Project?>(null) }
 
@@ -541,12 +542,10 @@ fun BossDraggableComponent.BossTopLeftBar(
             // Project folder was deleted - show message and remove from list
             deletedProjectName = project.name
             ProjectState.removeRecentProject(project.path)
-        } else if (selectedProject.path.isNotEmpty()) {
-            // Project exists and another project is already open - show dialog
-            projectToOpen = project
         } else {
-            // Project exists and no project selected - open directly
-            openProjectInCurrentWindow(project)
+            // Asked where it goes - this Space, a new one, or a new window - by the window's one
+            // dialog (see ProjectOpenRequests). Straight in only when there is no window to ask.
+            if (!ProjectOpenRequests.ask(windowId, project)) openProjectInCurrentWindow(project)
         }
     }
 
@@ -605,7 +604,19 @@ fun BossDraggableComponent.BossTopLeftBar(
                     isLoading = isGitLoading,
                     onCheckout = { branchName ->
                         scope.launch {
-                            val result = GitService.checkout(branchName, windowId = windowId)
+                            // The one write verb that already took a
+                            // projectPathOverride and wasn't passing it: the
+                            // global belongs to whichever window aligned it last,
+                            // so a second window's checkout could act on the
+                            // other window's repository. The stash verbs below
+                            // still run on the global - their signatures take
+                            // no override, which is a follow-up, not this fix.
+                            val result =
+                                GitService.checkout(
+                                    branchName,
+                                    windowId = windowId,
+                                    projectPathOverride = windowProjectPath,
+                                )
                             when (result) {
                                 is GitSuccess -> gitSuccessMessage = "Switched to '$branchName'"
                                 is GitError -> gitErrorMessage = result.message
@@ -733,11 +744,24 @@ fun BossDraggableComponent.BossTopLeftBar(
 
     // Workspace button
     if (workspaceManager != null && onApplyWorkspace != null) {
+        // The menu rows are marked here as well as in the vertical bar's copy: it is the same
+        // menu answering the same question, and a state mark that appeared in only one of the two
+        // window configurations would make them disagree about the same Space. With the top bar on
+        // the vertical bar's footer is not drawn at all, so these rows are the ONLY place this
+        // window reports unsaved work.
+        //
+        // The button's own `unsaved` tint is deliberately NOT passed. A mark on the bar would sit
+        // in a dense row of chrome with no way to answer it: the save action is inside this
+        // button's Options submenu, so a mark in the MENU is next to its remedy while a mark on
+        // the button is not. Giving the top bar a save affordance of its own is a design change
+        // rather than a mark, and is left as follow-up work.
+        val unsavedWorkspaces by workspaceManager.unsavedWorkspaces.collectAsState()
         WorkspaceButton(
             onOpenWorkspace = onApplyWorkspace,
             workspaceManager = workspaceManager,
             getCurrentWorkspace = getCurrentWorkspace,
             onShowTopOfMind = onShowTopOfMind,
+            unsavedWorkspaceIds = unsavedWorkspaces[windowId].orEmpty(),
         )
     }
 
@@ -749,13 +773,7 @@ fun BossDraggableComponent.BossTopLeftBar(
                 val project = Project(name = projectName, path = it)
                 // Close the selection dialog
                 showProjectDialog = false
-                // Only show dialog if a project is already selected
-                if (selectedProject.path.isNotEmpty()) {
-                    projectToOpen = project
-                } else {
-                    // No project selected, open directly in current window
-                    openProjectInCurrentWindow(project)
-                }
+                if (!ProjectOpenRequests.ask(windowId, project)) openProjectInCurrentWindow(project)
             }
         }
 
@@ -767,23 +785,6 @@ fun BossDraggableComponent.BossTopLeftBar(
             onOpenDirectoryPicker = {
                 showProjectDialog = false
                 directoryPicker.pickDirectory()
-            },
-        )
-    }
-
-    // Project open mode dialog
-    projectToOpen?.let { project ->
-        ProjectOpenModeDialog(
-            project = project,
-            onDismiss = { projectToOpen = null },
-            onOpenInCurrentWindow = { selectedProj ->
-                openProjectInCurrentWindow(selectedProj)
-                projectToOpen = null
-            },
-            onOpenInNewWindow = { selectedProj ->
-                // Create new window with the project - each window has independent project state
-                WindowOperations.createNewWindowWithProject(selectedProj)
-                projectToOpen = null
             },
         )
     }
@@ -805,6 +806,9 @@ fun BossTopRightBar(
     toolLauncher: (@Composable (hintDirection: Panel, modifier: Modifier) -> Unit)? = null,
 ) {
     val currentUser by AuthService.currentUser.collectAsState()
+
+    // Browser Zoom Badge (appears when active browser zoom != 100%)
+    BrowserZoomBadge()
 
     // Show user email if logged in
     currentUser?.let { user ->

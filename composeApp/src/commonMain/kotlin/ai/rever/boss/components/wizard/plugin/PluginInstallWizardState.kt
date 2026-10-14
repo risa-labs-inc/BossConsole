@@ -46,7 +46,7 @@ data class WizardPluginInfo(
  * - Installation progress tracking
  */
 class PluginInstallWizardState(
-    availablePlugins: List<WizardPluginInfo>,
+    val availablePlugins: List<WizardPluginInfo>,
 ) {
     /**
      * Wizard step navigation state.
@@ -61,6 +61,9 @@ class PluginInstallWizardState(
      * Map of plugin ID to selection state.
      */
     private val _selectedPlugins = mutableStateMapOf<String, Boolean>()
+
+    var selectedProfile by mutableStateOf<ToolboxProfile?>(null)
+        private set
 
     /**
      * Installation progress (0.0 to 1.0).
@@ -98,6 +101,10 @@ class PluginInstallWizardState(
     var installationAttempted by mutableStateOf(false)
         private set
 
+    /** Monotonic trigger for a fresh installation coroutine, including retries. */
+    var installationRunId by mutableStateOf(0)
+        private set
+
     /**
      * Error message if installation failed.
      */
@@ -119,12 +126,24 @@ class PluginInstallWizardState(
             .map { it.id }
             .toSet()
 
-    init {
-        // Initialize with default selections (mandatory plugins are always selected)
+    /** Replace the recommendation while preserving the mandatory-tool invariant. */
+    fun applyProfile(profile: ToolboxProfile) {
+        selectedProfile = profile
         availablePlugins.forEach { plugin ->
-            _selectedPlugins[plugin.id] = plugin.isDefault || plugin.isMandatory
+            _selectedPlugins[plugin.id] = isRecommended(plugin, profile)
         }
     }
+
+    fun recommendedToolCount(profile: ToolboxProfile): Int = availablePlugins.count { isRecommended(it, profile) }
+
+    private fun isRecommended(
+        plugin: WizardPluginInfo,
+        profile: ToolboxProfile,
+    ): Boolean =
+        plugin.isMandatory ||
+            plugin.isDefault ||
+            plugin.category in profile.categories ||
+            plugin.id in profile.additionalPluginIds
 
     /**
      * Get plugins for a specific category.
@@ -203,7 +222,7 @@ class PluginInstallWizardState(
      */
     fun getSelectedPlugins(): List<WizardPluginInfo> {
         val selectedIds = getSelectedPluginIds().toSet()
-        return pluginsByCategory.values.flatten().filter { it.id in selectedIds }
+        return availablePlugins.filter { it.id in selectedIds }
     }
 
     /**
@@ -260,6 +279,18 @@ class PluginInstallWizardState(
         installationError = error
     }
 
+    /** Clear only the attempt state so the installing step can safely run again. */
+    fun prepareInstallationRetry() {
+        isInstalling = false
+        installationAttempted = false
+        installationProgress = 0f
+        installationStatus = "Preparing installation..."
+        installationError = null
+        installedPluginIds = emptyList()
+        failedPlugins = emptyList()
+        installationRunId++
+    }
+
     /**
      * Navigate to the next step.
      */
@@ -275,14 +306,6 @@ class PluginInstallWizardState(
     }
 
     /**
-     * Skip to the installing step.
-     */
-    fun skipToInstalling() {
-        val installingIndex = PluginInstallStep.allSteps.indexOf(PluginInstallStep.Installing)
-        wizardState.goToStep(installingIndex)
-    }
-
-    /**
      * Reset the wizard to initial state.
      */
     fun reset() {
@@ -291,6 +314,7 @@ class PluginInstallWizardState(
         installationStatus = ""
         isInstalling = false
         installationAttempted = false
+        installationRunId = 0
         installedPluginIds = emptyList()
         failedPlugins = emptyList()
         installationError = null

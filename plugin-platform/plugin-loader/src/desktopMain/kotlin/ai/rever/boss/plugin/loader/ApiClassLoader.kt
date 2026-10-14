@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.loader
 
+import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.Version
 import ai.rever.boss.plugin.logging.BossLogger
 import ai.rever.boss.plugin.logging.LogCategory
@@ -24,6 +25,12 @@ import java.util.jar.JarFile
  * Member additions to host-compiled types are still shadowed by the host's
  * copy (parent-first); those remain host-contract changes gated by
  * minBossVersion. Only brand-new types ship via the jar (minApiVersion).
+ *
+ * Trust: [fromPluginDir] installs only a jar somebody vouched for — a store
+ * sidecar that verifies over the jar's own claimed identity, or a
+ * bundled-trust marker matching its bytes. An api jar is classloaded as the
+ * PARENT of every plugin, so it gets no rollout warn-path: unverifiable
+ * jars degrade the API layer to host-compiled classes instead (BossConsole#851).
  *
  * Lifecycle: created at startup and HOT-SWAPPABLE at runtime. When a newer
  * api jar is installed, DynamicPluginManager.hotSwapApiLayer unloads every
@@ -55,51 +62,71 @@ class ApiClassLoader(
     val apiJarPath: String? = apiJarUrl?.let { File(it.toURI()).absolutePath }
 
     companion object {
+        /**
+         * An api-claiming jar candidate for the newest-selection: the jar,
+         * its parsed version (semver comparison key) and the manifest the
+         * trust anchor is derived from. Nested in the companion so the
+         * public [apiJarCandidates] / [latestVerifiedApiJar] / [verifyCandidate]
+         * helpers can name it.
+         */
+        data class ApiJarCandidate(
+            val jar: File,
+            val version: Version,
+            val manifest: PluginManifest,
+        )
+
         private val logger = BossLogger.forComponent("ApiClassLoader")
 
         /** Plugin id of the boss-plugin-api system plugin. */
         const val API_PLUGIN_ID = "ai.rever.boss.plugin.api"
 
         /**
-         * Build an ApiClassLoader over the newest boss-plugin-api jar in
-         * [pluginDir] (typically ~/.boss/plugins after bundled-copy and
-         * reconciliation). Returns an empty loader when none is found.
+         * Fast-rollback lever for the verification gate (BossConsole#851): set
+         * `boss.plugin.api.signature.enforce=false` (restart) to install the
+         * newest api-claiming jar without a trust proof, exactly as before the
+         * gate shipped. `boss.dev.mode` also disables the gate, but it is a
+         * broader lever (it also loosens unsigned-plugin enforcement for
+         * every plugin load); this property is scoped to the api layer alone.
+         * Defaults to enforced.
+         */
+        const val ENFORCE_PROPERTY = "boss.plugin.api.signature.enforce"
+
+        /**
+         * Environment counterpart of [ENFORCE_PROPERTY] for launcher/CI/systemd
+         * rollbacks, mirroring [PluginSignatureEnforcement.ENV_VAR].
+         */
+        const val ENFORCE_ENV = "BOSS_PLUGIN_API_SIGNATURE_ENFORCE"
+
+        /**
+         * Store-signature verifier used when [fromPluginDir] is called
+         * without an injected one (the production paths); the pinned public
+         * key is parsed once per process.
+         */
+        private val storeVerifier = PluginSignatureVerifier(PluginStoreTrust.TRUSTED_KEYS)
+
+        /**
+         * Build an ApiClassLoader over the newest VERIFIED boss-plugin-api
+         * jar in [pluginDir] (typically ~/.boss/plugins after bundled-copy
+         * and reconciliation). Returns an empty loader when none is found —
+         * or when none is verifiable: every candidate must pass the
+         * fail-closed trust gate ([apiJarRejectionReason], BossConsole#851)
+         * before it may become the shared API layer, and a newer
+         * unverifiable jar neither wins nor shadows an older verified one.
+         *
+         * [signatureVerifier] verifies store sidecars and is injectable for
+         * tests; production callers use the pinned store key.
          */
         fun fromPluginDir(
             pluginDir: File,
             parent: ClassLoader,
+            signatureVerifier: PluginSignatureVerifier = storeVerifier,
         ): ApiClassLoader {
-            val candidates =
-                pluginDir
-                    .listFiles { file ->
-                        file.isFile && file.extension == "jar"
-                    }.orEmpty()
-                    .mapNotNull { jar ->
-                        val manifest =
-                            try {
-                                PluginManifestReader.readFromJar(jar.absolutePath)
-                            } catch (e: Exception) {
-                                // not a BOSS plugin jar
-                                logger.debug(
-                                    LogCategory.SYSTEM,
-                                    "Skipping jar without readable plugin manifest",
-                                    mapOf("jar" to jar.name, "error" to e.toString()),
-                                )
-                                null
-                            }
-                        if (manifest?.pluginId == API_PLUGIN_ID) {
-                            val version = Version.parse(manifest.version)
-                            if (version != null) jar to version else null
-                        } else {
-                            null
-                        }
-                    }
+            val newest = selectApiJar(pluginDir, signatureVerifier)
 
-            val newest = candidates.maxByOrNull { it.second }
             if (newest == null) {
                 logger.warn(
                     LogCategory.SYSTEM,
-                    "No boss-plugin-api jar found; API layer limited to host-compiled classes",
+                    "No verifiable boss-plugin-api jar found; API layer limited to host-compiled classes",
                     mapOf(
                         "pluginDir" to pluginDir.absolutePath,
                     ),
@@ -107,17 +134,248 @@ class ApiClassLoader(
                 return ApiClassLoader(null, parent)
             }
 
-            val loader = ApiClassLoader(newest.first.toURI().toURL(), parent)
+            val loader = ApiClassLoader(newest.jar.toURI().toURL(), parent)
             logger.info(
                 LogCategory.SYSTEM,
                 "API layer resolved",
                 mapOf(
-                    "jar" to newest.first.name,
+                    "jar" to newest.jar.name,
                     "apiVersion" to (loader.apiVersion ?: "unknown"),
                 ),
             )
             return loader
         }
+
+        /**
+         * All api-claiming, manifest-valid, semver-parsable jars in
+         * [pluginDir], newest-first. Public for the hot-swap pre-check
+         * (DynamicPluginManager) so a swap that could not resolve to a
+         * verified jar can be refused before it unloads anything.
+         */
+        fun apiJarCandidates(pluginDir: File): List<ApiJarCandidate> = listApiJarCandidates(pluginDir)
+
+        /**
+         * The candidate [fromPluginDir] will install: the newest api-claiming
+         * jar, run through the fail-closed trust gate - UNLESS the rollback
+         * lever ([ENFORCE_PROPERTY] / [ENFORCE_ENV]) is set, in which case the
+         * newest jar installs without a trust proof, exactly the pre-gate
+         * behaviour. Startup and the hot-swap pre-check BOTH go through here,
+         * so the lever always applies the same way at every entry point
+         * (BossConsole#851 round-3 review: a rollback that only undoes the
+         * loader but not the hot-swap would be an inconsistent host).
+         */
+        fun selectApiJar(
+            pluginDir: File,
+            signatureVerifier: PluginSignatureVerifier = storeVerifier,
+        ): ApiJarCandidate? =
+            apiJarCandidates(pluginDir)
+                .sortedByDescending { it.version }
+                .firstNotNullOfOrNull { candidate ->
+                    val rejection = apiJarRejectionReason(candidate, signatureVerifier)
+                    if (rejection == null) {
+                        candidate
+                    } else {
+                        logger.warn(
+                            LogCategory.SYSTEM,
+                            "Skipping api-claiming jar without a valid trust proof",
+                            mapOf(
+                                "jar" to candidate.jar.name,
+                                "claimedVersion" to candidate.manifest.version,
+                                "reason" to rejection,
+                            ),
+                        )
+                        null
+                    }
+                }
+
+        /**
+         * The newest candidate that passes [verifyCandidate] on its OWN
+         * merits, or null. Pure verification predicate: it does NOT consult
+         * the rollback lever, which [selectApiJar] owns.
+         */
+        fun latestVerifiedApiJar(
+            pluginDir: File,
+            signatureVerifier: PluginSignatureVerifier = storeVerifier,
+        ): ApiJarCandidate? =
+            listApiJarCandidates(pluginDir)
+                .sortedByDescending { it.version }
+                .firstNotNullOfOrNull { candidate ->
+                    if (verifyCandidate(candidate, signatureVerifier) == null) candidate else null
+                }
+
+        private fun listApiJarCandidates(pluginDir: File): List<ApiJarCandidate> =
+            pluginDir
+                .listFiles { file ->
+                    file.isFile && file.extension == "jar"
+                }.orEmpty()
+                .mapNotNull { jar ->
+                    val manifest =
+                        try {
+                            PluginManifestReader.readFromJar(jar.absolutePath)
+                        } catch (e: Exception) {
+                            // not a BOSS plugin jar
+                            logger.debug(
+                                LogCategory.SYSTEM,
+                                "Skipping jar without readable plugin manifest",
+                                mapOf("jar" to jar.name, "error" to e.toString()),
+                            )
+                            null
+                        }
+                    if (manifest?.pluginId == API_PLUGIN_ID) {
+                        val version = Version.parse(manifest.version)
+                        if (version != null) ApiJarCandidate(jar, version, manifest) else null
+                    } else {
+                        null
+                    }
+                }
+
+        /**
+         * Whether the trust gate is currently enforced. Parsed with the SAME
+         * tolerant-but-safe rules as [PluginSignatureEnforcement.enforceUnsigned]
+         * (trim + lowercase, true/1/yes/on vs false/0/no/off): a security
+         * control whose "enforce" spellings silently DISABLE it is worse than
+         * no control, and an unrecognized value must fall back to the ENFORCED
+         * default with a warning, never to the weaker mode. Read once per
+         * selection (not per candidate) so a value flipped mid-scan cannot
+         * enforce for one jar and not the next.
+         */
+
+        fun isGateEnforced(): Boolean {
+            val raw = System.getProperty(ENFORCE_PROPERTY) ?: System.getenv(ENFORCE_ENV) ?: return true
+            return when (raw.trim().lowercase()) {
+                "true", "1", "yes", "on" -> {
+                    true
+                }
+
+                "false", "0", "no", "off" -> {
+                    false
+                }
+
+                else -> {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Unrecognized api-gate enforcement flag value - flag IGNORED, gate stays ENFORCED",
+                        mapOf(
+                            "value" to raw,
+                        ),
+                    )
+                    true
+                }
+            }
+        }
+
+        /**
+         * Fail-closed trust gate a candidate must pass before it is
+         * classloaded as the process-wide API layer (BossConsole#851).
+         *
+         * The api jar becomes the PARENT classloader of every plugin — its
+         * classes initialize on first resolution and outrank any single
+         * plugin — so unlike plugin loads (see DynamicPluginLoaderImpl's
+         * verifySignatureOrThrow) there is NO rollout warn-path for a
+         * missing signature: the #102 warn-and-allow window exists so users'
+         * plugin installs keep working while signatures are backfilled, but
+         * tolerating an unverified jar HERE is arbitrary code execution with
+         * maximal reach (exactly the hole #851 reports: an unsigned
+         * GitHub-fallback or nulled-signature store jar becoming the shared
+         * API layer, surviving the enforcement flip).
+         *
+         * Accepts exactly the proofs the platform already produces:
+         *
+         * - a store sidecar whose signature verifies over the canonical
+         *   anchor `pluginId|version|sha256` built from the jar's OWN
+         *   manifest identity — so a sidecar signed for different bytes or a
+         *   different version claim fails (substitution, not just tampering).
+         *   Present-but-invalid always rejects, bundled-trust or not,
+         *   mirroring plugin loads.
+         * - a [PluginBundledTrust] marker matching the jar's CURRENT bytes
+         *   (the host's bundled-copy install path, BossConsole#102: bundled
+         *   jars ship inside the signed app image and never carry a store
+         *   signature).
+         * - dev mode (`boss.dev.mode=true`), the same carve-out plugin loads
+         *   use so locally built api jars keep loading in development.
+         *
+         * Returns null to install, or a human-readable reason to reject.
+         * Any read/hash error also rejects — a jar that cannot be examined
+         * is unverifiable, never "probably fine". The jar is hashed here and
+         * re-read by the classloader below; as with plugin loads, that
+         * TOCTOU gap is outside the threat model (a local filesystem
+         * attacker can already tamper with the plugin dir directly).
+         */
+        private fun apiJarRejectionReason(
+            candidate: ApiJarCandidate,
+            signatureVerifier: PluginSignatureVerifier,
+        ): String? {
+            if (isGateEnforced()) {
+                return verifyCandidate(candidate, signatureVerifier)
+            }
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Api jar trust gate disabled via $ENFORCE_PROPERTY - installing without verification",
+                mapOf(
+                    "jar" to candidate.jar.name,
+                    "claimedVersion" to candidate.manifest.version,
+                ),
+            )
+            return null
+        }
+
+        /**
+         * The trust proof a candidate jar must carry to become the shared API
+         * layer. Exposed so callers deciding BEFORE a disruptive operation
+         * (the api hot swap unloads every plugin) can consult the same
+         * predicate instead of discovering the rejection afterwards
+         * (BossConsole#851 review).
+         */
+        fun verifyCandidate(
+            candidate: ApiJarCandidate,
+            signatureVerifier: PluginSignatureVerifier = storeVerifier,
+        ): String? =
+            try {
+                val jarPath = candidate.jar.absolutePath
+                val signature = PluginSignatureSidecar.read(jarPath)
+                if (signature == null) {
+                    if (PluginBundledTrust.isTrusted(jarPath)) {
+                        // Trusted bundled copy written by the host itself (#102).
+                        null
+                    } else if (System.getProperty("boss.dev.mode")?.toBoolean() == true) {
+                        logger.warn(
+                            LogCategory.SYSTEM,
+                            "Api jar has no store signature - installing only because dev mode is on",
+                            mapOf(
+                                "jar" to candidate.jar.name,
+                                "claimedVersion" to candidate.manifest.version,
+                            ),
+                        )
+                        null
+                    } else {
+                        "no store signature and not a trusted bundled artifact"
+                    }
+                } else {
+                    val sha256 = FileHashing.sha256(candidate.jar)
+                    val anchor =
+                        PluginStoreTrust.versionAnchor(
+                            candidate.manifest.pluginId,
+                            candidate.manifest.version,
+                            sha256,
+                        )
+                    val result = signatureVerifier.verifySignedMessage(anchor, signature)
+                    if (result.isVerified) {
+                        null
+                    } else {
+                        val reason = (result as? SignatureVerificationResult.Failed)?.reason ?: "unknown"
+                        "store signature does not verify: $reason"
+                    }
+                }
+            } catch (e: Exception) {
+                // Fail closed: an unreadable or unhashable candidate is
+                // unverifiable, never "probably fine".
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Api jar verification errored",
+                    mapOf("jar" to candidate.jar.name, "error" to e.toString()),
+                )
+                "verification error (${e.javaClass.simpleName}: ${e.message ?: "no detail"})"
+            }
 
         private fun readVersion(jar: File): String? {
             val fromManifest =

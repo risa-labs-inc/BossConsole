@@ -7,6 +7,9 @@ import ai.rever.boss.plugin.api.TerminalTabPluginAPI
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -50,6 +53,17 @@ object TerminalAPIAccess {
     fun getProvider(): TerminalTabPluginAPI? {
         val plugin = cachedDefaultPlugin ?: return null
         return plugin.getPluginAPI(TerminalTabPluginAPI::class.java)
+    }
+
+    /**
+     * Compose-aware provider lookup. Plugin APIs register after the host UI may already be in
+     * composition, so consumers must observe the registry generation instead of caching a null.
+     */
+    @Composable
+    fun rememberProvider(): TerminalTabPluginAPI? {
+        val plugin = cachedDefaultPlugin ?: return null
+        val registryVersion by plugin.apiRegistryVersion.collectAsState()
+        return key(registryVersion) { plugin.getPluginAPI(TerminalTabPluginAPI::class.java) }
     }
 
     // ==================== Convenience Methods (Graceful Degradation) ====================
@@ -198,7 +212,7 @@ object TerminalAPIAccess {
         onDismiss: () -> Unit,
         onComplete: () -> Unit,
     ) {
-        getProvider()?.TerminalOnboardingWizard(onDismiss, onComplete)
+        rememberProvider()?.TerminalOnboardingWizard(onDismiss, onComplete)
     }
 
     // ==================== Internal: Wire Runner Callbacks ====================

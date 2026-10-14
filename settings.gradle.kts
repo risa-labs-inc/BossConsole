@@ -51,6 +51,7 @@ if (!isWindowsArm64) {
     // type-safe `projects.*` accessors are unchanged — only the projectDir moves.
     listOf(
         "boss-ipc",
+        "boss-native-files",
         "boss-process-manager",
         "boss-service-auth",
         "boss-ui-sdk",

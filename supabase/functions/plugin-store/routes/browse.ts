@@ -1,17 +1,32 @@
-import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
-import type { PluginStoreContext } from "../types/context.ts"
+import { createRoute, z } from "@hono/zod-openapi"
 import {
   ListPluginsQuerySchema,
   SearchPluginsRequestSchema,
   PluginListResponseSchema,
   PluginDetailResponseSchema,
+  PopularTagsQuerySchema,
   PopularTagsResponseSchema,
   ErrorResponseSchema
 } from "../types/schemas.ts"
 import { listPlugins, searchPlugins, getPlugin, getPopularTags } from "../services/plugins.ts"
 import { getPluginVersions } from "../services/versions.ts"
+import { clientKey, rateLimit } from "../utils/rate-limit.ts"
+import { newRouter } from "../utils/router.ts"
 
-const browse = new OpenAPIHono<{ Variables: PluginStoreContext }>()
+// A request that fails its route's schema is answered by the router itself, before any handler
+// runs, with the ErrorResponseSchema 400 the routes below declare: see newRouter.
+const browse = newRouter()
+
+// Per-client limit on the anonymous catalogue routes (/list, /search,
+// /tags/popular): the same in-isolate token bucket the organisation function
+// applies to its handoff, invite and DNS routes (utils/rate-limit.ts is a
+// verbatim copy of organisation/utils/rate-limit.ts). 60/min matches the
+// organisation's admin-write brake - generous for a Toolbox paging through the
+// store, small enough that an anon loop burning search_plugins ILIKE CPU and
+// edge invocations is cut off quickly. Best effort by design: the util's header
+// spells out what this is and is not.
+const CATALOGUE_LIMIT = 60
+const CATALOGUE_WINDOW_SECONDS = 60
 
 // ============================================================================
 // GET /list - List all plugins
@@ -27,11 +42,27 @@ const listRoute = createRoute({
     query: ListPluginsQuerySchema
   },
   responses: {
+    429: {
+      description: 'Too many requests from this client',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     200: {
       description: 'Plugin list retrieved successfully',
       content: {
         'application/json': {
           schema: PluginListResponseSchema
+        }
+      }
+    },
+    400: {
+      description: 'Invalid page or pageSize',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
         }
       }
     },
@@ -48,6 +79,18 @@ const listRoute = createRoute({
 
 browse.openapi(listRoute, async (ctx) => {
   try {
+    // The brake before the work: this route is unauthenticated, so the limit
+    // is consumed before a single database call.
+    const limit = rateLimit(
+      `catalogue:${clientKey(ctx.req.raw.headers)}`,
+      CATALOGUE_LIMIT,
+      CATALOGUE_WINDOW_SECONDS,
+    )
+    if (!limit.allowed) {
+      ctx.header("Retry-After", String(limit.retryAfterSeconds))
+      return ctx.json({ error: 'Too many requests; try again later' }, 429)
+    }
+
     const supabase = ctx.get("supabase")
     const { page, pageSize, sortBy } = ctx.req.valid('query')
 
@@ -72,7 +115,7 @@ browse.openapi(listRoute, async (ctx) => {
     }, 200)
   } catch (error) {
     console.error('Error listing plugins:', error)
-    return ctx.json({ error: (error as Error).message }, 500)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 
@@ -96,6 +139,14 @@ const searchRoute = createRoute({
     }
   },
   responses: {
+    429: {
+      description: 'Too many requests from this client',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     200: {
       description: 'Search results retrieved successfully',
       content: {
@@ -125,6 +176,20 @@ const searchRoute = createRoute({
 
 browse.openapi(searchRoute, async (ctx) => {
   try {
+    // search_plugins is ILIKE-backed, so an unthrottled anon client burns DB
+    // CPU per request. The body has already been validated by the time this
+    // runs: a malformed one is refused by the hook above without reaching the
+    // limiter or the database.
+    const limit = rateLimit(
+      `catalogue:${clientKey(ctx.req.raw.headers)}`,
+      CATALOGUE_LIMIT,
+      CATALOGUE_WINDOW_SECONDS,
+    )
+    if (!limit.allowed) {
+      ctx.header("Retry-After", String(limit.retryAfterSeconds))
+      return ctx.json({ error: 'Too many requests; try again later' }, 429)
+    }
+
     const supabase = ctx.get("supabase")
     const body = ctx.req.valid('json')
 
@@ -148,7 +213,7 @@ browse.openapi(searchRoute, async (ctx) => {
     }, 200)
   } catch (error) {
     console.error('Error searching plugins:', error)
-    return ctx.json({ error: (error as Error).message }, 500)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 
@@ -200,14 +265,28 @@ browse.openapi(getPluginRoute, async (ctx) => {
     const supabase = ctx.get("supabase")
     const { pluginId } = ctx.req.valid('param')
 
-    const plugin = await getPlugin(supabase, pluginId)
+    // OPTIONAL auth, the same quiet rule as /list: a missing or unusable
+    // token answers the public catalogue, a valid one additionally unlocks
+    // what user_can_view_plugin_row says this reader may see. Without it the
+    // service-role client computes visibility for NOBODY (auth.uid() is
+    // NULL), and an organisation member got a 404 for their own
+    // organisation's plugin on the very page that lists its versions
+    // (issue #852).
+    const viewer = await optionalViewer(ctx)
+
+    const plugin = await getPlugin(supabase, pluginId, viewer)
     
     if (!plugin) {
       return ctx.json({ error: 'Plugin not found' }, 404)
     }
 
     // Get all versions
-    const versions = await getPluginVersions(supabase, pluginId)
+    const versions = await getPluginVersions(supabase, pluginId, viewer)
+
+    // PRIVATE when the answer depends on who asked - the same reason and the
+    // same header as /list: a shared cache holding one reader's copy would
+    // serve somebody else's organisation plugins to the next caller.
+    ctx.header("Cache-Control", viewer ? "private, no-store" : "public, max-age=60")
 
     return ctx.json({
       id: plugin.id,
@@ -246,7 +325,7 @@ browse.openapi(getPluginRoute, async (ctx) => {
     }, 200)
   } catch (error) {
     console.error('Error getting plugin:', error)
-    return ctx.json({ error: (error as Error).message }, 500)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 
@@ -261,16 +340,31 @@ const popularTagsRoute = createRoute({
   summary: 'Get popular tags',
   description: 'Get the most used tags for filtering',
   request: {
-    query: z.object({
-      limit: z.string().optional().default('20').transform(Number)
-    })
+    // BossConsole#1253: see PopularTagsQuerySchema for why each bound is there.
+    query: PopularTagsQuerySchema
   },
   responses: {
+    429: {
+      description: 'Too many requests from this client',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     200: {
       description: 'Popular tags retrieved successfully',
       content: {
         'application/json': {
           schema: PopularTagsResponseSchema
+        }
+      }
+    },
+    400: {
+      description: 'Invalid limit',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
         }
       }
     },
@@ -287,6 +381,19 @@ const popularTagsRoute = createRoute({
 
 browse.openapi(popularTagsRoute, async (ctx) => {
   try {
+    // The query has already been validated by the time this runs, so `limit` is an integer in
+    // 1..POPULAR_TAGS_LIMIT_MAX: a value outside that is refused by the hook above, before the
+    // limiter and the database. The limiter's result is `gate`, so it cannot be mistaken for it.
+    const gate = rateLimit(
+      `catalogue:${clientKey(ctx.req.raw.headers)}`,
+      CATALOGUE_LIMIT,
+      CATALOGUE_WINDOW_SECONDS,
+    )
+    if (!gate.allowed) {
+      ctx.header("Retry-After", String(gate.retryAfterSeconds))
+      return ctx.json({ error: 'Too many requests; try again later' }, 429)
+    }
+
     const supabase = ctx.get("supabase")
     const { limit } = ctx.req.valid('query')
 
@@ -295,7 +402,7 @@ browse.openapi(popularTagsRoute, async (ctx) => {
     return ctx.json({ tags }, 200)
   } catch (error) {
     console.error('Error getting popular tags:', error)
-    return ctx.json({ error: (error as Error).message }, 500)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 

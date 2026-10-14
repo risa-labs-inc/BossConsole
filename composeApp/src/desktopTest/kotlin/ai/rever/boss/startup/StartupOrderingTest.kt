@@ -1,0 +1,101 @@
+package ai.rever.boss.startup
+
+import ai.rever.boss.testsupport.repoRoot
+import java.io.File
+import kotlin.test.Test
+import kotlin.test.assertTrue
+
+/**
+ * Pins the order in `main` that keeps the native toolkit preload clear of other threads.
+ *
+ * Loading JxBrowser's toolkit swaps the process's malloc zones, and a free() on another thread
+ * during the swap is an uncatchable SIGTRAP (9.5.33, 2026-09-29). The race is far too rare for any
+ * test run to hit, so a reorder would ship silently: this reads `main.kt` and fails on the order
+ * instead. The runtime half is `ChromiumToolkitPreload.lateLoadReason`.
+ */
+class StartupOrderingTest {
+    private val root: File by lazy { repoRoot() }
+    private val main: String by lazy {
+        // Prose and literals cannot be mistaken for startup calls.
+        File(root, "composeApp/src/desktopMain/kotlin/ai/rever/boss/main.kt")
+            .readText()
+            .let(::startupCodeOnly)
+    }
+
+    private fun at(call: String): Int {
+        // Kotlin allows a newline before a member-access dot. Match the call, not its type name.
+        val pattern = Regex(call.split('.').joinToString("\\s*\\.\\s*") { Regex.escape(it) })
+        val matches = pattern.findAll(main).toList()
+        assertTrue(matches.isNotEmpty(), "main.kt no longer calls $call")
+        assertTrue(matches.size == 1, "main.kt calls $call more than once")
+        return matches.single().range.first
+    }
+
+    private val preflight get() = at("ChromiumBootstrap.preflight()")
+
+    @Test
+    fun `preflight runs while the single-instance lock is held`() {
+        assertTrue(at("SingleInstanceManager.acquireLock()") < preflight)
+    }
+
+    @Test
+    fun `preflight runs before anything creates the AWT toolkit`() {
+        assertTrue(preflight < at("DefaultWindowIcon.install()"))
+        // Pin known direct entry points; helper implementations still require code review.
+        val beforePreflight = main.substring(0, preflight)
+        listOf("Toolkit.getDefaultToolkit()", "SwingUtilities.invoke", "EventQueue.invoke", "Taskbar.")
+            .forEach { call -> assertTrue(call !in beforePreflight, "$call runs before the preflight") }
+    }
+
+    @Test
+    fun `background warm-ups start after the preflight`() {
+        assertTrue(preflight < at("WorkspaceSettingsManager.currentSettings"))
+        assertTrue(preflight < at("MacOSScrollGesturePhases.ensureStarted()"))
+    }
+
+    @Test
+    fun `icon creation records its entry point before accessing the toolkit`() {
+        val icon =
+            startupCodeOnly(
+                File(
+                    root,
+                    "composeApp/src/desktopMain/kotlin/ai/rever/boss/window/WindowIcon.kt",
+                ).readText(),
+            )
+        val owner = icon.indexOf("object DefaultWindowIcon")
+        val install = icon.indexOf("fun install()", owner)
+        val marker = icon.indexOf(".noteAwtToolkitCreating(", install)
+        val toolkit = icon.indexOf("Toolkit.getDefaultToolkit()", install)
+        assertTrue(
+            owner >= 0 && install > owner && marker > install && toolkit > marker,
+            "Window icon installation must record creation before accessing AWT",
+        )
+    }
+
+    @Test
+    fun `pre-warm is handed the preflight`() {
+        assertTrue(preflight < at("ChromiumBootstrap.prepare(chromiumPreflight,"))
+    }
+
+    @Test
+    fun `the relaunch handoff is consumed under the lock and replayed after the post-lock CLI`() {
+        val consume = at("RelaunchHandoff.consume()")
+        assertTrue(at("SingleInstanceManager.acquireLock()") < consume)
+        assertTrue(consume < at("ChromiumBootstrap.prepare(chromiumPreflight,"))
+        assertTrue(at("CliBootstrap.dispatchPostLock(args)") < at("RelaunchHandoff::toCommand"))
+    }
+
+    @Test
+    fun `every engine download completion goes through onEngineDownloadComplete`() {
+        // A download path that booted the engine itself would bring back the 9.5.39 fresh-install crash.
+        at("ChromiumBootstrap.onEngineDownloadComplete(")
+        val completions = Regex("""progress\s*\.\s*isComplete""").findAll(main).count()
+        val routed =
+            Regex("""if\s*\(\s*progress\s*\.\s*isComplete\s*\)\s*onEngineDownloaded\(\)""")
+                .findAll(main)
+                .count()
+        assertTrue(completions > 0 && completions == routed, "a download completion bypasses onEngineDownloaded")
+        val bootInProcess = main.indexOf("bootInProcess =")
+        assertTrue(bootInProcess >= 0 && main.indexOf("prewarmInBackground(force = true)") > bootInProcess)
+    }
+}

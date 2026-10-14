@@ -12,8 +12,10 @@ import ai.rever.boss.ipc.proto.services.WriteFileRequest
 import ai.rever.boss.plugin.api.FileNodeData
 import ai.rever.boss.plugin.api.FileSystemDataProvider
 import ai.rever.boss.plugin.api.NodeLoadingStateData
+import ai.rever.boss.plugin.pathutils.DownloadsDirectory
 import com.google.protobuf.ByteString
 import io.grpc.ManagedChannel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -21,6 +23,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import java.io.ByteArrayOutputStream
 import java.io.File
 
 /**
@@ -156,7 +159,10 @@ class FileSystemDataProviderProxy(
     ): Result<String> =
         withContext(Dispatchers.Default) {
             try {
-                val fullPath = "$parentPath/$fileName"
+                // Built exactly as the in-process provider builds it, because the plugin compares
+                // this string with host-built paths: a hand-joined "/" mixed separators on Windows
+                // and doubled one after a parent passed with a trailing separator.
+                val fullPath = File(parentPath, fileName).absolutePath
                 fsStub.createFile(
                     CreateFileRequest
                         .newBuilder()
@@ -177,7 +183,7 @@ class FileSystemDataProviderProxy(
     ): Result<String> =
         withContext(Dispatchers.Default) {
             try {
-                val fullPath = "$parentPath/$folderName"
+                val fullPath = File(parentPath, folderName).absolutePath
                 fsStub.createFile(
                     CreateFileRequest
                         .newBuilder()
@@ -214,8 +220,12 @@ class FileSystemDataProviderProxy(
     ): Result<String> =
         withContext(Dispatchers.Default) {
             try {
-                val parent = File(path).parent ?: ""
-                val newPath = if (parent.isNotBlank()) "$parent/$newName" else newName
+                // Same rule as the in-process provider: no parent directory is a failure, not a
+                // bare name, which the kernel would resolve against its own working directory.
+                val parentDir =
+                    File(path).parentFile
+                        ?: return@withContext Result.failure(IllegalStateException("Cannot determine parent directory"))
+                val newPath = File(parentDir, newName).absolutePath
                 fsStub.renameFile(
                     RenameFileRequest
                         .newBuilder()
@@ -254,15 +264,38 @@ class FileSystemDataProviderProxy(
     override suspend fun readFile(path: String): Result<String> =
         withContext(Dispatchers.Default) {
             try {
-                val response =
-                    fsStub.readFile(
-                        ReadFileRequest.newBuilder().setPath(path).build(),
-                    )
-                if (response.errorMessage.isNotBlank()) {
-                    Result.failure(Exception(response.errorMessage))
-                } else {
-                    Result.success(response.content.toStringUtf8())
-                }
+                val content = ByteArrayOutputStream()
+                var expectedSize: Long? = null
+                do {
+                    val response =
+                        fsStub.readFile(
+                            ReadFileRequest
+                                .newBuilder()
+                                .setPath(path)
+                                .setOffsetBytes(content.size().toLong())
+                                .setMaxBytes(1_048_576)
+                                .build(),
+                        )
+                    check(response.errorMessage.isBlank()) { response.errorMessage }
+                    check(
+                        response.totalSizeBytes in 0..MAX_TEXT_BYTES.toLong() &&
+                            content.size() + response.content.size() <= MAX_TEXT_BYTES,
+                    ) {
+                        "Text files larger than 8 MiB cannot be read through the plugin provider"
+                    }
+                    check(expectedSize == null || expectedSize == response.totalSizeBytes) {
+                        "File changed during read; retry"
+                    }
+                    expectedSize = response.totalSizeBytes
+                    check(!response.truncated || !response.content.isEmpty) {
+                        "File service returned an empty partial page"
+                    }
+                    response.content.writeTo(content)
+                } while (response.truncated)
+                check(content.size().toLong() == expectedSize) { "File changed during read; retry" }
+                Result.success(content.toString(Charsets.UTF_8))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Result.failure(e)
             }
@@ -305,7 +338,10 @@ class FileSystemDataProviderProxy(
 
     // ---- Pure system queries (answered locally) ----
 
-    override fun getDownloadsDirectory(): String = System.getProperty("user.home") + "/Downloads"
+    // Answered locally, so it has to agree with the host rather than approximate it: the plain
+    // concatenation this replaced named a directory that did not exist whenever ~/Downloads did
+    // not, and on Windows it mixed separators, so it compared unequal to every host-built path.
+    override fun getDownloadsDirectory(): String = DownloadsDirectory.current()
 
     override fun getHomeDirectory(): String = System.getProperty("user.home")
 
@@ -348,3 +384,6 @@ class FileSystemDataProviderProxy(
         return sb.toString()
     }
 }
+
+// This provider returns a complete in-memory String. Larger files require a streaming editor API.
+private const val MAX_TEXT_BYTES = 8_388_608

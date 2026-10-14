@@ -184,13 +184,13 @@ fun BookmarkDialog(
                         Spacer(modifier = Modifier.width(4.dp))
                         Icon(
                             imageVector = Icons.Outlined.WorkOutline,
-                            contentDescription = "Workspaces",
+                            contentDescription = "Spaces",
                             modifier = Modifier.size(16.dp),
                             tint = BossTheme.colors.textSecondary,
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Open In Workspaces",
+                            text = "Open In Spaces",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
                             color = BossTheme.colors.textPrimary,
@@ -202,7 +202,7 @@ fun BookmarkDialog(
 
                         if (workspaces.isEmpty()) {
                             Text(
-                                text = "No workspaces available",
+                                text = "No spaces available",
                                 fontSize = 13.sp,
                                 color = BossTheme.colors.textSecondary,
                             )
@@ -226,7 +226,7 @@ fun BookmarkDialog(
                         }
 
                         Text(
-                            text = "Leave empty to use current workspace",
+                            text = "Leave empty to use current space",
                             fontSize = 11.sp,
                             color = BossTheme.colors.textSecondary,
                             modifier = Modifier.padding(top = 8.dp),

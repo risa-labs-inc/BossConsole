@@ -1,10 +1,10 @@
-import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
-import type { PluginStoreContext } from "../types/context.ts"
+import { createRoute, z } from "@hono/zod-openapi"
 import { ErrorResponseSchema } from "../types/schemas.ts"
 import { getUserFromToken } from "../utils/auth.ts"
 import { deleteJar } from "../services/storage.ts"
+import { newRouter } from "../utils/router.ts"
 
-const admin = new OpenAPIHono<{ Variables: PluginStoreContext }>()
+const admin = newRouter()
 
 // ============================================================================
 // Schemas
@@ -107,7 +107,7 @@ admin.openapi(setPublishedRoute, async (ctx) => {
     return ctx.json({ success: true, pluginId, published }, 200)
   } catch (error) {
     console.error('Error in set published:', error)
-    return ctx.json({ error: (error as Error).message }, 500)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 
@@ -193,7 +193,7 @@ admin.openapi(deletePluginRoute, async (ctx) => {
 
     if (deleteError) {
       console.error('Error deleting plugin:', deleteError)
-      return ctx.json({ error: deleteError.message }, 500)
+      return ctx.json({ error: 'Internal server error' }, 500)
     }
 
     // Clean up JAR files from storage
@@ -212,7 +212,7 @@ admin.openapi(deletePluginRoute, async (ctx) => {
     return ctx.json({ success: true, pluginId }, 200)
   } catch (error) {
     console.error('Error in delete plugin:', error)
-    return ctx.json({ error: (error as Error).message }, 500)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 
@@ -297,7 +297,7 @@ admin.openapi(setVerifiedRoute, async (ctx) => {
     return ctx.json({ success: true, pluginId, verified }, 200)
   } catch (error) {
     console.error('Error in set verified:', error)
-    return ctx.json({ error: (error as Error).message }, 500)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 

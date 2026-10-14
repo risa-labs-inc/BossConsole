@@ -686,6 +686,10 @@ private fun SettingsContentArea(
                     SecuritySettings()
                 }
 
+                SettingsSection.SHARING -> {
+                    AppSharingSettings()
+                }
+
                 SettingsSection.LANGUAGE_SERVERS -> {
                     LspSettings()
                 }
@@ -720,6 +724,10 @@ private fun SettingsContentArea(
 
                 SettingsSection.THEME -> {
                     ThemeSettings()
+                }
+
+                SettingsSection.GETTING_STARTED -> {
+                    GettingStartedSettings()
                 }
 
                 else -> {}

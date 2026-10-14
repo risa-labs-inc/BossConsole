@@ -3,6 +3,8 @@ package ai.rever.boss.components.window_panel.components.main_window_panels
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.theme.sidebarGlassEnabled
+import ai.rever.boss.theme.sidebarTileFill
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -111,7 +113,7 @@ internal fun TabBarGroupHeader(
             // rule of the same weight was indistinguishable from just another gap between tabs.
             Divider(
                 modifier = Modifier.fillMaxWidth().padding(top = GROUP_RULE_GAP),
-                color = colors.line,
+                color = if (sidebarGlassEnabled) colors.textPrimary.copy(alpha = 0.14f) else colors.line,
             )
         }
         GroupHeaderRow(group = group, tint = tint, hovered = hovered, hover = headerHover, press = interactionSource)
@@ -141,7 +143,13 @@ private fun GroupHeaderRow(
                 .height(GROUP_HEADER_HEIGHT)
                 .hoverable(hover)
                 .hoverable(press)
-                .background(if (hovered) colors.raised else Color.Transparent)
+                .background(
+                    if (hovered) {
+                        if (sidebarGlassEnabled) sidebarTileFill(hovered = true) else colors.raised
+                    } else {
+                        Color.Transparent
+                    },
+                )
                 // combinedClickable, so the row answers both gestures: single to go there, double
                 // to show it alone. The map's own panes are wired exactly this way.
                 .combinedClickable(

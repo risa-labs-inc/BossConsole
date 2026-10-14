@@ -1,7 +1,12 @@
 package ai.rever.boss.components.overlays
 
+import ai.rever.boss.components.window_panel.components.main_window_panels.besideLeadingRail
+import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -25,22 +30,35 @@ class HeavyweightCornerTest {
     fun `top end sits at the parent's right edge, not the screen's`() {
         // 100 + (1000 - 432) = 668, i.e. offset from the PARENT origin. Using the screen origin
         // instead is the classic version of this bug and lands the toast on the wrong monitor.
-        assertEquals(668 to 50, cornerPosition(parent, size, Alignment.TopEnd))
+        assertEquals(668 to 50, cornerPosition(parent, size, Alignment.TopEnd, LayoutDirection.Ltr))
     }
 
     @Test
     fun `top start sits at the parent origin`() {
-        assertEquals(100 to 50, cornerPosition(parent, size, Alignment.TopStart))
+        assertEquals(100 to 50, cornerPosition(parent, size, Alignment.TopStart, LayoutDirection.Ltr))
+    }
+
+    @Test
+    fun `start and end follow right to left layout direction`() {
+        assertEquals(668 to 50, cornerPosition(parent, size, Alignment.TopStart, LayoutDirection.Rtl))
+        assertEquals(100 to 50, cornerPosition(parent, size, Alignment.TopEnd, LayoutDirection.Rtl))
     }
 
     @Test
     fun `bottom end offsets by both slacks`() {
-        assertEquals(668 to 650, cornerPosition(parent, size, Alignment.BottomEnd))
+        assertEquals(668 to 650, cornerPosition(parent, size, Alignment.BottomEnd, LayoutDirection.Ltr))
     }
 
     @Test
     fun `center centres on both axes`() {
-        assertEquals(384 to 350, cornerPosition(parent, size, Alignment.Center))
+        assertEquals(384 to 350, cornerPosition(parent, size, Alignment.Center, LayoutDirection.Ltr))
+    }
+
+    @Test
+    fun `fractional sizes round instead of clipping a pixel`() {
+        val fractional = DpSize(432.6.dp, 200.6.dp)
+
+        assertEquals(667 to 649, cornerPosition(parent, fractional, Alignment.BottomEnd, LayoutDirection.Ltr))
     }
 
     @Test
@@ -48,13 +66,13 @@ class HeavyweightCornerTest {
         // A negative slack would put the toast above and left of the window, where it is off screen
         // and its dismiss button is unreachable. Floor at the parent origin instead.
         val huge = DpSize(2000.dp, 2000.dp)
-        assertEquals(100 to 50, cornerPosition(parent, huge, Alignment.TopEnd))
-        assertEquals(100 to 50, cornerPosition(parent, huge, Alignment.BottomEnd))
+        assertEquals(100 to 50, cornerPosition(parent, huge, Alignment.TopEnd, LayoutDirection.Ltr))
+        assertEquals(100 to 50, cornerPosition(parent, huge, Alignment.BottomEnd, LayoutDirection.Ltr))
     }
 
     @Test
     fun `unmeasured parent falls back to the origin`() {
-        assertEquals(0 to 0, cornerPosition(null, size, Alignment.TopEnd))
+        assertEquals(0 to 0, cornerPosition(null, size, Alignment.TopEnd, LayoutDirection.Ltr))
     }
 
     // --- insetBounds: anchoring to a sub-region of the window ---
@@ -64,12 +82,12 @@ class HeavyweightCornerTest {
         // Identity, not merely equal contents: every existing caller passes zero, and returning a
         // fresh array would make the placement effect's key change on every recomposition - one
         // native setLocation per frame, for nothing.
-        assertSame(parent, insetBounds(parent, DpSize.Zero))
+        assertSame(parent, insetBounds(parent, DpSize.Zero, LayoutDirection.Ltr))
     }
 
     @Test
     fun `an inset shrinks the far edges and leaves the origin alone`() {
-        val region = insetBounds(parent, DpSize(48.dp, 24.dp))
+        val region = insetBounds(parent, DpSize(48.dp, 24.dp), LayoutDirection.Ltr)
         assertEquals(listOf(100, 50, 952, 776), region?.toList())
     }
 
@@ -77,12 +95,12 @@ class HeavyweightCornerTest {
     fun `bottom end moves in by exactly the inset while top start does not move at all`() {
         // The whole point of expressing this as a smaller rectangle: a caller inset from the right
         // and the bottom has not moved its top-left corner, so a near-corner anchor must not move.
-        val region = insetBounds(parent, DpSize(48.dp, 24.dp))
+        val region = insetBounds(parent, DpSize(48.dp, 24.dp), LayoutDirection.Ltr)
 
-        assertEquals(620 to 626, cornerPosition(region, size, Alignment.BottomEnd))
+        assertEquals(620 to 626, cornerPosition(region, size, Alignment.BottomEnd, LayoutDirection.Ltr))
         assertEquals(
-            cornerPosition(parent, size, Alignment.TopStart),
-            cornerPosition(region, size, Alignment.TopStart),
+            cornerPosition(parent, size, Alignment.TopStart, LayoutDirection.Ltr),
+            cornerPosition(region, size, Alignment.TopStart, LayoutDirection.Ltr),
         )
     }
 
@@ -91,15 +109,15 @@ class HeavyweightCornerTest {
         // A negative extent reads as slack in cornerPosition, which would place the overlay outside
         // the parent entirely - the failure mode the floor in cornerPosition exists to prevent,
         // reintroduced one layer up.
-        val region = insetBounds(parent, DpSize(4000.dp, 4000.dp))
+        val region = insetBounds(parent, DpSize(4000.dp, 4000.dp), LayoutDirection.Ltr)
 
         assertEquals(listOf(100, 50, 0, 0), region?.toList())
-        assertEquals(100 to 50, cornerPosition(region, size, Alignment.BottomEnd))
+        assertEquals(100 to 50, cornerPosition(region, size, Alignment.BottomEnd, LayoutDirection.Ltr))
     }
 
     @Test
     fun `an unmeasured parent stays unmeasured through an inset`() {
-        assertNull(insetBounds(null, DpSize(48.dp, 24.dp)))
+        assertNull(insetBounds(null, DpSize(48.dp, 24.dp), LayoutDirection.Ltr))
     }
 
     // --- bounds tracking: the decisions the AWT listeners make ---
@@ -153,5 +171,49 @@ class HeavyweightCornerTest {
         // A null region says nothing about how big the content may be, so the first-frame size is
         // the only available bound - the same choice the previous clamp made.
         assertEquals(DpSize(432.dp, 600.dp), regionCeiling(null, DpSize(432.dp, 600.dp)))
+    }
+
+    @Test
+    fun `RTL end inset moves the left edge and preserves the right edge`() {
+        val region = resolveRegion(parent, DpSize(48.dp, 24.dp), null, LayoutDirection.Rtl)
+        assertEquals(listOf(148, 50, 952, 776), region?.toList())
+        assertEquals(148 to 626, cornerPosition(region, size, Alignment.BottomEnd, LayoutDirection.Rtl))
+        assertEquals(668 to 50, cornerPosition(region, size, Alignment.TopStart, LayoutDirection.Rtl))
+    }
+
+    @Test
+    fun `RTL drawer stays beside the retained right rail within the explicit panel`() {
+        val panel = IntRect(40, 12, 520, 612).besideLeadingRail(36.dp, LayoutDirection.Rtl)
+        assertEquals(IntRect(40, 12, 484, 612), panel)
+        val region = resolveRegion(parent, DpSize.Zero, panel, LayoutDirection.Rtl)
+        assertEquals(384 to 62, cornerPosition(region, DpSize(200.dp, 100.dp), Alignment.TopStart, LayoutDirection.Rtl))
+        val narrow = IntRect(40, 12, 50, 612).besideLeadingRail(36.dp, LayoutDirection.Rtl)
+        assertEquals(narrow.left, narrow.right)
+    }
+
+    @Test
+    fun `RTL oversized content clamps inside the inset region`() {
+        val region = insetBounds(parent, DpSize(48.dp, 24.dp), LayoutDirection.Rtl)
+        val huge = DpSize(2000.dp, 2000.dp)
+        assertEquals(148 to 50, cornerPosition(region, huge, Alignment.TopStart, LayoutDirection.Rtl))
+        assertEquals(148 to 50, cornerPosition(region, huge, Alignment.BottomEnd, LayoutDirection.Rtl))
+    }
+
+    @Test
+    fun `absolute alignment does not mirror and custom bias is honored`() {
+        assertEquals(100 to 50, cornerPosition(parent, size, AbsoluteAlignment.TopLeft, LayoutDirection.Rtl))
+        assertEquals(526 to 350, cornerPosition(parent, size, BiasAlignment(0.5f, 0f), LayoutDirection.Ltr))
+    }
+
+    @Test
+    fun `odd center slack and fractional round down follow Compose`() {
+        assertEquals(
+            385 to 350,
+            cornerPosition(intArrayOf(100, 50, 1001, 800), size, Alignment.Center, LayoutDirection.Ltr),
+        )
+        assertEquals(
+            668 to 650,
+            cornerPosition(parent, DpSize(432.4.dp, 200.4.dp), Alignment.BottomEnd, LayoutDirection.Ltr),
+        )
     }
 }

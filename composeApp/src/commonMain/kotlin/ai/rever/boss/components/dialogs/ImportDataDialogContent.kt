@@ -79,7 +79,7 @@ internal fun ChooseSourceContent(
         Spacer(Modifier.height(BossTheme.space.lg))
         SectionLabel("FROM A FILE")
         Text(
-            "Passwords from CSV, bookmarks from HTML - Chrome ⋮ ▸ Passwords ▸ Export, " +
+            "Passwords from CSV, Bitwarden JSON or KeePass XML; bookmarks from HTML - Chrome ⋮ ▸ Passwords ▸ Export, " +
                 "Safari File ▸ Export, Firefox Passwords ▸ Export Logins.",
             style = BossTheme.type.body,
             color = BossTheme.colors.textSecondary,

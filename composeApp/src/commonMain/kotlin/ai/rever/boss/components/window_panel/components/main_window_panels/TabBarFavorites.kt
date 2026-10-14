@@ -1,6 +1,7 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
 import ai.rever.boss.cache.loadHighQualityFavicon
+import ai.rever.boss.components.home.HomeNavigationButton
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropTarget
 import ai.rever.boss.components.overlays.ContextMenuItem
@@ -11,6 +12,7 @@ import ai.rever.boss.components.plugin.PanelIds
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.bookmark.Bookmark
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.theme.sidebarTileFill
 import ai.rever.boss.window.LocalWindowId
 import ai.rever.boss.window.MenuActionsHandler
 import androidx.compose.foundation.Image
@@ -23,6 +25,7 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -72,9 +75,6 @@ private val FAVORITE_TILE_RADIUS = 10.dp
 /** Gap between tiles, in both directions. */
 private val FAVORITE_TILE_GAP = 6.dp
 
-/** Tiles per row before wrapping. Four 40dp tiles and three 6dp gaps fit inside a 200dp bar. */
-private const val FAVORITES_PER_ROW = 4
-
 /**
  * Arc's Favorites: an icon-only grid of bookmarks pinned above everything else in the sidebar.
  *
@@ -82,7 +82,8 @@ private const val FAVORITES_PER_ROW = 4
  * constantly, so they are recognised by their favicon long before a title would be read, and a
  * grid of them costs four rows' height instead of twenty. Titles live in the tooltip.
  *
- * **Owned by the bookmarks plugin, not the host.** BOSS has no bookmark store of its own -
+ * Home is a built-in first tile and remains available without the bookmarks plugin.
+ * Saved bookmarks are owned by the bookmarks plugin. BOSS has no bookmark store of its own -
  * `BookmarkAPIAccess` returns null for everything when that plugin is absent - so this section
  * offers to install it rather than rendering an empty grid that could never fill. That offer goes
  * through the same prompt the install-time dependency flow uses, so it arrives with a working
@@ -94,8 +95,8 @@ private const val FAVORITES_PER_ROW = 4
  * |---|---|---|
  * | absent | - | offer to install it |
  * | installed | no | say it is not running, and do NOT offer to install it again |
- * | installed | yes, nothing saved | say how to save one |
- * | installed | yes, saved | the tiles |
+ * | installed | yes, nothing saved | Home tile |
+ * | installed | yes, saved | Home followed by saved tiles |
  *
  * The middle row is not hypothetical: a plugin whose jar fails BinaryCompatibilityValidator is
  * installed, enabled, and disabled at load, so its API is unreachable while every "is it
@@ -118,7 +119,7 @@ private const val FAVORITES_PER_ROW = 4
  * @param trailing the collapse chevron or the pin, on the SAME line as the label. It lived on a
  *   row of its own first, which spent a whole line of a narrow bar on one 16dp glyph.
  * @param onOpen opens the Bookmarks panel, or null when there is no panel to open. The shelf
- *   shows four favourites; the label is the way to the rest of them, which is what a section
+ *   shows pinned favourites; the label opens all bookmarks, which is what a section
  *   header pointing at a plugin should do. Null leaves the label inert rather than clickable and
  *   silent - see [TabBarFavorites] for when.
  */
@@ -167,6 +168,7 @@ fun TabBarFavorites(
     onOpen: (Bookmark) -> Unit,
     onRemove: (Bookmark) -> Unit,
     onInstallPlugin: () -> Unit,
+    homeSelected: Boolean = false,
     trailing: @Composable () -> Unit = {},
     /**
      * The drag system, so a tab can be dropped here to bookmark it.
@@ -219,6 +221,14 @@ fun TabBarFavorites(
                 },
         )
 
+        FavoritesGrid(
+            bookmarks = if (pluginInstalled == true && apiReachable) bookmarks else emptyList(),
+            onOpen = onOpen,
+            onRemove = onRemove,
+            homeSelected = homeSelected,
+            onHome = { windowId?.let { MenuActionsHandler.triggerGoHome(it) } },
+        )
+
         when {
             pluginInstalled == false -> {
                 FavoritesEmptyState(
@@ -240,43 +250,32 @@ fun TabBarFavorites(
                     onAction = {},
                 )
             }
-
-            bookmarks.isEmpty() -> {
-                FavoritesEmptyState(
-                    headline = "No Favorites yet",
-                    // Names the exact menu item, because a hint that only says the feature exists
-                    // leaves someone looking for a control that is two levels into a context menu.
-                    body = "Right-click a tab and choose Bookmark to keep it here",
-                    actionLabel = null,
-                    onAction = {},
-                )
-            }
-
-            else -> {
-                FavoritesGrid(bookmarks = bookmarks, onOpen = onOpen, onRemove = onRemove)
-            }
         }
     }
 }
 
-/** The tiles, wrapped [FAVORITES_PER_ROW] to a row. */
+/** Fixed-size tiles that wrap according to the available sidebar width. */
 @Composable
 private fun FavoritesGrid(
     bookmarks: List<Bookmark>,
     onOpen: (Bookmark) -> Unit,
     onRemove: (Bookmark) -> Unit,
+    homeSelected: Boolean,
+    onHome: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(FAVORITE_TILE_GAP)) {
-        bookmarks.chunked(FAVORITES_PER_ROW).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(FAVORITE_TILE_GAP)) {
-                row.forEach { bookmark ->
-                    FavoriteTile(
-                        bookmark = bookmark,
-                        onOpen = { onOpen(bookmark) },
-                        onRemove = { onRemove(bookmark) },
-                    )
-                }
-            }
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(FAVORITE_TILE_GAP),
+        verticalArrangement = Arrangement.spacedBy(FAVORITE_TILE_GAP),
+    ) {
+        // Home is a built-in favorite, independent of the optional bookmark store.
+        HomeNavigationButton(selected = homeSelected, onClick = onHome)
+        bookmarks.forEach { bookmark ->
+            FavoriteTile(
+                bookmark = bookmark,
+                onOpen = { onOpen(bookmark) },
+                onRemove = { onRemove(bookmark) },
+            )
         }
     }
 }
@@ -333,7 +332,7 @@ private fun FavoriteTile(
                 .size(FAVORITE_TILE_SIZE)
                 .clip(RoundedCornerShape(FAVORITE_TILE_RADIUS))
                 // Hover lifts the tile rather than the icon, so the whole target reads as live.
-                .background(if (hovered) colors.signalWash else colors.raised)
+                .background(sidebarTileFill(hovered))
                 .hoverable(interactionSource)
                 .contextMenu(
                     items =

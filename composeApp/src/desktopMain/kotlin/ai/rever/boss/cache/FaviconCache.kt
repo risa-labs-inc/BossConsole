@@ -44,13 +44,18 @@ object FaviconCache {
      *
      * @param url The URL associated with this favicon (used to generate cache key)
      * @param imageBitmap The favicon ImageBitmap to cache
+     * @param scheme The colour scheme the page rendered under. When given, the icon is also kept as
+     *   that scheme's variant and the returned key names it, so a site that serves a different icon
+     *   per `prefers-color-scheme` keeps one of each, and a tab restored under the other theme can
+     *   find the right one (see [loadFavicon]).
      * @return The cache key, or null if the favicon exceeds the size limit and nothing usable is
      *   already cached for [url]
      */
     fun saveFavicon(
         url: String,
         imageBitmap: ImageBitmap,
-    ): String? = saveFavicon(url, imageBitmap, cacheDir)
+        scheme: FaviconScheme? = null,
+    ): String? = saveFavicon(url, imageBitmap, cacheDir, scheme)
 
     /**
      * [saveFavicon] against an explicit directory, so the branch that decides whether a tab keeps
@@ -64,6 +69,7 @@ object FaviconCache {
         url: String,
         imageBitmap: ImageBitmap,
         dir: File,
+        scheme: FaviconScheme? = null,
     ): String? {
         var cacheFile: File? = null
         var tempFile: File? = null
@@ -93,7 +99,7 @@ object FaviconCache {
                 // favicon after the first for a given URL failed there - and the cache outlives the
                 // process, so "the first" was usually some previous run. See File.atomicMoveFrom.
                 cacheFile.atomicMoveFrom(tempFile)
-                cacheKey
+                scheme?.let { saveSchemeVariant(cacheKey, cacheFile, dir, it) } ?: cacheKey
             }
         } catch (e: Exception) {
             // servedStaleCache separates "favicons are stale" from "favicons are gone" in a log,
@@ -137,35 +143,11 @@ object FaviconCache {
     ): String? = cacheKey?.takeIf { cacheFile.exists() }
 
     /**
-     * Loads a favicon from the cache.
-     * @param cacheKey The cache key generated from the URL
+     * Loads a favicon from the cache, preferring the variant for the theme on screen now.
+     * @param cacheKey The key [saveFavicon] returned
      * @return ai.rever.boss.plugin.api.TabIcon.Image if found, null if not found or on error
      */
-    fun loadFavicon(cacheKey: String): ai.rever.boss.plugin.api.TabIcon.Image? {
-        try {
-            val cacheFile = File(cacheDir, "$cacheKey.png")
-
-            if (!cacheFile.exists()) {
-                return null
-            }
-
-            // Read PNG file
-            val bufferedImage = ImageIO.read(cacheFile)
-            if (bufferedImage == null) {
-                logger.warn(LogCategory.BROWSER, "Failed to read cached favicon", mapOf("cacheKey" to cacheKey))
-                return null
-            }
-
-            // Convert to Compose ImageBitmap
-            val imageBitmap = bufferedImage.toComposeImageBitmap()
-            val painter = BitmapPainter(imageBitmap)
-            return ai.rever.boss.plugin.api.TabIcon
-                .Image(painter)
-        } catch (e: Exception) {
-            logger.warn(LogCategory.BROWSER, "Error loading favicon", mapOf("cacheKey" to cacheKey), error = e)
-            return null
-        }
-    }
+    fun loadFavicon(cacheKey: String): TabIcon.Image? = loadSchemeFavicon(cacheKey, FaviconScheme.current(), cacheDir)
 
     /**
      * Clears all cached favicons.

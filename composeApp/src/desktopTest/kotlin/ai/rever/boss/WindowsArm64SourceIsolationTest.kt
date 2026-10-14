@@ -34,6 +34,7 @@ class WindowsArm64SourceIsolationTest {
             "ai.rever.boss.ipc.",
             "ai.rever.boss.ui.sdk.",
             "ai.rever.boss.process.",
+            "ai.rever.boss.plugin.ipc.",
         )
 
     /** Path fragments dropped from `desktopMain` on Windows ARM64. */
@@ -50,15 +51,22 @@ class WindowsArm64SourceIsolationTest {
         listOf(
             "/kernel/",
             "/plugin/remote/",
+            "/plugin/OopPluginDisableLifecycleTest.kt",
+            "/plugin/OutOfProcessPluginSpawnerLifecycleTest.kt",
+            "/plugin/OutOfProcessSpawnerEpochFencingTest.kt",
             "/plugin/IpcCompatibilityTest.kt",
             "/plugin/PluginStoreSetupIpcGateTest.kt",
             "/plugin/PluginStateDeltaTest.kt",
             "/plugin/PluginProcessIdTest.kt",
             "/run/DesktopRunnerTerminalServiceTest.kt",
+            "/git/GitRunInTerminalQuotingTest.kt",
         )
 
-    /** Excluded for reasons unrelated to the platform, so not part of the mirror. */
-    private val unconditionalExclusions = listOf("/SkipListDriftTest.kt")
+    /**
+     * Excluded when `plugin-api-ipc` is absent rather than by the directory mirror, so not
+     * part of it: both test files import `ai.rever.boss.plugin.ipc`.
+     */
+    private val unconditionalExclusions = listOf("/SkipListDriftTest.kt", "/DownloadsDirectoryConsistencyTest.kt")
 
     private fun repoRoot(): File? =
         generateSequence(File("").absoluteFile) { it.parentFile }

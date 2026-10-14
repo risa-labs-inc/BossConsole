@@ -1,0 +1,12 @@
+[
+  {"name": "leading vertical noise", "samples": [[0, 1], [-20, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0]], "expected": ["back"], "cancelled": false},
+  {"name": "leading horizontal jitter", "samples": [[1, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0]], "expected": [], "cancelled": false},
+  {"name": "vertical curl cancelled", "samples": [[0, 80], [-20, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0]], "expected": [], "cancelled": false},
+  {"name": "ease below threshold", "samples": [[-20, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0], [50, 0]], "expected": [], "cancelled": false},
+  {"name": "reversal", "samples": [[-20, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0], [150, 0]], "expected": [], "cancelled": false},
+  {"name": "zero crossing reversal", "samples": [[-20, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0], [120, 0], [-20, 0]], "expected": [], "cancelled": false},
+  {"name": "vertical after threshold", "samples": [[-20, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0], [0, 300], [-1, 0]], "expected": ["back"], "cancelled": false},
+  {"name": "short flick", "samples": [[-10, 0], [-10, 0], [-10, 0]], "expected": [], "cancelled": false},
+  {"name": "cancelled contact", "samples": [[-20, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0], [-20, 0]], "expected": [], "cancelled": true},
+  {"name": "forward", "samples": [[20, 0], [20, 0], [20, 0], [20, 0], [20, 0], [20, 0]], "expected": ["forward"], "cancelled": false}
+]

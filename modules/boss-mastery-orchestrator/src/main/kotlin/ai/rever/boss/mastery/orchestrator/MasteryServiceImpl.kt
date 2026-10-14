@@ -16,16 +16,18 @@ import ai.rever.boss.ipc.proto.MasteryStatus
 import ai.rever.boss.ipc.proto.MasterySummary
 import ai.rever.boss.ipc.proto.NodeCompleted
 import ai.rever.boss.ipc.proto.NodeFailed
+import ai.rever.boss.ipc.proto.NodeSkipped
 import ai.rever.boss.ipc.proto.NodeStarted
 import ai.rever.boss.mastery.MasteryExecutor
+import io.grpc.Status
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import org.slf4j.LoggerFactory
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import ai.rever.boss.ipc.proto.MasteryDefinition as PMasteryDef
 import ai.rever.boss.ipc.proto.MasteryEdge as PMasteryEdge
 import ai.rever.boss.ipc.proto.MasteryNode as PMasteryNode
@@ -43,58 +45,83 @@ import ai.rever.boss.mastery.MasteryProgress as KProgress
  */
 class MasteryServiceImpl(
     private val executor: MasteryExecutor,
+    private val definitionLimit: Int = 256,
+    private val executionLimit: Int = 8,
+    private val historyLimit: Int = 256,
 ) : MasteryServiceGrpcKt.MasteryServiceCoroutineImplBase() {
     private val logger = LoggerFactory.getLogger(MasteryServiceImpl::class.java)
 
-    private val definitions = ConcurrentHashMap<String, KMasteryDef>()
-    private val runningJobs = ConcurrentHashMap<String, Job>()
-    private val execStatus = ConcurrentHashMap<String, MasteryStatus>()
+    init {
+        require(definitionLimit > 0 && executionLimit > 0 && historyLimit >= executionLimit)
+    }
+
+    private val stateLock = Any()
+    private val definitions = linkedMapOf<String, KMasteryDef>()
+    private val runningJobs = mutableMapOf<String, Job>()
+    private val execStatus = linkedMapOf<String, MasteryStatus>()
 
     override suspend fun createMastery(request: PMasteryDef): MasteryId {
+        validateDefinition(request)
         val kotlinDef = request.toKotlin()
         val id = kotlinDef.id.ifBlank { UUID.randomUUID().toString() }
-        definitions[id] = kotlinDef.copy(id = id)
+        synchronized(stateLock) {
+            if (id !in definitions && definitions.size >= definitionLimit) {
+                throw Status.RESOURCE_EXHAUSTED.withDescription("Mastery definition limit reached").asRuntimeException()
+            }
+            definitions[id] = kotlinDef.copy(id = id)
+        }
         logger.info("Mastery created: id={}, name={}", id, kotlinDef.name)
         return MasteryId.newBuilder().setId(id).build()
     }
 
     override fun executeMastery(request: ExecuteMasteryRequest): Flow<PProgress> =
         flow {
-            val def =
-                definitions[request.masteryId] ?: run {
-                    logger.warn("ExecuteMastery: definition not found: {}", request.masteryId)
-                    return@flow
-                }
-
-            val executionId = UUID.randomUUID().toString()
-            logger.info("Starting mastery execution: id={}, masteryId={}", executionId, def.id)
-            updateStatus(executionId, request.masteryId, "running")
-
-            try {
-                coroutineScope {
-                    // Register the coroutineScope's Job BEFORE any suspension point to prevent
-                    // a cancel-window race where cancelMastery() arrives before registration (M9 fix).
-                    runningJobs[executionId] = coroutineContext[Job]!!
-
+            if (request.serializedSize > 65_536) {
+                throw masteryLimit("Mastery execution input exceeds 64 KiB")
+            }
+            coroutineScope {
+                val executionId = UUID.randomUUID().toString()
+                val def =
+                    synchronized(stateLock) {
+                        val definition =
+                            definitions[request.masteryId]
+                                ?: throw Status.NOT_FOUND.asRuntimeException()
+                        if (runningJobs.size >= executionLimit) {
+                            throw masteryLimit("Too many active mastery executions")
+                        }
+                        // Register admission before the first progress event can be observed.
+                        runningJobs[executionId] = checkNotNull(coroutineContext[Job])
+                        updateStatus(executionId, request.masteryId, "running")
+                        definition
+                    }
+                var finalState = "failed"
+                try {
                     executor.execute(def, request.inputMap).collect { progress ->
-                        emit(progress.toProto(executionId))
                         when (progress) {
-                            is KProgress.Completed -> updateStatus(executionId, request.masteryId, "completed")
-                            is KProgress.Failed -> updateStatus(executionId, request.masteryId, "failed")
+                            is KProgress.Completed -> finalState = "completed"
+                            is KProgress.Failed -> finalState = "failed"
                             else -> Unit
                         }
+                        emit(progress.toProto(executionId))
+                    }
+                } catch (e: CancellationException) {
+                    // A node's own timeout does not cancel this execution scope.
+                    finalState = if (coroutineContext.isActive) "failed" else "cancelled"
+                    throw e
+                } finally {
+                    // Cancellation requests never release capacity until the execution actually settles.
+                    synchronized(stateLock) {
+                        runningJobs.remove(executionId)
+                        updateStatus(executionId, request.masteryId, finalState)
                     }
                 }
-            } finally {
-                runningJobs.remove(executionId)
             }
         }
 
     override suspend fun cancelMastery(request: MasteryExecutionId): CancelMasteryResponse {
-        val job = runningJobs.remove(request.executionId)
+        val job = synchronized(stateLock) { runningJobs[request.executionId] }
         return if (job != null) {
             job.cancel()
-            updateStatus(request.executionId, "", "cancelled")
             logger.info("Cancelled execution: {}", request.executionId)
             CancelMasteryResponse
                 .newBuilder()
@@ -111,7 +138,7 @@ class MasteryServiceImpl(
     }
 
     override suspend fun getMasteryStatus(request: MasteryExecutionId): MasteryStatus =
-        execStatus[request.executionId]
+        synchronized(stateLock) { execStatus[request.executionId] }
             ?: MasteryStatus
                 .newBuilder()
                 .setExecutionId(request.executionId)
@@ -131,8 +158,9 @@ class MasteryServiceImpl(
     }
 
     override suspend fun listMasteries(request: ListMasteriesRequest): ListMasteriesResponse {
+        validateArgument(request.offset >= 0 && request.limit >= 0) { "Pagination must be nonnegative" }
         val all: List<KMasteryDef> =
-            definitions.values
+            synchronized(stateLock) { definitions.values.toList() }
                 .filter { def ->
                     request.filter.isBlank() ||
                         def.name.contains(request.filter, ignoreCase = true) ||
@@ -164,7 +192,7 @@ class MasteryServiceImpl(
     }
 
     override suspend fun deleteMastery(request: MasteryId): Empty {
-        definitions.remove(request.id)
+        synchronized(stateLock) { definitions.remove(request.id) }
         logger.info("Mastery deleted: id={}", request.id)
         return Empty.getDefaultInstance()
     }
@@ -186,6 +214,10 @@ class MasteryServiceImpl(
             builder.setCompletedAt(System.currentTimeMillis())
         }
         execStatus[executionId] = builder.build()
+        val iterator = execStatus.entries.iterator()
+        while (execStatus.size > historyLimit && iterator.hasNext()) {
+            if (iterator.next().key !in runningJobs) iterator.remove()
+        }
     }
 }
 
@@ -272,7 +304,7 @@ private fun KMasteryDef.toProto(): PMasteryDef {
     return b.build()
 }
 
-private fun KProgress.toProto(executionId: String): PProgress {
+internal fun KProgress.toProto(executionId: String): PProgress {
     val b =
         PProgress
             .newBuilder()
@@ -321,6 +353,16 @@ private fun KProgress.toProto(executionId: String): PProgress {
             )
         }
 
+        is KProgress.NodeSkipped -> {
+            b.setNodeSkipped(
+                NodeSkipped
+                    .newBuilder()
+                    .setNodeId(nodeId)
+                    .setReason(reason)
+                    .build(),
+            )
+        }
+
         is KProgress.Completed -> {
             b.setCompleted(
                 MasteryCompleted
@@ -342,4 +384,41 @@ private fun KProgress.toProto(executionId: String): PProgress {
         }
     }
     return b.build()
+}
+
+/**
+ * Validates one definition's encoded size, node count, retry count and timeout bounds.
+ *
+ * Edge `condition` (and the equally unevaluated `outputKey`/`inputKey` pair) are rejected
+ * rather than accepted-and-ignored: the executor resolves dependencies purely
+ * topologically and never evaluates edge expressions, so a definition carrying a
+ * condition would run its guarded nodes unconditionally (#1060). Refusing the
+ * definition keeps the schema's documented contract honest until an expression
+ * language actually exists.
+ */
+private fun validateDefinition(request: PMasteryDef) {
+    validateArgument(request.id.length <= 200 && request.name.length <= 512 && request.author.length <= 512) {
+        "Mastery identifiers or summary fields exceed the size limit"
+    }
+    validateArgument(request.description.length <= 4096) { "Mastery description exceeds the size limit" }
+    if (request.serializedSize > 65_536 || request.nodesCount > 128 || request.edgesCount > 512) {
+        throw masteryLimit("Mastery definition exceeds service limits")
+    }
+    validateArgument(request.nodesList.all { it.maxRetries in 0..5 && it.timeoutMs in 0..300_000 }) {
+        "Mastery nodes support at most 5 retries and a 5-minute timeout"
+    }
+    validateArgument(request.edgesList.none { it.condition.isNotBlank() }) {
+        "Mastery edge conditions are not supported yet: the executor does not evaluate " +
+            "them, so a conditioned edge would run its target node unconditionally. " +
+            "Remove the condition or split the workflow (#1060)"
+    }
+}
+
+private fun masteryLimit(message: String) = Status.RESOURCE_EXHAUSTED.withDescription(message).asRuntimeException()
+
+private inline fun validateArgument(
+    valid: Boolean,
+    message: () -> String,
+) {
+    if (!valid) throw Status.INVALID_ARGUMENT.withDescription(message()).asRuntimeException()
 }

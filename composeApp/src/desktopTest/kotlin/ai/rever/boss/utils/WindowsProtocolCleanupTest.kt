@@ -393,6 +393,74 @@ class WindowsProtocolCleanupTest {
         assertEquals("(none)", maskUserPath(null))
     }
 
+    @Test
+    fun `masks the account name whichever separator the path uses`() {
+        // Windows accepts both spellings, and the registry values masked here are not
+        // all written by BOSS. Matching only backslashes logged the name verbatim.
+        assertEquals(
+            "C:/Users/***/AppData/Local/BOSS/BOSS.exe",
+            maskUserPath("C:/Users/me/AppData/Local/BOSS/BOSS.exe"),
+        )
+        assertEquals(
+            "C:/Documents and Settings/***/BOSS/BOSS.exe",
+            maskUserPath("C:/Documents and Settings/me/BOSS/BOSS.exe"),
+        )
+    }
+
+    @Test
+    fun `only a whole path segment named Users counts`() {
+        // This is the property that makes the `+` on the separators safe: a separator is
+        // required on BOTH sides, so "Users" never matches as part of a longer name. If
+        // it ever did, the masker would start eating unrelated directories. Cases from
+        // @arjun28115's review on #1343.
+        val notAccountRoots =
+            listOf(
+                """C:\PowerUsers\me\x""",
+                """C:\Users-old\me\x""",
+                """D:\Backup\MyUsers\me""",
+                """C:\Data\Users.txt""",
+                """C:\UsersData\me""",
+            )
+        notAccountRoots.forEach { untouched ->
+            assertEquals(untouched, maskUserPath(untouched), "masked a directory that is not an account root")
+        }
+    }
+
+    @Test
+    fun `any Users segment qualifies, not only the one at the drive root`() {
+        // Deliberate: an archived or copied per-user directory gets its next segment
+        // masked too. For a privacy masker, over-masking is the safe direction, and a
+        // segment sitting under a directory named Users is a plausible account name.
+        // Pinned so the behaviour is a decision rather than an accident.
+        assertEquals(
+            """D:\Archive\Users\***\f.txt""",
+            maskUserPath("""D:\Archive\Users\alice\f.txt"""),
+        )
+    }
+
+    @Test
+    fun `masks the account name when the separators arrived escaped`() {
+        // A value that reached the log with its separators doubled is foreign text for
+        // the same reason a forward-slash one is: BOSS did not write it. Matching a
+        // single separator left the account-name class starting on the second one, so
+        // the match was abandoned and the name went out verbatim.
+        assertEquals(
+            """C:\\Users\\***\\AppData""",
+            maskUserPath("""C:\\Users\\me\\AppData"""),
+        )
+    }
+
+    @Test
+    fun `masks only the account segment of a mixed-separator path`() {
+        // The account-name character class has to exclude BOTH separators. Excluding
+        // only the backslash, the name ran on past a forward slash and took every
+        // remaining segment with it - masking the whole tail rather than the name.
+        assertEquals(
+            """C:\Users/***/AppData/Local/BOSS/BOSS.exe""",
+            maskUserPath("""C:\Users/me/AppData/Local/BOSS/BOSS.exe"""),
+        )
+    }
+
     // endregion
 
     @Test

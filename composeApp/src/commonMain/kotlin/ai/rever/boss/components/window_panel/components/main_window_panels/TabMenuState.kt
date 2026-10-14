@@ -254,7 +254,7 @@ fun BossTabsComponent.rememberTabMenuState(
                 val isFavorited = BookmarkAPIAccess.isFavorite(currentWorkspace.id)
                 add(
                     ContextMenuItem(
-                        if (isFavorited) "Unfavorite Workspace" else "Favorite Workspace",
+                        if (isFavorited) "Unfavorite Space" else "Favorite Space",
                         // The icon shows what the action DOES, matching the label: "Unfavorite"
                         // empties the star, "Favorite" fills it.
                         if (isFavorited) Icons.Outlined.StarBorder else Icons.Filled.Star,
@@ -343,7 +343,7 @@ fun BossTabsComponent.rememberTabMenuState(
             // Bookmark dialog (gracefully handles missing bookmarks plugin)
             if (showBookmarkDialog && tabToBookmark != null) {
                 val dialogCollections = rememberBookmarkCollections()
-                val workspaces by workspaceManager.workspaces.collectAsState()
+                val workspaces by workspaceManager.visibleWorkspaces.collectAsState()
                 BookmarkDialog(
                     tabTitle = tabToBookmark!!.title,
                     collections = dialogCollections,

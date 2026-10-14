@@ -234,7 +234,7 @@ fun BrowserEngineSettings() {
                         }
 
                         else -> {
-                            "Published engine versions from Supabase and GitHub"
+                            "Published engine versions with catalog checksums for this platform"
                         }
                     },
                 enabled = !installing,

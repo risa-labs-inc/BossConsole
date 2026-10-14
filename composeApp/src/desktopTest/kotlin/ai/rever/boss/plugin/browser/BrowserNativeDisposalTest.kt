@@ -21,6 +21,38 @@ import kotlin.test.assertTrue
 
 class BrowserNativeDisposalTest {
     @Test
+    fun `forced shutdown removes queued tasks from pending accounting`() {
+        val executor = DrainingBrowserExecutor("test-forced-drain")
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        try {
+            executor.execute {
+                started.countDown()
+                var released = false
+                while (!released) {
+                    try {
+                        release.await()
+                        released = true
+                    } catch (_: InterruptedException) {
+                        // Model a native call that does not end when Java interrupts its worker.
+                    }
+                }
+            }
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            executor.execute { error("Discarded task must not run") }
+            assertEquals(2, executor.pending)
+            assertEquals(1, executor.shutdownNow().size)
+            assertEquals(1, executor.pending)
+        } finally {
+            release.countDown()
+            executor.shutdown()
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
+        }
+        assertEquals(0, executor.pending)
+        assertEquals(0, executor.inFlight)
+    }
+
+    @Test
     fun `view detachment precedes native disposal even when detachment fails`() {
         val order = mutableListOf<String>()
         assertFailsWith<IllegalStateException> {

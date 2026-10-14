@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 
 /**
@@ -119,6 +120,9 @@ internal fun focusQuickActionsVisible(
 
 /** Where the host's own actions belong right now. Mutually exclusive by construction. */
 internal enum class FocusQuickActionsPlacement {
+    /** Native toolbar owns the actions; no content overlay or sidebar copy is needed. */
+    TITLE_BAR,
+
     /** Nowhere: the top bar is up and still owns them. */
     NONE,
 
@@ -248,8 +252,11 @@ internal fun focusQuickActionsPlacement(
      */
     panelFootAvailable: Boolean = false,
     railActionsFit: Boolean = true,
+    titleBarAvailable: Boolean = false,
 ): FocusQuickActionsPlacement =
     when {
+        titleBarAvailable -> FocusQuickActionsPlacement.TITLE_BAR
+
         !focusQuickActionsVisible(settings, topBarHidden, showTopBar) -> FocusQuickActionsPlacement.NONE
 
         // Rail first, unchanged: where there is a right rail these have always gone in it, and it
@@ -604,6 +611,7 @@ internal fun BoxScope.FocusModeQuickActions(
  */
 internal fun Modifier.reportContentInset(
     density: Float,
+    layoutDirection: LayoutDirection,
     onInset: (DpSize) -> Unit,
 ): Modifier =
     onGloballyPositioned { coordinates ->
@@ -616,7 +624,10 @@ internal fun Modifier.reportContentInset(
                 // overlay outside the content pane - the failure `cornerPosition`'s floor prevents,
                 // reintroduced a layer up. `boundsInRoot` clips to the root so it cannot go
                 // negative today; this costs nothing and stops that being load-bearing.
-                ((root.width - bounds.right).coerceAtLeast(0f) / density).dp,
+                (
+                    (if (layoutDirection == LayoutDirection.Rtl) bounds.left else root.width - bounds.right)
+                        .coerceAtLeast(0f) / density
+                ).dp,
                 ((root.height - bounds.bottom).coerceAtLeast(0f) / density).dp,
             ),
         )

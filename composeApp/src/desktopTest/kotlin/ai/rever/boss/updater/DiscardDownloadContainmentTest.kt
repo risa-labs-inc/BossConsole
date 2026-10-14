@@ -1,7 +1,9 @@
 package ai.rever.boss.updater
 
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertFalse
@@ -62,7 +64,14 @@ class DiscardDownloadContainmentTest {
         val dir = createRestrictedDir(defaultStagingDir())
         val link = File(dir, "link-to-victim.dmg")
         link.delete()
-        Files.createSymbolicLink(link.toPath(), victim.toPath())
+        try {
+            Files.createSymbolicLink(link.toPath(), victim.toPath())
+        } catch (_: UnsupportedOperationException) {
+            assumeTrue(false, "This filesystem does not support symbolic links")
+        } catch (e: IOException) {
+            if (!System.getProperty("os.name").startsWith("Windows")) throw e
+            assumeTrue(false, "Symbolic link creation is not permitted on this Windows host")
+        }
 
         service.discardDownload(link.absolutePath)
 

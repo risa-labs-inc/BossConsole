@@ -419,3 +419,23 @@ Deno.test("POST /manage/list - scopes the query to the authenticated caller", as
     'The listing is scoped to the token subject'
   )
 })
+
+Deno.test("POST /manage/list - unexpected route exceptions return a generic 500", async () => {
+  const app = buildApp(createMockSupabaseClient())
+  const originalEnvGet = Deno.env.get
+  const diagnostic = 'private environment diagnostic'
+  Deno.env.get = (key: string) => {
+    if (key === 'SUPABASE_ANON_KEY') throw new Error(diagnostic)
+    return originalEnvGet(key)
+  }
+
+  try {
+    const response = await postJson(app, '/manage/list', {}, ATTACKER_TOKEN)
+    assertEquals(response.status, 500)
+    const body = await response.text()
+    assertEquals(JSON.parse(body), { error: 'Internal server error' })
+    assertEquals(body.includes(diagnostic), false)
+  } finally {
+    Deno.env.get = originalEnvGet
+  }
+})

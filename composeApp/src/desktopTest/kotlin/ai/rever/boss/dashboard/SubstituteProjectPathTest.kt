@@ -41,7 +41,7 @@ class SubstituteProjectPathTest {
     }
 
     @Test
-    fun leavesAlreadyDoubleQuotedTemplateRaw() {
+    fun leavesAlreadyDoubleQuotedTemplateInItsQuoteRegion() {
         // A user who worked around the bug with cd "{projectPath}" must NOT get cd "'…'".
         assertEquals(
             "cd \"$spaced\"",
@@ -50,9 +50,9 @@ class SubstituteProjectPathTest {
     }
 
     @Test
-    fun leavesAlreadySingleQuotedTemplateRaw() {
+    fun escapesApostrophesInAlreadySingleQuotedTemplate() {
         assertEquals(
-            "cd '$spaced'",
+            "cd '${CommandProcessor.escapeInsideQuote(spaced, '\'')}'",
             WorkspacePlaceholders.substituteProjectPath("cd '{projectPath}'", spaced, quote = true),
         )
     }
@@ -74,8 +74,8 @@ class SubstituteProjectPathTest {
      * path was empty - landing on `~/.claude/projects/` itself.
      *
      * Asserted through `{gitRemoteUrl}` and `{claudeContinueFlag}` only. `{projectPath}` is
-     * left out on purpose: its no-project answer is `DefaultWorkingDirectory.ensureDefaultDirectory()`, which
-     * would create `~/BossProjects` on the machine running this.
+     * left out on purpose: its no-project answer is `DefaultWorkingDirectory.ensureDefaultDirectory()`,
+     * which would create `~/BossProjects` on the machine running this.
      *
      * This is the direct-caller path. Every production caller resolves before calling, so with
      * no project selected they all pass `~/BossProjects` and take the has-a-project branch -
@@ -96,5 +96,47 @@ class SubstituteProjectPathTest {
                 "projectPath=${absent.orEmpty().ifEmpty { "<blank>" }}",
             )
         }
+    }
+
+    @Test
+    fun projectPathContainingAmpersandsSurvivesSubstitutionAndNormalization() {
+        val ampersandPath =
+            if (ai.rever.boss.run.ShellUtils.isWindows) {
+                """C:\Users\foo\A && B\proj"""
+            } else {
+                "/Users/foo/A && B/proj"
+            }
+        val quotedAmpersand = CommandProcessor.quotePath(ampersandPath)
+        val expected =
+            if (ai.rever.boss.run.ShellUtils.isWindows) {
+                "cd $quotedAmpersand; claude"
+            } else {
+                "cd $quotedAmpersand && claude"
+            }
+        assertEquals(
+            expected,
+            WorkspacePlaceholders.processPlaceholders(
+                "cd {projectPath} && claude",
+                ampersandPath,
+                quoteProjectPath = true,
+            ),
+        )
+    }
+
+    @Test
+    fun normalizeCommandPreservesAmpersandsInsideQuotedStrings() {
+        if (!ai.rever.boss.run.ShellUtils.isWindows) return
+        assertEquals(
+            "cd 'C:\\A && B'; echo '1 && 2'",
+            CommandProcessor.normalizeCommand("cd 'C:\\A && B' && echo '1 && 2'"),
+        )
+        assertEquals(
+            "echo \"A && B\"; dir",
+            CommandProcessor.normalizeCommand("echo \"A && B\" && dir"),
+        )
+        assertEquals(
+            "cmd1&&cmd2",
+            CommandProcessor.normalizeCommand("cmd1&&cmd2"),
+        )
     }
 }

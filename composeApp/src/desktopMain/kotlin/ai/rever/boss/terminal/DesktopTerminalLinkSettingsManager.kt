@@ -1,8 +1,10 @@
 package ai.rever.boss.terminal
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -10,7 +12,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -35,6 +40,11 @@ actual object TerminalLinkSettingsManager {
 
     // Coroutine scope for async operations - uses SupervisorJob so failures don't cancel other operations
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // Serializes writes so overlapping saves persist in order, freshest last. The mutex alone
+    // only orders them; atomicWriteText (temp file then atomic rename) is what makes each write
+    // crash-safe, so a reader never sees a torn file and a crash mid-write cannot truncate it.
+    private val saveMutex = Mutex()
 
     // Default settings provided immediately, updated async when file is loaded
     private val _currentSettings = MutableStateFlow(TerminalLinkSettings())
@@ -62,28 +72,39 @@ actual object TerminalLinkSettingsManager {
                     _currentSettings.value = settings
                     logger.debug(LogCategory.TERMINAL, "Loaded settings")
                 } else {
-                    // Create default settings file
-                    val content = json.encodeToString(TerminalLinkSettings.serializer(), _currentSettings.value)
-                    settingsFile.writeText(content)
+                    // Create the default settings file under the same lock saveSettings uses, so a
+                    // load-time default write cannot race a concurrent toggle's save and lose it.
+                    saveMutex.withLock {
+                        val content = json.encodeToString(TerminalLinkSettings.serializer(), _currentSettings.value)
+                        settingsFile.atomicWriteText(content)
+                    }
                     logger.debug(LogCategory.TERMINAL, "Created default settings file")
                 }
+            } catch (e: SerializationException) {
+                logger.warn(LogCategory.TERMINAL, "Error loading settings", decodeFailure(e))
+                // Keep default settings on error
             } catch (e: Exception) {
                 logger.warn(LogCategory.TERMINAL, "Error loading settings", error = e)
                 // Keep default settings on error
             }
         }
 
+    internal suspend fun reloadForTest() = loadSettingsAsync()
+
     /**
      * Save current settings to persistent storage.
      */
     actual suspend fun saveSettings() =
         withContext(Dispatchers.IO) {
-            try {
-                val content = json.encodeToString(TerminalLinkSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
-                logger.debug(LogCategory.TERMINAL, "Settings saved")
-            } catch (e: Exception) {
-                logger.warn(LogCategory.TERMINAL, "Error saving settings", error = e)
+            saveMutex.withLock {
+                try {
+                    // Encode inside the lock so the last writer persists the freshest state.
+                    val content = json.encodeToString(TerminalLinkSettings.serializer(), _currentSettings.value)
+                    settingsFile.atomicWriteText(content)
+                    logger.debug(LogCategory.TERMINAL, "Settings saved")
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.TERMINAL, "Error saving settings", error = e)
+                }
             }
         }
 

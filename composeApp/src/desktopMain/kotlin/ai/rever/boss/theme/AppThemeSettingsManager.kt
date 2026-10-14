@@ -1,11 +1,13 @@
 package ai.rever.boss.theme
 
+import ai.rever.boss.components.workspaces.SettingsThemeBaseline
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.plugin.ui.BossThemes
 import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -14,6 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 
 /**
  * Persists the user's host theme choice and keeps the live [BossThemeController]
@@ -51,25 +54,70 @@ object AppThemeSettingsManager {
      * app.
      */
     fun ensureInitialized() {
-        BossThemeController.select(_settings.value.appThemeId)
+        publish(_settings.value.appThemeId)
     }
 
     /** Select a theme: applies it live via [BossThemeController] and persists it. */
     fun select(themeId: String) {
         if (BossThemes.all.none { it.id == themeId }) return
-        BossThemeController.select(themeId)
+        publish(themeId)
         _settings.value = _settings.value.copy(appThemeId = themeId)
         scope.launch { save() }
+    }
+
+    fun updateGlass(
+        coverage: String,
+        style: String,
+        tint: Float,
+        opacity: Float = _settings.value.glassOpacity,
+    ) {
+        _settings.value =
+            _settings.value.copy(
+                glassCoverage = coverage.takeIf { it in setOf("off", "sidebar", "window") } ?: "window",
+                glassStyle = if (style == "clear") "clear" else "regular",
+                glassTint = if (tint.isFinite()) tint.coerceIn(0f, 1f) else DEFAULT_GLASS_TINT,
+                glassOpacity = if (opacity.isFinite()) opacity.coerceIn(0f, 1f) else DEFAULT_GLASS_OPACITY,
+            )
+        scope.launch { save() }
+    }
+
+    /**
+     * Show [themeId] and record it as the Space-theme BASELINE.
+     *
+     * A theme belongs to a Space now: entering one drives [BossThemeController] on its own, and a
+     * Space that names no theme falls back to whatever was chosen here. So the two writes have to
+     * happen together - a settings load that skipped [SettingsThemeBaseline] would leave every
+     * unthemed Space resolving to the compiled-in default the moment the first switch happened.
+     *
+     * It runs in this direction, a push from Settings into `commonMain`, because
+     * [SettingsThemeBaseline] lives beside the Spaces and this object cannot: it resolves a home
+     * directory, so it is desktop-only.
+     *
+     * Picking a theme here while sitting in a Space that HAS one shows the pick immediately, and
+     * leaving that Space and coming back shows the Space's own again. That is the model rather
+     * than an oversight: a Space theme is an override layered over this choice, and refusing to
+     * show what someone just picked would be worse.
+     */
+    private fun publish(themeId: String) {
+        SettingsThemeBaseline.set(themeId)
+        BossThemeController.select(themeId)
     }
 
     private fun loadSync() {
         try {
             val content = if (settingsFile.exists()) settingsFile.readText() else null
             _settings.value = AppThemeSettings.decodeOrDefaults(content, SystemUtils.isWindows)
+        } catch (e: SerializationException) {
+            logger.warn(LogCategory.SYSTEM, "Failed to load app theme settings, using default", decodeFailure(e))
+            _settings.value = platformDefaults
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load app theme settings, using default", error = e)
             _settings.value = platformDefaults
         }
+    }
+
+    internal fun reloadForTest() {
+        loadSync()
     }
 
     private suspend fun save() =

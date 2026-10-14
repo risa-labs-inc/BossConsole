@@ -1,5 +1,6 @@
 package ai.rever.boss.services.supabase
 
+import ai.rever.boss.plugin.logging.LogSanitizer
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import io.github.jan.supabase.logging.LogLevel
@@ -49,13 +50,17 @@ class NamedSupabaseLogging(
         // log: a RestException carries the PostgREST error body, which can echo column values.
         // Other throwable types can still carry server data; keep only the type here.
         // The type is the diagnostic half worth keeping; the library's own text is in `message`.
+        //
+        // Library message text is sanitized through LogSanitizer so sensitive payloads
+        // (such as Supabase JWT access tokens embedded in Realtime websocket frames) are redacted.
         val fields =
             mapOf<String, Any?>(
                 "client" to name,
                 "tag" to tag,
                 "errorType" to throwable?.let { it::class.simpleName },
             )
-        val text = "[$name] $message"
+        val sanitized = LogSanitizer.sanitizeLogMessage(message)
+        val text = "[$name] $sanitized"
         // The library is chatty at debug, so that level stays opt-in via BOSS_LOG_LEVEL
         // rather than being paid for on every run.
         when (level) {

@@ -3,6 +3,8 @@ package ai.rever.boss.components.window_panel.components.main_window_panels
 import ai.rever.boss.components.bars.getPanelScrollbarConfig
 import ai.rever.boss.components.bars.lazyListScrollbar
 import ai.rever.boss.components.dividers.SDivider
+import ai.rever.boss.components.home.HomeNavigationButton
+import ai.rever.boss.components.home.isHomeTab
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.HoverTooltipBox
 import ai.rever.boss.components.overlays.TooltipPlacement
@@ -10,6 +12,8 @@ import ai.rever.boss.components.overlays.contextMenu
 import ai.rever.boss.layout.BossChrome
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.window.LocalWindowId
+import ai.rever.boss.window.MenuActionsHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -183,6 +187,8 @@ fun BossTabRail(
     belowTabs: @Composable () -> Unit = {},
 ) {
     val colors = BossTheme.colors
+    val windowId = LocalWindowId.current
+    val active = groups.firstOrNull { it.isActive } ?: groups.firstOrNull()
     Column(
         modifier = Modifier.fillMaxSize().padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -191,6 +197,11 @@ fun BossTabRail(
             icon = Icons.Default.ChevronRight,
             contentDescription = "Expand tab bar",
             onClick = onExpand,
+        )
+        HomeNavigationButton(
+            selected = active?.state?.let { it.tabs.isEmpty() || isHomeTab(it.tabs.getOrNull(it.activeIndex)) } == true,
+            compact = true,
+            onClick = { windowId?.let { MenuActionsHandler.triggerGoHome(it) } },
         )
         Spacer(Modifier.height(4.dp))
         Box(Modifier.fillMaxWidth(0.6f).height(1.dp).background(colors.line))

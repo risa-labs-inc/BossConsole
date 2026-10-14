@@ -67,12 +67,12 @@ class LoadGateWiringTest {
 
     @Test
     fun `the snapshot is taken before anything downloads`() {
-        // After `mgr.updatePlugin` the old jar may already be gone: that call unloads, promotes and
+        // After `downloadAndActivate` the old jar may already be gone: that call unloads, promotes and
         // then reconciles. A snapshot there would copy nothing and report success.
         val bridge =
             source("composeApp/src/desktopMain/kotlin/ai/rever/boss/components/plugin/PluginUpdateBridge.kt")
         val snapshot = bridge.indexOf("PluginRollbackStore.snapshot(")
-        val update = bridge.indexOf("mgr.updatePlugin(")
+        val update = bridge.indexOf("val result = downloadAndActivate(")
         assertTrue(snapshot in 0 until update, "the snapshot runs after the update has already replaced the jar")
     }
 

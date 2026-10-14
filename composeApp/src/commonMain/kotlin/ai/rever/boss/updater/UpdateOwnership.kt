@@ -197,7 +197,8 @@ class UpdateCoordinator internal constructor(
         // still belongs in the bottom bar. Idempotent, so every window may ask.
         UpdateDownloadCenterMirror.start(this)
 
-        if (!UpdateSettings.autoCheckEnabled) return
+        manager.startAutomaticUpdates()
+        if (!UpdateSettings.autoCheckEnabled && !UpdateSettings.autoUpdateEnabled) return
 
         val startedNow =
             startMutex.withLock {
@@ -229,7 +230,7 @@ class UpdateCoordinator internal constructor(
     /** Enable or disable the periodic check loop (settings toggle). */
     suspend fun setPeriodicChecksEnabled(enabled: Boolean) {
         if (isShutDown) return
-        if (enabled) ensureStarted() else manager.stopPeriodicChecks()
+        if (enabled || UpdateSettings.autoUpdateEnabled) ensureStarted() else manager.stopPeriodicChecks()
     }
 
     /**
@@ -241,6 +242,16 @@ class UpdateCoordinator internal constructor(
      */
     val updateState: StateFlow<UpdateState>
         get() = manager.updateState
+
+    /** The app root owns this collector; no per-window handle may start or stop it. */
+    suspend fun installAutomaticUpdatesWhenWindowless(
+        windowsOpen: kotlinx.coroutines.flow.Flow<Boolean>,
+        canRestart: () -> Boolean,
+        quitForUpdate: () -> Unit,
+    ) {
+        if (isShutDown) return
+        manager.installAutomaticUpdatesWhenWindowless(windowsOpen, { !isShutDown && canRestart() }, quitForUpdate)
+    }
 
     val lastCheckTime: StateFlow<kotlin.time.Instant?>
         get() = manager.lastCheckTime

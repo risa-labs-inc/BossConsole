@@ -4,17 +4,19 @@ import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.VersionConstants
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
-import ai.rever.boss.utils.sha256Of
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 
 /**
@@ -43,6 +45,29 @@ object ChromiumAutoDownloader {
     // staging dir whose executable.name/version.txt happen to exist (e.g. extracted
     // from the archive itself) but whose extraction never actually completed.
     private const val STAGED_COMPLETE_MARKER = ".staging-complete"
+
+    /**
+     * Default caps for [extractWithJava], against a hostile or corrupted release archive: a real
+     * Chromium build has on the order of ten thousand entries and extracts to a few hundred
+     * MB, so both limits sit well above any legitimate archive while still refusing one that
+     * declares a modest central directory but streams unbounded bytes, or one padded with an
+     * unreasonable number of entries to exhaust inodes.
+     *
+     * Constants, not mutable state: a test passes smaller limits as arguments, and nothing at
+     * runtime can loosen the ones production uses.
+     */
+    private const val MAX_ZIP_ENTRIES = 200_000
+    private const val MAX_TOTAL_UNCOMPRESSED_BYTES = 4L * 1024 * 1024 * 1024
+    private const val DEFAULT_COPY_BUFFER_SIZE = 8192
+
+    /**
+     * What one path component of an entry is charged against the byte budget, on top of its
+     * content: a directory or file costs at least a filesystem block and an inode whatever its
+     * size, and a hostile archive can name a deep path over and over for almost no compressed
+     * size. Charging every component keeps the inodes an archive can create, and the disk they
+     * pin, inside the same total the content bytes already answer to.
+     */
+    internal const val PATH_COMPONENT_COST_BYTES = 4096L
 
     /** The engine version matching this build's bundled JxBrowser library. */
     val defaultVersion: String get() = JXBROWSER_VERSION
@@ -118,11 +143,47 @@ object ChromiumAutoDownloader {
     }
 
     // Directory params are injectable for tests.
+
+    /**
+     * Startup recovery for an interrupted direct-path swap (#910 follow-up):
+     * a hard kill between "move target aside" and "promote .new" leaves no
+     * engine at target while the only copy sits in the .old backup, and a
+     * crashed extraction leaves a .new sibling nothing else ever reclaims.
+     * Both are handled here, BEFORE anything consults isChromiumInstalled or
+     * starts a re-download.
+     */
+    private fun recoverInterruptedEngineSwap(
+        target: File,
+        backup: File,
+    ) {
+        if (!target.exists() && backup.exists()) {
+            if (backup.renameTo(target)) {
+                logger.info(
+                    LogCategory.BROWSER,
+                    "Restored the engine from the interrupted-swap backup",
+                    mapOf("backup" to backup.toString()),
+                )
+            } else {
+                logger.warn(
+                    LogCategory.BROWSER,
+                    "Found an interrupted-swap backup but could not restore it",
+                    mapOf("backup" to backup.toString()),
+                )
+            }
+        }
+        val interruptedExtract = File(target.parentFile, target.name + ".new")
+        if (interruptedExtract.exists()) {
+            interruptedExtract.deleteRecursively()
+            logger.info(LogCategory.BROWSER, "Discarded interrupted engine extraction sibling")
+        }
+    }
+
     internal fun promotePendingInstall(
         pending: File,
         target: File,
         backup: File,
     ) {
+        recoverInterruptedEngineSwap(target, backup)
         if (!pending.exists()) return
 
         try {
@@ -184,8 +245,31 @@ object ChromiumAutoDownloader {
      * Check if Chromium is already installed, valid, and matches the effective
      * engine version (Settings pin, else the bundled JxBrowser version).
      */
-    fun isChromiumInstalled(): Boolean {
-        val dir = getChromiumDir()
+    fun isChromiumInstalled(): Boolean = chromiumInstalledAt(recordRepair = ::recordRepairAttempt)
+
+    /**
+     * Check the cache without consuming the startup repair attempt, and without logging. Safe for
+     * status queries: the status bar asks this every few seconds, and the lines this check writes
+     * announce what startup is about to do ("will re-download"), which a query does not do.
+     */
+    internal fun isChromiumInstalledReadOnly(): Boolean = chromiumInstalledAt(recordRepair = readOnlyInspection)
+
+    /**
+     * The `recordRepair` of an inspection that decides nothing: it records no repair attempt, and
+     * so announces none of the decisions [chromiumInstalledAt] otherwise logs. Identified by
+     * reference rather than by a flag so the check's signature, and the lint baseline keyed on it,
+     * stay as they are.
+     */
+    internal val readOnlyInspection: () -> Unit = {}
+
+    internal fun chromiumInstalledAt(
+        dir: Path = getChromiumDir(),
+        requiredVersion: String = effectiveVersion,
+        isMac: Boolean = System.getProperty("os.name").lowercase().contains("mac"),
+        repairAttempted: () -> Boolean = ::repairAlreadyAttempted,
+        recordRepair: () -> Unit,
+    ): Boolean {
+        val log = logger.takeUnless { recordRepair === readOnlyInspection }
         if (!dir.toFile().exists()) return false
 
         // Check executable.name exists (required by JxBrowser)
@@ -195,18 +279,18 @@ object ChromiumAutoDownloader {
         // Check version matches current JxBrowser version
         val versionFile = dir.resolve(VERSION_FILE).toFile()
         if (!versionFile.exists()) {
-            logger.debug(LogCategory.BROWSER, "Chromium version file not found, will re-download")
+            log?.debug(LogCategory.BROWSER, "Chromium version file not found, will re-download")
             return false
         }
 
         val installedVersion = versionFile.readText().trim()
-        if (installedVersion != effectiveVersion) {
-            logger.info(
+        if (installedVersion != requiredVersion) {
+            log?.info(
                 LogCategory.BROWSER,
                 "Chromium version mismatch",
                 mapOf(
                     "installed" to installedVersion,
-                    "required" to effectiveVersion,
+                    "required" to requiredVersion,
                 ),
             )
             return false
@@ -214,7 +298,7 @@ object ChromiumAutoDownloader {
 
         // On macOS, verify the executable has proper permissions
         // This catches cached Chromium from older versions that didn't set execute bit correctly
-        if (System.getProperty("os.name").lowercase().contains("mac")) {
+        if (isMac) {
             val executableName = executableNameFile.readText().trim()
             // executable.name holds the bundle name without its suffix (the branding
             // workflow writes `basename "$APP_BUNDLE" .app`), so the directory on
@@ -222,7 +306,7 @@ object ChromiumAutoDownloader {
             // exists and the permission check below silently never ran.
             val executablePath = dir.resolve("$executableName.app/Contents/MacOS/$executableName").toFile()
             if (executablePath.exists() && !executablePath.canExecute()) {
-                logger.info(LogCategory.BROWSER, "Chromium executable missing execute permission, will re-download")
+                log?.info(LogCategory.BROWSER, "Chromium executable missing execute permission, will re-download")
                 return false
             }
 
@@ -233,18 +317,18 @@ object ChromiumAutoDownloader {
                 // directory on EVERY launch and re-fetch ~160 MB forever, silently.
                 // The marker lives outside the engine directory because a
                 // re-download replaces that whole directory.
-                if (repairAlreadyAttempted()) {
-                    logger.warn(
+                if (repairAttempted()) {
+                    log?.warn(
                         LogCategory.BROWSER,
                         "Chromium still registers itself as a browser after a re-download; keeping it",
-                        mapOf("version" to effectiveVersion),
+                        mapOf("version" to requiredVersion),
                     )
                 } else {
-                    recordRepairAttempt()
-                    logger.info(
+                    recordRepair()
+                    log?.info(
                         LogCategory.BROWSER,
                         "Cached Chromium still registers itself as a browser, will re-download",
-                        mapOf("version" to effectiveVersion),
+                        mapOf("version" to requiredVersion),
                     )
                     return false
                 }
@@ -395,11 +479,19 @@ object ChromiumAutoDownloader {
         version: String,
         staged: Boolean = false,
         onProgress: (DownloadProgress) -> Unit,
+    ): Result<Path> = downloadChromium(version, staged, onProgress, ChromiumReleaseSource::downloadCandidates)
+
+    internal suspend fun downloadChromium(
+        version: String,
+        staged: Boolean,
+        onProgress: (DownloadProgress) -> Unit,
+        resolveCandidates: suspend (String, String) -> List<EngineDownloadCandidate>,
     ): Result<Path> =
         withContext(Dispatchers.IO) {
             val archiveName = "boss-chromium-${detectPlatform()}.zip"
+            val candidates = resolveCandidates(version, archiveName)
             installFromCandidates(
-                candidates = ChromiumReleaseSource.downloadCandidates(version, archiveName),
+                candidates = candidates,
                 version = version,
                 targetDir = if (staged) getPendingChromiumDir() else getChromiumDir(),
                 staged = staged,
@@ -408,9 +500,9 @@ object ChromiumAutoDownloader {
         }
 
     /**
-     * Try each download candidate in order: fetch, verify checksum (when the
-     * catalog provides one), extract, stamp version. The transfer and extract
-     * steps are injectable for tests.
+     * Try each download candidate in order: fetch, verify integrity (fail
+     * closed via [EngineArchiveIntegrityVet]), extract, stamp version. The
+     * transfer and extract steps are injectable for tests.
      */
     internal suspend fun installFromCandidates(
         candidates: List<EngineDownloadCandidate>,
@@ -434,6 +526,10 @@ object ChromiumAutoDownloader {
             )
 
             try {
+                // A hashless archive cannot pass the integrity gate. Refuse it
+                // before creating a temp file or fetching hundreds of MB.
+                EngineArchiveIntegrityVet.requirePinnedHash(candidate).getOrThrow()
+
                 // Create parent directories
                 Files.createDirectories(targetDir.parent)
 
@@ -442,45 +538,23 @@ object ChromiumAutoDownloader {
                 try {
                     fetch(candidate.url, tempFile)
 
-                    // Integrity check before extracting a native binary we will
-                    // execute. Like the app updater, this guards against
-                    // Storage/CDN corruption (hash and URL come from the same
-                    // catalog row); the constructed GitHub URL has no hash.
-                    if (candidate.sha256 != null) {
-                        val actualSha = sha256Of(tempFile.toFile())
-                        if (!candidate.sha256.equals(actualSha, ignoreCase = true)) {
-                            throw IllegalStateException(
-                                "Engine archive checksum mismatch from ${candidate.sourceName} " +
-                                    "(expected ${candidate.sha256}, got $actualSha)",
-                            )
-                        }
-                        logger.info(
-                            LogCategory.BROWSER,
-                            "Engine archive checksum verified",
-                            mapOf(
-                                "source" to candidate.sourceName,
-                            ),
-                        )
-                    } else {
-                        logger.debug(
-                            LogCategory.BROWSER,
-                            "No checksum available for engine archive",
-                            mapOf(
-                                "source" to candidate.sourceName,
-                            ),
-                        )
-                    }
+                    // Integrity gate before extracting a native binary we will
+                    // execute: the bytes must match the catalog sha256 pinned on
+                    // the candidate, and a candidate that pins no hash at all
+                    // is refused too, fail closed like the plugin update jar
+                    // identity vet. The engine this installs is EXECUTED, so an
+                    // archive nothing can vouch for must never reach the
+                    // extract; a refusal falls through to the next candidate and
+                    // leaves the installed engine untouched.
+                    EngineArchiveIntegrityVet.vet(candidate, tempFile.toFile()).getOrThrow()
 
                     // Update status to extracting
                     onProgress(DownloadProgress(0, 0, isExtracting = true))
 
-                    // Delete existing directory if present
-                    if (targetDir.toFile().exists()) {
-                        targetDir.toFile().deleteRecursively()
-                    }
-
-                    // Extract
-                    extract(tempFile, targetDir)
+                    // Atomic install: never delete the only working engine up
+                    // front; extract to a sibling and swap via a backup dir with
+                    // rollback on any failure (atomicEngineSwap).
+                    atomicEngineSwap(tempFile, extract, targetDir)
 
                     // Verify extraction produced executable.name
                     val executableNameFile = targetDir.resolve("executable.name").toFile()
@@ -600,6 +674,79 @@ object ChromiumAutoDownloader {
     }
 
     /**
+     * Extract [archive] into a fresh sibling of [targetDir] and swap it into
+     * place atomically (#910): the current engine is moved to a `.old` backup,
+     * restored on any failure (extract, promote, or verification), and deleted
+     * only after the new install is verified. A failure must leave the app
+     * with a working engine, never none.
+     */
+    private fun atomicEngineSwap(
+        archive: Path,
+        extract: (Path, Path) -> Unit,
+        targetDir: Path,
+    ) {
+        val backupDir = targetDir.parent.resolve(targetDir.fileName.toString() + ".old")
+        val extractDir = targetDir.parent.resolve(targetDir.fileName.toString() + ".new")
+        if (backupDir.toFile().exists()) backupDir.toFile().deleteRecursively()
+        if (extractDir.toFile().exists()) extractDir.toFile().deleteRecursively()
+        if (targetDir.toFile().exists() && !targetDir.toFile().renameTo(backupDir.toFile())) {
+            throw IllegalStateException("Could not move the current engine aside for an atomic replace " + targetDir)
+        }
+        try {
+            extract(archive, extractDir)
+            promoteAndVerify(extractDir, targetDir)
+        } catch (e: Exception) {
+            // Any failure after the engine was moved aside must put it back.
+            restoreEngine(backupDir, targetDir, "swap")
+            throw e
+        }
+        backupDir.toFile().deleteRecursively()
+    }
+
+    /**
+     * Move the freshly extracted install into place and verify it; throws on
+     * any failure so the caller's catch restores the previous engine.
+     */
+    private fun promoteAndVerify(
+        extractDir: Path,
+        targetDir: Path,
+    ) {
+        if (!extractDir.toFile().renameTo(targetDir.toFile())) {
+            throw promoteFailure(targetDir)
+        }
+        if (!targetDir.resolve("executable.name").toFile().exists()) {
+            // Verification failed: clear the unverified install so the backup
+            // can take its place.
+            targetDir.toFile().deleteRecursively()
+            throw verificationFailure()
+        }
+    }
+
+    /** Move the backup engine back to [targetDir] after a failed swap step. */
+    private fun restoreEngine(
+        backupDir: Path,
+        targetDir: Path,
+        stage: String,
+    ) {
+        if (backupDir.toFile().exists() && !backupDir.toFile().renameTo(targetDir.toFile())) {
+            logger.warn(
+                LogCategory.BROWSER,
+                "Could not restore the previous engine after a failed " + stage,
+                mapOf("backup" to backupDir.toString()),
+            )
+        }
+    }
+
+    private fun verificationFailure(): IllegalStateException =
+        IllegalStateException(
+            "Extraction completed but executable.name not found. " +
+                "The downloaded archive may be corrupted.",
+        )
+
+    private fun promoteFailure(targetDir: Path): IllegalStateException =
+        IllegalStateException("Could not move the extracted engine into place " + targetDir)
+
+    /**
      * Extract a zip file to a target directory.
      * On macOS, uses native `ditto` to preserve symlinks, resource forks,
      * and code signatures. Java's ZipInputStream breaks macOS framework
@@ -635,62 +782,166 @@ object ChromiumAutoDownloader {
         val output = process.inputStream.bufferedReader().readText()
         val exitCode = process.waitFor()
         if (exitCode != 0) {
-            logger.warn(
-                LogCategory.BROWSER,
-                "ditto extraction failed, falling back to Java",
-                mapOf("exitCode" to exitCode, "output" to output),
+            throw IllegalStateException(
+                "ditto extraction failed (exitCode=$exitCode); refusing the Java fallback " +
+                    "because it breaks macOS framework symlinks: $output",
             )
-            extractWithJava(zipPath, targetDir)
         }
     }
 
     /**
      * Extract using Java's ZipInputStream (non-macOS or fallback).
+     *
+     * `internal` rather than `private` so a test can drive it directly against a hand-built
+     * zip, without depending on the macOS-only `ditto` branch [extractZip] picks by platform.
      */
-    private fun extractWithJava(
+    internal fun extractWithJava(
         zipPath: Path,
         targetDir: Path,
+        maxEntries: Int = MAX_ZIP_ENTRIES,
+        maxBytes: Long = MAX_TOTAL_UNCOMPRESSED_BYTES,
     ) {
+        val budget = ExtractionBudget(maxEntries, maxBytes)
         ZipInputStream(Files.newInputStream(zipPath)).use { zis ->
             var entry = zis.nextEntry
             while (entry != null) {
-                val targetPath = targetDir.resolve(entry.name).normalize()
-
-                // Security check: prevent zip slip attack
-                if (!targetPath.startsWith(targetDir)) {
-                    throw SecurityException("Zip entry outside target directory: ${entry.name}")
-                }
-
-                if (entry.isDirectory) {
-                    Files.createDirectories(targetPath)
-                } else {
-                    // Ensure parent directories exist
-                    Files.createDirectories(targetPath.parent)
-
-                    Files.newOutputStream(targetPath).use { output ->
-                        zis.copyTo(output)
-                    }
-
-                    // Preserve executable bit on Unix
-                    if (!System.getProperty("os.name").lowercase().contains("win")) {
-                        val name = entry.name.lowercase()
-                        val isMacOSExecutable = name.contains(".app/contents/macos/")
-                        val isChromium = name.contains("chromium") || name.contains("boss")
-                        val isSharedLib = name.endsWith(".so")
-                        val isShellScript = name.endsWith(".sh")
-                        val fileName = targetPath.fileName.toString()
-                        val hasNoExtension = !fileName.contains(".")
-
-                        if (isMacOSExecutable || isChromium || isSharedLib || isShellScript || hasNoExtension) {
-                            targetPath.toFile().setExecutable(true)
-                        }
-                    }
-                }
-
+                extractEntry(zis, entry, targetDir, budget)
                 zis.closeEntry()
                 entry = zis.nextEntry
             }
         }
+    }
+
+    private fun extractEntry(
+        zis: ZipInputStream,
+        entry: ZipEntry,
+        targetDir: Path,
+        budget: ExtractionBudget,
+    ) {
+        // Counts the entry and charges its path against the budget before anything is
+        // created for it, so the refusal leaves nothing behind for the offending entry.
+        budget.admit(entry.name)
+
+        val targetPath = targetDir.resolve(entry.name).normalize()
+
+        // Security check: prevent zip slip attack
+        if (!targetPath.startsWith(targetDir)) {
+            throw SecurityException("Zip entry outside target directory: ${entry.name}")
+        }
+
+        if (entry.isDirectory) {
+            // closeEntry() drains unread content without going through copyBounded. Reject
+            // directory payloads before that unbudgeted decompression can take place.
+            if (zis.read() != -1) {
+                throw SecurityException("Chromium archive directory entry contains data")
+            }
+            Files.createDirectories(targetPath)
+            return
+        }
+        // Ensure parent directories exist
+        Files.createDirectories(targetPath.parent)
+
+        Files.newOutputStream(targetPath).use { output ->
+            // ZipEntry.size is unreliable here (-1 in a streaming zip, or simply a lie an
+            // attacker controls), so the cap is enforced against bytes actually read, not the
+            // entry's declared size - this catches both a single oversized entry and many
+            // entries whose sizes sum past the total budget.
+            budget.spend(copyBounded(zis, output, budget.remaining, budget.limit))
+        }
+        markExecutableIfNeeded(entry.name, targetPath)
+    }
+
+    /**
+     * The entry-count and byte limits of one [extractWithJava] run. Content bytes and the
+     * per-path overhead from [entryOverheadBytes] draw from the same [limit].
+     */
+    private class ExtractionBudget(
+        private val maxEntries: Int,
+        val limit: Long,
+    ) {
+        private var entries = 0
+        private var spent = 0L
+
+        val remaining: Long get() = limit - spent
+
+        fun admit(entryName: String) {
+            entries++
+            if (entries > maxEntries) {
+                throw SecurityException(
+                    "Chromium archive has more than $maxEntries entries - refusing to extract",
+                )
+            }
+            spent += entryOverheadBytes(entryName)
+            if (spent > limit) {
+                throw SecurityException(
+                    "Chromium archive exceeds the $limit byte extraction limit - refusing to extract",
+                )
+            }
+        }
+
+        fun spend(bytes: Long) {
+            spent += bytes
+        }
+    }
+
+    /** Preserve the executable bit on Unix for the files an unpacked engine needs to run. */
+    private fun markExecutableIfNeeded(
+        entryName: String,
+        targetPath: Path,
+    ) {
+        if (System.getProperty("os.name").lowercase().contains("win")) return
+        val name = entryName.lowercase()
+        val isMacOSExecutable = name.contains(".app/contents/macos/")
+        val isChromium = name.contains("chromium") || name.contains("boss")
+        val isSharedLib = name.endsWith(".so")
+        val isShellScript = name.endsWith(".sh")
+        val hasNoExtension = !targetPath.fileName.toString().contains(".")
+
+        if (isMacOSExecutable || isChromium || isSharedLib || isShellScript || hasNoExtension) {
+            targetPath.toFile().setExecutable(true)
+        }
+    }
+
+    /**
+     * Copy [input] to [output], refusing once more than [remainingBytes] have been read - the byte
+     * cap [extractWithJava] uses instead of trusting [java.util.zip.ZipEntry.getSize].
+     * [totalLimit] is only the number named in the refusal.
+     */
+    private fun copyBounded(
+        input: InputStream,
+        output: OutputStream,
+        remainingBytes: Long,
+        totalLimit: Long,
+    ): Long {
+        val buffer = ByteArray(DEFAULT_COPY_BUFFER_SIZE)
+        var copied = 0L
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            copied += read
+            if (copied > remainingBytes) {
+                throw SecurityException(
+                    "Chromium archive exceeds the $totalLimit byte extraction limit - refusing to extract",
+                )
+            }
+            output.write(buffer, 0, read)
+        }
+        return copied
+    }
+
+    /**
+     * What the entry named [name] costs before any content: its path bytes plus
+     * [PATH_COMPONENT_COST_BYTES] for each component, since each one can create a directory or
+     * file. Read from the name alone, so nothing the archive declares about sizes is trusted.
+     *
+     * Both `/` and `\` separate components. Extraction runs on Windows, where a backslash in an
+     * entry name is a path separator to the filesystem, so counting only `/` would charge a
+     * `a\b\c\d` name as one component while it creates three directories. On Linux a backslash
+     * is an ordinary filename character, so this can only overcharge, which is the safe side of a cap.
+     */
+    internal fun entryOverheadBytes(name: String): Long {
+        val components = name.split('/', '\\').count { it.isNotEmpty() }
+        return name.toByteArray(Charsets.UTF_8).size + components * PATH_COMPONENT_COST_BYTES
     }
 
     /**

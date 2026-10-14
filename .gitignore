@@ -36,6 +36,9 @@ captures
 *.zip
 *.msi
 *.jar
+!gradle/wrapper/gradle-wrapper.jar
+!composeApp/src/desktopMain/resources/launcher/gradle-wrapper.jar
+
 distribution-final/
 distribution/
 BOSS-Standalone-Windows/
@@ -128,3 +131,8 @@ supabase/tests/.migration-fixtures/
 supabase/tests/master_key_rotation_test.sql
 supabase/tests/db_access_audit_test.sql
 supabase/tests/client_grant_audit_test.sql
+
+/supabase/tests/secret_iv_upgrade_test.sql
+
+# Application sharing SQL test dependencies
+supabase/tests/app-sharing/node_modules/

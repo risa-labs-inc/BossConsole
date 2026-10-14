@@ -83,7 +83,7 @@ data class CreateSecretRequest(
         if (username.isBlank()) {
             return Result.failure(IllegalArgumentException("Username cannot be empty"))
         }
-        if (password.isBlank()) {
+        if (password.isEmpty()) {
             return Result.failure(IllegalArgumentException("Password cannot be empty"))
         }
         if (twofaEnabled && twofaType == null) {
@@ -124,7 +124,7 @@ data class UpdateSecretRequest(
         if (username.isBlank()) {
             return Result.failure(IllegalArgumentException("Username cannot be empty"))
         }
-        if (password.isBlank()) {
+        if (password.isEmpty()) {
             return Result.failure(IllegalArgumentException("Password cannot be empty"))
         }
         if (twofaEnabled && twofaType == null) {

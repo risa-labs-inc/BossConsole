@@ -2,6 +2,8 @@
 
 package ai.rever.boss.utils
 
+import ai.rever.boss.health.WorkspaceHealthCollector
+import ai.rever.boss.health.toJson
 import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
@@ -17,27 +19,40 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.net.ConnectException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
 import java.nio.ByteBuffer
 import java.nio.channels.Channels
+import java.nio.channels.FileChannel
+import java.nio.channels.FileLock
+import java.nio.channels.OverlappingFileLockException
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.nio.charset.StandardCharsets
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.attribute.PosixFilePermissions
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.HexFormat
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.thread
 
 private val logger = BossLogger.forComponent("SingleInstanceManager")
@@ -49,6 +64,7 @@ private const val KEY_VERSION = "version"
 private const val KEY_TRANSPORT = "transport"
 private const val KEY_ENDPOINT = "endpoint"
 private const val KEY_TOKEN = "token"
+internal const val KEY_PID = "pid"
 
 /** Wire protocol marker, first field of every request line. */
 internal const val PROTOCOL_VERSION = "boss-si-1"
@@ -71,9 +87,33 @@ internal const val VERB_MCP_LIST = "MCP_LIST"
 /** Asks the running instance to invoke an MCP tool. */
 internal const val VERB_MCP_INVOKE = "MCP_INVOKE"
 
+/** Asks the running instance to reload a plugin in development mode. */
+internal const val VERB_PLUGIN_DEV_RELOAD = "PLUGIN_DEV_RELOAD"
+
+sealed interface ReloadResult {
+    data object Success : ReloadResult
+
+    data class HostOffline(
+        val message: String = "BossConsole is not running",
+    ) : ReloadResult
+
+    /**
+     * The host is running but did not confirm the reload within the client budget. The reload
+     * may still be in progress on the host; the staged JAR is on disk for the next launch.
+     */
+    data class TimedOut(
+        val message: String,
+    ) : ReloadResult
+
+    data class Failed(
+        val reason: String,
+    ) : ReloadResult
+}
+
 internal const val RESPONSE_OK = "OK"
 internal const val RESPONSE_PONG = "PONG"
 internal const val RESPONSE_REJECTED = "REJECTED"
+internal const val RESPONSE_BUSY = "BUSY"
 private const val RESPONSE_LLM_TOKEN_PREFIX = "LLM_TOKEN "
 internal const val RESPONSE_STATUS_PREFIX = "STATUS "
 internal const val RESPONSE_MCP_LIST_PREFIX = "MCP_LIST "
@@ -89,6 +129,8 @@ private const val IPC_PORT_RANGE = 10 // Try ports 56789-56798
 private const val TCP_BACKLOG = 5
 
 private const val CONNECTION_TIMEOUT_MS = 10000L // 10 seconds - important for auth deep links
+private const val CROSS_PROCESS_LOCK_TIMEOUT_MS = 2000L
+private const val LOCK_POLL_INTERVAL_MS = 25L
 private const val LLM_TOKEN_TIMEOUT_MS = 90000L
 private const val MCP_INVOKE_TIMEOUT_MS = 60000L
 
@@ -97,18 +139,45 @@ private const val MCP_INVOKE_TIMEOUT_MS = 60000L
 // still close a genuinely wedged connection rather than race it.
 private const val OPEN_ACTION_TIMEOUT_MS = 5000L
 
+// A dev reload on the host unloads the running instance and installs fresh bytes.
+// This is the client budget: above anything a healthy reload spends, below the
+// 60s server connection budget the verb gets from isLongerBudgetCandidate.
+internal const val PLUGIN_DEV_RELOAD_TIMEOUT_MS = 45_000L
+
+/**
+ * Maximum number of in-flight client handler threads. Bounds a local-thread flood
+ * against the host (#1326). For unauthenticated connections, each connection is capped
+ * at [CONNECTION_TIMEOUT_MS] (10s). For authenticated requests presenting the published
+ * token, [isLongerBudgetCandidate] may grant up to [MCP_INVOKE_TIMEOUT_MS] (60s) or
+ * [LLM_TOKEN_TIMEOUT_MS] (90s). Furthermore, the watchdog closes the socket channel
+ * rather than interrupting the thread, so a handler waiting on a blocking gateway or plugin
+ * action may hold its permit until the operation returns. At capacity, incoming connections
+ * are immediately answered with [RESPONSE_BUSY] and closed without spawning additional threads.
+ */
+internal const val MAX_CLIENT_HANDLERS = 32
+
 /**
  * Ceiling on a single request. Bounds what one caller can make the app buffer,
  * sized to accommodate Base64-encoded tool arguments and payloads.
  */
 internal const val MAX_REQUEST_BYTES = 1024 * 1024
 
+/**
+ * Longest URL a [VERB_OPEN] request may carry, in UTF-8 bytes.
+ *
+ * Well past a fully percent-encoded maximum-length file path (~100 KB), yet far
+ * under [MAX_REQUEST_BYTES]: the URL is untrusted input from any program that
+ * can ask the OS to open a link, so it gets its own bound rather than the whole
+ * request budget.
+ */
+internal const val MAX_FORWARD_URL_BYTES = 256 * 1024
+
 // Reserve 1368 wire bytes for the protocol, token and up to 256 UTF-8 tool-name characters.
 internal const val MAX_ARGUMENT_BYTES = 768 * 1024 - 1024
 internal const val MAX_TOOL_NAME_LENGTH = 256
 
-/** A response is one short word; nothing legitimate approaches this. */
-private const val MAX_RESPONSE_BYTES = 256
+/** A response ceiling expanded to 1024 bytes to support diagnostic dev reload error payloads. */
+internal const val MAX_RESPONSE_BYTES = 1024
 
 /** Ceiling on data responses (status, MCP tool list, Base64 tool invocation output). */
 private const val MAX_DATA_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -153,6 +222,8 @@ internal data class InstanceDescriptor(
     val transport: SingleInstanceTransport,
     val endpoint: String,
     val token: String,
+    val pid: Long? = null,
+    val socketFileKey: Any? = null,
 ) {
     fun encode(): String =
         buildString {
@@ -160,9 +231,12 @@ internal data class InstanceDescriptor(
             appendLine("$KEY_TRANSPORT=${transport.name}")
             appendLine("$KEY_ENDPOINT=$endpoint")
             appendLine("$KEY_TOKEN=$token")
+            if (pid != null) {
+                appendLine("$KEY_PID=$pid")
+            }
         }
 
-    override fun toString(): String = "InstanceDescriptor(transport=$transport, endpoint=$endpoint, token=<redacted>)"
+    override fun toString(): String = "InstanceDescriptor($transport, $endpoint, pid=$pid, token=<redacted>)"
 }
 
 /**
@@ -183,13 +257,109 @@ internal fun parseInstanceDescriptor(text: String): InstanceDescriptor? {
     val transport = SingleInstanceTransport.entries.firstOrNull { it.name == fields[KEY_TRANSPORT] }
     val endpoint = fields[KEY_ENDPOINT]?.takeIf { it.isNotBlank() }
     val token = fields[KEY_TOKEN]?.takeIf { it.length >= TOKEN_HEX_LENGTH }
+    // A present-but-unparseable pid means a tampered file, not a legacy one:
+    // the whole descriptor is unusable rather than merely unverifiable.
+    val pidField = fields[KEY_PID]
+    val pid = pidField?.toLongOrNull()
+    val fieldsUsable = transport != null && endpoint != null && token != null
 
-    return if (transport != null && endpoint != null && token != null) {
-        InstanceDescriptor(transport, endpoint, token)
+    return if (fieldsUsable && (pidField == null || pid != null)) {
+        InstanceDescriptor(transport, endpoint, token, pid)
     } else {
         null
     }
 }
+
+/**
+ * How far a descriptor read off disk can be trusted to name the live owner of
+ * the channel it points at.
+ */
+internal enum class DescriptorTrust {
+    /** The recorded pid is alive and, where the OS exposes it, runs this program. */
+    VERIFIED,
+
+    /**
+     * No usable pid binding: a descriptor written before pids were recorded, or
+     * a live pid whose executable the OS will not show us. Not proof of forgery,
+     * so ordinary links may still cross, but a credential-bearing link must not.
+     */
+    UNVERIFIED,
+
+    /**
+     * The recorded pid is dead or provably belongs to a different program, so
+     * whatever answers on the endpoint is not the publisher — a stale file a
+     * squatter is answering on, or one that was planted outright.
+     */
+    FORGED,
+}
+
+/**
+ * Checks whether the OS process with [pid] is currently alive.
+ * Returns false if the process does not exist, has exited, or cannot be queried.
+ */
+internal fun isProcessAlive(pid: Long): Boolean =
+    runCatching {
+        ProcessHandle.of(pid).map { it.isAlive }.orElse(false)
+    }.getOrDefault(false)
+
+/**
+ * Decides how much trust a descriptor's recorded pid buys the endpoint.
+ *
+ * The strongest check, where the platform can name a socket's owner
+ * ([SocketPeerLookup]), is that the recorded pid is the process holding the
+ * endpoint — without it, a planter could simply copy the live BOSS pid into a
+ * descriptor pointing at its own listener. Where the OS cannot say, the
+ * recorded pid must at least be a live process running our executable.
+ *
+ * The residual hole, documented rather than faked: a same-uid attacker who
+ * records a pid *it owns* and runs a process with the same executable path
+ * (any `java` in a dev environment) satisfies every check here. Closing that
+ * needs an OS-level peer credential bound to a signed identity, which the JDK
+ * does not expose on either transport.
+ */
+@Suppress("ReturnCount")
+internal fun descriptorTrust(descriptor: InstanceDescriptor): DescriptorTrust {
+    val pid = descriptor.pid ?: return DescriptorTrust.UNVERIFIED
+    val handle =
+        runCatching { ProcessHandle.of(pid).orElse(null) }.getOrNull()
+            ?: return DescriptorTrust.FORGED
+    if (!handle.isAlive) return DescriptorTrust.FORGED
+
+    // The endpoint-owner check runs before the executable comparison because it
+    // is the stronger one: it answers "does this pid own this socket", which a
+    // pid the attacker does not own but did record cannot satisfy.
+    val owners = SocketPeerLookup.ownerPidsOf(descriptor)
+    if (owners != null && pid !in owners) return DescriptorTrust.FORGED
+    if (owners != null) return DescriptorTrust.VERIFIED
+
+    val ours =
+        runCatching {
+            ProcessHandle
+                .current()
+                .info()
+                .command()
+                .orElse(null)
+        }.getOrNull()
+    val theirs = runCatching { handle.info().command().orElse(null) }.getOrNull()
+    return when {
+        ours != null && theirs != null && ours != theirs -> DescriptorTrust.FORGED
+
+        // When owner lookup cannot answer, matching executables is the fallback.
+        ours != null && theirs != null -> DescriptorTrust.VERIFIED
+
+        // The OS cannot show executables nor the endpoint's owner, so the pid's
+        // liveness is all that is established — better than nothing, not enough
+        // for auth.
+        else -> DescriptorTrust.UNVERIFIED
+    }
+}
+
+/**
+ * `boss://auth/…` callbacks carry live tokens in the fragment, which is what
+ * makes a hijacked channel worth planting — it is the one link a forwarded
+ * request must never hand to an unverified peer.
+ */
+private fun isAuthDeepLink(url: String): Boolean = deepLinkHostOf(url) == "auth"
 
 /**
  * One request read off the channel.
@@ -218,8 +388,11 @@ internal data class SingleInstanceRequest(
  *
  * The line is `<protocol> <token> <verb> ...`
  */
+@Suppress("ReturnCount")
 internal fun parseRequestLine(line: String): SingleInstanceRequest? {
-    val parts = line.trim().split(' ', limit = 5)
+    val trimmed = line.trim()
+    val parts = trimmed.split(' ', limit = 5)
+
     if (parts.size < 3 || parts[0] != PROTOCOL_VERSION) return null
 
     val token = parts[1]
@@ -233,7 +406,11 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
         }
 
         VERB_OPEN -> {
-            if (parts.size == 5) {
+            // The URL is the rest of the line, so it can never itself contain a
+            // line break — but a raw control character can still arrive mid-line
+            // (a hand-rolled sender, a stray CR). A well-formed URL carries none:
+            // anything needing one arrives percent-encoded.
+            if (parts.size == 5 && parts[4].none { it.isISOControl() }) {
                 SingleInstanceRequest(token, VERB_OPEN, DeepLinkOrigin.fromWireLabel(parts[3]), parts[4])
             } else {
                 null
@@ -244,6 +421,15 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
             parseMcpInvokeRequest(token, parts)
         }
 
+        VERB_PLUGIN_DEV_RELOAD -> {
+            val pluginId = parts.getOrNull(3).orEmpty()
+            if (validPluginDevId(pluginId)) {
+                SingleInstanceRequest(token, VERB_PLUGIN_DEV_RELOAD, DeepLinkOrigin.OPERATOR_CLI, null, pluginId)
+            } else {
+                null
+            }
+        }
+
         else -> {
             null
         }
@@ -252,6 +438,16 @@ internal fun parseRequestLine(line: String): SingleInstanceRequest? {
 
 private fun validMcpToolName(toolName: String): Boolean =
     toolName.length in 1..MAX_TOOL_NAME_LENGTH && toolName.none { it.isWhitespace() || it.isISOControl() }
+
+/**
+ * A plugin id crosses the wire as a bare token and the host joins it straight onto
+ * the dev staging root, so it must never carry a path separator or traverse out of it.
+ * Whitespace cannot survive the wire format anyway; the separators and `..` can.
+ */
+private fun validPluginDevId(pluginId: String): Boolean =
+    pluginId.length in 1..MAX_TOOL_NAME_LENGTH &&
+        pluginId.none { it.isWhitespace() || it.isISOControl() || it == '/' || it == '\\' } &&
+        pluginId != ".." && pluginId != "."
 
 private fun parseMcpInvokeRequest(
     token: String,
@@ -276,12 +472,38 @@ private fun decodeBase64Args(base64Payload: String): String? {
     }
 }
 
-/** Builds the line [parseRequestLine] reads. Never log the result: it carries the token. */
+/**
+ * Whether [url] can occupy one framed [VERB_OPEN] line.
+ *
+ * The framing is `\n`-delimited, so a URL containing a raw newline or carriage
+ * return would smuggle a second line into the stream. Rejecting is the safe
+ * answer — a legitimate URL is already percent-encoded, so refusing control
+ * characters loses no real link. The byte cap bounds what the framing writes
+ * into a single request.
+ *
+ * The answer does not depend on the channel token, so a caller can check before
+ * it has even read the descriptor — e.g. to keep a refused URL out of a retry
+ * loop it could never pass.
+ */
+internal fun canFrameOpenUrl(url: String): Boolean =
+    url.isNotBlank() &&
+        url.none { it.isISOControl() } &&
+        url.toByteArray(StandardCharsets.UTF_8).size <= MAX_FORWARD_URL_BYTES
+
+/**
+ * Builds the line [parseRequestLine] reads, or null when [canFrameOpenUrl]
+ * refuses [url]. Never log the result: it carries the token.
+ */
 internal fun formatOpenRequest(
     token: String,
     origin: DeepLinkOrigin,
     url: String,
-): String = "$PROTOCOL_VERSION $token $VERB_OPEN ${origin.name} $url"
+): String? {
+    if (!canFrameOpenUrl(url)) {
+        return null
+    }
+    return "$PROTOCOL_VERSION $token $VERB_OPEN ${origin.name} $url"
+}
 
 /** Builds a liveness probe line. Never log the result: it carries the token. */
 internal fun formatPingRequest(token: String): String = "$PROTOCOL_VERSION $token $VERB_PING"
@@ -343,10 +565,11 @@ internal fun isForwardableUrl(url: String?): Boolean =
  * Linux — the descriptor holds the channel token, and the endpoint it names is
  * where a forward (including the auth callback) gets delivered.
  */
-private object SingleInstanceFiles {
+internal object SingleInstanceFiles {
     private const val RUNTIME_DIR_NAME = "run"
     private const val DESCRIPTOR_FILE_NAME = "single-instance"
     private const val SOCKET_FILE_NAME = "single-instance.sock"
+    private const val LIFECYCLE_LOCK_FILE_NAME = "single-instance.lifecycle.lock"
 
     /** Pre-hardening lock file, which lived in the system temp directory. */
     private const val LEGACY_LOCK_FILE_NAME = "boss-instance.lock"
@@ -363,6 +586,198 @@ private object SingleInstanceFiles {
 
     val socketFile: File
         get() = File(runtimeDir, SOCKET_FILE_NAME)
+
+    val lifecycleLockFile: File
+        get() = File(runtimeDir, LIFECYCLE_LOCK_FILE_NAME)
+
+    private val crossProcessJvmLock = ReentrantLock()
+
+    private val holdsOsLock = ThreadLocal.withInitial { false }
+
+    private enum class LockAcquireStatus {
+        ACQUIRED,
+        TIMED_OUT,
+        UNSUPPORTED,
+    }
+
+    private data class LockAttemptResult(
+        val status: LockAcquireStatus,
+        val lock: FileLock? = null,
+        val cause: Exception? = null,
+    )
+
+    /**
+     * Shared cross-process serialization for publication and withdrawal (#1326).
+     * Ensures an incoming process binding an endpoint cannot have its newly-created
+     * socket unlinked by a concurrent stale withdraw, and that publication never exposes
+     * a half-written or momentarily absent descriptor.
+     *
+     * Lock acquisition hierarchy: [lifecycleLock] -> [crossProcessJvmLock] -> [FileLock].
+     * Callers entering via [SingleInstanceManager] hold [lifecycleLock] before entering here.
+     * Direct callers (e.g. withdrawForTest or test fixtures) acquire [crossProcessJvmLock]
+     * and the file lock without [lifecycleLock].
+     *
+     * Re-entrant on the current thread: nested invocations reuse the acquired file lock
+     * instead of throwing [OverlappingFileLockException]. Synchronized within the JVM
+     * via [crossProcessJvmLock] before acquiring the OS file lock.
+     *
+     * The OS lock is acquired using [FileChannel.tryLock] with a bounded deadline ([timeoutMs]).
+     * If the deadline is exceeded and [onTimeout] is supplied, [onTimeout] is returned.
+     * Otherwise, a [TimeoutException] is thrown to fail closed, ensuring destructive actions
+     * are never executed unlocked.
+     */
+    fun <T> withCrossProcessLock(
+        timeoutMs: Long = CROSS_PROCESS_LOCK_TIMEOUT_MS,
+        onTimeout: (() -> T)? = null,
+        block: () -> T,
+    ): T {
+        crossProcessJvmLock.lock()
+        try {
+            if (holdsOsLock.get()) {
+                return block()
+            }
+            return acquireOsLockAndExecute(timeoutMs, onTimeout, block)
+        } finally {
+            crossProcessJvmLock.unlock()
+        }
+    }
+
+    private fun openLifecycleChannel(path: java.nio.file.Path): FileChannel? =
+        try {
+            FileChannel.open(
+                path,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.READ,
+                StandardOpenOption.WRITE,
+            )
+        } catch (e: IOException) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Single-instance cross-process lock file could not be opened; OS file locking unavailable",
+                error = e,
+            )
+            null
+        } catch (e: SecurityException) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Single-instance cross-process lock file access denied; OS file locking unavailable",
+                error = e,
+            )
+            null
+        }
+
+    private fun <T> handleLockFailure(
+        status: LockAcquireStatus,
+        cause: Exception?,
+        timeoutMs: Long,
+        onTimeout: (() -> T)?,
+    ): T {
+        if (status == LockAcquireStatus.UNSUPPORTED) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Single-instance cross-process file locking is unavailable on this filesystem",
+                error = cause,
+            )
+            return onTimeout?.invoke()
+                ?: throw IllegalStateException(
+                    "Single-instance cross-process file locking is unavailable on this filesystem",
+                    cause,
+                )
+        }
+        logger.warn(
+            LogCategory.SYSTEM,
+            "Timed out waiting for single-instance cross-process lock after ${timeoutMs}ms (held by peer)",
+        )
+        return onTimeout?.invoke()
+            ?: throw TimeoutException(
+                "Timed out waiting for single-instance cross-process lock after ${timeoutMs}ms (held by peer)",
+            )
+    }
+
+    private fun <T> executeWithAcquiredLock(
+        lock: FileLock,
+        channel: FileChannel,
+        block: () -> T,
+    ): T {
+        holdsOsLock.set(true)
+        return try {
+            block()
+        } finally {
+            holdsOsLock.set(false)
+            try {
+                lock.release()
+            } catch (_: IOException) {
+            }
+            try {
+                channel.close()
+            } catch (_: IOException) {
+            }
+        }
+    }
+
+    private fun <T> acquireOsLockAndExecute(
+        timeoutMs: Long,
+        onTimeout: (() -> T)?,
+        block: () -> T,
+    ): T {
+        val path = lifecycleLockFile.toPath()
+        val parent = lifecycleLockFile.parentFile
+        if (parent != null && !parent.exists()) {
+            parent.mkdirs()
+        }
+        val channel = openLifecycleChannel(path)
+        if (channel == null) {
+            return handleLockFailure(LockAcquireStatus.UNSUPPORTED, null, timeoutMs, onTimeout)
+        }
+        restrictToOwner(path, ownerOnlyFilePermissions)
+
+        val lockResult = tryAcquireFileLock(channel, timeoutMs)
+        val lock = lockResult.lock
+        return if (lock != null) {
+            executeWithAcquiredLock(lock, channel, block)
+        } else {
+            try {
+                channel.close()
+            } catch (_: IOException) {
+            }
+            handleLockFailure(lockResult.status, lockResult.cause, timeoutMs, onTimeout)
+        }
+    }
+
+    private fun tryAcquireFileLock(
+        channel: FileChannel,
+        timeoutMs: Long,
+    ): LockAttemptResult {
+        val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        var acquiredLock: FileLock? = null
+        var unsupportedCause: Exception? = null
+        var shouldStop = false
+        while (acquiredLock == null && !shouldStop && System.nanoTime() < deadlineNanos) {
+            acquiredLock =
+                try {
+                    channel.tryLock()
+                } catch (_: OverlappingFileLockException) {
+                    null
+                } catch (e: IOException) {
+                    unsupportedCause = e
+                    shouldStop = true
+                    null
+                }
+            if (acquiredLock == null && !shouldStop) {
+                try {
+                    Thread.sleep(LOCK_POLL_INTERVAL_MS)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    shouldStop = true
+                }
+            }
+        }
+        return when {
+            acquiredLock != null -> LockAttemptResult(LockAcquireStatus.ACQUIRED, lock = acquiredLock)
+            unsupportedCause != null -> LockAttemptResult(LockAcquireStatus.UNSUPPORTED, cause = unsupportedCause)
+            else -> LockAttemptResult(LockAcquireStatus.TIMED_OUT)
+        }
+    }
 
     /**
      * Creates the runtime directory owner-only, re-applying those permissions
@@ -413,18 +828,21 @@ private object SingleInstanceFiles {
         }
     }
 
-    /** Publishes [descriptor] owner-only, replacing whatever was there. */
+    /** Publishes [descriptor] owner-only, replacing whatever was there atomically. */
     fun write(descriptor: InstanceDescriptor): Boolean {
         val path = descriptorFile.toPath()
+        val parent = descriptorFile.parentFile
+        if (parent != null && !parent.exists()) {
+            parent.mkdirs()
+        }
+        val tempPath = File(runtimeDir, "$DESCRIPTOR_FILE_NAME.tmp").toPath()
         val bytes = descriptor.encode().toByteArray(StandardCharsets.UTF_8)
         return try {
-            Files.deleteIfExists(path)
+            Files.deleteIfExists(tempPath)
             try {
-                // Created with the right mode from the start, so the token is
-                // never briefly readable by anyone else.
                 Files
                     .newByteChannel(
-                        path,
+                        tempPath,
                         setOf(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE),
                         PosixFilePermissions.asFileAttribute(ownerOnlyFilePermissions),
                     ).use { it.write(ByteBuffer.wrap(bytes)) }
@@ -434,8 +852,13 @@ private object SingleInstanceFiles {
                     "POSIX file mode unavailable, writing then restricting",
                     mapOf("reason" to (e.message ?: "unsupported")),
                 )
-                Files.write(path, bytes)
-                restrictToOwner(path, ownerOnlyFilePermissions)
+                Files.write(tempPath, bytes)
+                restrictToOwner(tempPath, ownerOnlyFilePermissions)
+            }
+            try {
+                Files.move(tempPath, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(tempPath, path, StandardCopyOption.REPLACE_EXISTING)
             }
             true
         } catch (e: IOException) {
@@ -460,17 +883,109 @@ private object SingleInstanceFiles {
      * descriptor pointing at a removed socket is the state
      * [SingleInstanceManager.acquireLock] reclaims cleanly, while a socket with no
      * descriptor is unreachable and never cleaned up.
+     *
+     * Only withdraws what was published by this instance: if the descriptor file on disk
+     * already belongs to another token (because another process reclaimed the endpoint while
+     * this instance was tearing down or releasing), it is left in place so the new owner's
+     * descriptor and listening socket are not unlinked.
+     *
+     * Inode-checked: on POSIX systems, comparing the socket file's device/inode before unlinking
+     * ensures that even if publication interleaved, a socket replaced by a new instance is never unlinked.
+     * Verification fails closed: if either the bound file key or current file key cannot be established,
+     * the socket file is preserved.
      */
     fun withdraw(descriptor: InstanceDescriptor?) {
+        if (descriptor == null) return
+        withCrossProcessLock(
+            onTimeout = {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Timed out waiting for cross-process lock during withdrawal; preserving shared files",
+                )
+            },
+        ) {
+            withdrawLocked(descriptor)
+        }
+    }
+
+    /**
+     * Withdraws single-instance files when the caller already holds the cross-process lock.
+     */
+    internal fun withdrawLocked(descriptor: InstanceDescriptor?) {
+        if (descriptor == null) return
         try {
+            val onDisk = read()
+            if (onDisk != null && onDisk.token != descriptor.token) {
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Single-instance descriptor was reclaimed by another owner; leaving it in place",
+                )
+                return
+            }
             Files.deleteIfExists(descriptorFile.toPath())
-            if (descriptor?.transport == SingleInstanceTransport.UNIX) {
-                Files.deleteIfExists(File(descriptor.endpoint).toPath())
+            if (descriptor.transport == SingleInstanceTransport.UNIX) {
+                withdrawUnixSocket(descriptor)
             }
         } catch (e: IOException) {
             logger.warn(LogCategory.SYSTEM, "Error removing single-instance files", error = e)
         }
     }
+
+    /**
+     * Unlinks the Unix domain socket if the on-disk file key matches the bound key.
+     * Note on inode reuse: unlinking and rebinding a socket at the same path may land
+     * on the same device/inode if freed. The cross-process lock is the primary serialization;
+     * this inode identity check provides defence-in-depth rather than an absolute guarantee.
+     */
+    private fun withdrawUnixSocket(descriptor: InstanceDescriptor) {
+        val socketPath = File(descriptor.endpoint).toPath()
+        if (!Files.exists(socketPath)) return
+        val currentKey =
+            try {
+                Files.readAttributes(socketPath, BasicFileAttributes::class.java).fileKey()
+            } catch (_: Exception) {
+                null
+            }
+        val boundKey = descriptor.socketFileKey
+        when {
+            boundKey != null && currentKey != null && currentKey == boundKey -> {
+                Files.deleteIfExists(socketPath)
+            }
+
+            boundKey == null || currentKey == null -> {
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Socket file ownership cannot be positively verified (missing file key); leaving in place",
+                )
+            }
+
+            else -> {
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Socket file was replaced by another owner (inode mismatch); leaving it in place",
+                )
+            }
+        }
+    }
+}
+
+/** Outcome of probing an instance endpoint to determine reachability and liveness. */
+internal enum class SingleInstanceProbe {
+    /** The endpoint answered the ping request with a valid PONG. */
+    PONG,
+
+    /** The endpoint is active and answered with BUSY. */
+    BUSY,
+
+    /**
+     * The endpoint accepted the connection, confirming a live listener is bound to it,
+     * but closed, timed out, or encountered an error before completing a valid reply.
+     * The instance is active, but currently saturated or dropping requests.
+     */
+    CONNECTED_NO_REPLY,
+
+    /** No process is listening on the endpoint (connection refused or socket unlinked). */
+    UNREACHABLE,
 }
 
 /**
@@ -480,11 +995,17 @@ private object SingleInstanceFiles {
  * The 10-second budget is enforced by closing the channel underneath a blocked
  * read, because a blocking [SocketChannel] has no read timeout of its own.
  */
-private object SingleInstanceWire {
+internal object SingleInstanceWire {
     private val watchdog =
         Executors.newSingleThreadScheduledExecutor(
             ThreadFactory { runnable -> Thread(runnable, "BOSS-IPC-Watchdog").apply { isDaemon = true } },
         )
+
+    /**
+     * Test seam for overriding the watchdog scheduler.
+     * Any test that sets this must restore it to null in a `finally` block or call [SingleInstanceManager.release].
+     */
+    internal var watchdogSchedulerOverride: ScheduledExecutorService? = null
 
     /**
      * Binds the Unix-domain socket, or returns null when this platform or path
@@ -509,7 +1030,20 @@ private object SingleInstanceWire {
             val channel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
             channel.bind(UnixDomainSocketAddress.of(path))
             SingleInstanceFiles.restrictToOwner(path, ownerOnlyFilePermissions)
-            channel to InstanceDescriptor(SingleInstanceTransport.UNIX, path.toString(), token)
+            val socketFileKey =
+                try {
+                    Files.readAttributes(path, BasicFileAttributes::class.java).fileKey()
+                } catch (_: Exception) {
+                    null
+                }
+            channel to
+                InstanceDescriptor(
+                    transport = SingleInstanceTransport.UNIX,
+                    endpoint = path.toString(),
+                    token = token,
+                    pid = ProcessHandle.current().pid(),
+                    socketFileKey = socketFileKey,
+                )
         } catch (e: UnsupportedOperationException) {
             logger.debug(
                 LogCategory.SYSTEM,
@@ -533,7 +1067,13 @@ private object SingleInstanceWire {
             try {
                 val channel = ServerSocketChannel.open()
                 channel.bind(InetSocketAddress(InetAddress.getLoopbackAddress(), port), TCP_BACKLOG)
-                return channel to InstanceDescriptor(SingleInstanceTransport.TCP, port.toString(), token)
+                return channel to
+                    InstanceDescriptor(
+                        transport = SingleInstanceTransport.TCP,
+                        endpoint = port.toString(),
+                        token = token,
+                        pid = ProcessHandle.current().pid(),
+                    )
             } catch (e: IOException) {
                 logger.trace(
                     LogCategory.SYSTEM,
@@ -545,25 +1085,72 @@ private object SingleInstanceWire {
         return null
     }
 
-    /** True when something on [descriptor]'s endpoint answers a probe with the published token. */
+    /** Probes [descriptor]'s endpoint, distinguishing unreachable from live-but-unresponsive endpoints. */
+    @Suppress("TooGenericExceptionCaught")
+    fun probeInstance(
+        descriptor: InstanceDescriptor,
+        request: String = formatPingRequest(descriptor.token),
+        timeoutMs: Long = SingleInstanceManager.connectionBudgetMsOverride ?: CONNECTION_TIMEOUT_MS,
+        maxResponseBytes: Int = MAX_RESPONSE_BYTES,
+    ): SingleInstanceProbe {
+        val channel = connect(descriptor) ?: return SingleInstanceProbe.UNREACHABLE
+        var budget: ScheduledFuture<*>? = null
+        return try {
+            channel.use { ch ->
+                budget = closeAfterBudget(ch, timeoutMs)
+                runCatching { writeLine(ch, request) }
+                val line =
+                    runCatching {
+                        readBoundedLine(BufferedInputStream(Channels.newInputStream(ch)), maxResponseBytes)
+                    }.getOrNull()
+                when (line) {
+                    RESPONSE_PONG -> SingleInstanceProbe.PONG
+                    RESPONSE_BUSY -> SingleInstanceProbe.BUSY
+                    else -> SingleInstanceProbe.CONNECTED_NO_REPLY
+                }
+            }
+        } catch (_: IOException) {
+            SingleInstanceProbe.CONNECTED_NO_REPLY
+        } catch (_: RejectedExecutionException) {
+            SingleInstanceProbe.CONNECTED_NO_REPLY
+        } catch (e: Exception) {
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Single-instance probe failed",
+                mapOf("reason" to (e.message ?: "error")),
+            )
+            SingleInstanceProbe.CONNECTED_NO_REPLY
+        } finally {
+            budget?.cancel(false)
+            runCatching { channel.close() }
+        }
+    }
+
+    /**
+     * True when something on [descriptor]'s endpoint answers a probe with the published token or is busy.
+     * Note that [SingleInstanceProbe.CONNECTED_NO_REPLY] returns false here as dev reload requires
+     * a responsive host that holds the token.
+     */
     fun respondsToPing(descriptor: InstanceDescriptor): Boolean {
-        val response = exchange(descriptor, formatPingRequest(descriptor.token))
-        return response == RESPONSE_PONG
+        val probe = probeInstance(descriptor)
+        return probe == SingleInstanceProbe.PONG || probe == SingleInstanceProbe.BUSY
     }
 
     /** Sends one line and reads one bounded line back, within the connection budget. */
+    @Suppress("TooGenericExceptionCaught")
     fun exchange(
         descriptor: InstanceDescriptor,
         request: String,
-        timeoutMs: Long = CONNECTION_TIMEOUT_MS,
+        timeoutMs: Long = SingleInstanceManager.connectionBudgetMsOverride ?: CONNECTION_TIMEOUT_MS,
         maxResponseBytes: Int = MAX_RESPONSE_BYTES,
     ): String? {
         val channel = connect(descriptor) ?: return null
-        val budget = closeAfterBudget(channel, timeoutMs)
+        var budget: ScheduledFuture<*>? = null
         return try {
-            channel.use {
-                writeLine(it, request)
-                readBoundedLine(BufferedInputStream(Channels.newInputStream(it)), maxResponseBytes)
+            channel.use { ch ->
+                budget = closeAfterBudget(ch, timeoutMs)
+                writeLine(ch, request)
+                readBoundedLine(BufferedInputStream(Channels.newInputStream(ch)), maxResponseBytes)
             }
         } catch (e: IOException) {
             logger.debug(
@@ -572,9 +1159,50 @@ private object SingleInstanceWire {
                 mapOf("reason" to (e.message ?: "io error")),
             )
             null
+        } catch (e: RejectedExecutionException) {
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Single-instance exchange watchdog rejected",
+                mapOf("reason" to (e.message ?: "watchdog rejected")),
+            )
+            null
+        } catch (e: Exception) {
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Single-instance exchange failed",
+                mapOf("reason" to (e.message ?: "unexpected error")),
+            )
+            null
         } finally {
-            budget.cancel(false)
+            budget?.cancel(false)
+            runCatching { channel.close() }
         }
+    }
+
+    /**
+     * Sends one line and reads one bounded line back, retrying with exponential backoff
+     * when the running instance answers with [RESPONSE_BUSY].
+     */
+    fun exchangeWithRetry(
+        descriptor: InstanceDescriptor,
+        request: String,
+        timeoutMs: Long = SingleInstanceManager.connectionBudgetMsOverride ?: CONNECTION_TIMEOUT_MS,
+        maxResponseBytes: Int = MAX_RESPONSE_BYTES,
+        maxRetries: Int = 3,
+    ): String? {
+        var resp = exchange(descriptor, request, timeoutMs, maxResponseBytes)
+        var retries = 0
+        while (resp == RESPONSE_BUSY && retries < maxRetries) {
+            try {
+                Thread.sleep(50L * (1 shl retries))
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return null
+            }
+            retries++
+            resp = exchange(descriptor, request, timeoutMs, maxResponseBytes)
+        }
+        return resp
     }
 
     private fun connect(descriptor: InstanceDescriptor): SocketChannel? =
@@ -646,9 +1274,10 @@ private object SingleInstanceWire {
 
     fun closeAfterBudget(
         channel: SocketChannel,
-        timeoutMs: Long = CONNECTION_TIMEOUT_MS,
-    ): ScheduledFuture<*> =
-        watchdog.schedule(
+        timeoutMs: Long = SingleInstanceManager.connectionBudgetMsOverride ?: CONNECTION_TIMEOUT_MS,
+    ): ScheduledFuture<*> {
+        val scheduler = watchdogSchedulerOverride ?: watchdog
+        return scheduler.schedule(
             Runnable {
                 if (channel.isOpen) {
                     logger.warn(LogCategory.SYSTEM, "Closing a single-instance connection that overran its budget")
@@ -658,6 +1287,23 @@ private object SingleInstanceWire {
             timeoutMs,
             TimeUnit.MILLISECONDS,
         )
+    }
+
+    fun respondBusyAndClose(client: SocketChannel) {
+        try {
+            client.configureBlocking(false)
+            val bytes = ByteBuffer.wrap("$RESPONSE_BUSY\n".toByteArray(StandardCharsets.UTF_8))
+            while (bytes.hasRemaining()) {
+                val written = client.write(bytes)
+                if (written == 0) break
+            }
+            runCatching { client.shutdownOutput() }
+        } catch (_: IOException) {
+            // EPIPE/ECONNRESET when client disconnects early; throttled drop log bounds output.
+        } finally {
+            closeQuietly(client)
+        }
+    }
 
     private fun closeQuietly(channel: SocketChannel) {
         try {
@@ -696,8 +1342,15 @@ private fun buildLlmTokenResponse(providerOverride: (() -> Result<String>)?): St
     )
 }
 
+/**
+ * The STATUS response. [healthJson] is a parameter so a test can check that the real response carries
+ * the health report without starting a browser engine or reading the MCP files.
+ */
 @Suppress("TooGenericExceptionCaught")
-private fun buildStatusResponse(statusProviderOverride: (() -> String)?): String {
+internal fun buildStatusResponse(
+    statusProviderOverride: (() -> String)?,
+    healthJson: () -> JsonObject = { WorkspaceHealthCollector().collect().toJson() },
+): String {
     val rawJson =
         if (statusProviderOverride != null) {
             statusProviderOverride.invoke()
@@ -732,6 +1385,8 @@ private fun buildStatusResponse(statusProviderOverride: (() -> String)?): String
                             put("heapPercent", heapPercent)
                         },
                     )
+                    // Never throws: a health source that cannot be read is reported as unchecked.
+                    put("health", healthJson())
                 }.toString()
             } catch (e: Exception) {
                 return RESPONSE_ERROR_PREFIX + (e.message ?: "Failed to query status")
@@ -808,6 +1463,43 @@ private fun buildMcpInvokeResponse(
     }
 }
 
+private fun buildPluginDevReloadResponse(
+    pluginId: String,
+    handler: ((String) -> Boolean)?,
+): String {
+    if (pluginId.isBlank()) {
+        return "RELOAD_FAILED Missing pluginId parameter"
+    }
+    val result =
+        runCatching {
+            checkNotNull(handler) { "Development plugin reload is not available in this host" }.invoke(pluginId)
+        }
+    return result.fold(
+        onSuccess = { success ->
+            if (success) {
+                "RELOAD_OK $pluginId"
+            } else {
+                "RELOAD_FAILED Failed to reload plugin $pluginId"
+            }
+        },
+        onFailure = { error ->
+            val rootCause =
+                generateSequence(error) { it.cause?.takeIf { cause -> cause !== it } }
+                    .take(15)
+                    .last()
+            val errorName = rootCause::class.simpleName ?: "Error"
+            val errorDetail = rootCause.message ?: error.message ?: "No detailed cause"
+            val sanitizedMessage =
+                "$errorName: $errorDetail"
+                    .replace(Regex("[\\r\\n]+"), " ")
+                    .take(400)
+            val recoveryWarning =
+                if (error.suppressedExceptions.isNotEmpty()) "Rollback failed; check the host log. " else ""
+            "RELOAD_FAILED $recoveryWarning$sanitizedMessage"
+        },
+    )
+}
+
 internal fun encodeMcpTools(tools: List<ai.rever.boss.plugin.api.RegisteredMcpTool>): String =
     JsonArray(
         tools.map { registeredTool ->
@@ -823,12 +1515,42 @@ internal fun encodeMcpTools(tools: List<ai.rever.boss.plugin.api.RegisteredMcpTo
         },
     ).toString()
 
-private fun parseToolSchema(schema: String): kotlinx.serialization.json.JsonElement =
-    try {
-        Json.parseToJsonElement(schema)
-    } catch (_: IllegalArgumentException) {
-        JsonPrimitive(schema)
+private const val MAX_CACHED_TOOL_SCHEMAS = 128
+private const val MAX_CACHED_TOOL_SCHEMA_CHARS = 64 * 1024
+private typealias ToolSchemaCacheEntry = MutableMap.MutableEntry<String, kotlinx.serialization.json.JsonElement>
+
+/**
+ * Bounded because schemas are supplied by reloadable plugins and can change on every registration.
+ * IPC callers can only read the registry and cannot add keys. Schemas over 64 KiB bypass retention,
+ * bounding retained source text to roughly 8 MiB plus parsed-tree overhead.
+ */
+private val schemaCache =
+    object : LinkedHashMap<String, kotlinx.serialization.json.JsonElement>(MAX_CACHED_TOOL_SCHEMAS, 0.75f, true) {
+        override fun removeEldestEntry(eldest: ToolSchemaCacheEntry): Boolean = size > MAX_CACHED_TOOL_SCHEMAS
     }
+
+internal fun clearToolSchemaCache() = synchronized(schemaCache) { schemaCache.clear() }
+
+internal fun parseToolSchema(schema: String): kotlinx.serialization.json.JsonElement {
+    fun parse() =
+        try {
+            Json.parseToJsonElement(schema)
+        } catch (_: IllegalArgumentException) {
+            JsonPrimitive(schema)
+        }
+
+    return if (schema.length > MAX_CACHED_TOOL_SCHEMA_CHARS) {
+        parse()
+    } else {
+        val cached = synchronized(schemaCache) { schemaCache[schema] }
+        cached ?: run {
+            val parsed = parse()
+            synchronized(schemaCache) {
+                schemaCache[schema] ?: parsed.also { schemaCache[schema] = it }
+            }
+        }
+    }
+}
 
 internal fun encodeMcpResult(
     toolName: String,
@@ -865,14 +1587,15 @@ internal val isSingleLineCredential: (String) -> Boolean =
     { token -> token.isNotBlank() && token.none { it == '\n' || it == '\r' || it == ' ' } }
 
 /**
- * Waits for the next connection, or returns null once the channel is gone —
+ * Waits for the next connection, or returns null once the channel is gone --
  * which is what [SingleInstanceManager.release] closing it looks like from here.
  */
 private fun acceptNextClient(
     serverChannel: ServerSocketChannel?,
     isListening: () -> Boolean,
-): SocketChannel? =
-    try {
+): SocketChannel? {
+    SingleInstanceManager.acceptNextClientOverride?.let { return it(serverChannel, isListening) }
+    return try {
         serverChannel?.accept()
     } catch (error: IOException) {
         if (isListening()) {
@@ -880,8 +1603,11 @@ private fun acceptNextClient(
         }
         null
     }
+}
 
 private fun pluginActionResponse(verdict: kotlinx.coroutines.Deferred<Boolean>?): String {
+    // Null is the queued verdict for an external action held for confirmation. Nothing has run,
+    // but the running instance accepted responsibility for asking the operator.
     if (verdict == null) return RESPONSE_OK
     val handled = kotlinx.coroutines.runBlocking { awaitPluginAction(verdict, OPEN_ACTION_TIMEOUT_MS) }
     return when (handled) {
@@ -903,8 +1629,11 @@ private fun pluginActionResponse(verdict: kotlinx.coroutines.Deferred<Boolean>?)
  *
  * Architecture:
  * - The descriptor lives in BOSS's own per-user data root (`~/.boss/run`, created
- *   owner-only) and records the channel endpoint plus a token minted fresh at
- *   startup. It records no pid.
+ *   owner-only) and records the channel endpoint, a token minted fresh at
+ *   startup, and the pid of the process that published it. The pid binds the
+ *   file to a live owner: [descriptorTrust] refuses to forward to a peer whose
+ *   recorded pid is gone or provably another program, and refuses auth links to
+ *   a peer it cannot verify at all.
  * - The channel is a Unix-domain socket inside that directory where the JDK
  *   supports one (macOS, Linux), and a loopback TCP port otherwise (Windows).
  *   Either way the token is what establishes that a caller may be listened to:
@@ -931,10 +1660,39 @@ private fun pluginActionResponse(verdict: kotlinx.coroutines.Deferred<Boolean>?)
  * }
  * ```
  */
-@Suppress("TooManyFunctions")
+@Suppress("TooManyFunctions", "LargeClass")
 object SingleInstanceManager {
+    private val lifecycleLock = Any()
+
+    @Volatile
     private var serverChannel: ServerSocketChannel? = null
+
+    @Volatile
     private var listenerThread: Thread? = null
+
+    @Volatile
+    private var listenerEpoch: Long = 0L
+
+    /** Indicates whether the IPC listener thread is currently running. */
+    internal val isListenerAlive: Boolean
+        get() = listenerThread?.isAlive == true
+
+    /**
+     * Bounds the in-flight client handler threads so a local flood cannot park
+     * N daemons per request (#1326). When the budget is exhausted, the listener
+     * thread responds with BUSY and closes the freshly-accepted connection without
+     * spawning a handler: the rejected caller receives a transient BUSY wire response
+     * enabling cooperative backoff/retry, and the worst case for the host is
+     * `MAX_CLIENT_HANDLERS` parked handler threads.
+     */
+    private val clientSlots = java.util.concurrent.Semaphore(MAX_CLIENT_HANDLERS)
+
+    /** Number of client handler permits currently available (test seam). */
+    internal val availableClientSlots: Int
+        get() = clientSlots.availablePermits()
+
+    /** Test seam for intercepting client accept in the listener loop; must be cleared in test teardown or [release]. */
+    internal var acceptNextClientOverride: ((ServerSocketChannel?, () -> Boolean) -> SocketChannel?)? = null
 
     /** Test seam; production serves credentials from the running BOSS session. */
     internal var llmTokenProviderOverride: (() -> Result<String>)? = null
@@ -948,12 +1706,42 @@ object SingleInstanceManager {
     /** Test seam / host hook for MCP tool invocation response. */
     internal var mcpInvokeHandlerOverride: (suspend (String, String) -> McpToolResult)? = null
 
+    /** Test seam / host hook for dev plugin reload response. */
+    internal var pluginReloadHandlerOverride: ((String) -> Boolean)? = null
+
+    /** Test seam for overriding connection and handler budget timeouts. */
+    internal var connectionBudgetMsOverride: Long? = null
+
+    /** Test seam for watchdog scheduler; must be cleared in test teardown or [release]. */
+    internal var watchdogSchedulerOverride: ScheduledExecutorService?
+        get() = SingleInstanceWire.watchdogSchedulerOverride
+        set(value) {
+            SingleInstanceWire.watchdogSchedulerOverride = value
+        }
+
+    private val droppedConnectionsCount = AtomicInteger(0)
+    private val lastDroppedWarningLogNanos = AtomicLong(Long.MIN_VALUE)
+    private const val DROPPED_LOG_INTERVAL_NANOS = 1_000_000_000L
+
     @Volatile
-    private var isListening: Boolean = false
+    internal var isListening: Boolean = false
 
     /** The descriptor this process published, or null when it is not the owner. */
     @Volatile
     private var published: InstanceDescriptor? = null
+
+    /** Test seam to intercept right before [teardownFaultedListener] is called in the accept loop. */
+    internal var beforeTeardownFaultedListenerForTest: ((Long) -> Unit)? = null
+
+    /**
+     * Whether this process holds the single-instance claim - it won
+     * [acquireLock] and has not been [release]d. Destructive startup cleanup
+     * (FluckEngine's stale-Chromium sweep) consults this: the sweep matches
+     * processes by shared data-dir paths, so a process that lost - or never
+     * took - the claim must not run it against the owning instance's tree.
+     */
+    val isInstanceOwner: Boolean
+        get() = published != null
 
     /** Runtime directory override for tests; see [SingleInstanceFiles.runtimeDirOverride]. */
     internal var runtimeDirOverride: File?
@@ -962,14 +1750,32 @@ object SingleInstanceManager {
             SingleInstanceFiles.runtimeDirOverride = value
         }
 
+    /** The published descriptor for test assertions. */
+    internal val publishedInstanceDescriptor: InstanceDescriptor?
+        get() = published
+
+    /** Test-only seam to drive descriptor withdrawal with an explicit descriptor. */
+    internal fun withdrawForTest(descriptor: InstanceDescriptor?) {
+        SingleInstanceFiles.withdraw(descriptor)
+    }
+
+    /** Test-only access to current listener epoch. */
+    internal val listenerEpochForTest: Long
+        get() = listenerEpoch
+
+    /** Test-only seam to invoke faulted listener teardown directly. */
+    internal fun teardownFaultedListenerForTest(epoch: Long) {
+        teardownFaultedListener(epoch)
+    }
+
     /**
      * Check whether another instance of BOSS is already running, by asking it.
      * Does not take ownership - use [acquireLock] for that.
      */
-    fun isAnotherInstanceRunning(): Boolean {
-        val descriptor = SingleInstanceFiles.read() ?: return false
-        return SingleInstanceWire.respondsToPing(descriptor)
-    }
+    fun isAnotherInstanceRunning(): Boolean =
+        SingleInstanceFiles.read()?.let { existing ->
+            !shouldReclaimExisting(existing)
+        } ?: false
 
     /**
      * Try to become the single instance.
@@ -977,28 +1783,158 @@ object SingleInstanceManager {
      * Returns true if we are the one, false if another instance is answering on
      * the channel. On success the channel is listening and the descriptor is
      * published.
+     *
+     * Note: Not safe to call twice on a running, healthy instance. Re-invoking [acquireLock]
+     * while an instance is already listening will tear down and withdraw the existing
+     * instance if publication fails.
      */
     fun acquireLock(): Boolean {
-        SingleInstanceFiles.prepare()
+        joinPreviousListener()
 
-        val existing = SingleInstanceFiles.read()
-        if (existing != null && SingleInstanceWire.respondsToPing(existing)) {
-            logger.info(LogCategory.SYSTEM, "Another instance is answering on the single-instance channel")
+        val preLock = SingleInstanceFiles.read()
+        if (preLock != null && !shouldReclaimExisting(preLock)) {
             return false
         }
-        if (existing != null) {
-            // Nothing answers, so this descriptor outlived its process.
-            logger.debug(LogCategory.SYSTEM, "Reclaiming a single-instance descriptor nothing answers on")
-        }
 
-        return startServer()
+        var listenerToJoinOnFailure: Thread? = null
+        val acquired =
+            synchronized(lifecycleLock) {
+                SingleInstanceFiles.withCrossProcessLock(
+                    onTimeout = {
+                        logger.warn(LogCategory.SYSTEM, "Timed out waiting for lock in acquireLock")
+                        false
+                    },
+                ) {
+                    SingleInstanceFiles.prepare()
+
+                    val underLock = SingleInstanceFiles.read()
+                    if (underLock?.token != preLock?.token) {
+                        logger.info(
+                            LogCategory.SYSTEM,
+                            "Single-instance descriptor changed during lock acquisition; aborting startup",
+                        )
+                        return@withCrossProcessLock false
+                    }
+
+                    val startResult = startServerLocked()
+                    if (!startResult.success) {
+                        listenerToJoinOnFailure = startResult.threadToJoin
+                        return@withCrossProcessLock false
+                    }
+                    true
+                }
+            }
+
+        if (listenerToJoinOnFailure != null) {
+            joinListenerThread(listenerToJoinOnFailure)
+        }
+        return acquired
     }
 
     /**
-     * Bind the channel, publish the descriptor and start accepting.
-     * Returns false when there is nothing a second launch could reach.
+     * Drains any previous listener thread outside the lifecycle lock so a faulted
+     * listener attempting [teardownFaultedListener] can acquire the monitor and exit
+     * cleanly without stalling (#1326).
      */
-    private fun startServer(): Boolean {
+    private fun joinPreviousListener() {
+        if (!isListening) {
+            joinListenerThread(listenerThread)
+        }
+    }
+
+    private fun joinListenerThread(thread: Thread?) {
+        if (thread != null && thread.isAlive && thread != Thread.currentThread()) {
+            try {
+                thread.join(1000L)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                logger.warn(LogCategory.SYSTEM, "Interrupted waiting for listener thread", error = e)
+            }
+        }
+    }
+
+    private fun shouldReclaimExisting(existing: InstanceDescriptor): Boolean {
+        if (existing.pid != null && !isProcessAlive(existing.pid)) {
+            logger.debug(
+                LogCategory.SYSTEM,
+                "Reclaiming a single-instance descriptor whose recorded process is gone",
+                mapOf("pid" to existing.pid),
+            )
+            return true
+        }
+        return isReclaimableEndpoint(existing)
+    }
+
+    private fun isReclaimableEndpoint(existing: InstanceDescriptor): Boolean {
+        val probe = SingleInstanceWire.probeInstance(existing)
+        if (probe == SingleInstanceProbe.UNREACHABLE) {
+            logger.debug(LogCategory.SYSTEM, "Reclaiming a single-instance descriptor nothing answers on")
+            return true
+        }
+        val trust = descriptorTrust(existing)
+        return when {
+            trust == DescriptorTrust.FORGED -> {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "The single-instance channel answers, but its recorded owner is a different " +
+                        "program - reclaiming a descriptor that may have been planted",
+                    mapOf("endpoint" to existing.endpoint, "pid" to existing.pid),
+                )
+                true
+            }
+
+            probe == SingleInstanceProbe.PONG -> {
+                logger.info(LogCategory.SYSTEM, "Another instance is answering on the single-instance channel")
+                false
+            }
+
+            // At this point probe is BUSY or CONNECTED_NO_REPLY.
+            // Positive evidence of ownership is required before refusing to reclaim:
+            // A saturated genuine BOSS instance has trust == VERIFIED.
+            // Note: probeInstance catches Exception and maps unexpected failures fail-closed to
+            // CONNECTED_NO_REPLY. Gating refusal strictly on VERIFIED ensures that legitimate
+            // saturated owners are preserved while unverified descriptors (e.g. pid == null
+            // pointing at a recycled TCP port or dead listener) remain safely reclaimable (#1326).
+            trust != DescriptorTrust.VERIFIED -> {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "The single-instance channel accepted a connection but failed to reply with a valid token, " +
+                        "and the descriptor owner is unverified - reclaiming endpoint",
+                    mapOf("endpoint" to existing.endpoint, "pid" to existing.pid, "probe" to probe.name),
+                )
+                true
+            }
+
+            else -> {
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Another instance is active but saturated on the single-instance channel",
+                    mapOf("probe" to probe.name),
+                )
+                false
+            }
+        }
+    }
+
+    private data class StartServerResult(
+        val success: Boolean,
+        val threadToJoin: Thread? = null,
+    )
+
+    /**
+     * Bind the channel, publish the descriptor and start accepting.
+     * Caller must hold [lifecycleLock] and [SingleInstanceFiles.withCrossProcessLock].
+     */
+    private fun startServerLocked(): StartServerResult {
+        val previousListener = listenerThread
+        listenerThread = null
+        try {
+            serverChannel?.close()
+        } catch (e: IOException) {
+            logger.warn(LogCategory.SYSTEM, "Error closing previous server channel", error = e)
+        }
+        serverChannel = null
+
         val token = newChannelToken()
         val bound =
             SingleInstanceWire.openUnixServer(SingleInstanceFiles.socketFile, token)
@@ -1009,7 +1945,7 @@ object SingleInstanceManager {
         // token would be unknowable, so failing to publish is failing to start
         // rather than listening on something nobody can address.
         val descriptor = bound?.second?.takeIf { SingleInstanceFiles.write(it) }
-        if (descriptor == null) {
+        return if (descriptor == null) {
             logger.error(
                 LogCategory.SYSTEM,
                 if (bound == null) {
@@ -1018,35 +1954,127 @@ object SingleInstanceManager {
                     "Failed to publish the single-instance descriptor"
                 },
             )
-            release()
-            return false
+            cleanupFailedStartLocked(bound?.second)
+            StartServerResult(success = false, threadToJoin = previousListener)
+        } else {
+            published = descriptor
+            logger.info(
+                LogCategory.SYSTEM,
+                "Single-instance channel listening",
+                mapOf("transport" to descriptor.transport.name, "endpoint" to descriptor.endpoint),
+            )
+
+            startAcceptLoop()
+            StartServerResult(success = true, threadToJoin = previousListener)
         }
-
-        published = descriptor
-        logger.info(
-            LogCategory.SYSTEM,
-            "Single-instance channel listening",
-            mapOf("transport" to descriptor.transport.name, "endpoint" to descriptor.endpoint),
-        )
-
-        startAcceptLoop()
-        return true
     }
 
+    /**
+     * Cleans up channel, descriptor, and listener references following a bind or publication failure.
+     * Must be called while holding [lifecycleLock] and [SingleInstanceFiles.withCrossProcessLock].
+     * Never re-acquires the file lock and defers joining [listenerThread] until caller exits monitors.
+     */
+    private fun cleanupFailedStartLocked(boundDescriptor: InstanceDescriptor?) {
+        isListening = false
+        val descriptorToWithdraw = boundDescriptor ?: published
+        published = null
+
+        resetSeamsAndCounters()
+
+        try {
+            serverChannel?.close()
+        } catch (e: IOException) {
+            logger.warn(LogCategory.SYSTEM, "Error closing server channel on startup failure", error = e)
+        }
+        serverChannel = null
+        listenerThread = null
+
+        if (boundDescriptor?.transport == SingleInstanceTransport.UNIX) {
+            try {
+                Files.deleteIfExists(File(boundDescriptor.endpoint).toPath())
+            } catch (e: IOException) {
+                logger.warn(LogCategory.SYSTEM, "Error removing socket file on startup failure", error = e)
+            }
+        }
+
+        SingleInstanceFiles.withdrawLocked(descriptorToWithdraw)
+    }
+
+    private fun resetSeamsAndCounters() {
+        acceptNextClientOverride = null
+        llmTokenProviderOverride = null
+        statusProviderOverride = null
+        mcpListProviderOverride = null
+        mcpInvokeHandlerOverride = null
+        pluginReloadHandlerOverride = null
+        watchdogSchedulerOverride = null
+        connectionBudgetMsOverride = null
+        beforeTeardownFaultedListenerForTest = null
+        droppedConnectionsCount.set(0)
+        lastDroppedWarningLogNanos.set(Long.MIN_VALUE)
+    }
+
+    @Suppress("TooGenericExceptionCaught")
     private fun startAcceptLoop() {
+        val epoch = ++listenerEpoch
         isListening = true
         listenerThread =
             thread(isDaemon = true, name = "BOSS-IPC-Listener") {
-                logger.trace(LogCategory.SYSTEM, "IPC listener thread started")
+                logger.trace(LogCategory.SYSTEM, "IPC listener thread started (epoch $epoch)")
 
                 while (isListening && !Thread.currentThread().isInterrupted) {
-                    val client = acceptNextClient(serverChannel) { isListening } ?: break
-                    handleClient(client)
+                    try {
+                        val client = acceptNextClient(serverChannel) { isListening }
+                        if (client == null) {
+                            if (isListening && serverChannel?.isOpen == true) {
+                                logger.error(
+                                    LogCategory.SYSTEM,
+                                    "IPC listener accept failed unexpectedly while listening; " +
+                                        "tearing down faulted endpoint",
+                                )
+                                beforeTeardownFaultedListenerForTest?.invoke(epoch)
+                                teardownFaultedListener(epoch)
+                            }
+                            break
+                        }
+                        handleClient(client)
+                    } catch (e: Throwable) {
+                        if (isListening && !Thread.currentThread().isInterrupted) {
+                            logger.error(
+                                LogCategory.SYSTEM,
+                                "Unexpected error in single-instance accept loop",
+                                error = e,
+                            )
+                        }
+                    }
                 }
 
-                logger.trace(LogCategory.SYSTEM, "IPC listener thread stopped")
+                logger.trace(LogCategory.SYSTEM, "IPC listener thread stopped (epoch $epoch)")
             }
     }
+
+    private fun teardownFaultedListener(epoch: Long) =
+        synchronized(lifecycleLock) {
+            if (epoch != listenerEpoch || !isListening) {
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Faulted listener teardown ignored: current epoch $listenerEpoch superseded $epoch",
+                )
+                return@synchronized
+            }
+            val descriptor = published
+            published = null
+            // Withdraw descriptor first to eliminate the race where endpoint is closed
+            // but descriptor still points to it
+            SingleInstanceFiles.withdraw(descriptor)
+            try {
+                serverChannel?.close()
+            } catch (e: IOException) {
+                logger.warn(LogCategory.SYSTEM, "Error closing faulted server channel", error = e)
+            }
+            serverChannel = null
+            isListening = false
+        }
 
     /**
      * Handle one connection.
@@ -1054,44 +2082,96 @@ object SingleInstanceManager {
      * The token is checked before the request means anything, so a caller that
      * cannot present it gets a refusal and nothing else.
      */
+    @Suppress("TooGenericExceptionCaught")
     private fun handleClient(client: SocketChannel) {
-        thread(isDaemon = true, name = "BOSS-IPC-Client-Handler") {
-            var budget = SingleInstanceWire.closeAfterBudget(client)
-            try {
-                client.use { channel ->
-                    val line =
-                        SingleInstanceWire.readBoundedLine(
-                            BufferedInputStream(Channels.newInputStream(channel)),
-                            MAX_REQUEST_BYTES,
-                        )
-                    val request = line?.let { parseRequestLine(it) }
-                    // Only a caller that presented the live token gets the longer
-                    // budget: minting a credential is a round trip to the gateway,
-                    // and nothing an unauthenticated caller sends should change what
-                    // this process is willing to spend on it.
-                    if (request != null && isLongerBudgetCandidate(request)) {
-                        budget.cancel(false)
-                        val timeout =
-                            if (request.verb == VERB_LLM_TOKEN) LLM_TOKEN_TIMEOUT_MS else MCP_INVOKE_TIMEOUT_MS
-                        budget = SingleInstanceWire.closeAfterBudget(channel, timeout)
+        // Acquire a handler slot before spawning a thread. A local flood that
+        // exceeds MAX_CLIENT_HANDLERS in-flight requests is answered with BUSY
+        // and dropped immediately, so a single attacker cannot park an unbounded
+        // number of daemons by holding the channel open. See #1326.
+        if (!clientSlots.tryAcquire()) {
+            recordDroppedConnection()
+            SingleInstanceWire.respondBusyAndClose(client)
+            return
+        }
+        var spawned = false
+        try {
+            thread(isDaemon = true, name = "BOSS-IPC-Client-Handler") {
+                var budget: ScheduledFuture<*>? = null
+                try {
+                    client.use { channel ->
+                        budget = SingleInstanceWire.closeAfterBudget(channel)
+                        val line =
+                            SingleInstanceWire.readBoundedLine(
+                                BufferedInputStream(Channels.newInputStream(channel)),
+                                MAX_REQUEST_BYTES,
+                            )
+                        val request = line?.let { parseRequestLine(it) }
+                        // Only a caller that presented the live token gets the longer
+                        // budget: minting a credential is a round trip to the gateway,
+                        // and nothing an unauthenticated caller sends should change what
+                        // this process is willing to spend on it.
+                        if (request != null && isLongerBudgetCandidate(request)) {
+                            budget.cancel(false)
+                            val timeout =
+                                if (request.verb == VERB_LLM_TOKEN) LLM_TOKEN_TIMEOUT_MS else MCP_INVOKE_TIMEOUT_MS
+                            budget = SingleInstanceWire.closeAfterBudget(channel, timeout)
+                        }
+                        SingleInstanceWire.writeLine(channel, responseFor(request))
                     }
-                    SingleInstanceWire.writeLine(channel, responseFor(request))
+                } catch (e: IOException) {
+                    logger.debug(
+                        LogCategory.SYSTEM,
+                        "Single-instance connection ended early",
+                        mapOf("reason" to (e.message ?: "io error")),
+                    )
+                } catch (e: RejectedExecutionException) {
+                    logger.debug(
+                        LogCategory.SYSTEM,
+                        "Single-instance watchdog scheduling rejected",
+                        mapOf("reason" to (e.message ?: "rejected")),
+                    )
+                } catch (e: Throwable) {
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "Single-instance connection failed unexpectedly",
+                        error = e,
+                    )
+                } finally {
+                    budget?.cancel(false)
+                    runCatching { client.close() }
+                    clientSlots.release()
                 }
-            } catch (e: IOException) {
-                logger.debug(
-                    LogCategory.SYSTEM,
-                    "Single-instance connection ended early",
-                    mapOf("reason" to (e.message ?: "io error")),
-                )
-            } finally {
-                budget.cancel(false)
             }
+            spawned = true
+        } finally {
+            if (!spawned) {
+                clientSlots.release()
+                runCatching { client.close() }
+            }
+        }
+    }
+
+    private fun recordDroppedConnection() {
+        val total = droppedConnectionsCount.incrementAndGet()
+        val now = System.nanoTime()
+        val last = lastDroppedWarningLogNanos.get()
+        if ((last == Long.MIN_VALUE || now - last >= DROPPED_LOG_INTERVAL_NANOS) &&
+            lastDroppedWarningLogNanos.compareAndSet(last, now)
+        ) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Single-instance handler at capacity; dropping connection without reading (total: $total)",
+            )
         }
     }
 
     private val isLongerBudgetCandidate: (SingleInstanceRequest) -> Boolean
         get() = { request ->
-            (request.verb == VERB_LLM_TOKEN || request.verb == VERB_MCP_INVOKE) && presentsLiveToken(request)
+            (
+                request.verb == VERB_LLM_TOKEN ||
+                    request.verb == VERB_MCP_INVOKE ||
+                    request.verb == VERB_PLUGIN_DEV_RELOAD
+            ) && presentsLiveToken(request)
         }
 
     /**
@@ -1110,6 +2190,7 @@ object SingleInstanceManager {
      * back. A request that does not present the live token is refused here,
      * before its contents mean anything.
      */
+    @Suppress("TooGenericExceptionCaught", "CyclomaticComplexMethod")
     private fun responseFor(request: SingleInstanceRequest?): String {
         if (request == null || !presentsLiveToken(request)) {
             logger.warn(LogCategory.SYSTEM, "Refused a malformed single-instance request or missing channel token")
@@ -1158,6 +2239,10 @@ object SingleInstanceManager {
                 buildMcpInvokeResponse(toolName, argsJson, mcpInvokeHandlerOverride)
             }
 
+            request.verb == VERB_PLUGIN_DEV_RELOAD -> {
+                buildPluginDevReloadResponse(request.toolName.orEmpty(), pluginReloadHandlerOverride)
+            }
+
             else -> {
                 logger.warn(LogCategory.SYSTEM, "Refused a single-instance request BOSS does not serve")
                 RESPONSE_REJECTED
@@ -1166,18 +2251,46 @@ object SingleInstanceManager {
     }
 
     /**
+     * The descriptor on disk, or null when it is not safe to talk to the
+     * endpoint it advertises. [DescriptorTrust.FORGED] never is; a peer that
+     * cannot be verified at all ([DescriptorTrust.UNVERIFIED]) is tolerated only
+     * for exchanges that carry no credentials in either direction — anything
+     * requesting or sending credential-adjacent data passes
+     * [requireVerified]. Callers that merely need "is a descriptor there" keep
+     * [SingleInstanceFiles.read].
+     */
+    private fun readSafeDescriptor(requireVerified: Boolean = false): InstanceDescriptor? =
+        SingleInstanceFiles.read()?.takeIf { descriptor ->
+            val trust = descriptorTrust(descriptor)
+            val safe = trust != DescriptorTrust.FORGED && (!requireVerified || trust == DescriptorTrust.VERIFIED)
+            if (!safe) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Ignoring a single-instance descriptor whose recorded owner is not the live process",
+                    mapOf(
+                        "transport" to descriptor.transport.name,
+                        "endpoint" to descriptor.endpoint,
+                        "pid" to descriptor.pid,
+                        "trust" to trust.name,
+                    ),
+                )
+            }
+            safe
+        }
+
+    /**
      * Requests a credential from the already-running, signed-in BOSS process.
      * The credential is never written to disk or included in a log line.
      */
     fun requestLlmToken(): Result<String> {
-        val target = SingleInstanceFiles.read()
+        val target = readSafeDescriptor(requireVerified = true)
         return if (target == null) {
             Result.failure(
                 IllegalStateException("Open BOSS, sign in with your RISA account, and retry."),
             )
         } else {
             val response =
-                SingleInstanceWire.exchange(
+                SingleInstanceWire.exchangeWithRetry(
                     target,
                     formatLlmTokenRequest(target.token),
                     LLM_TOKEN_TIMEOUT_MS,
@@ -1188,6 +2301,12 @@ object SingleInstanceManager {
                 )
             } else {
                 when {
+                    response == RESPONSE_BUSY -> {
+                        Result.failure(
+                            IllegalStateException("BOSS is busy handling other requests. Please retry shortly."),
+                        )
+                    }
+
                     response.startsWith(RESPONSE_LLM_TOKEN_PREFIX) -> {
                         Result.success(response.removePrefix(RESPONSE_LLM_TOKEN_PREFIX))
                     }
@@ -1210,10 +2329,10 @@ object SingleInstanceManager {
     @Suppress("ReturnCount", "TooGenericExceptionCaught")
     fun queryStatus(): Result<String> {
         val target =
-            SingleInstanceFiles.read()
+            readSafeDescriptor()
                 ?: return Result.failure(IllegalStateException("BOSS is not running. Launch BOSS to view status."))
         val response =
-            SingleInstanceWire.exchange(
+            SingleInstanceWire.exchangeWithRetry(
                 target,
                 formatStatusRequest(target.token),
                 timeoutMs = CONNECTION_TIMEOUT_MS,
@@ -1223,6 +2342,10 @@ object SingleInstanceManager {
             )
 
         return when {
+            response == RESPONSE_BUSY -> {
+                Result.failure(IllegalStateException("BOSS is busy handling other requests. Please retry shortly."))
+            }
+
             response.startsWith(RESPONSE_STATUS_PREFIX) -> {
                 val base64 = response.removePrefix(RESPONSE_STATUS_PREFIX).trim()
                 try {
@@ -1255,10 +2378,10 @@ object SingleInstanceManager {
     @Suppress("ReturnCount", "TooGenericExceptionCaught")
     fun queryMcpList(): Result<String> {
         val target =
-            SingleInstanceFiles.read()
+            readSafeDescriptor()
                 ?: return Result.failure(IllegalStateException("BOSS is not running. Launch BOSS to list MCP tools."))
         val response =
-            SingleInstanceWire.exchange(
+            SingleInstanceWire.exchangeWithRetry(
                 target,
                 formatMcpListRequest(target.token),
                 timeoutMs = CONNECTION_TIMEOUT_MS,
@@ -1268,6 +2391,10 @@ object SingleInstanceManager {
             )
 
         return when {
+            response == RESPONSE_BUSY -> {
+                Result.failure(IllegalStateException("BOSS is busy handling other requests. Please retry shortly."))
+            }
+
             response.startsWith(RESPONSE_MCP_LIST_PREFIX) -> {
                 val base64 = response.removePrefix(RESPONSE_MCP_LIST_PREFIX).trim()
                 try {
@@ -1313,7 +2440,7 @@ object SingleInstanceManager {
             return Result.failure(IllegalArgumentException("Timeout must be between 1 and 60 seconds"))
         }
         val target =
-            SingleInstanceFiles.read()
+            readSafeDescriptor(requireVerified = true)
                 ?: return Result.failure(IllegalStateException("BOSS is not running. Launch BOSS to invoke MCP tools."))
         val response =
             SingleInstanceWire.exchange(
@@ -1326,6 +2453,10 @@ object SingleInstanceManager {
             )
 
         return when {
+            response == RESPONSE_BUSY -> {
+                Result.failure(IllegalStateException("BOSS is busy handling other requests. Please retry shortly."))
+            }
+
             response.startsWith(RESPONSE_MCP_INVOKE_PREFIX) -> {
                 val base64 = response.removePrefix(RESPONSE_MCP_INVOKE_PREFIX).trim()
                 try {
@@ -1355,16 +2486,33 @@ object SingleInstanceManager {
     /**
      * Send a URL to the existing instance.
      *
+     * The descriptor file is the only thing standing between any local program
+     * that can write it and the running instance's auth flow: whoever controls
+     * the endpoint it names receives forwarded links, including `boss://auth`
+     * callbacks carrying live tokens. [descriptorTrust] therefore gates the
+     * forward before a connection is ever opened: nothing crosses when the
+     * recorded owner pid is gone or belongs to another program, and an auth
+     * link never crosses to a peer that cannot be verified at all.
+     *
      * @param origin what the caller knows about where [url] came from. Defaults to
      *   [DeepLinkOrigin.EXTERNAL], because a forwarded URL normally reached this
      *   process from the OS.
      * @return true if the running instance acknowledged it. For most links this
      *   still means only "queued" (fire-and-forget, as before); for a
-     *   `boss://plugin?id=…&action=…` link it now means the registered handler
-     *   reported the action handled. An unregistered handler id, a declined
-     *   action, or an unknown outcome at timeout returns false. This is not a
-     *   guarantee that asynchronous work started by a handler has completed.
+     *   `boss://plugin?id=…&action=…` link from [DeepLinkOrigin.OPERATOR_CLI] it
+     *   means the registered handler reported the action handled. For the default
+     *   external origin it means the action was queued for confirmation and has not
+     *   run. A refused action, an unregistered handler on the operator path, or an
+     *   unknown outcome at timeout returns false. This is not a guarantee that
+     *   asynchronous work started by a handler has completed.
+     *
+     *   False also covers two cases a caller may want to tell apart: a URL
+     *   [canFrameOpenUrl] refuses is rejected before any connection attempt,
+     *   while any other false means the running instance could not be reached
+     *   or did not accept. A retrying caller can check [canFrameOpenUrl] once,
+     *   up front, to keep a refusal out of a retry loop it could never pass.
      */
+    @Suppress("ReturnCount")
     fun sendToExistingInstance(
         url: String,
         origin: DeepLinkOrigin = DeepLinkOrigin.EXTERNAL,
@@ -1376,12 +2524,26 @@ object SingleInstanceManager {
 
         val response =
             SingleInstanceFiles.read()?.let { target ->
+                // A refused forward never reaches connect(), so a planted endpoint receives no probe.
+                if (!mayForwardTo(target, url)) return false
+                val request = formatOpenRequest(target.token, origin, url)
+                if (request == null) {
+                    // A URL that cannot occupy one line is refused here, before
+                    // the connection opens: sending it would inject a second
+                    // framed line the peer only partially reads.
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Refusing to forward a URL that cannot be framed safely",
+                        mapOf("urlBytes" to url.toByteArray(StandardCharsets.UTF_8).size),
+                    )
+                    return false
+                }
                 logger.debug(
                     LogCategory.SYSTEM,
                     "Attempting to connect to existing instance",
                     mapOf("transport" to target.transport.name, "endpoint" to target.endpoint),
                 )
-                SingleInstanceWire.exchange(target, formatOpenRequest(target.token, origin, url))
+                SingleInstanceWire.exchangeWithRetry(target, request)
             }
 
         if (response == RESPONSE_OK) {
@@ -1394,6 +2556,121 @@ object SingleInstanceManager {
             )
         }
         return response == RESPONSE_OK
+    }
+
+    /**
+     * Whether a link may be handed to the peer [descriptor] names.
+     *
+     * A forged descriptor — recorded pid dead, or belonging to a different
+     * program — means whatever answers on the endpoint is not the publisher, so
+     * nothing is forwarded. A descriptor that cannot be verified (written before
+     * pids were recorded, or a pid whose executable the OS will not show) still
+     * carries ordinary links for backward compatibility, but never a `boss://auth`
+     * callback, since that is the link a planted descriptor exists to steal.
+     * Refusals are logged rather than silent.
+     */
+    private fun mayForwardTo(
+        descriptor: InstanceDescriptor,
+        url: String,
+    ): Boolean =
+        when (descriptorTrust(descriptor)) {
+            DescriptorTrust.FORGED -> {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Refusing to forward a URL: the descriptor's recorded owner is not the live process",
+                    mapOf(
+                        "transport" to descriptor.transport.name,
+                        "endpoint" to descriptor.endpoint,
+                        "pid" to descriptor.pid,
+                    ),
+                )
+                false
+            }
+
+            DescriptorTrust.UNVERIFIED -> {
+                val refused = isAuthDeepLink(url)
+                if (refused) {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Refusing to forward an auth link to an unverified single-instance peer",
+                        mapOf("transport" to descriptor.transport.name, "endpoint" to descriptor.endpoint),
+                    )
+                }
+                !refused
+            }
+
+            DescriptorTrust.VERIFIED -> {
+                true
+            }
+        }
+
+    /**
+     * Dispatches dev reload signal for [pluginId] to the running BossConsole instance
+     * with synchronous request-response verification and timeout handling.
+     *
+     * A response that never arrives is split into its two causes: nothing answering the
+     * channel means the host is offline, while a host that answers a probe but not the
+     * reload is busy, and the staged JAR is still picked up at the next launch.
+     */
+    @Suppress("ReturnCount")
+    fun reloadDevPlugin(
+        pluginId: String,
+        timeoutMs: Int = PLUGIN_DEV_RELOAD_TIMEOUT_MS.toInt(),
+    ): ReloadResult {
+        if (!validPluginDevId(pluginId)) {
+            return ReloadResult.Failed("Invalid plugin id for dev reload: '$pluginId'")
+        }
+        val target =
+            readSafeDescriptor()
+                ?: return ReloadResult.HostOffline("BossConsole is not running.")
+        val message = "$PROTOCOL_VERSION ${target.token} $VERB_PLUGIN_DEV_RELOAD $pluginId"
+        return try {
+            val response =
+                SingleInstanceWire.exchange(
+                    target,
+                    message,
+                    timeoutMs = timeoutMs.toLong(),
+                    maxResponseBytes = MAX_RESPONSE_BYTES,
+                ) ?: return if (SingleInstanceWire.respondsToPing(target)) {
+                    ReloadResult.TimedOut(
+                        "BossConsole is running but did not confirm the reload within $timeoutMs ms; " +
+                            "it may still be reloading",
+                    )
+                } else {
+                    ReloadResult.HostOffline("BossConsole is offline or the channel stopped answering")
+                }
+
+            when {
+                response == RESPONSE_BUSY -> {
+                    ReloadResult.TimedOut(
+                        "BossConsole is running but busy handling other requests; please retry dev reload",
+                    )
+                }
+
+                response == "RELOAD_OK $pluginId" -> {
+                    ReloadResult.Success
+                }
+
+                response.startsWith("RELOAD_FAILED") -> {
+                    ReloadResult.Failed(response.removePrefix("RELOAD_FAILED").trim())
+                }
+
+                else -> {
+                    ReloadResult.Failed("Malformed IPC response: $response")
+                }
+            }
+        } catch (
+            @Suppress("SwallowedException") e: ConnectException,
+        ) {
+            logger.debug(
+                LogCategory.SYSTEM,
+                "IPC host connection refused; host is offline",
+                mapOf("pluginId" to pluginId),
+            )
+            ReloadResult.HostOffline("BossConsole is offline (connection refused)")
+        } catch (e: Exception) {
+            ReloadResult.Failed("IPC communication error: ${e.message}")
+        }
     }
 
     /**
@@ -1411,32 +2688,29 @@ object SingleInstanceManager {
      * Should be called on application shutdown.
      */
     fun release() {
-        logger.info(LogCategory.SYSTEM, "Releasing the single-instance channel...")
+        val threadToJoin: Thread?
+        synchronized(lifecycleLock) {
+            logger.info(LogCategory.SYSTEM, "Releasing the single-instance channel...")
 
-        isListening = false
-        val descriptor = published
-        published = null
-        llmTokenProviderOverride = null
-        statusProviderOverride = null
-        mcpListProviderOverride = null
-        mcpInvokeHandlerOverride = null
+            isListening = false
+            val descriptor = published
+            published = null
+            SingleInstanceFiles.withdraw(descriptor)
 
-        try {
-            serverChannel?.close()
-        } catch (e: IOException) {
-            logger.warn(LogCategory.SYSTEM, "Error closing the server channel", error = e)
+            resetSeamsAndCounters()
+
+            try {
+                serverChannel?.close()
+            } catch (e: IOException) {
+                logger.warn(LogCategory.SYSTEM, "Error closing the server channel", error = e)
+            }
+            serverChannel = null
+
+            threadToJoin = listenerThread
+            listenerThread = null
         }
-        serverChannel = null
 
-        try {
-            listenerThread?.join(1000)
-        } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
-            logger.warn(LogCategory.SYSTEM, "Interrupted waiting for the listener thread", error = e)
-        }
-        listenerThread = null
-
-        SingleInstanceFiles.withdraw(descriptor)
+        joinListenerThread(threadToJoin)
 
         logger.info(LogCategory.SYSTEM, "Single-instance channel released")
     }

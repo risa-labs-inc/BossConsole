@@ -1,18 +1,26 @@
-import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
-import type { PluginStoreContext } from "../types/context.ts"
+import { createRoute, z } from "@hono/zod-openapi"
 import {
   DownloadInfoResponseSchema,
   ErrorResponseSchema
 } from "../types/schemas.ts"
-import { getPlugin, getPluginById } from "../services/plugins.ts"
+import { getPluginForDownload } from "../services/plugins.ts"
 import { getLatestVersion, getVersion } from "../services/versions.ts"
 import { getSignedDownloadUrl } from "../services/storage.ts"
 import { recordDownload, hashIp } from "../services/downloads.ts"
 import { getUserFromToken, validateApiKey } from "../utils/auth.ts"
+import { clientKey, rateLimit } from "../utils/rate-limit.ts"
 import { isAllowedExternalJarUrl } from "../services/github.ts"
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { newRouter } from "../utils/router.ts"
 
-const download = new OpenAPIHono<{ Variables: PluginStoreContext }>()
+const download = newRouter()
+
+// Per-client limit on the public download-info routes, the same in-isolate
+// token bucket as the catalogue routes in browse.ts. A separate key prefix
+// means a burst of downloads cannot lock a client out of browsing, and vice
+// versa; 60/min is generous for real installs and their version checks.
+const DOWNLOAD_INFO_LIMIT = 60
+const DOWNLOAD_INFO_WINDOW_SECONDS = 60
 
 /**
  * Install-permission gate. A plugin's `requiredPermissions` lists the effective
@@ -108,6 +116,14 @@ const downloadLatestRoute = createRoute({
     })
   },
   responses: {
+    429: {
+      description: 'Too many requests from this client',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     200: {
       description: 'Download URL generated successfully',
       content: {
@@ -153,11 +169,23 @@ const downloadLatestRoute = createRoute({
 
 download.openapi(downloadLatestRoute, async (ctx) => {
   try {
+    // The brake before the work: these routes are unauthenticated and every
+    // allowed request costs visibility RPCs and a signed URL.
+    const limit = rateLimit(
+      `download-info:${clientKey(ctx.req.raw.headers)}`,
+      DOWNLOAD_INFO_LIMIT,
+      DOWNLOAD_INFO_WINDOW_SECONDS,
+    )
+    if (!limit.allowed) {
+      ctx.header("Retry-After", String(limit.retryAfterSeconds))
+      return ctx.json({ error: 'Too many requests; try again later' }, 429)
+    }
+
     const supabase = ctx.get("supabase")
     const { pluginId } = ctx.req.valid('param')
 
-    // Get plugin
-    const plugin = await getPlugin(supabase, pluginId)
+    // No visibility here: canInstall below is the gate. See getPluginForDownload.
+    const plugin = await getPluginForDownload(supabase, pluginId)
     if (!plugin) {
       return ctx.json({ error: 'Plugin not found' }, 404)
     }
@@ -214,6 +242,9 @@ download.openapi(downloadLatestRoute, async (ctx) => {
       // Don't fail the request if tracking fails
     }
 
+    // Private: the body can describe an org plugin and holds a signed URL, but the path names no
+    // caller, so a shared cache would hand it to the next anonymous request.
+    ctx.header('Cache-Control', 'private, no-store')
     return ctx.json({
       downloadUrl,
       sha256: version.sha256,
@@ -236,7 +267,7 @@ download.openapi(downloadLatestRoute, async (ctx) => {
     }, 200)
   } catch (error) {
     console.error('Error generating download URL:', error)
-    return ctx.json({ error: (error as Error).message }, 500)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 
@@ -257,6 +288,14 @@ const downloadVersionRoute = createRoute({
     })
   },
   responses: {
+    429: {
+      description: 'Too many requests from this client',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
     200: {
       description: 'Download URL generated successfully',
       content: {
@@ -302,11 +341,21 @@ const downloadVersionRoute = createRoute({
 
 download.openapi(downloadVersionRoute, async (ctx) => {
   try {
+    const limit = rateLimit(
+      `download-info:${clientKey(ctx.req.raw.headers)}`,
+      DOWNLOAD_INFO_LIMIT,
+      DOWNLOAD_INFO_WINDOW_SECONDS,
+    )
+    if (!limit.allowed) {
+      ctx.header("Retry-After", String(limit.retryAfterSeconds))
+      return ctx.json({ error: 'Too many requests; try again later' }, 429)
+    }
+
     const supabase = ctx.get("supabase")
     const { pluginId, version: versionStr } = ctx.req.valid('param')
 
-    // Get plugin
-    const plugin = await getPlugin(supabase, pluginId)
+    // No visibility here: canInstall below is the gate. See getPluginForDownload.
+    const plugin = await getPluginForDownload(supabase, pluginId)
     if (!plugin) {
       return ctx.json({ error: 'Plugin not found' }, 404)
     }
@@ -360,6 +409,9 @@ download.openapi(downloadVersionRoute, async (ctx) => {
       console.error('Error tracking download:', e)
     }
 
+    // Private: the body can describe an org plugin and holds a signed URL, but the path names no
+    // caller, so a shared cache would hand it to the next anonymous request.
+    ctx.header('Cache-Control', 'private, no-store')
     return ctx.json({
       downloadUrl,
       sha256: version.sha256,
@@ -382,7 +434,7 @@ download.openapi(downloadVersionRoute, async (ctx) => {
     }, 200)
   } catch (error) {
     console.error('Error generating download URL:', error)
-    return ctx.json({ error: (error as Error).message }, 500)
+    return ctx.json({ error: 'Internal server error' }, 500)
   }
 })
 

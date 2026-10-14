@@ -234,11 +234,6 @@ class PluginClassLoaderManager(
             }
         }
 
-        // Combine default shared packages with manifest-specified packages
-        val sharedPackages =
-            PluginClassLoader.defaultSharedPackages +
-                manifest.sharedPackages.map { if (it.endsWith(".")) it else "$it." }.toSet()
-
         // Create the classloader. The shared ApiClassLoader (when installed)
         // sits between the plugin and the host so API types absent from the
         // host resolve from the newest api jar with one shared identity.
@@ -247,11 +242,38 @@ class PluginClassLoaderManager(
                 pluginId = pluginId,
                 urls = urls.toTypedArray(),
                 parent = sharedApiClassLoader ?: parentClassLoader,
-                sharedPackages = sharedPackages,
+                sharedPackages = sharedPackagesFor(manifest),
             )
 
         activeClassLoaders[pluginId] = classLoader
         return classLoader
+    }
+
+    /**
+     * Default shared packages plus the manifest's entries. The manifest may
+     * only narrow the host's shared surface: an entry is kept when it names a
+     * package inside an already-shared root; anything else would re-open
+     * parent delegation to arbitrary host classes, so it is dropped and logged.
+     */
+    private fun sharedPackagesFor(manifest: PluginManifest): Set<String> {
+        val allowedRoots = PluginClassLoader.defaultSharedPackages
+        return allowedRoots +
+            manifest.sharedPackages
+                .map { if (it.endsWith(".")) it else "$it." }
+                .filter { entry ->
+                    val kept = allowedRoots.any { entry.startsWith(it) }
+                    if (!kept) {
+                        logger.warn(
+                            LogCategory.SYSTEM,
+                            "Dropping a sharedPackages entry outside the shared host packages",
+                            mapOf(
+                                "pluginId" to manifest.pluginId,
+                                "sharedPackage" to entry,
+                            ),
+                        )
+                    }
+                    kept
+                }.toSet()
     }
 
     /**

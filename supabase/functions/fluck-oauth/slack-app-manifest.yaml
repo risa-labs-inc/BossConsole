@@ -1,0 +1,24 @@
+# The Fluck Slack app. Import at api.slack.com/apps (App Manifest). Keep in sync with README.md.
+display_information:
+  name: Fluck
+oauth_config:
+  redirect_urls:
+    - https://pcnwqamqdnsadranufjv.functions.supabase.co/fluck-oauth/slack/callback
+    - https://api.risaboss.com/functions/v1/fluck-oauth/slack/callback
+  scopes:
+    user:
+      - channels:history
+      - channels:read
+      - groups:history
+      - groups:read
+      - im:history
+      - im:read
+      - mpim:history
+      - mpim:read
+      - users:read
+      - users:read.email
+      - search:read
+      - chat:write
+settings:
+  # One way: Slack cannot turn rotation off again, and this function refuses rotating tokens.
+  token_rotation_enabled: false

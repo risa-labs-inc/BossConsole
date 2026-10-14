@@ -1,10 +1,10 @@
 package ai.rever.boss.components.window_panel
 
 import ai.rever.boss.components.window_panel.components.main_window_panels.SIDEBAR_REVEAL_CLOSE_DELAY_MS
-import ai.rever.boss.components.window_panel.components.main_window_panels.SIDEBAR_REVEAL_OPEN_DELAY_MS
 import ai.rever.boss.components.window_panel.components.main_window_panels.besideLeadingRail
 import ai.rever.boss.components.window_panel.components.main_window_panels.hoverRevealTarget
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -67,10 +67,8 @@ class TabBarSidebarRevealTest {
     }
 
     @Test
-    fun `the close delay exceeds the open delay`() {
-        // Load-bearing rather than cosmetic: the close grace has to cover the rail-to-drawer
-        // handoff, which itself takes the open delay. Equal or shorter and the drawer flickers.
-        assertTrue(SIDEBAR_REVEAL_CLOSE_DELAY_MS > SIDEBAR_REVEAL_OPEN_DELAY_MS)
+    fun `closing retains a short grace period`() {
+        assertTrue(SIDEBAR_REVEAL_CLOSE_DELAY_MS > 0L)
     }
 
     @Test
@@ -79,7 +77,7 @@ class TabBarSidebarRevealTest {
 
         assertEquals(
             IntRect(left = 76, top = 12, right = 520, bottom = 612),
-            panel.besideLeadingRail(36.dp),
+            panel.besideLeadingRail(36.dp, LayoutDirection.Ltr),
         )
     }
 
@@ -89,9 +87,16 @@ class TabBarSidebarRevealTest {
         // zero-width answer is what resolveRegion's documented inset fallback then acts on.
         // Pin the coercion direction so that inheritance stays a deliberate choice.
         val panel = IntRect(left = 40, top = 12, right = 50, bottom = 612)
-        val region = panel.besideLeadingRail(36.dp)
+        val region = panel.besideLeadingRail(36.dp, LayoutDirection.Ltr)
 
         assertEquals(50, region.left)
         assertEquals(region.left, region.right, "the drawer region is zero-width, not negative")
+    }
+
+    @Test
+    fun `hidden rail leaves drawer flush with either leading edge`() {
+        val panel = IntRect(left = 40, top = 32, right = 520, bottom = 612)
+        assertEquals(panel, panel.besideLeadingRail(0.dp, LayoutDirection.Ltr))
+        assertEquals(panel, panel.besideLeadingRail(0.dp, LayoutDirection.Rtl))
     }
 }

@@ -383,7 +383,7 @@ class BossDraggableComponent(
                 for ((panelId, z) in zones) {
                     when {
                         z.leftZone.contains(currentPosition) -> {
-                            dropTgt = TabDropTarget.SplitPanel(panelId, SplitOrientation.VERTICAL)
+                            dropTgt = TabDropTarget.SplitPanel(panelId, SplitOrientation.VERTICAL, placeBefore = true)
                             highlight = leftHalf(z.panelBounds)
                         }
 
@@ -393,7 +393,7 @@ class BossDraggableComponent(
                         }
 
                         z.topZone.contains(currentPosition) -> {
-                            dropTgt = TabDropTarget.SplitPanel(panelId, SplitOrientation.HORIZONTAL)
+                            dropTgt = TabDropTarget.SplitPanel(panelId, SplitOrientation.HORIZONTAL, placeBefore = true)
                             highlight = topHalf(z.panelBounds)
                         }
 

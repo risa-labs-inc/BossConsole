@@ -51,6 +51,14 @@ class EngineDownloadUxTest {
     }
 
     @Test
+    fun `the relaunch after a download says so instead of falling back to connecting`() {
+        // isComplete resets the byte counts to zero, which without this reads as "Connecting".
+        val status = engineDownloadStatus(label, isExtracting = false, totalBytes = 0, isRestarting = true)
+        assertTrue(status.startsWith("Restarting BOSS"), status)
+        assertTrue(status.contains("9.4.0"), status)
+    }
+
+    @Test
     fun `a staged install offers the restart that completes it`() {
         val outcome = stagedInstallOutcome("9.4.0", "9.4.0", Result.success(Unit))
 

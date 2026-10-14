@@ -1,10 +1,10 @@
 package ai.rever.boss.utils
 
+import ai.rever.boss.cli.createBossCLI
 import java.io.File
 import java.net.URLDecoder
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -224,27 +224,11 @@ class OsOpenArgumentsTest {
     @Test
     fun `the CLI subcommand list matches the CLI`() {
         // The failure mode when these drift is a double-open, which is easy to
-        // miss and hard to attribute - so it is pinned against the source that
-        // registers them.
-        val root =
-            assertNotNull(
-                generateSequence(File("").absoluteFile) { it.parentFile }
-                    .firstOrNull { File(it, "composeApp/build.gradle.kts").isFile },
-                "could not locate the repository root",
-            )
-        val source = File(root, "composeApp/src/desktopMain/kotlin/ai/rever/boss/cli/BossCommand.kt")
-        assertTrue(source.isFile, "BossCommand.kt not found at ${source.absolutePath}")
-
-        // The negative lookbehind excludes the root command, which is declared
-        // as `NoOpCliktCommand(name = "boss")` and whose text contains
-        // `CliktCommand(name = "boss")` as a substring. Without it the test
-        // demands a "boss" subcommand that does not exist.
-        val registered =
-            Regex("""(?<!NoOp)CliktCommand\(name\s*=\s*"([a-z-]+)"\)""")
-                .findAll(source.readText())
-                .map { it.groupValues[1] }
-                .toSet()
-        assertTrue(registered.isNotEmpty(), "no subcommand names parsed out of BossCommand.kt")
+        // miss and hard to attribute - so it is pinned against what createBossCLI
+        // actually registers. Asking the CLI, rather than reading BossCommand.kt,
+        // also covers a subcommand declared in a file of its own.
+        val registered = createBossCLI().registeredSubcommands().map { it.commandName }.toSet()
+        assertTrue(registered.isNotEmpty(), "createBossCLI registered no subcommands")
         assertEquals(
             registered.sorted(),
             OsOpenArguments.CLI_SUBCOMMANDS.sorted(),

@@ -11,6 +11,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -31,6 +32,8 @@ import kotlin.test.assertTrue
  * cannot be read or written (BossConsole#85) — lives in
  * [McpKillSwitchPersistenceTest].
  */
+// Keep the invocation contracts in one fixture so the shared registry setup is consistent.
+@Suppress("LargeClass")
 class McpToolRegistryCoreTest {
     private val tempFiles = mutableListOf<File>()
 
@@ -41,6 +44,14 @@ class McpToolRegistryCoreTest {
                 .createTempDirectory("mcp-registry-test")
                 .toFile()
         return File(dir, "mcp-disabled-tools.json").also { tempFiles.add(it) }
+    }
+
+    private fun tempPolicyFile(): File {
+        val dir =
+            kotlin.io.path
+                .createTempDirectory("mcp-provider-policy-test")
+                .toFile()
+        return File(dir, "mcp-tool-policy.json").also { tempFiles.add(it) }
     }
 
     @AfterTest
@@ -357,6 +368,71 @@ class McpToolRegistryCoreTest {
     }
 
     @Test
+    fun `provider registration does not persist inherited DENY and re-enable keeps it enforced`() {
+        val policyFile = tempPolicyFile()
+        McpPolicyEngine(policyFile).setProviderPolicy("shared-provider", McpPolicyAction.DENY)
+        val policyEngine = McpPolicyEngine(policyFile)
+        val core = McpToolRegistryCore(disabledFile = null, policyEngine = policyEngine)
+        val namespacedId = "plugin-a::shared-provider"
+        val namespacedProvider = provider(namespacedId, echoTool("open_tool"))
+
+        core.registerProvider(namespacedProvider)
+
+        assertEquals(
+            namespacedId,
+            core.tools.value
+                .single()
+                .providerId,
+        )
+        assertFalse(
+            policyEngine.config.value.providerRules
+                .containsKey(namespacedId),
+            "registration must not persist a derived scoped DENY",
+        )
+        assertFalse(
+            McpPolicyEngine(policyFile)
+                .config.value.providerRules
+                .containsKey(namespacedId),
+            "registration must leave the policy file unchanged",
+        )
+        assertEquals(
+            McpPolicyAction.DENY,
+            policyEngine.policyFor("open_tool", namespacedId),
+        )
+
+        core.unregisterProvider(namespacedId)
+        core.registerProvider(namespacedProvider)
+
+        assertEquals(
+            McpPolicyAction.DENY,
+            policyEngine.policyFor("open_tool", namespacedId),
+            "disable and re-enable must not revive a provider the operator denied",
+        )
+    }
+
+    @Test
+    fun `non-namespaced provider registration does not rewrite policy`() {
+        val policyFile = tempPolicyFile()
+        McpPolicyEngine(policyFile).setProviderPolicy("host-provider", McpPolicyAction.DENY)
+        val beforeRegistration = policyFile.readText()
+        val policyEngine = McpPolicyEngine(policyFile)
+        val core = McpToolRegistryCore(disabledFile = null, policyEngine = policyEngine)
+
+        core.registerProvider(provider("host-provider", echoTool("open_tool")))
+
+        assertEquals(
+            beforeRegistration,
+            policyFile.readText(),
+            "registering a host provider must not rewrite its existing policy",
+        )
+        assertNull(policyEngine.fault.value)
+        assertEquals(
+            McpPolicyAction.DENY,
+            policyEngine.policyFor("open_tool", "host-provider"),
+        )
+    }
+
+    @Test
     fun `save leaves no dangling tmp file (atomic rename completed)`() {
         val file = tempDisabledFile()
         val core = McpToolRegistryCore(disabledFile = file)
@@ -387,6 +463,7 @@ class McpToolRegistryCoreTest {
             val core = McpToolRegistryCore(disabledFile = null)
             val result = core.invoke("does_not_exist", "{}")
             assertTrue(result.isError)
+            assertTrue(result.text.contains("No such MCP tool"), result.text)
         }
 
     @Test
@@ -398,6 +475,7 @@ class McpToolRegistryCoreTest {
 
             val result = core.invoke("disabled_tool", "{}")
             assertTrue(result.isError)
+            assertTrue(result.text.contains("disabled"), result.text)
         }
 
     @Test
@@ -409,6 +487,51 @@ class McpToolRegistryCoreTest {
 
             val result = core.invoke("gated_tool", "{}")
             assertTrue(result.isError)
+            assertTrue(result.text.contains("not permitted"), result.text)
+        }
+
+    @Test
+    fun `invoke distinguishes unknown, disabled, and unpermitted tools`() =
+        runBlocking {
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool("close_workspace"),
+                    echoTool("disabled_tool"),
+                    echoTool("gated_tool", requiredPermissions = listOf("secret.read")),
+                ),
+            )
+            core.setToolEnabled("disabled_tool", enabled = false)
+
+            val unknown = core.invoke("close_workspac", "{}")
+            val disabled = core.invoke("disabled_tool", "{}")
+            val unpermitted = core.invoke("gated_tool", "{}")
+
+            // Three distinct messages - and the typo gets a "did you mean" hint.
+            assertTrue(unknown.isError)
+            assertTrue(unknown.text.contains("did you mean 'close_workspace'"), unknown.text)
+            assertTrue(disabled.text.contains("disabled"), disabled.text)
+            assertTrue(unpermitted.text.contains("not permitted"), unpermitted.text)
+            assertEquals(3, setOf(unknown.text, disabled.text, unpermitted.text).size)
+        }
+
+    @Test
+    fun `a suggestion only names tools the caller could see`() =
+        runBlocking {
+            // The gated tool is registered but unpermitted: it must not leak into the hint.
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool("gated_secret", requiredPermissions = listOf("secret.read")),
+                    echoTool("open_workspace"),
+                ),
+            )
+
+            val result = core.invoke("gated_secre", "{}")
+            assertTrue(result.isError)
+            assertFalse(result.text.contains("gated_secret"), result.text)
         }
 
     @Test
@@ -507,15 +630,73 @@ class McpToolRegistryCoreTest {
         }
 
     @Test
-    fun `invoke with malformed JSON args runs the handler with an empty arg set instead of erroring`() =
+    fun `invoke refuses non-object and unparseable args without running the handler`() =
         runBlocking {
+            var handlerCalls = 0
+            val ledger = McpOperationLedger(ledgerFile = null)
+            val core = McpToolRegistryCore(disabledFile = null, ledger = ledger)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool(
+                        "bad_args_tool",
+                        handler =
+                            McpToolHandler {
+                                handlerCalls++
+                                McpToolResult("ok")
+                            },
+                    ),
+                ),
+            )
+
+            val arrayResult = core.invoke("bad_args_tool", "[1,2,3]")
+            assertTrue(arrayResult.isError)
+            assertTrue(
+                arrayResult.text.contains("JSON array"),
+                "the refusal must name the received type, got: ${arrayResult.text}",
+            )
+            assertTrue(
+                arrayResult.text.contains("inputSchema"),
+                "the refusal must point at the expected schema, got: ${arrayResult.text}",
+            )
+
+            // The lenient element parser reads "garbage" as a bare-token primitive - still
+            // not a JSON object, still refused, and the handler still must not run.
+            val garbageResult = core.invoke("bad_args_tool", "garbage")
+            assertTrue(garbageResult.isError)
+            assertTrue(
+                garbageResult.text.contains("received"),
+                "the refusal must name what was received, got: ${garbageResult.text}",
+            )
+
+            val unparseableResult = core.invoke("bad_args_tool", "{not valid json")
+            assertTrue(unparseableResult.isError)
+            assertTrue(
+                unparseableResult.text.contains("unparseable"),
+                "the refusal must say the input could not be parsed, got: ${unparseableResult.text}",
+            )
+
+            // The refusal is a ledgered INVALID_ARGUMENTS denial, and the handler never ran
+            // for any of the three calls - a "lying success" on defaults is what b13 removes.
+            assertEquals(0, handlerCalls)
+            assertEquals(
+                List(3) { McpApprovalDisposition.INVALID_ARGUMENTS },
+                ledger.recentOperations.value.map { it.approvalDisposition },
+            )
+        }
+
+    @Test
+    fun `invoke still treats blank argument text as no arguments`() =
+        runBlocking {
+            // Blank means "caller sent nothing", which parseArgs maps to {} - only
+            // non-blank non-object text is refused, so a no-arg call must still run.
             var captured: McpToolArgs? = null
             val core = McpToolRegistryCore(disabledFile = null)
             core.registerProvider(
                 provider(
                     "p1",
                     echoTool(
-                        "bad_args_tool",
+                        "blank_args_tool",
                         handler =
                             McpToolHandler { args ->
                                 captured = args
@@ -525,10 +706,110 @@ class McpToolRegistryCoreTest {
                 ),
             )
 
-            val result = core.invoke("bad_args_tool", "{not valid json")
-
-            assertFalse(result.isError)
+            assertFalse(core.invoke("blank_args_tool", "   ").isError)
             assertFalse(requireNotNull(captured).has("anything"))
+        }
+
+    @Test
+    fun `invoke enforces the tool's declared inputSchema and never runs the handler on a mismatch`() =
+        runBlocking {
+            var handlerCalls = 0
+            val ledger = McpOperationLedger(ledgerFile = null)
+            val core = McpToolRegistryCore(disabledFile = null, ledger = ledger)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    McpToolDefinition(
+                        name = "read_file",
+                        description = "test tool read_file",
+                        inputSchema =
+                            """{"type":"object","properties":{"path":{"type":"string"}},""" +
+                                """"required":["path"]}""",
+                        handler =
+                            McpToolHandler {
+                                handlerCalls++
+                                McpToolResult("ok")
+                            },
+                    ),
+                ),
+            )
+
+            val wrongType = core.invoke("read_file", """{"path":123}""")
+            assertTrue(wrongType.isError, "a number where the schema declares a string must be refused")
+            assertTrue(wrongType.text.contains("path"), "the error names the offending field")
+            assertTrue(wrongType.text.contains("string"), "the error names the expected type")
+
+            val missing = core.invoke("read_file", "{}")
+            assertTrue(missing.isError, "a missing required field must be refused")
+            assertTrue(missing.text.contains("path"), "the error names the missing field")
+
+            assertEquals(0, handlerCalls, "schema-mismatched calls must never reach the handler")
+            assertEquals(2, ledger.recentOperations.value.size)
+            assertTrue(
+                ledger.recentOperations.value.all {
+                    it.approvalDisposition == McpApprovalDisposition.INVALID_ARGUMENTS
+                },
+                "schema refusals are recorded as INVALID_ARGUMENTS, not a tool fault",
+            )
+
+            // The gate must not over-reject: arguments satisfying the schema still invoke.
+            val ok = core.invoke("read_file", """{"path":"/tmp/x"}""")
+            assertFalse(ok.isError)
+            assertEquals(1, handlerCalls)
+        }
+
+    @Test
+    fun `invoke fails closed when the tool's inputSchema itself is unreadable`() =
+        runBlocking {
+            var handlerCalls = 0
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    McpToolDefinition(
+                        name = "broken_schema_tool",
+                        description = "test tool broken_schema_tool",
+                        inputSchema = "{not a schema",
+                        handler =
+                            McpToolHandler {
+                                handlerCalls++
+                                McpToolResult("ok")
+                            },
+                    ),
+                ),
+            )
+
+            val result = core.invoke("broken_schema_tool", "{}")
+
+            assertTrue(result.isError, "a contract the host cannot read cannot be enforced")
+            assertEquals(0, handlerCalls)
+        }
+
+    @Test
+    fun `deeply nested arguments are rejected before schema parsing and execution`() =
+        runBlocking {
+            var calls = 0
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool(
+                        "read_file",
+                        handler =
+                            McpToolHandler {
+                                calls++
+                                McpToolResult("ran")
+                            },
+                    ),
+                ),
+            )
+            val nested = "{\"value\":" + "[".repeat(1024) + "0" + "]".repeat(1024) + "}"
+
+            val result = core.invoke("read_file", nested)
+
+            assertTrue(result.isError)
+            assertTrue(result.text.contains("nesting depth"))
+            assertEquals(0, calls)
         }
 
     @Test
@@ -756,4 +1037,144 @@ class McpToolRegistryCoreTest {
             assertEquals(out, roundTripped, "cap=$cap does not survive a UTF-8 round trip")
         }
     }
+
+    @Test
+    fun `IdentityHashMap execution objects prevents collision between identical argument instances`() {
+        val args1 = McpToolArgs(mapOf("x" to 1), """{"x":1}""")
+        val args2 = McpToolArgs(mapOf("x" to 1), """{"x":1}""")
+
+        assertEquals(args1.raw, args2.raw)
+        assertEquals(args1.int("x"), args2.int("x"))
+        assertTrue(args1 !== args2)
+
+        args1.withExecutionObject("payload-1")
+        assertNull(args2.executionObject<String>())
+        assertEquals("payload-1", args1.executionObject<String>())
+        assertNull(args1.executionObject<String>())
+    }
+
+    @Test
+    fun `executionObject reified type check returns null on type mismatch`() {
+        val args = McpToolArgs(emptyMap(), "{}")
+        args.withExecutionObject(42)
+
+        assertNull(args.executionObject<String>())
+        assertNull(consumeExecutionObject(args))
+
+        args.withExecutionObject(42)
+        assertEquals(42, args.executionObject<Int>())
+        assertNull(args.executionObject<Int>())
+    }
+
+    @Test
+    fun `invalidArguments is checked before effectivePolicy DENY`() =
+        runBlocking<Unit> {
+            val file = tempPolicyFile()
+            file.writeText("""{"tools":{"test_tool":"DENY"}}""")
+            val policy = McpPolicyEngine(policyFile = file)
+            val core =
+                McpToolRegistryCore(
+                    disabledFile = null,
+                    policyEngine = policy,
+                    approvalBus = McpApprovalBus(),
+                    ledger = McpOperationLedger(ledgerFile = null),
+                )
+            val toolDef =
+                McpToolDefinition(
+                    name = "test_tool",
+                    description = "Tool with required args",
+                    handler = McpToolHandler { McpToolResult("ok") },
+                    inputSchema = """{"type":"object","required":["req"],"properties":{"req":{"type":"string"}}}""",
+                )
+            core.registerProvider(provider("p1", toolDef))
+
+            // Invoke with invalid arguments (missing required "req")
+            val result = core.invoke("test_tool", "{}")
+            assertTrue(result.isError)
+            // Must fail on argument validation, NOT on "MCP tool rejected by policy (DENY)"
+            assertTrue(
+                result.text.contains("inputSchema validation") || result.text.contains("missing required argument"),
+                result.text,
+            )
+            assertFalse(result.text.contains("MCP tool rejected by policy (DENY)"), result.text)
+        }
+
+    @Test
+    fun `executionObject is preserved across secret argument substitution and cleaned up after invocation`() =
+        runBlocking<Unit> {
+            val secretId = "00000000-0000-0000-0000-000000000001"
+            val vault =
+                object : ai.rever.boss.mcp.secrets.SecretLookup {
+                    override suspend fun page(
+                        limit: Int,
+                        offset: Int,
+                    ): Result<List<ai.rever.boss.mcp.secrets.SecretRecord>> =
+                        Result.success(
+                            listOf(
+                                ai.rever.boss.mcp.secrets.SecretRecord(
+                                    id = secretId,
+                                    website = "example.com",
+                                    username = "user",
+                                    password = "secret_password",
+                                    notes = null,
+                                ),
+                            ),
+                        )
+                }
+
+            var executionObjectInHandler: String? = null
+            val toolDef =
+                McpToolDefinition(
+                    name = "secret_prep_tool",
+                    description = "Tool testing secret substitution with prep",
+                    handler =
+                        McpToolHandler { args ->
+                            executionObjectInHandler = args.executionObject<String>()
+                            McpToolResult("ok: ${args.raw}")
+                        },
+                )
+
+            val preparingProvider =
+                object : McpToolProvider, McpToolPreparer {
+                    override val providerId = "prep_provider"
+
+                    override fun tools() = listOf(toolDef)
+
+                    override suspend fun prepareInvocation(
+                        toolName: String,
+                        args: McpToolArgs,
+                    ): McpPreparationResult =
+                        McpPreparationResult.Prepared(
+                            displayModel = null,
+                            executionObject = "MY_SPECIAL_PLAN",
+                            requiresFreshApproval = false,
+                        )
+                }
+
+            val bus = McpApprovalBus()
+            val core =
+                McpToolRegistryCore(
+                    disabledFile = null,
+                    policyEngine = McpPolicyEngine(policyFile = null),
+                    approvalBus = bus,
+                    ledger = McpOperationLedger(ledgerFile = null),
+                    secretLookup = vault,
+                )
+            core.updateAccess(isAdmin = true, permissions = emptySet())
+            core.registerProvider(preparingProvider)
+
+            val call =
+                async {
+                    core.invoke("secret_prep_tool", """{"p":"{{secret:$secretId.password}}"}""")
+                }
+            val request =
+                withTimeout(5_000) {
+                    bus.pendingList.first { it.isNotEmpty() }.first()
+                }
+            bus.approve(request.id, trustForSession = false)
+            val result = call.await()
+
+            assertFalse(result.isError)
+            assertEquals("MY_SPECIAL_PLAN", executionObjectInHandler)
+        }
 }

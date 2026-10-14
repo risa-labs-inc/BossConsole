@@ -14,6 +14,9 @@
  *   1. system_plugins.github_repo            (owner/repo, system plugins)
  *   2. plugins.homepage_url                  (store plugins published from GitHub)
  *   3. fallback: risa-labs-inc/BossConsole-Releases (also for host crashes)
+ * The first two sources are accepted only when they resolve under the configured
+ * allowed GitHub owner; publisher-controlled homepages cannot steer the server
+ * token to another owner.
  * If filing in the plugin repo fails (repo gone, issues disabled), the report
  * falls back to the default repo rather than being lost.
  *
@@ -137,10 +140,31 @@ async function pgSelect(pathAndQuery: string): Promise<Record<string, unknown>[]
   return await response.json() as Record<string, unknown>[]
 }
 
+// The only GitHub owner the server-held token is allowed to act on for
+// plugin-attributed crash filing. `plugins.homepage_url` is publisher-
+// controlled (any authenticated user can publish or update a plugin), and
+// the function files issues with the server's GITHUB_TOKEN — without this
+// bound, a publisher could aim that token at an arbitrary repository
+// (BossConsole#774). Operator-curated system_plugins entries are held to the
+// same owner so a mis-typed row cannot send reports out-of-org either.
+// Overridable by env for deployments that host plugin repos under a different
+// org. This changes plugin attribution only; DEFAULT_REPO remains project-owned.
+const ALLOWED_REPO_OWNER = (Deno.env.get("CRASH_REPORT_ALLOWED_REPO_OWNER")?.trim() || "risa-labs-inc")
+  .toLowerCase()
+
+/** A repo the crash-report proxy may file into: shaped, and owned by the allowed org. */
+function isAllowedRepo(repo: string): boolean {
+  if (!REPO_RE.test(repo)) return false
+  const owner = repo.split("/")[0].toLowerCase()
+  return owner === ALLOWED_REPO_OWNER
+}
+
 /**
  * Resolve the GitHub repo a plugin's crashes should be filed in.
- * Returns null when the plugin is unknown or has no usable GitHub link
- * (e.g. a local-only plugin) — the caller then uses DEFAULT_REPO.
+ * Returns null when the plugin is unknown, has no usable GitHub link, or the
+ * link resolves outside the allowed owner (e.g. a local-only plugin, or a
+ * publisher-controlled homepage_url pointing at a repo the project's token
+ * has no business writing to) — the caller then uses DEFAULT_REPO.
  */
 export async function resolvePluginRepo(pluginId: string): Promise<string | null> {
   const id = encodeURIComponent(pluginId)
@@ -149,13 +173,16 @@ export async function resolvePluginRepo(pluginId: string): Promise<string | null
     `system_plugins?plugin_id=eq.${id}&select=github_repo&limit=1`,
   )
   const systemRepo = system[0]?.github_repo
-  if (typeof systemRepo === "string" && REPO_RE.test(systemRepo)) return systemRepo
+  if (typeof systemRepo === "string" && isAllowedRepo(systemRepo)) return systemRepo
 
   const store = await pgSelect(
     `plugins?plugin_id=eq.${id}&select=homepage_url&limit=1`,
   )
   const homepage = store[0]?.homepage_url
-  if (typeof homepage === "string" && homepage) return parseGitHubRepo(homepage)
+  if (typeof homepage === "string" && homepage) {
+    const parsed = parseGitHubRepo(homepage)
+    if (parsed && isAllowedRepo(parsed)) return parsed
+  }
 
   return null
 }

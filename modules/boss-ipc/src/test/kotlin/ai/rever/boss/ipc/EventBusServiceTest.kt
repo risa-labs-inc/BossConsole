@@ -3,8 +3,6 @@ package ai.rever.boss.ipc
 import ai.rever.boss.ipc.proto.*
 import ai.rever.boss.ipc.services.EventBusServiceImpl
 import com.google.protobuf.ByteString
-import io.grpc.ManagedChannelBuilder
-import io.grpc.ServerBuilder
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -15,7 +13,6 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
-import java.net.ServerSocket
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -28,32 +25,20 @@ class EventBusServiceTest {
         const val BATCH_SIZE = 3
     }
 
-    private var server: io.grpc.Server? = null
+    private lateinit var testServer: IpcTestServer
     private var channel: io.grpc.ManagedChannel? = null
-    private var port: Int = 0
     private lateinit var eventBusService: EventBusServiceImpl
 
     @Before
     fun setUp() {
-        port = ServerSocket(0).use { it.localPort }
         eventBusService = EventBusServiceImpl()
-        server =
-            ServerBuilder
-                .forPort(port)
-                .addService(eventBusService)
-                .build()
-                .start()
-        channel =
-            ManagedChannelBuilder
-                .forAddress("localhost", port)
-                .usePlaintext()
-                .build()
+        testServer = IpcTestServer(eventBusService)
+        channel = testServer.channelFor("test-process")
     }
 
     @After
     fun tearDown() {
-        channel?.shutdownNow()
-        server?.shutdownNow()
+        testServer.close()
     }
 
     /**

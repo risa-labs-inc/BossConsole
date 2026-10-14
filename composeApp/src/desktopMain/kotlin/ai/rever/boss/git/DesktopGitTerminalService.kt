@@ -1,5 +1,6 @@
 package ai.rever.boss.git
 
+import ai.rever.boss.plugin.workspace.uniqueId
 import ai.rever.boss.services.terminal.TerminalAPIAccess
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -27,8 +28,9 @@ actual object GitTerminalService {
         workingDirectory: String,
         operationName: String,
     ): Boolean {
-        // Generate a unique tab ID for this git operation
-        val tabId = "git-${operationName.lowercase().replace(" ", "-")}-${System.currentTimeMillis()}"
+        // Generate a unique tab ID for this git operation - configId keys sidebar tab
+        // tracking, so a same-millisecond mint would reuse the other operation's tab.
+        val tabId = uniqueId("git-${operationName.lowercase().replace(" ", "-")}")
 
         val success =
             TerminalAPIAccess.newSidebarTab(

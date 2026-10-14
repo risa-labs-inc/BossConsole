@@ -35,6 +35,19 @@ The `generateVersionConstants` Gradle task was not running reliably before compi
 
 ## Release Rebuild Process
 
+### Warning: re-running an existing tag with different bytes
+
+`sync-release.yml` SKIPS uploading an asset that already exists on the GitHub
+release, while `publish-supabase-release.sh` UPSERTS the catalog row and
+recomputes its hash. Re-running a release for an existing tag with different
+bytes therefore leaves the GitHub release on the OLD asset and the Supabase
+catalog on the NEW hash. Since the GitHub fallback download verifies against
+the catalog hash (PR #798, issue #797), that divergence now fails closed: the
+fallback logs the checksum mismatch and the user re-downloads from the primary
+source. The documented flow below (delete the release, delete the tag, re-run)
+avoids the skip path; if you must re-run in place, delete the release's assets
+first so both sources receive the new bytes.
+
 ### Prerequisites
 
 - GitHub CLI (`gh`) installed and authenticated

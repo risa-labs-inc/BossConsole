@@ -225,17 +225,58 @@ begin
     end if;
   end loop;
 
+  -- A mapped column's stripped value (after cols[i][4]'s outer envelope, if
+  -- any) is either the legacy zero-IV ciphertext every column held before
+  -- 20260914000000_randomize_secret_encryption_iv.sql, or - for the three
+  -- columns that migration touched - the 'v2:' || base64(iv || ciphertext)
+  -- envelope encrypt_text now writes. This function re-encrypts either shape
+  -- under the new key, preserving its own envelope rather than upgrading one
+  -- to the other: that upgrade is the encryption migration's job, not
+  -- rotation's, whose contract stays "same shape, new key". A v2 row gets a
+  -- freshly generated IV - rotating the key is a good time to rotate the IV
+  -- too, and it is why this is a function rather than an inline expression:
+  -- gen_random_bytes(16) has to be evaluated exactly once and reused for both
+  -- the encrypt_iv call and the stored prefix, which a single SQL expression
+  -- cannot guarantee (two calls to it would produce two different values).
+  execute $def$
+    create or replace function pg_temp.rotate_ciphertext(v text, old_key bytea, new_key bytea)
+      returns text language plpgsql as $rc$
+    declare
+      envelope bytea; iv bytea; body bytea; new_iv bytea;
+    begin
+      if v is null then
+        return null;
+      end if;
+      if v like 'v2:%' then
+        envelope := pg_catalog.decode(substring(v from 4), 'base64');
+        iv := substring(envelope from 1 for 16);
+        body := substring(envelope from 17);
+        new_iv := extensions.gen_random_bytes(16);
+        return 'v2:' || pg_catalog.encode(
+          new_iv || extensions.encrypt_iv(
+            extensions.decrypt_iv(body, old_key, iv, 'aes'),
+            new_key, new_iv, 'aes'),
+          'base64');
+      end if;
+      return pg_catalog.encode(
+        extensions.encrypt(
+          extensions.decrypt(pg_catalog.decode(v, 'base64'), old_key, 'aes'),
+          new_key, 'aes'),
+        'base64');
+    end;
+    $rc$;
+  $def$;
+
   for i in 1 .. array_length(cols, 1) loop
     execute format($f$
       update public.%1$I
-         set %2$I = %4$L || pg_catalog.encode(
-               extensions.encrypt(
-                 extensions.decrypt(pg_catalog.decode(pg_catalog.substr(%2$I, %5$s),'base64'), $1::bytea, 'aes'),
-                 $2::bytea, 'aes'), 'base64')
+         set %2$I = %4$L || pg_temp.rotate_ciphertext(pg_catalog.substr(%2$I, %5$s), $1, $2)
        where %2$I is not null
     $f$, cols[i][1], cols[i][2], cols[i][3], cols[i][4], (length(cols[i][4]) + 1)::text)
-      using old_key, new_key;
+      using old_key::bytea, new_key::bytea;
   end loop;
+
+  drop function pg_temp.rotate_ciphertext(text, bytea, bytea);
 
   for i in 1 .. array_length(known_triggers, 1) loop
     if to_regclass(format('public.%I', known_triggers[i][1])) is not null

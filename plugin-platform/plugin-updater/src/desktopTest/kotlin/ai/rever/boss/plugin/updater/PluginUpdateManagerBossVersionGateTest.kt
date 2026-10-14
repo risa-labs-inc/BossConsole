@@ -41,6 +41,8 @@ class PluginUpdateManagerBossVersionGateTest {
         return PluginUpdateManager(
             repositoryManager = repos,
             hostBossVersion = hostBossVersion,
+            // Not this suite's subject - an always-accept vet keeps the pre-wire behaviour.
+            verifyDownloadedJar = { _, _ -> Result.success(Unit) },
         )
     }
 
