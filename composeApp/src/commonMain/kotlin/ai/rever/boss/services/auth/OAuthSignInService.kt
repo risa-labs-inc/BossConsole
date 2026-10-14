@@ -598,14 +598,15 @@ internal val OAuthSignInService: OAuthSignInFlow by lazy {
  * Apple's page opens in Safari on macOS whatever the default browser is: only Safari can offer
  * the Mac's own Apple Account with Touch ID there, which is the closest a Developer ID app can
  * get to the native Sign in with Apple sheet (Apple limits that sheet to Mac App Store apps).
- * Google stays in the default browser, where the user is usually already signed in to Google.
+ * Google also uses Safari when BOSS owns web links or no default browser is available.
  */
 internal fun preferredBrowserCommand(
     provider: OAuthProviderKind,
     osName: String,
     url: String,
+    useExternalFallback: Boolean = false,
 ): List<String>? =
-    if (provider == OAuthProviderKind.APPLE && osName.lowercase().contains("mac")) {
+    if ((provider == OAuthProviderKind.APPLE || useExternalFallback) && osName.lowercase().contains("mac")) {
         listOf("open", "-a", "Safari", url)
     } else {
         null
@@ -616,9 +617,31 @@ private suspend fun openSignInPage(
     provider: OAuthProviderKind,
     url: String,
 ): Boolean {
-    val preferred = preferredBrowserCommand(provider, System.getProperty("os.name").orEmpty(), url)
-    if (preferred != null && runAndWait(preferred)) return true
-    return openInSystemBrowser(url)
+    val osName = System.getProperty("os.name").orEmpty()
+    val useExternalFallback = externalSignInBrowserRequired()
+    val preferred = preferredBrowserCommand(provider, osName, url, useExternalFallback)
+    val browserOpened =
+        (preferred != null && runAndWait(preferred)) ||
+            (!useExternalFallback && openInSystemBrowser(url))
+    if (browserOpened) return true
+    return withContext(Dispatchers.IO) {
+        signInBrowserWindowCommands(osName, url).any { command ->
+            if (osName.lowercase().contains("mac")) {
+                exitsCleanly(command)
+            } else {
+                // These are browser processes, not short-lived OS openers. A running browser
+                // is success; never kill it because it keeps its window open.
+                runCatching {
+                    val process =
+                        ProcessBuilder(command)
+                            .redirectErrorStream(true)
+                            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                            .start()
+                    !process.waitFor(500, java.util.concurrent.TimeUnit.MILLISECONDS) || process.exitValue() == 0
+                }.getOrDefault(false)
+            }
+        }
+    }
 }
 
 /** Whether [command] exited 0 within a few seconds; `open -a` exits non-zero when the app is missing. */
@@ -674,3 +697,37 @@ private fun openWithPlatformCommand(url: String): Boolean {
         }
     return exitsCleanly(command)
 }
+
+/** Unknown ownership must not send the OAuth URL back into BOSS. */
+internal expect suspend fun externalSignInBrowserRequired(): Boolean
+
+/** Explicit external windows: Google refuses sign-in inside embedded web views. */
+internal fun signInBrowserWindowCommands(
+    osName: String,
+    url: String,
+): List<List<String>> =
+    when {
+        osName.lowercase().contains("mac") -> {
+            listOf(
+                listOf("open", "-n", "-a", "Google Chrome", "--args", "--new-window", url),
+                listOf("open", "-n", "-a", "Firefox", "--args", "--new-window", url),
+                listOf("open", "-n", "-a", "Microsoft Edge", "--args", "--new-window", url),
+            )
+        }
+
+        osName.lowercase().contains("win") -> {
+            listOf(
+                listOf("msedge", "--new-window", url),
+                listOf("chrome", "--new-window", url),
+                listOf("firefox", "--new-window", url),
+            )
+        }
+
+        else -> {
+            listOf(
+                listOf("google-chrome", "--new-window", url),
+                listOf("chromium", "--new-window", url),
+                listOf("firefox", "--new-window", url),
+            )
+        }
+    }
