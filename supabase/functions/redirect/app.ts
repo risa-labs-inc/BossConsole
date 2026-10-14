@@ -151,6 +151,7 @@ export const OPTIMIST_REDIRECTS: ReadonlySet<string> = new Set([
 // additional_redirect_urls, the prod Auth allow-list, and both email templates' `$max` predicate.
 export const MAX_REDIRECTS: ReadonlySet<string> = new Set([
   "https://evolvemax.com/auth/callback",
+  "https://max.136-70-232-222.sslip.io/auth/callback", // temporary: evolvemax.com before its DNS points at the cluster
   "http://127.0.0.1:8806/auth/callback", // local Max server
 ])
 

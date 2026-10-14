@@ -16,7 +16,7 @@
   Exact-match URLs only, disjoint from optimist/web, so fluck never matches those.
 */}}{{ $bossterm := eq .RedirectTo "bossterm://auth/verify" -}}
 {{ $optimist := or (eq .RedirectTo "https://askoptimist.com/auth/callback") (eq .RedirectTo "https://optimist.risalabs.ai/auth/callback") (eq .RedirectTo "http://127.0.0.1:8796/auth/callback") -}}
-{{ $max := or (eq .RedirectTo "https://evolvemax.com/auth/callback") (eq .RedirectTo "http://127.0.0.1:8806/auth/callback") -}}
+{{ $max := or (eq .RedirectTo "https://evolvemax.com/auth/callback") (eq .RedirectTo "https://max.136-70-232-222.sslip.io/auth/callback") (eq .RedirectTo "http://127.0.0.1:8806/auth/callback") -}}
 {{ $fluck := eq .RedirectTo "http://127.0.0.1:54321/functions/v1/fluck-web/auth" -}}
 {{ $web := eq .RedirectTo "http://127.0.0.1:54321/functions/v1/live-sessions/auth" -}}
 <!DOCTYPE html>
