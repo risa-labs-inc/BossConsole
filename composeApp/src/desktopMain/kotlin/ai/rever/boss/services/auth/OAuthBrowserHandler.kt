@@ -5,13 +5,19 @@ import ai.rever.boss.utils.DefaultHandlerState
 import ai.rever.boss.utils.MacOSDefaultBrowserHandler
 
 internal actual suspend fun externalSignInBrowserRequired(): Boolean {
-    val handler = if (System.getProperty("os.name").orEmpty().lowercase().contains("mac")) {
-        // OAuth uses HTTPS. The aggregate browser role also includes HTTP and HTML files,
-        // which can belong to another app even when HTTPS still points back to BOSS.
-        MacOSDefaultBrowserHandler.browserHandlerStates().getOrNull()?.get("https")
-    } else {
-        DefaultBrowserManager.browserHandlerState().getOrNull()
-    }
+    val handler =
+        if (System
+                .getProperty("os.name")
+                .orEmpty()
+                .lowercase()
+                .contains("mac")
+        ) {
+            // OAuth uses HTTPS. The aggregate browser role also includes HTTP and HTML files,
+            // which can belong to another app even when HTTPS still points back to BOSS.
+            MacOSDefaultBrowserHandler.browserHandlerStates().getOrNull()?.get("https")
+        } else {
+            DefaultBrowserManager.browserHandlerState().getOrNull()
+        }
     return requiresExternalSignInBrowser(handler)
 }
 

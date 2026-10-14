@@ -620,8 +620,10 @@ private suspend fun openSignInPage(
     val osName = System.getProperty("os.name").orEmpty()
     val useExternalFallback = externalSignInBrowserRequired()
     val preferred = preferredBrowserCommand(provider, osName, url, useExternalFallback)
-    if (preferred != null && runAndWait(preferred)) return true
-    if (!useExternalFallback && openInSystemBrowser(url)) return true
+    val browserOpened =
+        (preferred != null && runAndWait(preferred)) ||
+            (!useExternalFallback && openInSystemBrowser(url))
+    if (browserOpened) return true
     return withContext(Dispatchers.IO) {
         signInBrowserWindowCommands(osName, url).any { command ->
             if (osName.lowercase().contains("mac")) {
@@ -630,10 +632,11 @@ private suspend fun openSignInPage(
                 // These are browser processes, not short-lived OS openers. A running browser
                 // is success; never kill it because it keeps its window open.
                 runCatching {
-                    val process = ProcessBuilder(command)
-                        .redirectErrorStream(true)
-                        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                        .start()
+                    val process =
+                        ProcessBuilder(command)
+                            .redirectErrorStream(true)
+                            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                            .start()
                     !process.waitFor(500, java.util.concurrent.TimeUnit.MILLISECONDS) || process.exitValue() == 0
                 }.getOrDefault(false)
             }
@@ -699,21 +702,32 @@ private fun openWithPlatformCommand(url: String): Boolean {
 internal expect suspend fun externalSignInBrowserRequired(): Boolean
 
 /** Explicit external windows: Google refuses sign-in inside embedded web views. */
-internal fun signInBrowserWindowCommands(osName: String, url: String): List<List<String>> =
+internal fun signInBrowserWindowCommands(
+    osName: String,
+    url: String,
+): List<List<String>> =
     when {
-        osName.lowercase().contains("mac") -> listOf(
-            listOf("open", "-n", "-a", "Google Chrome", "--args", "--new-window", url),
-            listOf("open", "-n", "-a", "Firefox", "--args", "--new-window", url),
-            listOf("open", "-n", "-a", "Microsoft Edge", "--args", "--new-window", url),
-        )
-        osName.lowercase().contains("win") -> listOf(
-            listOf("msedge", "--new-window", url),
-            listOf("chrome", "--new-window", url),
-            listOf("firefox", "--new-window", url),
-        )
-        else -> listOf(
-            listOf("google-chrome", "--new-window", url),
-            listOf("chromium", "--new-window", url),
-            listOf("firefox", "--new-window", url),
-        )
+        osName.lowercase().contains("mac") -> {
+            listOf(
+                listOf("open", "-n", "-a", "Google Chrome", "--args", "--new-window", url),
+                listOf("open", "-n", "-a", "Firefox", "--args", "--new-window", url),
+                listOf("open", "-n", "-a", "Microsoft Edge", "--args", "--new-window", url),
+            )
+        }
+
+        osName.lowercase().contains("win") -> {
+            listOf(
+                listOf("msedge", "--new-window", url),
+                listOf("chrome", "--new-window", url),
+                listOf("firefox", "--new-window", url),
+            )
+        }
+
+        else -> {
+            listOf(
+                listOf("google-chrome", "--new-window", url),
+                listOf("chromium", "--new-window", url),
+                listOf("firefox", "--new-window", url),
+            )
+        }
     }
