@@ -137,7 +137,7 @@ additional_redirect_urls = ["boss://auth/verify", "boss://auth/callback", "bosst
   # Max web callback (redirect/app.ts MAX_REDIRECTS)
   "https://evolvemax.com/auth/callback", "http://127.0.0.1:8806/auth/callback",
   # fluck-web page (functions/fluck-web, fluck.risaboss.com): same landing shape as live-sessions
-  "https://fluck.risaboss.com/auth", "https://api.risaboss.com/functions/v1/fluck-web/auth", "http://127.0.0.1:54321/functions/v1/fluck-web/auth"]
+  "https://fluck.ai/auth", "https://fluck.risaboss.com/auth", "https://api.risaboss.com/functions/v1/fluck-web/auth", "http://127.0.0.1:54321/functions/v1/fluck-web/auth"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # Path to JWT signing key. DO NOT commit your signing keys file to git.
