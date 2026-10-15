@@ -23,6 +23,7 @@ async function fixture(options: {
     LIVEKIT_URL: "wss://demo.livekit.cloud",
     LIVEKIT_API_KEY: "lk-key",
     LIVEKIT_API_SECRET: "lk-secret",
+    SUPABASE_URL: "https://api.example",
     ...options.env,
   }
   const handler = createHandler({
@@ -127,9 +128,14 @@ Deno.test("live call creates the room, dispatches the agent and mints scoped tok
   })
 })
 
-Deno.test("live call defaults max_seconds to 1800 and derives the base URL from the request", async () => {
-  const f = await fixture({ env: { BOSS_AI_ALLOW_LOCAL_AGENT: "1" } })
-  const response = await f.live(good, f.inference, "http://127.0.0.1:54321")
+Deno.test("live call defaults max_seconds to 1800; BOSS_AI_PUBLIC_URL overrides the callback base", async () => {
+  const f = await fixture({
+    env: {
+      BOSS_AI_ALLOW_LOCAL_AGENT: "1",
+      BOSS_AI_PUBLIC_URL: "http://127.0.0.1:54321/functions/v1/boss-ai/",
+    },
+  })
+  const response = await f.live(good, f.inference, "http://kong:8000")
   assertEquals(response.status, 200)
   const metadata = JSON.parse(f.calls.find((c) => c.name === "createDispatch")!.args[2] as string)
   assertEquals(metadata.max_seconds, 1800)

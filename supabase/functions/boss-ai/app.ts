@@ -156,6 +156,18 @@ async function settleReservation(
   }
 }
 
+/**
+ * The function's public address, for the voice worker to call back: inside the edge runtime the request URL is
+ * an internal host. BOSS_AI_PUBLIC_URL (e.g. https://api.risaboss.com/functions/v1/boss-ai) wins, else SUPABASE_URL.
+ */
+function publicBase(deps: Dependencies): string {
+  const explicit = deps.secret("BOSS_AI_PUBLIC_URL")?.replace(/\/+$/, "")
+  if (explicit) return explicit
+  const supabase = deps.secret("SUPABASE_URL")?.replace(/\/+$/, "")
+  if (!supabase) throw new HttpError(503, "voice_unavailable", "Voice calls are not configured.")
+  return `${supabase}/functions/v1/boss-ai`
+}
+
 export function createHandler(deps: Dependencies): (request: Request) => Promise<Response> {
   const startLiveCall = async (
     request: Request,
@@ -209,7 +221,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       agent_url: input.agent_url,
       agent_token: input.agent_token,
       inference: {
-        base_url: `${new URL(request.url).origin}/functions/v1/boss-ai/v1`,
+        base_url: `${publicBase(deps)}/v1`,
         token: call.token,
       },
       stt_model: LIVE_STT_MODEL,
