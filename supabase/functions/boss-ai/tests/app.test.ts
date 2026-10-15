@@ -30,6 +30,8 @@ async function fixture(options: {
   voice?: string | null
   reserveUsage?: unknown
   audio?: ReadableStream<Uint8Array>
+  poolUsage?: unknown
+  failUsage?: boolean
 } = {}) {
   const calls: { name: string; params: Obj }[] = []
   const requests: Request[] = []
@@ -65,6 +67,10 @@ async function fixture(options: {
       }
       if (name === "boss_ai_settle" && options.failFirstSettlement && settlements === 1) {
         throw new Error("private database detail")
+      }
+      if (name === "boss_ai_usage") {
+        if (options.failUsage) throw new Error("database unavailable")
+        return options.poolUsage ?? null
       }
       if (name === "boss_ai_catalog") {
         return [{ id: "boss-test", allowance: { day: { remaining: 1024 } } }]
@@ -788,4 +794,50 @@ Deno.test("allowance_exceeded carries the pool usage", async () => {
   assertEquals(error.code, "allowance_exceeded")
   assertEquals(error.usage, usage)
   assertEquals(f.requests.length, 0)
+})
+
+const pool = {
+  day: { limit: 3600, used: 100, remaining: 3500, resets_at: "2026-10-16T00:00:00Z" },
+  week: { limit: 3600, used: 100, remaining: 3500, resets_at: "2026-10-19T00:00:00Z" },
+  month: { limit: 3600, used: 3000, remaining: 600, resets_at: "2026-11-01T00:00:00Z" },
+}
+
+Deno.test("transcription and speech report the smallest remaining period of the pool", async () => {
+  const text = await fixture({ kind: "transcription", poolUsage: pool })
+  const transcribed = await text.handler(text.request(stt, text.token, "audio/transcriptions"))
+  assertEquals((await transcribed.json()).usage, {
+    seconds: 3.4,
+    billed_seconds: 4,
+    remaining_seconds: 600,
+    resets_at: "2026-11-01T00:00:00Z",
+  })
+  const usage = text.calls.filter((call) => call.name === "boss_ai_usage")
+  assertEquals(usage.map((call) => call.params), [{
+    p_user_id: "00000000-0000-0000-0000-000000000001",
+    p_model_id: "boss-test",
+  }])
+  assert(
+    text.calls.findIndex((c) => c.name === "boss_ai_usage") >
+      text.calls.findIndex((c) => c.name === "boss_ai_settle"),
+  )
+  const speech = await fixture({ kind: "speech", poolUsage: pool })
+  const spoken = await speech.handler(speech.request(tts, speech.token, "audio/speech"))
+  assertEquals(spoken.headers.get("X-Remaining-Seconds"), "600")
+  assertEquals(spoken.headers.get("X-Resets-At"), "2026-11-01T00:00:00Z")
+  await spoken.arrayBuffer()
+})
+
+Deno.test("audio responses omit quota when the usage read fails or is unreadable", async () => {
+  for (const options of [{ failUsage: true }, { poolUsage: null }, { poolUsage: { day: 5 } }]) {
+    const text = await fixture({ kind: "transcription", ...options })
+    const transcribed = await text.handler(text.request(stt, text.token, "audio/transcriptions"))
+    assertEquals(transcribed.status, 200)
+    assertEquals((await transcribed.json()).usage, { seconds: 3.4, billed_seconds: 4 })
+    const speech = await fixture({ kind: "speech", ...options })
+    const spoken = await speech.handler(speech.request(tts, speech.token, "audio/speech"))
+    assertEquals(spoken.status, 200)
+    assertEquals(spoken.headers.get("X-Remaining-Seconds"), null)
+    assertEquals(spoken.headers.get("X-Resets-At"), null)
+    await spoken.arrayBuffer()
+  }
 })

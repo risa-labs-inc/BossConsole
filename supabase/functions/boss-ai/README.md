@@ -152,7 +152,7 @@ not verified to accept it); it still applies to chat.
 validated for base64 shape and forwarded undecoded as
 `{model: upstream_model, input_audio, language?}`. Response:
 `{"text", "usage": {"seconds",
-"billed_seconds"}}`.
+"billed_seconds", "remaining_seconds"?, "resets_at"?}}`.
 
 `POST /v1/audio/speech`:
 
@@ -163,7 +163,11 @@ validated for base64 shape and forwarded undecoded as
 `input` is 1 to 2000 characters (400 `invalid_input` otherwise). The proxy sends
 `response_format: "mp3"` and the voice, taken from the request, else the model row's `voice`, else
 omitted. The upstream body is streamed through as `audio/mpeg` without buffering and is cut off past
-16 MiB. Headers: `X-Request-ID`, `X-Billed-Seconds`.
+16 MiB. Headers: `X-Request-ID`, `X-Billed-Seconds`, and `X-Remaining-Seconds` and `X-Resets-At`.
+
+After settling, both routes read the pool with `boss_ai_usage` and report the period with the
+smallest remaining (`remaining_seconds`, `resets_at`). If that read fails or times out the fields
+are omitted; the request never fails because of it.
 
 **Metering is seconds**; the `tokens_*` columns hold seconds for audio models, and ledger rows keep
 the actual `model_id`. Admission reserves `max_output_tokens` (the most seconds one request may

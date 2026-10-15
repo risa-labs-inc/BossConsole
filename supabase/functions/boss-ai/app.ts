@@ -2,6 +2,8 @@ import { bearer, HttpError, mintToken, signingKey, verifyToken } from "./auth.ts
 import {
   capped,
   MAX_AUDIO_OUTPUT_BYTES,
+  Remaining,
+  smallestRemaining,
   speechBody,
   transcriptionBody,
   transcriptionSeconds,
@@ -56,6 +58,31 @@ function failure(error: unknown, requestId: string): Response {
     ? error
     : new HttpError(503, "unavailable", "BOSS AI is temporarily unavailable.")
   return json({ error: { code: e.code, message: e.message, ...e.extra } }, e.status, requestId)
+}
+
+/** Pool quota after settlement. Best effort: a failure or slow read omits it. */
+async function remainingQuota(
+  deps: Dependencies,
+  user: string,
+  modelId: string,
+): Promise<Remaining | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const usage = await Promise.race([
+      deps.rpc("boss_ai_usage", { p_user_id: user, p_model_id: modelId }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new SettlementTimeoutError()),
+          deps.settlementTimeoutMs ?? 2_000,
+        )
+      }),
+    ])
+    return smallestRemaining(usage)
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 async function settleReservation(
@@ -301,8 +328,9 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           reservation = undefined
           // A retained reservation (unknown duration) bills the full reserved window.
           const billed = Math.min(measuredTokens ?? Infinity, result.model.max_output_tokens)
+          const quota = await remainingQuota(deps, user, input.model as string)
           return json(
-            { text: payload.text, usage: { seconds, billed_seconds: billed } },
+            { text: payload.text, usage: { seconds, billed_seconds: billed, ...quota } },
             200,
             requestId,
           )
@@ -318,8 +346,13 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         measuredTokens = Math.min(prepared.seconds!, result.model.max_output_tokens)
         await settleWithRetry(measuredTokens)
         reservation = undefined
+        const quota = await remainingQuota(deps, user, input.model as string)
         return new Response(capped(upstream.body, MAX_AUDIO_OUTPUT_BYTES, cleanup), {
           headers: {
+            ...(quota && {
+              "X-Remaining-Seconds": String(quota.remaining_seconds),
+              "X-Resets-At": quota.resets_at,
+            }),
             "Content-Type": "audio/mpeg",
             "Cache-Control": "no-store",
             "X-Request-ID": requestId,

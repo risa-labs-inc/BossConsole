@@ -62,6 +62,28 @@ export function transcriptionSeconds(payload: Obj, audio: string, format: string
   return format === "wav" ? wavSeconds(audio) : null
 }
 
+export interface Remaining {
+  remaining_seconds: number
+  resets_at: string
+}
+
+/** The period with the least time left in a `boss_ai_usage` result, or null when unreadable. */
+export function smallestRemaining(usage: unknown): Remaining | null {
+  if (typeof usage !== "object" || usage === null) return null
+  let best: Remaining | null = null
+  for (const period of Object.values(usage as Obj)) {
+    const { remaining, resets_at } = (period ?? {}) as Obj
+    if (
+      typeof remaining !== "number" || !Number.isFinite(remaining) ||
+      typeof resets_at !== "string"
+    ) continue
+    if (best === null || remaining < best.remaining_seconds) {
+      best = { remaining_seconds: remaining, resets_at }
+    }
+  }
+  return best
+}
+
 export function speechBody(input: Obj, model: Model): { body: Obj; seconds: number } {
   onlyKeys(input, ["model", "input", "voice"])
   const text = input.input
