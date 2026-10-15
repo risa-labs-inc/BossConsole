@@ -9,8 +9,9 @@ desktop is needed.
 
 1. Apply `20260912000000_boss_ai.sql`, `20260912001000_boss_ai_hardening.sql`,
    `20260912002000_boss_ai_validation.sql`, `20260912003000_boss_ai_allowance_preflight.sql`, and
-   `20260912004000_boss_ai_exchange_tickets.sql` in order. Earlier files have already been applied
-   to the preview branch; fixes are forward migrations, not edits to applied history.
+   `20260912004000_boss_ai_exchange_tickets.sql` in order; `20261015000000_boss_ai_voice.sql` adds
+   audio models. Earlier files have already been applied to the preview branch; fixes are forward
+   migrations, not edits to applied history.
 2. Set `BOSS_AI_SIGNING_SECRET` to at least 32 random bytes (encoded as a string). Set upstream API
    keys as secrets named `BOSS_AI_<NAME>`. The signing-secret name is explicitly prohibited as an
    upstream key in both SQL and the handler. Never put these keys in a shared vault entry. Supabase
@@ -130,6 +131,84 @@ upstream-hosted tools, conversation IDs, client-selected providers, redirects, o
 extensions are forwarded. Vision accepts inline PNG/JPEG/WebP images, not remote image URLs. The
 endpoint must enforce the configured context limit; this is part of the upstream contract, not an
 assertion inferred from a model name.
+
+## Voice (audio models)
+
+`boss_ai_models.kind` is `chat` (default), `transcription` or `speech`. Audio routes use the same
+bearer, admission, ledger and error shape as chat, and take JSON bodies. The upstream URL is the
+connection `base_url` plus `/audio/transcriptions` or `/audio/speech`, whatever its `api_type`.
+`/v1/chat/completions` and each audio route reject a model of another kind with 400
+`wrong_model_kind` (after the permission lookup, before any reservation). `/v1/models` lists `kind`
+per model. `provider_routing` is not forwarded on audio requests (OpenRouter's audio endpoints are
+not verified to accept it); it still applies to chat.
+
+`POST /v1/audio/transcriptions`, at most 4 MiB:
+
+```json
+{ "model": "max-stt", "input_audio": { "data": "<base64>", "format": "wav" }, "language": "en" }
+```
+
+`format` is `wav`, `mp3`, `webm`, `ogg`, `flac` or `m4a`; `language` is optional. The audio is
+validated for base64 shape and forwarded undecoded as
+`{model: upstream_model, input_audio, language?}`. Response:
+`{"text", "usage": {"seconds",
+"billed_seconds", "remaining_seconds"?, "resets_at"?}}`.
+
+`POST /v1/audio/speech`:
+
+```json
+{ "model": "max-tts", "input": "One sentence or a few.", "voice": "optional override" }
+```
+
+`input` is 1 to 2000 characters (400 `invalid_input` otherwise). The proxy sends
+`response_format: "mp3"` and the voice, taken from the request, else the model row's `voice`, else
+omitted. The upstream body is streamed through as `audio/mpeg` without buffering and is cut off past
+16 MiB. Headers: `X-Request-ID`, `X-Billed-Seconds`, and `X-Remaining-Seconds` and `X-Resets-At`.
+
+After settling, both routes read the pool with `boss_ai_usage` and report the period with the
+smallest remaining (`remaining_seconds`, `resets_at`). If that read fails or times out the fields
+are omitted; the request never fails because of it.
+
+**Metering is seconds**; the `tokens_*` columns hold seconds for audio models, and ledger rows keep
+the actual `model_id`. Admission reserves `max_output_tokens` (the most seconds one request may
+bill) instead of `context_length`; `boss_ai_lookup`'s `misconfigured_allowance` check and the
+remaining-allowance check use the same amount. Settlement:
+
+- Transcription: `ceil(upstream usage.seconds)`; if missing, estimated from the WAV header and
+  length; otherwise the reservation is kept (`usage_unknown_reservation_retained`).
+- Speech: `max(1, ceil(chars / 14))`, settled once upstream returns 200, before the stream starts.
+- Upstream rejection that proves no work (400/401/402/403/404/405/406/413/415/422/429) settles 0;
+  other failures keep the reservation, as for chat.
+
+**Shared pool.** `allowance_model_id` makes a model draw from another model's allowance and usage;
+the pool key is `coalesce(allowance_model_id, id)`. Allowances, the policy, usage sums, the
+concurrency limit and the admission lock are all per user and pool, so speech and transcription
+share one budget. Pools are one level deep (a trigger refuses self, chains and re-pooling a target).
+Publication, enablement and connection checks still apply to the requested model itself.
+`allowance_exceeded` (429) includes the pool's `usage`:
+
+```json
+{
+  "error": {
+    "code": "allowance_exceeded",
+    "message": "...",
+    "usage": {
+      "month": { "limit": 3600, "used": 3600, "remaining": 0, "resets_at": "2026-11-01T00:00:00Z" }
+    }
+  }
+}
+```
+
+Operator data (applied by hand, not a migration), for a shared hour of talk time:
+
+```sql
+INSERT INTO boss_ai_models (id, display_name, connection_id, upstream_model, kind, voice, context_length, max_output_tokens, published, enabled)
+VALUES ('max-stt','Max STT','openrouter-optimist','nvidia/parakeet-tdt-0.6b-v3','transcription',NULL,1024,60,true,true),
+       ('max-tts','Max TTS','openrouter-optimist','elevenlabs/eleven-flash-v2.5','speech','sarah',1024,20,true,true);
+UPDATE boss_ai_models SET allowance_model_id='max-stt' WHERE id='max-tts';
+INSERT INTO boss_ai_allowances (model_id, permission_name, tokens_per_day, tokens_per_week, tokens_per_month, max_concurrent)
+VALUES ('max-stt','ai.use',3600,3600,3600,6);
+```
 
 ## Restricting a model to an organisation
 

@@ -5,7 +5,12 @@ const audience = "boss-ai-inference"
 const lifetime = 300
 
 export class HttpError extends Error {
-  constructor(public status: number, public code: string, message: string) {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+    public extra: Record<string, unknown> = {},
+  ) {
     super(message)
   }
 }

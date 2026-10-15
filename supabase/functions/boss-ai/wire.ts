@@ -23,6 +23,8 @@ export type Obj = Record<string, unknown>
 export interface Model {
   id: string
   upstream_model: string
+  kind: "chat" | "transcription" | "speech"
+  voice?: string | null
   capabilities: string[]
   context_length: number
   max_output_tokens: number
@@ -108,7 +110,7 @@ export async function readJson(
   }
 }
 
-export function endpoint(connection: Connection): string {
+function baseUrl(connection: Connection): string {
   if (
     !/^BOSS_AI_[A-Z0-9_]+$/.test(connection.api_key_secret) ||
     connection.api_key_secret === "BOSS_AI_SIGNING_SECRET"
@@ -119,8 +121,17 @@ export function endpoint(connection: Connection): string {
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
     throw new HttpError(503, "configuration", "BOSS AI is temporarily unavailable.")
   }
-  return url.toString().replace(/\/$/, "") +
+  return url.toString().replace(/\/$/, "")
+}
+
+export function endpoint(connection: Connection): string {
+  return baseUrl(connection) +
     (connection.api_type === "openai_chat" ? "/chat/completions" : "/responses")
+}
+
+/** Audio routes ignore api_type: every connection serves them under its base URL. */
+export function audioEndpoint(connection: Connection, route: "transcriptions" | "speech"): string {
+  return `${baseUrl(connection)}/audio/${route}`
 }
 
 /** Validate at the secret lookup itself, independent of endpoint call ordering. */

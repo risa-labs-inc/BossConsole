@@ -1,5 +1,6 @@
 import { assert, assertEquals } from "@std/assert"
 import { createHandler } from "../app.ts"
+import { smallestRemaining } from "../audio.ts"
 import { mintToken, signingKey } from "../auth.ts"
 import { Obj } from "../wire.ts"
 
@@ -26,6 +27,12 @@ async function fixture(options: {
   providerRouting?: unknown
   routingAfterPreflight?: unknown
   baseUrl?: string
+  kind?: "chat" | "transcription" | "speech"
+  voice?: string | null
+  reserveUsage?: unknown
+  audio?: ReadableStream<Uint8Array>
+  poolUsage?: unknown
+  failUsage?: boolean
 } = {}) {
   const calls: { name: string; params: Obj }[] = []
   const requests: Request[] = []
@@ -62,6 +69,10 @@ async function fixture(options: {
       if (name === "boss_ai_settle" && options.failFirstSettlement && settlements === 1) {
         throw new Error("private database detail")
       }
+      if (name === "boss_ai_usage") {
+        if (options.failUsage) throw new Error("database unavailable")
+        return options.poolUsage ?? null
+      }
       if (name === "boss_ai_catalog") {
         return [{ id: "boss-test", allowance: { day: { remaining: 1024 } } }]
       }
@@ -70,26 +81,30 @@ async function fixture(options: {
         return options.eligible !== false
       }
       if (name === "boss_ai_reserve" || name === "boss_ai_lookup") {
-        return options.deny && name === "boss_ai_reserve" ? { error: options.deny } : {
-          model: {
-            id: "boss-test",
-            upstream_model: "private-model",
-            context_length: 4096,
-            max_output_tokens: 512,
-            provider_routing:
-              name === "boss_ai_reserve" && options.routingAfterPreflight !== undefined
-                ? options.routingAfterPreflight
-                : options.providerRouting ?? null,
-            capabilities: options.removeToolsAfterPreflight && name === "boss_ai_lookup"
-              ? ["text", "tools"]
-              : ["text"],
-          },
-          connection: {
-            base_url: options.baseUrl ?? "https://upstream.example/v1",
-            api_type: options.apiType ?? "openai_chat",
-            api_key_secret: options.keyName ?? "BOSS_AI_TEST",
-          },
-        }
+        return options.deny && name === "boss_ai_reserve"
+          ? { error: options.deny, usage: options.reserveUsage }
+          : {
+            model: {
+              id: "boss-test",
+              upstream_model: "private-model",
+              kind: options.kind ?? "chat",
+              voice: options.voice ?? null,
+              context_length: 4096,
+              max_output_tokens: options.kind && options.kind !== "chat" ? 120 : 512,
+              provider_routing:
+                name === "boss_ai_reserve" && options.routingAfterPreflight !== undefined
+                  ? options.routingAfterPreflight
+                  : options.providerRouting ?? null,
+              capabilities: options.removeToolsAfterPreflight && name === "boss_ai_lookup"
+                ? ["text", "tools"]
+                : ["text"],
+            },
+            connection: {
+              base_url: options.baseUrl ?? "https://upstream.example/v1",
+              api_type: options.apiType ?? "openai_chat",
+              api_key_secret: options.keyName ?? "BOSS_AI_TEST",
+            },
+          }
       }
       return null
     },
@@ -101,6 +116,16 @@ async function fixture(options: {
           init!.signal!.addEventListener("abort", () => reject(new Error("timeout")), {
             once: true,
           })
+        })
+      }
+      if (options.kind === "speech") {
+        return new Response(options.audio ?? new Blob([new Uint8Array([1, 2, 3])]), {
+          status: options.upstreamStatus ?? 200,
+        })
+      }
+      if (options.kind === "transcription" && !options.payload) {
+        return new Response(JSON.stringify({ text: "hello there", usage: { seconds: 3.4 } }), {
+          status: options.upstreamStatus ?? 200,
         })
       }
       return new Response(
@@ -127,8 +152,8 @@ async function fixture(options: {
       )
     },
   })
-  const request = (body: Obj, credential = token) =>
-    new Request("https://api.example/functions/v1/boss-ai/v1/chat/completions", {
+  const request = (body: Obj, credential = token, path = "chat/completions") =>
+    new Request(`https://api.example/functions/v1/boss-ai/v1/${path}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${credential}` },
       body: JSON.stringify(body),
@@ -600,4 +625,236 @@ Deno.test("eligibility RPC failures fail closed without minting or dispatching",
   assertEquals(response.status, 503)
   assertEquals((await response.json()).access_token, undefined)
   assertEquals(f.requests.length, 0)
+})
+
+const settled = (f: { calls: { name: string; params: Obj }[] }) =>
+  f.calls.filter((call) => call.name === "boss_ai_settle").map((call) => call.params.p_tokens)
+const wav = (seconds: number) => {
+  const bytes = new Uint8Array(44 + 32_000 * seconds)
+  const view = new DataView(bytes.buffer)
+  bytes.set(new TextEncoder().encode("RIFF"), 0)
+  bytes.set(new TextEncoder().encode("WAVE"), 8)
+  view.setUint32(28, 32_000, true)
+  return btoa(String.fromCharCode(...bytes))
+}
+const stt = { model: "boss-test", input_audio: { data: wav(1), format: "wav" }, language: "en" }
+const tts = { model: "boss-test", input: "x".repeat(29) }
+
+Deno.test("transcription forwards audio undecoded and settles ceil(upstream seconds)", async () => {
+  const f = await fixture({ kind: "transcription" })
+  const response = await f.handler(f.request(stt, f.token, "audio/transcriptions"))
+  assertEquals(response.status, 200)
+  assertEquals(await response.json(), {
+    text: "hello there",
+    usage: { seconds: 3.4, billed_seconds: 4 },
+  })
+  assertEquals(f.requests[0].url, "https://upstream.example/v1/audio/transcriptions")
+  assertEquals(await f.requests[0].json(), {
+    model: "private-model",
+    input_audio: stt.input_audio,
+    language: "en",
+  })
+  assertEquals(settled(f), [4])
+})
+
+Deno.test("transcription without upstream usage estimates a WAV and otherwise keeps the reservation", async () => {
+  const wavOnly = await fixture({ kind: "transcription", payload: { text: "a" } })
+  const estimated = await wavOnly.handler(
+    wavOnly.request(stt, wavOnly.token, "audio/transcriptions"),
+  )
+  assertEquals((await estimated.json()).usage, { seconds: 1, billed_seconds: 1 })
+  assertEquals(settled(wavOnly), [1])
+  const mp3 = await fixture({ kind: "transcription", payload: { text: "a" } })
+  const kept = await mp3.handler(
+    mp3.request(
+      { ...stt, input_audio: { data: "AAAA", format: "mp3" } },
+      mp3.token,
+      "audio/transcriptions",
+    ),
+  )
+  assertEquals((await kept.json()).usage, { seconds: null, billed_seconds: 120 })
+  assertEquals(settled(mp3), [null])
+  assert(mp3.audits.includes("usage_unknown_reservation_retained"))
+})
+
+Deno.test("transcription rejects malformed audio before admission", async () => {
+  for (
+    const input_audio of [
+      { data: "AAAA", format: "aiff" },
+      { data: "not base64!", format: "wav" },
+      { data: "AAA", format: "wav" },
+      { data: "", format: "wav" },
+      { data: "AAAA", format: "wav", extra: 1 },
+      "AAAA",
+    ]
+  ) {
+    const f = await fixture({ kind: "transcription" })
+    const response = await f.handler(
+      f.request({ ...stt, input_audio }, f.token, "audio/transcriptions"),
+    )
+    assertEquals(response.status, 400)
+    assertEquals(f.calls.filter((call) => call.name === "boss_ai_reserve").length, 0)
+    assertEquals(f.requests.length, 0)
+  }
+})
+
+Deno.test("speech streams mp3 through, settles chars/14 up front and sets the voice", async () => {
+  const f = await fixture({ kind: "speech", voice: "sarah" })
+  const response = await f.handler(f.request(tts, f.token, "audio/speech"))
+  assertEquals(response.status, 200)
+  assertEquals(response.headers.get("Content-Type"), "audio/mpeg")
+  assertEquals(response.headers.get("X-Billed-Seconds"), "3")
+  assertEquals(new Uint8Array(await response.arrayBuffer()), new Uint8Array([1, 2, 3]))
+  assertEquals(f.requests[0].url, "https://upstream.example/v1/audio/speech")
+  assertEquals(await f.requests[0].json(), {
+    model: "private-model",
+    input: tts.input,
+    response_format: "mp3",
+    voice: "sarah",
+  })
+  assertEquals(settled(f), [3])
+  const override = await fixture({ kind: "speech", voice: "sarah" })
+  await override.handler(
+    override.request({ ...tts, voice: "adam" }, override.token, "audio/speech"),
+  )
+  assertEquals((await override.requests[0].json()).voice, "adam")
+  const none = await fixture({ kind: "speech" })
+  await none.handler(none.request({ ...tts, input: "hi" }, none.token, "audio/speech"))
+  assertEquals((await none.requests[0].json()).voice, undefined)
+  assertEquals(settled(none), [1])
+})
+
+Deno.test("speech validates input length and caps streamed output", async () => {
+  for (const input of ["", "x".repeat(2001), 5]) {
+    const f = await fixture({ kind: "speech" })
+    const response = await f.handler(f.request({ ...tts, input }, f.token, "audio/speech"))
+    assertEquals(response.status, 400)
+    assertEquals((await response.json()).error.code, "invalid_input")
+    assertEquals(f.requests.length, 0)
+  }
+  const chunk = new Uint8Array(1024 * 1024)
+  let sent = 0
+  const f = await fixture({
+    kind: "speech",
+    audio: new ReadableStream<Uint8Array>({
+      pull(controller) {
+        sent++
+        controller.enqueue(chunk)
+      },
+    }),
+  })
+  const response = await f.handler(f.request(tts, f.token, "audio/speech"))
+  let received = 0
+  let failed = false
+  try {
+    for await (const part of response.body!) received += part.length
+  } catch {
+    failed = true
+  }
+  assert(failed)
+  assert(received <= 16 * 1024 * 1024 && sent <= 18)
+})
+
+Deno.test("audio upstream failure refunds and kinds are enforced per route", async () => {
+  const failing = await fixture({ kind: "speech", upstreamStatus: 400 })
+  assertEquals(
+    (await failing.handler(failing.request(tts, failing.token, "audio/speech"))).status,
+    502,
+  )
+  assertEquals(settled(failing), [0])
+  const chatOnSpeech = await fixture({ kind: "speech" })
+  const wrong = await chatOnSpeech.handler(chatOnSpeech.request(body))
+  assertEquals(wrong.status, 400)
+  assertEquals((await wrong.json()).error.code, "wrong_model_kind")
+  assertEquals(chatOnSpeech.calls.map((call) => call.name), ["boss_ai_lookup"])
+  const speechOnChat = await fixture()
+  assertEquals(
+    (await (await speechOnChat.handler(
+      speechOnChat.request(tts, speechOnChat.token, "audio/speech"),
+    ))
+      .json()).error.code,
+    "wrong_model_kind",
+  )
+  const sttOnSpeech = await fixture({ kind: "speech" })
+  assertEquals(
+    (await sttOnSpeech.handler(sttOnSpeech.request(stt, sttOnSpeech.token, "audio/transcriptions")))
+      .status,
+    400,
+  )
+  assertEquals(sttOnSpeech.requests.length, 0)
+})
+
+Deno.test("allowance_exceeded carries the pool usage", async () => {
+  const usage = {
+    month: { limit: 3600, used: 3600, remaining: 0, resets_at: "2026-11-01T00:00:00Z" },
+  }
+  const f = await fixture({ kind: "speech", deny: "allowance_exceeded", reserveUsage: usage })
+  const response = await f.handler(f.request(tts, f.token, "audio/speech"))
+  assertEquals(response.status, 429)
+  const error = (await response.json()).error
+  assertEquals(error.code, "allowance_exceeded")
+  assertEquals(error.usage, usage)
+  assertEquals(f.requests.length, 0)
+})
+
+const pool = {
+  day: { limit: 3600, used: 100, remaining: 3500, resets_at: "2026-10-16T00:00:00Z" },
+  week: { limit: 3600, used: 100, remaining: 3500, resets_at: "2026-10-19T00:00:00Z" },
+  month: { limit: 3600, used: 3000, remaining: 600, resets_at: "2026-11-01T00:00:00Z" },
+}
+
+Deno.test("transcription and speech report the smallest remaining period of the pool", async () => {
+  const text = await fixture({ kind: "transcription", poolUsage: pool })
+  const transcribed = await text.handler(text.request(stt, text.token, "audio/transcriptions"))
+  assertEquals((await transcribed.json()).usage, {
+    seconds: 3.4,
+    billed_seconds: 4,
+    remaining_seconds: 600,
+    resets_at: "2026-11-01T00:00:00Z",
+  })
+  const usage = text.calls.filter((call) => call.name === "boss_ai_usage")
+  assertEquals(usage.map((call) => call.params), [{
+    p_user_id: "00000000-0000-0000-0000-000000000001",
+    p_model_id: "boss-test",
+  }])
+  assert(
+    text.calls.findIndex((c) => c.name === "boss_ai_usage") >
+      text.calls.findIndex((c) => c.name === "boss_ai_settle"),
+  )
+  const speech = await fixture({ kind: "speech", poolUsage: pool })
+  const spoken = await speech.handler(speech.request(tts, speech.token, "audio/speech"))
+  assertEquals(spoken.headers.get("X-Remaining-Seconds"), "600")
+  assertEquals(spoken.headers.get("X-Resets-At"), "2026-11-01T00:00:00Z")
+  await spoken.arrayBuffer()
+})
+
+Deno.test("audio responses omit quota when the usage read fails or is unreadable", async () => {
+  for (const options of [{ failUsage: true }, { poolUsage: null }, { poolUsage: { day: 5 } }]) {
+    const text = await fixture({ kind: "transcription", ...options })
+    const transcribed = await text.handler(text.request(stt, text.token, "audio/transcriptions"))
+    assertEquals(transcribed.status, 200)
+    assertEquals((await transcribed.json()).usage, { seconds: 3.4, billed_seconds: 4 })
+    const speech = await fixture({ kind: "speech", ...options })
+    const spoken = await speech.handler(speech.request(tts, speech.token, "audio/speech"))
+    assertEquals(spoken.status, 200)
+    assertEquals(spoken.headers.get("X-Remaining-Seconds"), null)
+    assertEquals(spoken.headers.get("X-Resets-At"), null)
+    await spoken.arrayBuffer()
+  }
+})
+
+Deno.test("smallestRemaining reports the latest reset among periods tied at the minimum", () => {
+  const usage = {
+    day: { limit: 3600, used: 9, remaining: 3591, resets_at: "2026-10-16T00:00:00+00:00" },
+    week: { limit: 3600, used: 9, remaining: 3591, resets_at: "2026-10-19T00:00:00+00:00" },
+    month: { limit: 3600, used: 9, remaining: 3591, resets_at: "2026-11-01T00:00:00+00:00" },
+  }
+  assertEquals(smallestRemaining(usage), {
+    remaining_seconds: 3591,
+    resets_at: "2026-11-01T00:00:00+00:00",
+  })
+  assertEquals(
+    smallestRemaining({ ...usage, day: { ...usage.day, remaining: 10 } })?.resets_at,
+    "2026-10-16T00:00:00+00:00",
+  )
 })
