@@ -1,13 +1,14 @@
 -- pgTAP tests for the agents platform (20261016130000).
 -- Run with: supabase test db
 begin;
-select plan(40);
+select plan(57);
 
 insert into auth.users (id, email, email_confirmed_at) values
     ('a9000000-0000-4000-8000-00000000000a', 'owner-a@agents.test', now()),
     ('a9000000-0000-4000-8000-00000000000b', 'owner-b@agents.test', now()),
     ('a9000000-0000-4000-8000-00000000000c', 'plain@agents.test', now()),
-    ('a9000000-0000-4000-8000-00000000000d', 'platform@agents.test', now());
+    ('a9000000-0000-4000-8000-00000000000d', 'platform@agents.test', now()),
+    ('a9000000-0000-4000-8000-00000000000e', 'stranger@agents.test', now());
 insert into public.user_roles (user_id, role_id)
     select 'a9000000-0000-4000-8000-00000000000d', id from public.roles where name = 'admin';
 
@@ -138,6 +139,51 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000c', true);
 select is((select array_agg(instance_id) from public.agent_installs), array['inst-c'], 'user reads only their own install');
 select throws_ok($q$ update public.agent_installs set state = 'failed' $q$, '42501', null, 'user cannot write installs');
+
+-- ---- evolution requests ----
+reset role;
+-- installer c has a running install (above); agent is live. org B admin = stranger.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000c', true);
+create temp table ev (k text primary key, id uuid);
+grant all on ev to authenticated;
+select lives_ok($q$ insert into ev select 'inst', public.request_agent_evolution((select id from ag), 'make the greeting friendlier please') $q$, 'installer requests an evolution');
+select throws_ok($q$ select public.request_agent_evolution((select id from ag), 'too short') $q$, '23514', null, 'brief too short refused');
+select is((select count(*)::int from public.agent_evolution_requests), 0, 'installer cannot read requests');
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000e', true);
+select throws_ok($q$ select public.request_agent_evolution((select id from ag), 'a stranger asking for changes here') $q$, '42501', 'not installed', 'stranger/installer-only refused');
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
+select lives_ok($q$ insert into ev select 'adm', public.request_agent_evolution((select id from ag), 'admin wants the tone changed to formal') $q$, 'org admin requests an evolution');
+select is((select string_agg(source, ',' order by source) from public.agent_evolution_requests), 'admin,agent', 'sources recorded');
+select lives_ok($q$ update public.agent_evolution_requests set status = 'discarded' where id = (select id from ev where k = 'adm') $q$, 'admin discards');
+select throws_ok($q$ update public.agent_evolution_requests set status = 'built' where id = (select id from ev where k = 'inst') $q$, '42501', null, 'admin cannot set built');
+select throws_ok($q$ update public.agent_evolution_requests set brief = 'rewritten brief that is long enough' $q$, '42501', null, 'admin cannot edit the brief');
+select throws_ok($q$ insert into public.agent_evolution_requests (agent_id, source, brief) values ((select id from ag), 'admin', 'direct insert is not allowed here') $q$, '42501', null, 'no direct inserts');
+
+-- non-live agent refused for installer
+reset role;
+select set_config('request.jwt.claims', '{"role":"service_role"}', true);
+update public.agents set status = 'suspended' where slug = 'acme';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000c', true);
+select throws_ok($q$ select public.request_agent_evolution((select id from ag), 'installer asks while not live now') $q$, 'P0001', 'agent not live', 'installer refused on a non-live agent');
+reset role;
+update public.agents set status = 'live' where slug = 'acme';
+
+-- ---- auto_promote ----
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
+select lives_ok($q$ update public.agents set auto_promote = true where slug = 'acme' $q$, 'admin sets auto_promote');
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000c', true);
+select is_empty($q$ update public.agents set auto_promote = false where slug = 'acme' returning 1 $q$, 'non-admin cannot set auto_promote');
+
+-- ---- brand bucket ----
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
+select lives_ok($q$ insert into storage.objects (bucket_id, name) values ('agent-brand', (select id::text from ag) || '/logo.png') $q$, 'admin uploads under own agent folder');
+select throws_ok($q$ insert into storage.objects (bucket_id, name) values ('agent-brand', 'a9000000-0000-4000-8000-0000000000ee/logo.png') $q$, '42501', null, 'upload under another agent folder refused');
+reset role;
+select ok((select public and file_size_limit = 2097152 from storage.buckets where id = 'agent-brand'), 'agent-brand is public with a 2 MiB limit');
+select ok((select file_size_limit = 209715200 from storage.buckets where id = 'agent-builds'), 'agent-builds allows 200 MiB');
 
 select * from finish();
 rollback;

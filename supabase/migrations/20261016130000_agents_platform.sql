@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS public.agents (
     allowed_tools        text[],
     live_persona_version int,
     live_build_id        uuid,
+    auto_promote         boolean NOT NULL DEFAULT false,
     created_by           uuid REFERENCES auth.users(id) ON DELETE SET NULL,
     created_at           timestamptz NOT NULL DEFAULT now(),
     updated_at           timestamptz NOT NULL DEFAULT now()
@@ -68,6 +69,9 @@ CREATE TABLE IF NOT EXISTS public.agent_builds (
     status       text NOT NULL DEFAULT 'queued'
         CHECK (status IN ('queued', 'building', 'failed', 'passed', 'approved', 'live', 'rolled_back')),
     report       jsonb,
+    kind         text NOT NULL DEFAULT 'evolve' CHECK (kind IN ('evolve', 'rebase')),
+    request_id   uuid,
+    parent_build_id uuid REFERENCES public.agent_builds(id) ON DELETE SET NULL,
     created_by   uuid REFERENCES auth.users(id) ON DELETE SET NULL,
     created_at   timestamptz NOT NULL DEFAULT now()
 );
@@ -78,6 +82,28 @@ ALTER TABLE public.agents
         REFERENCES public.agent_builds(id) ON DELETE SET NULL,
     ADD CONSTRAINT agents_live_persona_fk FOREIGN KEY (id, live_persona_version)
         REFERENCES public.agent_persona_versions(agent_id, version) MATCH SIMPLE;
+
+CREATE TABLE IF NOT EXISTS public.agent_evolution_requests (
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id     uuid NOT NULL REFERENCES public.agents(id) ON DELETE CASCADE,
+    requested_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+    source       text NOT NULL CHECK (source IN ('agent', 'admin')),
+    brief        text NOT NULL CHECK (char_length(brief) BETWEEN 20 AND 8000),
+    status       text NOT NULL DEFAULT 'queued'
+        CHECK (status IN ('queued', 'working', 'built', 'failed', 'discarded')),
+    build_id     uuid REFERENCES public.agent_builds(id) ON DELETE SET NULL,
+    detail       text,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_agent_evolution_requests_agent
+    ON public.agent_evolution_requests (agent_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_evolution_requests_queued
+    ON public.agent_evolution_requests (created_at) WHERE status = 'queued';
+
+ALTER TABLE public.agent_builds
+    ADD CONSTRAINT agent_builds_request_fk FOREIGN KEY (request_id)
+        REFERENCES public.agent_evolution_requests(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS public.agent_installs (
     user_id     uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -130,6 +156,10 @@ DROP TRIGGER IF EXISTS agent_installs_touch_on_write ON public.agent_installs;
 CREATE TRIGGER agent_installs_touch_on_write BEFORE INSERT OR UPDATE ON public.agent_installs
     FOR EACH ROW EXECUTE FUNCTION public.agent_installs_touch();
 
+DROP TRIGGER IF EXISTS agent_evolution_requests_touch_on_write ON public.agent_evolution_requests;
+CREATE TRIGGER agent_evolution_requests_touch_on_write BEFORE INSERT OR UPDATE ON public.agent_evolution_requests
+    FOR EACH ROW EXECUTE FUNCTION public.agent_installs_touch();
+
 -- Subject is always auth.uid(), so this is safe to expose to authenticated.
 CREATE OR REPLACE FUNCTION public.is_agent_org_admin(p_agent_id uuid) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
@@ -147,15 +177,15 @@ GRANT EXECUTE ON FUNCTION public.is_agent_org_admin(uuid) TO authenticated, serv
 -- ----------------------------------------------------------------------------
 REVOKE ALL ON public.agents, public.agent_persona_versions, public.agent_builds,
     public.agent_installs, public.agent_invites, public.agent_reserved_slugs,
-    public.platform_flags FROM PUBLIC, anon, authenticated;
+    public.platform_flags, public.agent_evolution_requests FROM PUBLIC, anon, authenticated;
 GRANT ALL ON public.agents, public.agent_persona_versions, public.agent_builds,
     public.agent_installs, public.agent_invites, public.agent_reserved_slugs,
-    public.platform_flags TO service_role;
+    public.platform_flags, public.agent_evolution_requests TO service_role;
 
 GRANT SELECT ON public.agents TO authenticated;
 GRANT INSERT (slug, org_id, name, brand, model, signup_policy, allowed_connectors, allowed_tools, created_by)
     ON public.agents TO authenticated;
-GRANT UPDATE (name, brand, model, signup_policy, allowed_connectors, allowed_tools)
+GRANT UPDATE (name, brand, model, signup_policy, allowed_connectors, allowed_tools, auto_promote)
     ON public.agents TO authenticated;
 GRANT SELECT ON public.agent_persona_versions TO authenticated;
 GRANT INSERT (agent_id, version, bundle_path, sha256, created_by)
@@ -165,11 +195,14 @@ GRANT INSERT (agent_id, base_version, patch_ref, jar_path, jar_sha256, created_b
     ON public.agent_builds TO authenticated;
 GRANT SELECT, INSERT, DELETE ON public.agent_invites TO authenticated;
 GRANT SELECT ON public.agent_installs TO authenticated;
+GRANT SELECT ON public.agent_evolution_requests TO authenticated;
+GRANT UPDATE (status) ON public.agent_evolution_requests TO authenticated;
 
 ALTER TABLE public.agents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_persona_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_builds ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_installs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.agent_evolution_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_invites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_reserved_slugs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.platform_flags ENABLE ROW LEVEL SECURITY;
@@ -211,6 +244,19 @@ CREATE POLICY "agent_invites admin all" ON public.agent_invites
 DROP POLICY IF EXISTS "agent_installs owner select" ON public.agent_installs;
 CREATE POLICY "agent_installs owner select" ON public.agent_installs
     FOR SELECT TO authenticated USING ((SELECT auth.uid()) = user_id);
+
+DROP POLICY IF EXISTS "agent_evolution_requests admin select" ON public.agent_evolution_requests;
+CREATE POLICY "agent_evolution_requests admin select" ON public.agent_evolution_requests
+    FOR SELECT TO authenticated USING (public.is_agent_org_admin(agent_id));
+-- Admins may only discard; the WITH CHECK pins the new value.
+DROP POLICY IF EXISTS "agent_evolution_requests admin discard" ON public.agent_evolution_requests;
+CREATE POLICY "agent_evolution_requests admin discard" ON public.agent_evolution_requests
+    FOR UPDATE TO authenticated
+    USING (public.is_agent_org_admin(agent_id))
+    WITH CHECK (public.is_agent_org_admin(agent_id) AND status = 'discarded');
+
+COMMENT ON COLUMN public.agents.brand IS
+    '{name, short_name, accent, logo_path}. logo_path convention: agent-brand/<agent_id>/<file> (public bucket agent-brand).';
 
 -- ----------------------------------------------------------------------------
 -- Public login-page view: owner-rights (not security_invoker) so anon sees live rows only.
@@ -347,10 +393,68 @@ GRANT EXECUTE ON FUNCTION public.publish_agent(uuid, int), public.review_agent(u
     public.suspend_agent(uuid), public.promote_build(uuid, uuid) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.agent_can_join(text, text) TO anon, authenticated, service_role;
 
+CREATE OR REPLACE FUNCTION public.request_agent_evolution(p_agent_id uuid, p_brief text)
+RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    a public.agents%ROWTYPE;
+    src text;
+    rid uuid;
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RAISE EXCEPTION 'Not signed in' USING ERRCODE = '42501';
+    END IF;
+    SELECT * INTO a FROM public.agents WHERE id = p_agent_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'agent not found' USING ERRCODE = 'P0001';
+    END IF;
+    IF public.is_org_admin(a.org_id) THEN
+        src := 'admin';
+    ELSIF EXISTS (SELECT 1 FROM public.agent_installs i
+                  WHERE i.agent_id = p_agent_id AND i.user_id = auth.uid() AND i.state <> 'removed') THEN
+        IF a.status <> 'live' THEN
+            RAISE EXCEPTION 'agent not live' USING ERRCODE = 'P0001';
+        END IF;
+        src := 'agent';
+    ELSE
+        RAISE EXCEPTION 'not installed' USING ERRCODE = '42501';
+    END IF;
+    INSERT INTO public.agent_evolution_requests (agent_id, requested_by, source, brief)
+        VALUES (p_agent_id, auth.uid(), src, p_brief) RETURNING id INTO rid;
+    RETURN rid;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.request_agent_evolution(uuid, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.request_agent_evolution(uuid, text) TO authenticated, service_role;
+
 -- ----------------------------------------------------------------------------
--- Private buckets (no storage.objects policies: only the service role / signed URLs)
+-- Buckets: agent-bundles and agent-builds are private with no policies (service role / signed URLs only)
 -- ----------------------------------------------------------------------------
-INSERT INTO storage.buckets (id, name, public) VALUES
-    ('agent-bundles', 'agent-bundles', false),
-    ('agent-builds', 'agent-builds', false)
-ON CONFLICT (id) DO UPDATE SET public = false;
+-- agent-builds holds engine jars: the bucket limit overrides the 50 MiB global one.
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types) VALUES
+    ('agent-bundles', 'agent-bundles', false, NULL, NULL),
+    ('agent-builds', 'agent-builds', false, 200 * 1024 * 1024, NULL),
+    ('agent-brand', 'agent-brand', true, 2 * 1024 * 1024,
+     ARRAY['image/png', 'image/jpeg', 'image/svg+xml', 'image/webp'])
+ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public,
+    file_size_limit = EXCLUDED.file_size_limit, allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+-- Public bucket: reads need no policy. Writes: admins of the agent whose id is the first path segment.
+CREATE OR REPLACE FUNCTION public.is_agent_brand_admin(p_name text) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+    SELECT CASE WHEN (storage.foldername(p_name))[1] ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                THEN public.is_agent_org_admin(((storage.foldername(p_name))[1])::uuid)
+                ELSE false END;
+$$;
+REVOKE ALL ON FUNCTION public.is_agent_brand_admin(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.is_agent_brand_admin(text) TO authenticated, service_role;
+
+DROP POLICY IF EXISTS "agent-brand admin insert" ON storage.objects;
+CREATE POLICY "agent-brand admin insert" ON storage.objects FOR INSERT TO authenticated
+    WITH CHECK (bucket_id = 'agent-brand' AND public.is_agent_brand_admin(name));
+DROP POLICY IF EXISTS "agent-brand admin update" ON storage.objects;
+CREATE POLICY "agent-brand admin update" ON storage.objects FOR UPDATE TO authenticated
+    USING (bucket_id = 'agent-brand' AND public.is_agent_brand_admin(name))
+    WITH CHECK (bucket_id = 'agent-brand' AND public.is_agent_brand_admin(name));
+DROP POLICY IF EXISTS "agent-brand admin delete" ON storage.objects;
+CREATE POLICY "agent-brand admin delete" ON storage.objects FOR DELETE TO authenticated
+    USING (bucket_id = 'agent-brand' AND public.is_agent_brand_admin(name));
