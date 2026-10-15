@@ -44,6 +44,9 @@ class BrowserLocationPermissionTest {
         assertEquals("http://localhost:3000", locationPermissionOrigin("http://localhost:3000/test"))
         assertEquals("http://127.0.0.1", locationPermissionOrigin("http://127.0.0.1:80"))
         assertEquals("http://[::1]:3000", locationPermissionOrigin("http://[::1]:3000/test"))
+        assertEquals("http://127.5.6.7:3000", locationPermissionOrigin("http://127.5.6.7:3000/test"))
+        assertEquals("http://app.localhost", locationPermissionOrigin("http://app.localhost"))
+        assertNull(locationPermissionOrigin("http://127.0.0.256"))
         assertNull(locationPermissionOrigin("http://localhost.evil.example"))
     }
 
@@ -123,6 +126,18 @@ class BrowserLocationPermissionTest {
         } finally {
             executor.shutdownNow()
         }
+    }
+
+    @Test
+    fun `coalescing bounds callbacks and immediately denies overflow`() {
+        val answers = mutableListOf<Boolean>()
+        val request = LocationPermissionRequest { answers += it }
+        repeat(63) { request.join { answers += it } }
+        request.join { answers += it }
+        assertEquals(listOf(false), answers)
+        request.finish(true)
+        assertEquals(64, answers.count { it })
+        assertEquals(1, answers.count { !it })
     }
 
     @Test

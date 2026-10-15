@@ -1152,40 +1152,48 @@ internal class BrowserHandleImpl(
         BrowserLocationPermission.register(
             browser,
             owner = { popOutFrame ?: WindowFocusManager.getWindow(currentWindowId) },
-            isCurrentOrigin = { frame, origin ->
+            isCurrentOrigin = { frame, origins ->
                 handleCall.call {
                     !browser.isClosed && browser.frames().contains(frame) &&
-                        locationPermissionOrigin(frame.executeJavaScript<String>("window.location.href")) == origin
+                        locationPermissionOrigin(browser.url()) == origins.embedding &&
+                        locationPermissionOrigin(frame.executeJavaScript<String>("window.location.href")) ==
+                        origins.requesting
                 } == true
             },
         )
 
-        // A tab exists from here on, whether or not it ever loads a page. Reporting the open
-        // before the initial navigation keeps opens and closes balanced for tabs the user
-        // shuts before anything renders.
-        visitTracker.opened(config.url.takeIf { it.isNotBlank() }?.let(::suggestableHost))
+        var initialized = false
+        try {
+            // A tab exists from here on, whether or not it ever loads a page. Reporting the open
+            // before the initial navigation keeps opens and closes balanced for tabs the user
+            // shuts before anything renders.
+            visitTracker.opened(config.url.takeIf { it.isNotBlank() }?.let(::suggestableHost))
 
-        // Load initial URL
-        if (config.url.isNotBlank()) {
-            // OTHER, not the LINK the tracker falls back to. Every tab starts here - new
-            // tabs, restored sessions, bookmarks, deep links, a link opened in a new tab -
-            // so leaving it unhinted would file the largest share of all page views under
-            // "clicked through from the previous page", which is the one thing it is not.
-            visitTracker.expect(BrowserNavigationType.OTHER)
-            val postData = config.initialPostData
-            val contentType = config.initialPostContentType
-            if (postData != null && contentType != null) {
-                // Replay a form-submit popup as POST on first navigation.
-                val params =
-                    LoadUrlParams
-                        .newBuilder(config.url)
-                        .uploadData(ByteData.of(postData))
-                        .addExtraHeader(HttpHeader.of("Content-Type", contentType))
-                        .build()
-                browser.navigation().loadUrl(params)
-            } else {
-                browser.navigation().loadUrl(config.url)
+            // Load initial URL
+            if (config.url.isNotBlank()) {
+                // OTHER, not the LINK the tracker falls back to. Every tab starts here - new
+                // tabs, restored sessions, bookmarks, deep links, a link opened in a new tab -
+                // so leaving it unhinted would file the largest share of all page views under
+                // "clicked through from the previous page", which is the one thing it is not.
+                visitTracker.expect(BrowserNavigationType.OTHER)
+                val postData = config.initialPostData
+                val contentType = config.initialPostContentType
+                if (postData != null && contentType != null) {
+                    // Replay a form-submit popup as POST on first navigation.
+                    val params =
+                        LoadUrlParams
+                            .newBuilder(config.url)
+                            .uploadData(ByteData.of(postData))
+                            .addExtraHeader(HttpHeader.of("Content-Type", contentType))
+                            .build()
+                    browser.navigation().loadUrl(params)
+                } else {
+                    browser.navigation().loadUrl(config.url)
+                }
             }
+            initialized = true
+        } finally {
+            if (!initialized) BrowserLocationPermission.unregister(browser)
         }
     }
 
