@@ -263,7 +263,20 @@ Response:
 ```
 
 Secrets: `LIVEKIT_URL` (wss), `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`. If any is missing the route
-returns 503 `voice_unavailable`. A LiveKit failure is a generic 503; no detail is returned.
+returns 503 `voice_unavailable`. A LiveKit failure is a generic 503; no detail is returned. The worker
+calls back on `BOSS_AI_PUBLIC_URL` (e.g. `https://api.risaboss.com/functions/v1/boss-ai`), else
+`SUPABASE_URL` + `/functions/v1/boss-ai`.
+
+The call's conversational model is `max-voice`, a fast chat model (operator data, not a migration):
+
+```sql
+INSERT INTO boss_ai_models (id, display_name, connection_id, upstream_model, capabilities, context_length, max_output_tokens, published, enabled, kind)
+VALUES ('max-voice','Max Voice','openrouter-optimist','google/gemini-3.5-flash-lite',ARRAY['text','tools','vision'],32768,1024,true,true,'chat');
+INSERT INTO boss_ai_allowances (model_id, permission_name, tokens_per_day, tokens_per_week, tokens_per_month, max_concurrent)
+VALUES ('max-voice','ai.use',2000000,6000000,20000000,6);
+```
+
+`vision` is needed: a voice turn's tool results can carry an image.
 
 ### Call speech usage (`POST /v1/voice/usage`)
 
