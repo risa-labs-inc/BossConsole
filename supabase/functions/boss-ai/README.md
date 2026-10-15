@@ -263,9 +263,9 @@ Response:
 ```
 
 Secrets: `LIVEKIT_URL` (wss), `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`. If any is missing the route
-returns 503 `voice_unavailable`. A LiveKit failure is a generic 503; no detail is returned. The worker
-calls back on `BOSS_AI_PUBLIC_URL` (e.g. `https://api.risaboss.com/functions/v1/boss-ai`), else
-`SUPABASE_URL` + `/functions/v1/boss-ai`.
+returns 503 `voice_unavailable`. A LiveKit failure is a generic 503; no detail is returned. The
+worker calls back on `BOSS_AI_PUBLIC_URL` (e.g. `https://api.risaboss.com/functions/v1/boss-ai`),
+else `SUPABASE_URL` + `/functions/v1/boss-ai`.
 
 The call's conversational model is `max-voice`, a fast chat model (operator data, not a migration):
 
