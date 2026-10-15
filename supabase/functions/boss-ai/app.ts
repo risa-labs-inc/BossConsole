@@ -1,5 +1,14 @@
 import { bearer, HttpError, mintToken, signingKey, verifyToken } from "./auth.ts"
 import {
+  capped,
+  MAX_AUDIO_OUTPUT_BYTES,
+  speechBody,
+  transcriptionBody,
+  transcriptionSeconds,
+  wrongKind,
+} from "./audio.ts"
+import {
+  audioEndpoint,
   completion,
   Connection,
   endpoint,
@@ -28,6 +37,17 @@ export interface Dependencies {
   settlementTimeoutMs?: number
   audit?: (event: string, requestId: string) => void
 }
+const ROUTES: Record<string, Model["kind"]> = {
+  "/v1/chat/completions": "chat",
+  "/v1/audio/transcriptions": "transcription",
+  "/v1/audio/speech": "speech",
+}
+interface Prepared {
+  body: Obj
+  audio?: string
+  format?: string
+  seconds?: number
+}
 const headers = { "Content-Type": "application/json", "Cache-Control": "no-store" }
 const json = (body: unknown, status = 200, requestId = "") =>
   new Response(JSON.stringify(body), { status, headers: { ...headers, "X-Request-ID": requestId } })
@@ -35,7 +55,7 @@ function failure(error: unknown, requestId: string): Response {
   const e = error instanceof HttpError
     ? error
     : new HttpError(503, "unavailable", "BOSS AI is temporarily unavailable.")
-  return json({ error: { code: e.code, message: e.message } }, e.status, requestId)
+  return json({ error: { code: e.code, message: e.message, ...e.extra } }, e.status, requestId)
 }
 
 async function settleReservation(
@@ -151,9 +171,8 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           requestId,
         )
       }
-      if (request.method !== "POST" || path !== "/v1/chat/completions") {
-        throw new HttpError(404, "not_found", "Unknown BOSS AI endpoint.")
-      }
+      const kind = request.method === "POST" ? ROUTES[path] : undefined
+      if (!kind) throw new HttpError(404, "not_found", "Unknown BOSS AI endpoint.")
       const input = await readJson(request.body)
       if (typeof input.model !== "string" || !/^[a-z0-9][a-z0-9._-]{0,99}$/.test(input.model)) {
         throw new HttpError(400, "invalid_model", "Choose a published BOSS model.")
@@ -173,13 +192,20 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           "This model's allowance cannot fit a request. Contact your BOSS administrator.",
         )
       }
-      requestBody(input, lookup.model, lookup.connection.api_type, lookup.connection.base_url)
+      if (lookup.model.kind !== kind) throw wrongKind()
+      const prepare = (model: Model, connection: Connection): Prepared =>
+        kind === "transcription"
+          ? transcriptionBody(input, model)
+          : kind === "speech"
+          ? speechBody(input, model)
+          : { body: requestBody(input, model, connection.api_type, connection.base_url) }
+      prepare(lookup.model, lookup.connection)
       phase = "reservation"
       const result = await deps.rpc("boss_ai_reserve", {
         p_user_id: user,
         p_model_id: input.model,
         p_request_id: requestId,
-      }) as { error?: string; model: Model; connection: Connection }
+      }) as { error?: string; usage?: unknown; model: Model; connection: Connection }
       if (result.error) {
         if (result.error === "duplicate") {
           throw new HttpError(409, "duplicate", "This request has already been admitted.")
@@ -192,18 +218,18 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
             429,
             result.error,
             "Your model allowance has insufficient remaining capacity. Check BOSS AI usage for reset times.",
+            result.usage === undefined ? {} : { usage: result.usage },
           )
         }
         throw new HttpError(429, "busy", "Too many requests for this model. Try again shortly.")
       }
       reservation = requestId
-      const body = requestBody(
-        input,
-        result.model,
-        result.connection.api_type,
-        result.connection.base_url,
-      )
-      const url = endpoint(result.connection)
+      if (result.model.kind !== kind) throw wrongKind()
+      const prepared = prepare(result.model, result.connection)
+      const body = prepared.body
+      const url = kind === "chat"
+        ? endpoint(result.connection)
+        : audioEndpoint(result.connection, kind === "speech" ? "speech" : "transcriptions")
       const apiKey = upstreamKey(result.connection, deps.secret)
       // Never follow redirects with an upstream credential. Only configured servers
       // receive it; request-supplied routing and provider overrides are rejected.
@@ -251,11 +277,55 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       }
       const settleWithRetry = async (tokens: number | null) => {
         if (tokens === null) audit("usage_unknown_reservation_retained")
-        if (tokens !== null && tokens > result.model.context_length) {
+        const reserved = kind === "chat"
+          ? result.model.context_length
+          : result.model.max_output_tokens
+        if (tokens !== null && tokens > reserved) {
           audit("usage_exceeds_configured_context")
         }
         phase = "settlement"
         await settleReservation(deps, requestId, tokens, audit)
+      }
+      if (kind === "transcription") {
+        try {
+          phase = "upstream_response"
+          const payload = await readJson(upstream.body, 1024 * 1024).catch(() => {
+            throw new HttpError(502, "upstream_error", "The model returned an invalid response.")
+          })
+          if (typeof payload.text !== "string") {
+            throw new HttpError(502, "upstream_error", "The model returned an invalid response.")
+          }
+          const seconds = transcriptionSeconds(payload, prepared.audio!, prepared.format!)
+          measuredTokens = seconds === null ? null : Math.ceil(seconds)
+          await settleWithRetry(measuredTokens)
+          reservation = undefined
+          // A retained reservation (unknown duration) bills the full reserved window.
+          const billed = Math.min(measuredTokens ?? Infinity, result.model.max_output_tokens)
+          return json(
+            { text: payload.text, usage: { seconds, billed_seconds: billed } },
+            200,
+            requestId,
+          )
+        } finally {
+          cleanup()
+        }
+      }
+      if (kind === "speech") {
+        if (!upstream.body) {
+          cleanup()
+          throw new HttpError(502, "upstream_error", "The model returned an invalid response.")
+        }
+        measuredTokens = Math.min(prepared.seconds!, result.model.max_output_tokens)
+        await settleWithRetry(measuredTokens)
+        reservation = undefined
+        return new Response(capped(upstream.body, MAX_AUDIO_OUTPUT_BYTES, cleanup), {
+          headers: {
+            "Content-Type": "audio/mpeg",
+            "Cache-Control": "no-store",
+            "X-Request-ID": requestId,
+            "X-Billed-Seconds": String(measuredTokens),
+          },
+        })
       }
       if (input.stream !== true) {
         try {

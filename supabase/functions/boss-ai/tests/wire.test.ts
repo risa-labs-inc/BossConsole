@@ -16,6 +16,7 @@ import { bearer, HttpError } from "../auth.ts"
 const model: Model = {
   id: "boss-test",
   upstream_model: "private-model",
+  kind: "chat",
   capabilities: ["text", "tools", "structured_output"],
   context_length: 4096,
   max_output_tokens: 512,
