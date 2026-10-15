@@ -1149,6 +1149,16 @@ internal class BrowserHandleImpl(
 
         setupEventListeners()
         setupBrowserHandlers()
+        BrowserLocationPermission.register(
+            browser,
+            owner = { popOutFrame ?: WindowFocusManager.getWindow(currentWindowId) },
+            isCurrentOrigin = { frame, origin ->
+                handleCall.call {
+                    !browser.isClosed && browser.frames().contains(frame) &&
+                        locationPermissionOrigin(frame.executeJavaScript<String>("window.location.href")) == origin
+                } == true
+            },
+        )
 
         // A tab exists from here on, whether or not it ever loads a page. Reporting the open
         // before the initial navigation keeps opens and closes balanced for tabs the user
@@ -1684,6 +1694,7 @@ internal class BrowserHandleImpl(
         // Browser closed
         subscriptions +=
             browser.on(BrowserClosed::class.java) {
+                BrowserLocationPermission.unregister(browser)
                 menuContextAuthority.invalidate()
                 logger.debug(LogCategory.BROWSER, "Browser closed", mapOf("handleId" to id))
                 swipeGestureClaim.close()
@@ -4497,6 +4508,7 @@ internal class BrowserHandleImpl(
     }
 
     private fun releaseBrowserSurfaceResources(cleanup: CleanupRunner) {
+        cleanup.run("cancel browser location request") { BrowserLocationPermission.unregister(browser) }
         cleanup.run("invalidate browser menu authority") { menuContextAuthority.invalidate() }
         cleanup.run("release browser audio source") { audioSource.close() }
         cleanup.run("release swipe gesture claim") { swipeGestureClaim.close() }

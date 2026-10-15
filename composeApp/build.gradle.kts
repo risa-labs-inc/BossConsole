@@ -222,6 +222,7 @@ val localPropertiesProvider: Provider<Properties> =
 val embeddedConfigKeys =
     listOf(
         "JXBROWSER_LICENSE_KEY",
+        "BOSS_BROWSER_GOOGLE_API_KEY",
         "SUPABASE_URL",
         "SUPABASE_ANON_KEY",
         "SUPABASE_FUNCTION_URL",
