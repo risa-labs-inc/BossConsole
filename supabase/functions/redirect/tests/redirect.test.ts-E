@@ -1,0 +1,333 @@
+/**
+ * Tests for the redirect Edge Function — the security-sensitive output escaping
+ * and the per-app (BOSS Console vs BossTerm) brand/scheme/token-param selection
+ * added in risa-labs-inc/BossConsole#787. No network: the Hono app is driven
+ * in-process via app.request().
+ *
+ * Run: cd supabase/functions/redirect && deno test --config deno.json
+ */
+
+import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert"
+// Import the app module (not index.ts, which calls Deno.serve) so no listener starts under test.
+import { agentHostLabel, agentLookup, app, FLUCK_WEB_REDIRECTS, htmlAttr, jsStringLiteral, OPTIMIST_REDIRECTS } from "../app.ts"
+
+async function pageFor(path: string): Promise<string> {
+  return await (await app.request(path)).text()
+}
+
+// (a) Output escaping neutralizes quote / double-quote / < / </script>.
+
+Deno.test("htmlAttr neutralizes ' \" < > &", () => {
+  assertEquals(htmlAttr(`a'b"c<d>e&f`), "a&#39;b&quot;c&lt;d&gt;e&amp;f")
+})
+
+Deno.test("jsStringLiteral is a double-quoted literal escaping \" and <", () => {
+  assertEquals(jsStringLiteral("a'b"), `"a'b"`)          // ' is harmless inside a "…" literal
+  assertEquals(jsStringLiteral(`a"b`), `"a\\"b"`)        // " is JSON-escaped
+  assertEquals(jsStringLiteral("</script>"), `"\\u003c/script>"`) // < escaped → can't close <script>
+})
+
+Deno.test("a crafted single-quote token can't break out of the JS string or the href", async () => {
+  // encodeURIComponent leaves ' ( ) - . unescaped, so this is the real reflected-XSS payload.
+  const html = await pageFor("/redirect?app=bossterm&token=" + encodeURIComponent("'-alert(document.cookie)-'"))
+  assertStringIncludes(html, 'window.location.href = "')                    // double-quoted JSON literal
+  assert(!html.includes("window.location.href = '"), "must not emit a single-quoted JS string")
+  assertStringIncludes(html, "&#39;-alert(document.cookie)-&#39;")          // href escapes the quotes
+})
+
+// (b) app=bossterm and redirect_to=bossterm://auth/verify both select BossTerm.
+
+Deno.test("app=bossterm → BossTerm brand + scheme + token_hash", async () => {
+  const html = await pageFor("/redirect?app=bossterm&token=abc&type=magiclink")
+  assertStringIncludes(html, "bossterm://auth/verify?token_hash=abc&type=magiclink")
+  assertStringIncludes(html, "<h1>BossTerm</h1>")
+})
+
+Deno.test("top-level token_hash param is accepted as the token", async () => {
+  const html = await pageFor("/redirect?app=bossterm&token_hash=xyz&type=magiclink")
+  assertStringIncludes(html, "bossterm://auth/verify?token_hash=xyz&type=magiclink")
+})
+
+Deno.test("redirect_to=bossterm://auth/verify → BossTerm", async () => {
+  const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent("bossterm://auth/verify"))
+  assertStringIncludes(html, "bossterm://auth/verify?token_hash=abc")
+  assertStringIncludes(html, "<h1>BossTerm</h1>")
+})
+
+Deno.test("type passes through verbatim (signup, not magiclink)", async () => {
+  assertStringIncludes(
+    await pageFor("/redirect?app=bossterm&token=t&type=signup"),
+    "bossterm://auth/verify?token_hash=t&type=signup",
+  )
+})
+
+Deno.test("non-exact redirect_to falls back to BOSS (exact-match contract)", async () => {
+  assertStringIncludes(
+    await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent("bossterm://auth/verify/x")),
+    "boss://auth/verify?token=abc",
+  )
+})
+
+// (c) Default falls back to boss://…?token=.
+
+Deno.test("default → BOSS Console brand + scheme + token param", async () => {
+  const html = await pageFor("/redirect?token=abc&type=magiclink")
+  assertStringIncludes(html, "boss://auth/verify?token=abc&type=magiclink")
+  assertStringIncludes(html, "<h1>BOSS Console</h1>")
+})
+
+// (d) Token extracted from the url= confirmation URL.
+
+Deno.test("extracts token + type + app from a percent-encoded url= confirmation URL", async () => {
+  const conf =
+    "https://api.risaboss.com/auth/v1/verify?token=tok123&type=magiclink&redirect_to=bossterm://auth/verify"
+  assertStringIncludes(
+    await pageFor("/redirect?url=" + encodeURIComponent(conf)),
+    "bossterm://auth/verify?token_hash=tok123&type=magiclink",
+  )
+})
+
+Deno.test("real email flow: unencoded ConfirmationURL (&-split) preserves type=signup", async () => {
+  // GoTrue's mailer uses text/template, so the email's ?url={{ .ConfirmationURL }} is NOT
+  // percent-encoded — the confirmation URL's &type=&redirect_to= split into top-level params on
+  // this request. A first-time user's link carries type=signup; it must survive into the deep
+  // link (the bug: it was being overwritten with "magiclink", which GoTrue then rejects).
+  const html = await pageFor(
+    "/redirect?url=https://proj.supabase.co/auth/v1/verify?token=HASH&type=signup&redirect_to=bossterm://auth/verify",
+  )
+  assertStringIncludes(html, "bossterm://auth/verify?token_hash=HASH&type=signup")
+  assertStringIncludes(html, "<h1>BossTerm</h1>")
+})
+
+Deno.test("missing token → 400", async () => {
+  const res = await app.request("/redirect")
+  assertEquals(res.status, 400)
+  assertStringIncludes(await res.text(), "Missing 'token' parameter")
+})
+
+Deno.test("health check", async () => {
+  const res = await app.request("/redirect/health")
+  assertEquals(res.status, 200)
+  assertStringIncludes(await res.text(), "healthy")
+})
+
+
+// (e) Web arm: a live-sessions redirect_to bounces to GoTrue's verify, unchanged, first-party host only.
+
+Deno.test("live-sessions redirect_to → bounce to the GoTrue verify URL (no scheme rewrite)", async () => {
+  const rt = "https://api.risaboss.com/functions/v1/live-sessions/auth"
+  const conf = "https://api.risaboss.com/auth/v1/verify?token=tok123"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent(conf)}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
+  assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=tok123&amp;type=magiclink&amp;redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
+  assertStringIncludes(html, "<h1>BossTerm Live Sessions</h1>")
+  assert(!html.includes("boss://auth/verify"), "must not deep-link the web flow into the desktop app")
+})
+
+Deno.test("live-sessions arm refuses a non-first-party confirmation host", async () => {
+  const rt = "https://api.risaboss.com/functions/v1/live-sessions/auth"
+  const res = await app.request(`/redirect?url=${encodeURIComponent("https://evil.example/auth/v1/verify?token=t")}&redirect_to=${encodeURIComponent(rt)}`)
+  assertEquals(res.status, 400)
+})
+
+Deno.test("a redirect_to merely CONTAINING the live-sessions prefix elsewhere is not the web arm", async () => {
+  const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent("https://evil.example/?x=https://api.risaboss.com/functions/v1/live-sessions/"))
+  assertStringIncludes(html, "boss://auth/verify?token=abc")
+})
+
+Deno.test("live-sessions arm is an exact match: a sub-path under the prefix is NOT the web arm", async () => {
+  const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent("https://api.risaboss.com/functions/v1/live-sessions/other"))
+  assertStringIncludes(html, "boss://auth/verify?token=abc")
+})
+
+Deno.test("live-sessions arm preserves a token_hash parameter name instead of renaming it", async () => {
+  const rt = "https://cli.risaboss.com/auth"
+  const conf = "https://api.risaboss.com/auth/v1/verify?token_hash=hh123"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent(conf)}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
+  assertStringIncludes(html, "auth/v1/verify?token_hash=hh123&amp;type=magiclink")
+})
+
+Deno.test("live-sessions arm accepts the vanity-host landing", async () => {
+  const rt = "https://cli.risaboss.com/auth"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent("https://api.risaboss.com/auth/v1/verify?token=t1")}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
+  assertStringIncludes(html, "redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
+  assertStringIncludes(html, "<h1>BossTerm Live Sessions</h1>")
+})
+
+// (f) Optimist chat: same web arm, Optimist brand, exact match only.
+
+Deno.test("optimist redirect_to → bounce to the GoTrue verify URL with the Optimist brand", async () => {
+  const rt = "https://optimist.risalabs.ai/auth/callback"
+  const conf = "https://api.risaboss.com/auth/v1/verify?token=tok9"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent(conf)}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
+  assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=tok9&amp;type=magiclink&amp;redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
+  assertStringIncludes(html, "<h1>Optimist</h1>")
+  assert(!html.includes("boss://auth/verify"), "must not deep-link the web flow into the desktop app")
+})
+
+Deno.test("askoptimist redirect_to → bounce to the GoTrue verify URL with the Optimist brand", async () => {
+  const rt = "https://askoptimist.com/auth/callback"
+  const conf = "https://api.risaboss.com/auth/v1/verify?token=tok9"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent(conf)}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
+  assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=tok9&amp;type=magiclink&amp;redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
+  assertStringIncludes(html, "<h1>Optimist</h1>")
+  assert(!html.includes("boss://auth/verify"), "must not deep-link the web flow into the desktop app")
+})
+
+Deno.test("optimist: the local chat server callback gets the Optimist brand", async () => {
+  const conf = "http://127.0.0.1:54321/auth/v1/verify?token=tok9"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent(conf)}&type=magiclink&redirect_to=${encodeURIComponent("http://127.0.0.1:8796/auth/callback")}`)
+  assertStringIncludes(html, "<h1>Optimist</h1>")
+})
+
+Deno.test("optimist arm refuses a non-first-party confirmation host", async () => {
+  const rt = "https://optimist.risalabs.ai/auth/callback"
+  const res = await app.request(`/redirect?url=${encodeURIComponent("https://evil.example/auth/v1/verify?token=t")}&redirect_to=${encodeURIComponent(rt)}`)
+  assertEquals(res.status, 400)
+})
+
+Deno.test("optimist arm is an exact match: another path on the host falls back to BOSS", async () => {
+  const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent("https://optimist.risalabs.ai/other"))
+  assertStringIncludes(html, "boss://auth/verify?token=abc")
+})
+
+// (g) Lockstep: OPTIMIST_REDIRECTS, config.toml and both email templates' `$optimist` predicate.
+
+const supabaseDir = new URL("../../../", import.meta.url)
+const read = (p: string) => Deno.readTextFile(new URL(p, supabaseDir))
+const isLoopback = (u: string) => new URL(u).hostname === "127.0.0.1"
+const optimistPredicateUrls = (tpl: string) =>
+  [...(tpl.match(/\{\{ \$optimist := [^\n]*/)?.[0] ?? "").matchAll(/eq \.RedirectTo "([^"]+)"/g)].map((m) => m[1]).sort()
+
+Deno.test("optimist redirect allow-list is in lockstep with config.toml and both email templates", async () => {
+  const config = await read("config.toml")
+  for (const u of OPTIMIST_REDIRECTS) assertStringIncludes(config, `"${u}"`)
+  const all = [...OPTIMIST_REDIRECTS].sort()
+  assertEquals(optimistPredicateUrls(await read("templates/email/magic-link.html")), all.filter((u) => !isLoopback(u)))
+  assertEquals(optimistPredicateUrls(await read("templates/email/magic-link-local.html")), all)
+})
+
+// (h) Web arm, Fluck brand: fluck-web's redirect_to bounces to GoTrue's verify like live-sessions.
+
+Deno.test("fluck-web redirect_to bounces to the GoTrue verify URL under the Fluck brand", async () => {
+  const rt = "https://fluck.risaboss.com/auth"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent("https://api.risaboss.com/auth/v1/verify?token=t1")}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
+  assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=t1&amp;type=magiclink&amp;redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
+  assertStringIncludes(html, "<h1>Fluck</h1>")
+  assert(!html.includes("boss://auth/verify"), "must not deep-link the web flow into the desktop app")
+})
+
+Deno.test("fluck-web arm accepts the direct function landing and refuses a non-first-party host", async () => {
+  const rt = "https://api.risaboss.com/functions/v1/fluck-web/auth"
+  const html = await pageFor(`/redirect?url=${encodeURIComponent("https://api.risaboss.com/auth/v1/verify?token=t1")}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`)
+  assertStringIncludes(html, "<h1>Fluck</h1>")
+  const res = await app.request(`/redirect?url=${encodeURIComponent("https://evil.example/auth/v1/verify?token=t")}&redirect_to=${encodeURIComponent(rt)}`)
+  assertEquals(res.status, 400)
+})
+
+Deno.test("fluck-web arm is an exact match: a sub-path or look-alike host is NOT the web arm", async () => {
+  for (const rt of ["https://fluck.risaboss.com/auth/x", "https://fluck.risaboss.com.evil.example/auth"]) {
+    const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent(rt))
+    assertStringIncludes(html, "boss://auth/verify?token=abc")
+  }
+})
+
+Deno.test("fluck-web redirect allow-list is in lockstep with config.toml and both email templates", async () => {
+  const fluckPredicateUrls = (tpl: string) =>
+    [...(tpl.match(/\{\{ \$fluck := [^\n]*/)?.[0] ?? "").matchAll(/eq \.RedirectTo "([^"]+)"/g)].map((m) => m[1]).sort()
+  const config = await read("config.toml")
+  for (const u of FLUCK_WEB_REDIRECTS) assertStringIncludes(config, `"${u}"`)
+  const all = [...FLUCK_WEB_REDIRECTS].sort()
+  assertEquals(fluckPredicateUrls(await read("templates/email/magic-link.html")), all.filter((u) => !isLoopback(u)))
+  assertEquals(fluckPredicateUrls(await read("templates/email/magic-link-local.html")), all.filter(isLoopback))
+})
+
+
+// (i) Agent hosts: https://<slug>.<AGENTS_BASE_DOMAIN>/auth/callback
+
+const GOTRUE = encodeURIComponent("https://api.risaboss.com/auth/v1/verify?token=t1")
+const agentLink = (rt: string) => `/redirect?url=${GOTRUE}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`
+
+async function withAgents<T>(base: string | undefined, live: Record<string, string>, fn: () => Promise<T>): Promise<T> {
+  const prev = Deno.env.get("AGENTS_BASE_DOMAIN")
+  const prevLookup = agentLookup.liveAgentName
+  if (base === undefined) Deno.env.delete("AGENTS_BASE_DOMAIN") else Deno.env.set("AGENTS_BASE_DOMAIN", base)
+  agentLookup.liveAgentName = (slug: string) => Promise.resolve(live[slug] ?? null)
+  try {
+    return await fn()
+  } finally {
+    if (prev === undefined) Deno.env.delete("AGENTS_BASE_DOMAIN") else Deno.env.set("AGENTS_BASE_DOMAIN", prev)
+    agentLookup.liveAgentName = prevLookup
+  }
+}
+
+Deno.test("agent host: a live agent's redirect_to bounces to GoTrue verify under the agent's name", async () => {
+  await withAgents("bossconsole.ai", { acme: "Acme Assistant" }, async () => {
+    const rt = "https://acme.bossconsole.ai/auth/callback"
+    const html = await pageFor(agentLink(rt))
+    assertStringIncludes(html, "<h1>Acme Assistant</h1>")
+    assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=t1&amp;type=magiclink&amp;redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
+    assert(!html.includes("boss://auth/verify"))
+  })
+})
+
+Deno.test("agent host: console.<base> is branded BOSS Console without a lookup", async () => {
+  await withAgents("bossconsole.ai", {}, async () => {
+    const html = await pageFor(agentLink("https://console.bossconsole.ai/auth/callback"))
+    assertStringIncludes(html, "<h1>BOSS Console</h1>")
+    assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=t1")
+  })
+})
+
+Deno.test("agent host: unknown or non-live slug falls through exactly like an unknown redirect", async () => {
+  await withAgents("bossconsole.ai", { acme: "Acme" }, async () => {
+    const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent("https://ghost.bossconsole.ai/auth/callback"))
+    assertStringIncludes(html, "boss://auth/verify?token=abc")
+    assertStringIncludes(html, "<h1>BOSS Console</h1>")
+  })
+})
+
+Deno.test("agent host: arm is off when AGENTS_BASE_DOMAIN is unset", async () => {
+  await withAgents(undefined, { acme: "Acme" }, async () => {
+    const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent("https://acme.bossconsole.ai/auth/callback"))
+    assertStringIncludes(html, "boss://auth/verify?token=abc")
+  })
+})
+
+Deno.test("agent host: only an exact https origin + /auth/callback with a single label is accepted", () => {
+  const ok = (u: string) => agentHostLabel(u, "bossconsole.ai")
+  assertEquals(ok("https://acme.bossconsole.ai/auth/callback"), "acme")
+  for (const bad of [
+    "http://acme.bossconsole.ai/auth/callback",
+    "https://acme.bossconsole.ai/auth/callback/x",
+    "https://acme.bossconsole.ai/auth/callback?x=1",
+    "https://acme.bossconsole.ai:8443/auth/callback",
+    "https://a.b.bossconsole.ai/auth/callback",
+    "https://bossconsole.ai/auth/callback",
+    "https://acme.bossconsole.ai.evil.example/auth/callback",
+    "https://acme.evilbossconsole.ai/auth/callback",
+    "https://user@acme.bossconsole.ai/auth/callback",
+    "https://-x.bossconsole.ai/auth/callback",
+  ]) assertEquals(ok(bad), null, bad)
+  assertEquals(agentHostLabel("https://acme.bossconsole.ai/auth/callback", undefined), null)
+})
+
+Deno.test("agent host: an agent name is HTML-escaped on the page", async () => {
+  await withAgents("bossconsole.ai", { acme: "<img src=x onerror=alert(1)>" }, async () => {
+    const html = await pageFor(agentLink("https://acme.bossconsole.ai/auth/callback"))
+    assert(!html.includes("<img src=x"))
+    assertStringIncludes(html, "&lt;img src=x onerror=alert(1)&gt;")
+  })
+})
+
+Deno.test("agent host: the glob is in config.toml and both templates carry the $agent predicate", async () => {
+  assertStringIncludes(await read("config.toml"), '"https://*.bossconsole.ai/auth/callback"')
+  for (const f of ["templates/email/magic-link.html", "templates/email/magic-link-local.html"]) {
+    const tpl = await read(f)
+    const line = tpl.match(/\{\{ \$agent := [^\n]*/)?.[0] ?? ""
+    // Every redirect_to the other brands recognise must be excluded or it would be misread as an agent.
+    for (const k of ["boss://auth/verify", "boss://auth/callback", "bossterm://auth/callback", "http://127.0.0.1:3000", "https://127.0.0.1:3000"]) {
+      assertStringIncludes(line, `(ne .RedirectTo "${k}")`)
+    }
+    assertStringIncludes(tpl, "{{ if $agent }}your agent{{")
+  }
+})

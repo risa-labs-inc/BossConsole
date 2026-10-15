@@ -9,7 +9,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert"
 // Import the app module (not index.ts, which calls Deno.serve) so no listener starts under test.
-import { app, FLUCK_WEB_REDIRECTS, htmlAttr, jsStringLiteral, OPTIMIST_REDIRECTS } from "../app.ts"
+import { agentHostLabel, agentLookup, app, FLUCK_WEB_REDIRECTS, htmlAttr, jsStringLiteral, OPTIMIST_REDIRECTS } from "../app.ts"
 
 async function pageFor(path: string): Promise<string> {
   return await (await app.request(path)).text()
@@ -239,4 +239,103 @@ Deno.test("fluck-web redirect allow-list is in lockstep with config.toml and bot
   const all = [...FLUCK_WEB_REDIRECTS].sort()
   assertEquals(fluckPredicateUrls(await read("templates/email/magic-link.html")), all.filter((u) => !isLoopback(u)))
   assertEquals(fluckPredicateUrls(await read("templates/email/magic-link-local.html")), all.filter(isLoopback))
+})
+
+
+// (i) Agent hosts: https://<slug>.<AGENTS_BASE_DOMAIN>/auth/callback
+
+const GOTRUE = encodeURIComponent("https://api.risaboss.com/auth/v1/verify?token=t1")
+const agentLink = (rt: string) => `/redirect?url=${GOTRUE}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`
+
+function setBase(v: string | undefined) {
+  if (v === undefined) {
+    Deno.env.delete("AGENTS_BASE_DOMAIN")
+  } else {
+    Deno.env.set("AGENTS_BASE_DOMAIN", v)
+  }
+}
+
+async function withAgents<T>(base: string | undefined, live: Record<string, string>, fn: () => Promise<T>): Promise<T> {
+  const prev = Deno.env.get("AGENTS_BASE_DOMAIN")
+  const prevLookup = agentLookup.liveAgentName
+  setBase(base)
+  agentLookup.liveAgentName = (slug: string) => Promise.resolve(live[slug] ?? null)
+  try {
+    return await fn()
+  } finally {
+    setBase(prev)
+    agentLookup.liveAgentName = prevLookup
+  }
+}
+
+Deno.test("agent host: a live agent's redirect_to bounces to GoTrue verify under the agent's name", async () => {
+  await withAgents("bossconsole.ai", { acme: "Acme Assistant" }, async () => {
+    const rt = "https://acme.bossconsole.ai/auth/callback"
+    const html = await pageFor(agentLink(rt))
+    assertStringIncludes(html, "<h1>Acme Assistant</h1>")
+    assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=t1&amp;type=magiclink&amp;redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
+    assert(!html.includes("boss://auth/verify"))
+  })
+})
+
+Deno.test("agent host: console.<base> is branded BOSS Console without a lookup", async () => {
+  await withAgents("bossconsole.ai", {}, async () => {
+    const html = await pageFor(agentLink("https://console.bossconsole.ai/auth/callback"))
+    assertStringIncludes(html, "<h1>BOSS Console</h1>")
+    assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=t1")
+  })
+})
+
+Deno.test("agent host: unknown or non-live slug falls through exactly like an unknown redirect", async () => {
+  await withAgents("bossconsole.ai", { acme: "Acme" }, async () => {
+    const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent("https://ghost.bossconsole.ai/auth/callback"))
+    assertStringIncludes(html, "boss://auth/verify?token=abc")
+    assertStringIncludes(html, "<h1>BOSS Console</h1>")
+  })
+})
+
+Deno.test("agent host: arm is off when AGENTS_BASE_DOMAIN is unset", async () => {
+  await withAgents(undefined, { acme: "Acme" }, async () => {
+    const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent("https://acme.bossconsole.ai/auth/callback"))
+    assertStringIncludes(html, "boss://auth/verify?token=abc")
+  })
+})
+
+Deno.test("agent host: only an exact https origin + /auth/callback with a single label is accepted", () => {
+  const ok = (u: string) => agentHostLabel(u, "bossconsole.ai")
+  assertEquals(ok("https://acme.bossconsole.ai/auth/callback"), "acme")
+  for (const bad of [
+    "http://acme.bossconsole.ai/auth/callback",
+    "https://acme.bossconsole.ai/auth/callback/x",
+    "https://acme.bossconsole.ai/auth/callback?x=1",
+    "https://acme.bossconsole.ai:8443/auth/callback",
+    "https://a.b.bossconsole.ai/auth/callback",
+    "https://bossconsole.ai/auth/callback",
+    "https://acme.bossconsole.ai.evil.example/auth/callback",
+    "https://acme.evilbossconsole.ai/auth/callback",
+    "https://user@acme.bossconsole.ai/auth/callback",
+    "https://-x.bossconsole.ai/auth/callback",
+  ]) assertEquals(ok(bad), null, bad)
+  assertEquals(agentHostLabel("https://acme.bossconsole.ai/auth/callback", undefined), null)
+})
+
+Deno.test("agent host: an agent name is HTML-escaped on the page", async () => {
+  await withAgents("bossconsole.ai", { acme: "<img src=x onerror=alert(1)>" }, async () => {
+    const html = await pageFor(agentLink("https://acme.bossconsole.ai/auth/callback"))
+    assert(!html.includes("<img src=x"))
+    assertStringIncludes(html, "&lt;img src=x onerror=alert(1)&gt;")
+  })
+})
+
+Deno.test("agent host: the glob is in config.toml and both templates carry the $agent predicate", async () => {
+  assertStringIncludes(await read("config.toml"), '"https://*.bossconsole.ai/auth/callback"')
+  for (const f of ["templates/email/magic-link.html", "templates/email/magic-link-local.html"]) {
+    const tpl = await read(f)
+    const line = tpl.match(/\{\{ \$agent := [^\n]*/)?.[0] ?? ""
+    // Every redirect_to the other brands recognise must be excluded or it would be misread as an agent.
+    for (const k of ["boss://auth/verify", "boss://auth/callback", "bossterm://auth/callback", "http://127.0.0.1:3000", "https://127.0.0.1:3000"]) {
+      assertStringIncludes(line, `(ne .RedirectTo "${k}")`)
+    }
+    assertStringIncludes(tpl, "{{ if $agent }}your agent{{")
+  }
 })
