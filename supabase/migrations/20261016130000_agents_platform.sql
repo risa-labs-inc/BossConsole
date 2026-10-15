@@ -438,23 +438,102 @@ INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_typ
 ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public,
     file_size_limit = EXCLUDED.file_size_limit, allowed_mime_types = EXCLUDED.allowed_mime_types;
 
--- Public bucket: reads need no policy. Writes: admins of the agent whose id is the first path segment.
-CREATE OR REPLACE FUNCTION public.is_agent_brand_admin(p_name text) RETURNS boolean
+-- Folder rule shared by agent-brand, agent-bundles and agent-builds: the first path segment is an agent id
+-- whose org the caller administers. agent-brand is public, so reads need no policy there.
+CREATE OR REPLACE FUNCTION public.is_agent_folder_admin(p_name text) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
     SELECT CASE WHEN (storage.foldername(p_name))[1] ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
                 THEN public.is_agent_org_admin(((storage.foldername(p_name))[1])::uuid)
                 ELSE false END;
 $$;
-REVOKE ALL ON FUNCTION public.is_agent_brand_admin(text) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.is_agent_brand_admin(text) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION public.is_agent_folder_admin(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.is_agent_folder_admin(text) TO authenticated, service_role;
 
 DROP POLICY IF EXISTS "agent-brand admin insert" ON storage.objects;
 CREATE POLICY "agent-brand admin insert" ON storage.objects FOR INSERT TO authenticated
-    WITH CHECK (bucket_id = 'agent-brand' AND public.is_agent_brand_admin(name));
+    WITH CHECK (bucket_id = 'agent-brand' AND public.is_agent_folder_admin(name));
 DROP POLICY IF EXISTS "agent-brand admin update" ON storage.objects;
 CREATE POLICY "agent-brand admin update" ON storage.objects FOR UPDATE TO authenticated
-    USING (bucket_id = 'agent-brand' AND public.is_agent_brand_admin(name))
-    WITH CHECK (bucket_id = 'agent-brand' AND public.is_agent_brand_admin(name));
+    USING (bucket_id = 'agent-brand' AND public.is_agent_folder_admin(name))
+    WITH CHECK (bucket_id = 'agent-brand' AND public.is_agent_folder_admin(name));
 DROP POLICY IF EXISTS "agent-brand admin delete" ON storage.objects;
 CREATE POLICY "agent-brand admin delete" ON storage.objects FOR DELETE TO authenticated
-    USING (bucket_id = 'agent-brand' AND public.is_agent_brand_admin(name));
+    USING (bucket_id = 'agent-brand' AND public.is_agent_folder_admin(name));
+
+-- agent-bundles: admins add (immutable versions: no UPDATE/DELETE) and read back their agent's bundles.
+DROP POLICY IF EXISTS "agent-bundles admin insert" ON storage.objects;
+CREATE POLICY "agent-bundles admin insert" ON storage.objects FOR INSERT TO authenticated
+    WITH CHECK (bucket_id = 'agent-bundles' AND public.is_agent_folder_admin(name));
+DROP POLICY IF EXISTS "agent-bundles admin select" ON storage.objects;
+CREATE POLICY "agent-bundles admin select" ON storage.objects FOR SELECT TO authenticated
+    USING (bucket_id = 'agent-bundles' AND public.is_agent_folder_admin(name));
+-- agent-builds: read-only for admins (review a build's patch); writes are service role.
+DROP POLICY IF EXISTS "agent-builds admin select" ON storage.objects;
+CREATE POLICY "agent-builds admin select" ON storage.objects FOR SELECT TO authenticated
+    USING (bucket_id = 'agent-builds' AND public.is_agent_folder_admin(name));
+
+-- ----------------------------------------------------------------------------
+-- platform_flags: flags hold no secrets, so every signed-in user may read them (the console
+-- reads agent_creation_open); only platform admins may change a value.
+-- ----------------------------------------------------------------------------
+GRANT SELECT ON public.platform_flags TO authenticated;
+GRANT UPDATE (value) ON public.platform_flags TO authenticated;
+DROP POLICY IF EXISTS "platform_flags read" ON public.platform_flags;
+CREATE POLICY "platform_flags read" ON public.platform_flags FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "platform_flags admin update" ON public.platform_flags;
+CREATE POLICY "platform_flags admin update" ON public.platform_flags FOR UPDATE TO authenticated
+    USING (public.is_user_admin((SELECT auth.uid())))
+    WITH CHECK (public.is_user_admin((SELECT auth.uid())));
+
+-- ----------------------------------------------------------------------------
+-- Persona versions are gapless: next_persona_version for the console, trigger as the guard.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.next_persona_version(p_agent_id uuid) RETURNS int
+    LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF NOT public.is_agent_org_admin(p_agent_id) THEN
+        RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
+    END IF;
+    RETURN COALESCE((SELECT max(v.version) FROM public.agent_persona_versions v
+                     WHERE v.agent_id = p_agent_id), 0) + 1;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.next_persona_version(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.next_persona_version(uuid) TO authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION public.agent_persona_versions_guard() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    -- Serialise concurrent inserts for one agent so two tabs cannot both take the same number.
+    PERFORM 1 FROM public.agents a WHERE a.id = NEW.agent_id FOR UPDATE;
+    IF NEW.version <> COALESCE((SELECT max(v.version) FROM public.agent_persona_versions v
+                                WHERE v.agent_id = NEW.agent_id), 0) + 1 THEN
+        RAISE EXCEPTION 'version_not_next' USING ERRCODE = 'P0001';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS agent_persona_versions_guard_on_insert ON public.agent_persona_versions;
+CREATE TRIGGER agent_persona_versions_guard_on_insert BEFORE INSERT ON public.agent_persona_versions
+    FOR EACH ROW EXECUTE FUNCTION public.agent_persona_versions_guard();
+
+-- ----------------------------------------------------------------------------
+-- Platform-admin review queue
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.list_pending_agents()
+RETURNS TABLE (id uuid, slug text, name text, org_id uuid, org_name text, created_at timestamptz)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+#variable_conflict use_column
+BEGIN
+    IF auth.uid() IS NULL OR NOT public.is_user_admin(auth.uid()) THEN
+        RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
+    END IF;
+    RETURN QUERY
+        SELECT a.id, a.slug, a.name, a.org_id, o.name, a.created_at
+        FROM public.agents a JOIN public.organisations o ON o.id = a.org_id
+        WHERE a.status = 'pending_review'
+        ORDER BY a.created_at;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.list_pending_agents() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.list_pending_agents() TO authenticated, service_role;

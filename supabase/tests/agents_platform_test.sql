@@ -1,7 +1,7 @@
 -- pgTAP tests for the agents platform (20261016130000).
 -- Run with: supabase test db
 begin;
-select plan(57);
+select plan(79);
 
 insert into auth.users (id, email, email_confirmed_at) values
     ('a9000000-0000-4000-8000-00000000000a', 'owner-a@agents.test', now()),
@@ -37,7 +37,7 @@ select ok(not has_table_privilege('authenticated', 'public.agents', 'DELETE')
       and not has_column_privilege('authenticated', 'public.agents', 'status', 'UPDATE')
       and not has_column_privilege('authenticated', 'public.agents', 'status', 'INSERT')
       and not has_table_privilege('authenticated', 'public.agent_installs', 'INSERT')
-      and not has_table_privilege('authenticated', 'public.platform_flags', 'SELECT'), 'column/table privileges deny status writes, install writes, flag reads');
+      and not has_table_privilege('authenticated', 'public.platform_flags', 'INSERT'), 'column/table privileges deny status writes, install writes, flag inserts');
 
 -- ---- org admin A creates and edits own agent ----
 set local role authenticated;
@@ -184,6 +184,58 @@ select throws_ok($q$ insert into storage.objects (bucket_id, name) values ('agen
 reset role;
 select ok((select public and file_size_limit = 2097152 from storage.buckets where id = 'agent-brand'), 'agent-brand is public with a 2 MiB limit');
 select ok((select file_size_limit = 209715200 from storage.buckets where id = 'agent-builds'), 'agent-builds allows 200 MiB');
+
+-- ---- agent-bundles / agent-builds storage ----
+reset role;
+insert into storage.objects (bucket_id, name) values
+    ('agent-builds', (select id::text from ag) || '/b1.patch'),
+    ('agent-bundles', (select id::text from ag) || '/persona-0.zip');
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
+select lives_ok($q$ insert into storage.objects (bucket_id, name) values ('agent-bundles', (select id::text from ag) || '/persona-1.zip') $q$, 'admin uploads a bundle under own agent');
+select throws_ok($q$ insert into storage.objects (bucket_id, name) values ('agent-bundles', 'a9000000-0000-4000-8000-0000000000ee/persona-1.zip') $q$, '42501', null, 'bundle upload under another agent refused');
+select is((select count(*)::int from storage.objects where bucket_id = 'agent-bundles'), 2, 'admin reads back own bundles');
+select is_empty($q$ update storage.objects set name = name || 'x' where bucket_id = 'agent-bundles' returning 1 $q$, 'bundles are immutable: no update');
+select is((select count(*)::int from pg_policies where schemaname = 'storage' and tablename = 'objects'
+    and policyname like 'agent-bundles%' and cmd in ('DELETE', 'UPDATE', 'ALL')), 0, 'bundles are immutable: no update/delete policy');
+select is((select count(*)::int from storage.objects where bucket_id = 'agent-builds'), 1, 'admin reads own build patch');
+select throws_ok($q$ insert into storage.objects (bucket_id, name) values ('agent-builds', (select id::text from ag) || '/evil.jar') $q$, '42501', null, 'clients cannot write builds');
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000c', true);
+select is((select count(*)::int from storage.objects where bucket_id in ('agent-bundles', 'agent-builds')), 0, 'non-admin sees no bundles or builds');
+
+-- ---- platform_flags ----
+select is((select value from public.platform_flags where key = 'agent_creation_open'), 'false'::jsonb, 'any signed-in user reads flags');
+select is_empty($q$ update public.platform_flags set value = 'true'::jsonb returning 1 $q$, 'non-platform-admin cannot update flags');
+select throws_ok($q$ insert into public.platform_flags values ('x', 'true') $q$, '42501', null, 'no flag inserts from clients');
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000d', true);
+select lives_ok($q$ update public.platform_flags set value = 'true'::jsonb where key = 'agent_creation_open' $q$, 'platform admin updates a flag');
+select is((select value from public.platform_flags where key = 'agent_creation_open'), 'true'::jsonb, 'the flag changed');
+
+-- ---- persona version numbering ----
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
+select is(public.next_persona_version((select id from ag)), 2, 'next_persona_version = max + 1');
+select throws_ok($q$ insert into public.agent_persona_versions (agent_id, version, bundle_path, sha256, created_by)
+    values ((select id from ag), 3, 'p3.zip', repeat('b', 64), 'a9000000-0000-4000-8000-00000000000a') $q$, 'P0001', 'version_not_next', 'a skipped version is rejected');
+select throws_ok($q$ insert into public.agent_persona_versions (agent_id, version, bundle_path, sha256, created_by)
+    values ((select id from ag), 1, 'p1b.zip', repeat('b', 64), 'a9000000-0000-4000-8000-00000000000a') $q$, 'P0001', 'version_not_next', 'a duplicate version is rejected');
+select lives_ok($q$ insert into public.agent_persona_versions (agent_id, version, bundle_path, sha256, created_by)
+    values ((select id from ag), 2, 'p2.zip', repeat('b', 64), 'a9000000-0000-4000-8000-00000000000a') $q$, 'the next version is accepted');
+select is(public.next_persona_version((select id from ag)), 3, 'the counter advances');
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000c', true);
+select throws_ok($q$ select public.next_persona_version((select id from ag)) $q$, '42501', null, 'non-admin cannot ask for the next version');
+
+-- ---- pending review queue ----
+reset role;
+update public.agents set status = 'pending_review' where slug = 'acme';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000d', true);
+select is((select row(slug, name, org_name)::text from public.list_pending_agents()), '(acme,"Acme 2","Agents A")', 'platform admin lists pending agents with org name');
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
+select throws_ok($q$ select * from public.list_pending_agents() $q$, '42501', null, 'org admin cannot list the review queue');
+reset role;
+set local role anon;
+select throws_ok($q$ select * from public.list_pending_agents() $q$, '42501', null, 'anon cannot list the review queue');
+reset role;
 
 select * from finish();
 rollback;
