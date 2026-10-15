@@ -105,7 +105,7 @@ Deno.test("live call creates the room, dispatches the agent and mints scoped tok
   })
   const [dispatchRoom, agent, metadataText] = f.calls.find((c) => c.name === "createDispatch")!
     .args as string[]
-  assertEquals([dispatchRoom, agent], [out.room, "fluck-voice"])
+  assertEquals([dispatchRoom, agent], [out.room, "max-voice-agent"])
   const metadata = JSON.parse(metadataText)
   assertEquals(metadata.agent_url, good.agent_url)
   assertEquals(metadata.agent_token, agentToken)

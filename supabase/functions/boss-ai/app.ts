@@ -53,7 +53,7 @@ export interface Dependencies {
   livekit?: (config: LiveKitConfig) => LiveKit
 }
 const AUDIO_PATHS = ["/v1/audio/transcriptions", "/v1/audio/speech"]
-const LIVE_AGENT = "fluck-voice"
+const LIVE_AGENT = "max-voice-agent"
 const LIVE_STT_MODEL = "max-stt"
 const LIVE_TTS_MODEL = "max-tts"
 const LIVE_MIN_SECONDS = 60

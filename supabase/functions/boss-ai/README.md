@@ -220,7 +220,7 @@ VALUES ('max-stt','ai.use',3600,3600,3600,6);
 
 ### Live calls (`POST /v1/voice/live`)
 
-Starts a LiveKit Cloud room for a Fluck voice call and dispatches the `fluck-voice` agent worker
+Starts a LiveKit Cloud room for a Fluck voice call and dispatches the `max-voice-agent` agent worker
 into it. The caller sends an inference-scoped bearer:
 
 ```json
@@ -244,7 +244,7 @@ reserved here: talk time is metered by the worker's `max-tts` speech calls and i
 reports (below).
 
 The proxy creates room `fluck-call-<uuid>` (`emptyTimeout` 60, `departureTimeout` 120,
-`maxParticipants` 2), dispatches agent `fluck-voice` with JSON metadata
+`maxParticipants` 2), dispatches agent `max-voice-agent` with JSON metadata
 `{agent_url, agent_token, inference: {base_url, token}, stt_model: "max-stt", tts_model: "max-tts",
 max_seconds, user}`,
 and mints a participant token (identity `user-<first 8 of user id>`, name "You",
