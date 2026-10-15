@@ -1,5 +1,6 @@
 import { assert, assertEquals } from "@std/assert"
 import { createHandler } from "../app.ts"
+import { smallestRemaining } from "../audio.ts"
 import { mintToken, signingKey } from "../auth.ts"
 import { Obj } from "../wire.ts"
 
@@ -840,4 +841,20 @@ Deno.test("audio responses omit quota when the usage read fails or is unreadable
     assertEquals(spoken.headers.get("X-Resets-At"), null)
     await spoken.arrayBuffer()
   }
+})
+
+Deno.test("smallestRemaining reports the latest reset among periods tied at the minimum", () => {
+  const usage = {
+    day: { limit: 3600, used: 9, remaining: 3591, resets_at: "2026-10-16T00:00:00+00:00" },
+    week: { limit: 3600, used: 9, remaining: 3591, resets_at: "2026-10-19T00:00:00+00:00" },
+    month: { limit: 3600, used: 9, remaining: 3591, resets_at: "2026-11-01T00:00:00+00:00" },
+  }
+  assertEquals(smallestRemaining(usage), {
+    remaining_seconds: 3591,
+    resets_at: "2026-11-01T00:00:00+00:00",
+  })
+  assertEquals(
+    smallestRemaining({ ...usage, day: { ...usage.day, remaining: 10 } })?.resets_at,
+    "2026-10-16T00:00:00+00:00",
+  )
 })

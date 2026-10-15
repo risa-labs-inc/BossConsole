@@ -67,7 +67,10 @@ export interface Remaining {
   resets_at: string
 }
 
-/** The period with the least time left in a `boss_ai_usage` result, or null when unreadable. */
+/**
+ * The least time left across a `boss_ai_usage` result's periods, and when it actually grows back: the latest
+ * reset among the periods tied at that minimum (a day resetting frees nothing while the month is spent).
+ */
 export function smallestRemaining(usage: unknown): Remaining | null {
   if (typeof usage !== "object" || usage === null) return null
   let best: Remaining | null = null
@@ -77,7 +80,10 @@ export function smallestRemaining(usage: unknown): Remaining | null {
       typeof remaining !== "number" || !Number.isFinite(remaining) ||
       typeof resets_at !== "string"
     ) continue
-    if (best === null || remaining < best.remaining_seconds) {
+    if (
+      best === null || remaining < best.remaining_seconds ||
+      (remaining === best.remaining_seconds && Date.parse(resets_at) > Date.parse(best.resets_at))
+    ) {
       best = { remaining_seconds: remaining, resets_at }
     }
   }
