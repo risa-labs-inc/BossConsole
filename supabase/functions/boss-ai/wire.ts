@@ -377,7 +377,7 @@ export function requestBody(
   if (type === "openai_chat") {
     if (tools) common.tools = tools
     if (common.stream) common.stream_options = { include_usage: true }
-    const cached = takesCacheControl(model.upstream_model, baseUrl, messages)
+    const cached = takesCacheControl(model.upstream_model, baseUrl)
       ? withPromptCache(messages)
       : messages
     return { ...common, messages: cached, max_completion_tokens: max }
@@ -415,31 +415,12 @@ export function requestBody(
   return { ...common, input: items, max_output_tokens: max, truncation: "disabled" }
 }
 
-// Upstreams that cache only where the request marks it. OpenRouter forwards `cache_control` to
-// them; every other upstream caches automatically or not at all, and gets the request unchanged.
-// Gemini creates an explicit cache before answering (~3 s to the first token, measured), and caches
-// implicitly anyway: mark it only when the prompt is large enough for the cache to repay that.
-export const GEMINI_CACHE_MIN_CHARS = 16_000
-export function takesCacheControl(
-  upstreamModel: string,
-  baseUrl: string,
-  messages: Obj[] = [],
-): boolean {
-  const id = upstreamModel.toLowerCase()
-  if (!isOpenRouter(baseUrl)) return false
-  if (id.startsWith("anthropic/")) return true
-  return id.startsWith("google/gemini") && textChars(messages) >= GEMINI_CACHE_MIN_CHARS
-}
-
-function textChars(messages: Obj[]): number {
-  let n = 0
-  for (const m of messages) {
-    if (typeof m.content === "string") n += m.content.length
-    else if (Array.isArray(m.content)) {
-      for (const p of m.content as Obj[]) if (typeof p.text === "string") n += p.text.length
-    }
-  }
-  return n
+// Upstreams that cache only where the request marks it: Anthropic. OpenRouter forwards `cache_control`;
+// every other upstream caches automatically or not at all and gets the request unchanged. Gemini is never
+// marked: it caches implicitly, and an explicit cache cost +1.4-3.2 s to the first token without paying back
+// on reuse (measured on flash-lite, short and 23k-char prompts).
+export function takesCacheControl(upstreamModel: string, baseUrl: string): boolean {
+  return isOpenRouter(baseUrl) && upstreamModel.toLowerCase().startsWith("anthropic/")
 }
 
 const EPHEMERAL = { type: "ephemeral" }
