@@ -57,6 +57,8 @@ const LIVE_AGENT = "fluck-voice"
 const LIVE_STT_MODEL = "max-stt"
 const LIVE_TTS_MODEL = "max-tts"
 const LIVE_MIN_SECONDS = 60
+/** A call runs until the caller hangs up (silence is free); this caps a tab left open. */
+export const LIVE_MAX_SECONDS = 8 * 3600
 /** Most seconds one /v1/voice/usage report may charge; the worker reports about every 30 s. */
 const LIVE_USAGE_MAX_SECONDS = 60
 
@@ -191,12 +193,16 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
     ) {
       throw new HttpError(400, "invalid_agent_token", "agent_token must be 32 to 256 characters.")
     }
-    const maxSeconds = input.max_seconds ?? 1800
+    const maxSeconds = input.max_seconds ?? LIVE_MAX_SECONDS
     if (
       typeof maxSeconds !== "number" || !Number.isInteger(maxSeconds) || maxSeconds < 60 ||
-      maxSeconds > 3600
+      maxSeconds > LIVE_MAX_SECONDS
     ) {
-      throw new HttpError(400, "invalid_max_seconds", "max_seconds must be 60 to 3600.")
+      throw new HttpError(
+        400,
+        "invalid_max_seconds",
+        `max_seconds must be 60 to ${LIVE_MAX_SECONDS}.`,
+      )
     }
     const url = deps.secret("LIVEKIT_URL")
     const apiKey = deps.secret("LIVEKIT_API_KEY")
@@ -236,7 +242,8 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
     await livekit.createRoom({
       name: room,
       emptyTimeout: 60,
-      departureTimeout: 20,
+      // A dropped caller (network change, locked phone) has two minutes to come back before the room closes.
+      departureTimeout: 120,
       maxParticipants: 2,
     })
     await livekit.createDispatch(room, LIVE_AGENT, metadata)

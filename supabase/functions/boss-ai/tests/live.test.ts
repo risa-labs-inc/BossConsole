@@ -100,7 +100,7 @@ Deno.test("live call creates the room, dispatches the agent and mints scoped tok
   assertEquals(room, {
     name: out.room,
     emptyTimeout: 60,
-    departureTimeout: 20,
+    departureTimeout: 120,
     maxParticipants: 2,
   })
   const [dispatchRoom, agent, metadataText] = f.calls.find((c) => c.name === "createDispatch")!
@@ -132,7 +132,7 @@ Deno.test("live call creates the room, dispatches the agent and mints scoped tok
   })
 })
 
-Deno.test("live call defaults max_seconds to 1800; BOSS_AI_PUBLIC_URL overrides the callback base", async () => {
+Deno.test("live call defaults max_seconds to 8 h; BOSS_AI_PUBLIC_URL overrides the callback base", async () => {
   const f = await fixture({
     env: {
       BOSS_AI_ALLOW_LOCAL_AGENT: "1",
@@ -142,7 +142,7 @@ Deno.test("live call defaults max_seconds to 1800; BOSS_AI_PUBLIC_URL overrides 
   const response = await f.live(good, f.inference, "http://kong:8000")
   assertEquals(response.status, 200)
   const metadata = JSON.parse(f.calls.find((c) => c.name === "createDispatch")!.args[2] as string)
-  assertEquals(metadata.max_seconds, 1800)
+  assertEquals(metadata.max_seconds, 8 * 3600)
   assertEquals(metadata.inference.base_url, "http://127.0.0.1:54321/functions/v1/boss-ai/v1")
 })
 
@@ -193,7 +193,7 @@ Deno.test("live call validates agent_url, agent_token and max_seconds", async ()
     { ...good, agent_token: "a".repeat(257) },
     { ...good, agent_token: "has space ".repeat(5) },
     { ...good, max_seconds: 59 },
-    { ...good, max_seconds: 3601 },
+    { ...good, max_seconds: 8 * 3600 + 1 },
     { ...good, max_seconds: 60.5 },
     { ...good, max_seconds: "600" },
     { ...good, extra: true },
@@ -215,7 +215,8 @@ Deno.test("live call validates agent_url, agent_token and max_seconds", async ()
   assertEquals((await remote.live({ ...good, agent_url: "http://evil.example/x" })).status, 400)
   const bounds = await fixture()
   assertEquals((await bounds.live({ ...good, max_seconds: 60 })).status, 200)
-  assertEquals((await bounds.live({ ...good, max_seconds: 3600 })).status, 200)
+  assertEquals((await bounds.live({ ...good, max_seconds: 8 * 3600 })).status, 200)
+  assertEquals((await bounds.live({ ...good, max_seconds: 8 * 3600 + 1 })).status, 400)
 })
 
 Deno.test("a LiveKit failure is a generic 503 that leaks nothing", async () => {
@@ -245,7 +246,7 @@ Deno.test("voice tokens work on audio routes only", async () => {
   assertEquals(f.calls.length, 0)
 })
 
-Deno.test("voice token lifetime is exp - iat, capped at 3900 s; inference stays at 300 s", async () => {
+Deno.test("voice token lifetime is exp - iat, capped at 8 h 5 min; inference stays at 300 s", async () => {
   const key = signingKey(secret)
   const { SignJWT } = await import("jose")
   const sign = (scope: string, iatAgo: number, lifetime: number) => {
@@ -258,7 +259,8 @@ Deno.test("voice token lifetime is exp - iat, capped at 3900 s; inference stays 
   const status = async (token: string) =>
     (await f.post("audio/speech", token, { model: "bad model!" })).status
   assertEquals(await status(await sign("voice", 3000, 3900)), 400)
-  assertEquals(await status(await sign("voice", 3950, 5000)), 401)
+  assertEquals(await status(await sign("voice", 20000, 28_000)), 400)
+  assertEquals(await status(await sign("voice", 29_200, 40_000)), 401)
   assertEquals(await status(await sign("inference", 400, 3600)), 401)
   assertEquals(await status(await sign("inference", 100, 3600)), 400)
   assertEquals(await status(await sign("other", 1, 3600)), 401)
