@@ -23,7 +23,7 @@ export function signingKey(secret: string | undefined): Uint8Array {
 }
 
 export type Scope = "inference" | "voice"
-const MAX_VOICE_AGE = 8 * 3600 + 300
+const MAX_VOICE_AGE = 3600 + 300
 
 /** A call-scoped token: voice routes only, valid for the call plus a five minute grace. */
 export async function mintVoiceToken(userId: string, key: Uint8Array, maxSeconds: number) {

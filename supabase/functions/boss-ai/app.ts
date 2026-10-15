@@ -57,8 +57,8 @@ const LIVE_AGENT = "fluck-voice"
 const LIVE_STT_MODEL = "max-stt"
 const LIVE_TTS_MODEL = "max-tts"
 const LIVE_MIN_SECONDS = 60
-/** A call runs until the caller hangs up (silence is free); this caps a tab left open. */
-export const LIVE_MAX_SECONDS = 8 * 3600
+/** A call ends at one hour or when the caller hangs up. */
+export const LIVE_MAX_SECONDS = 3600
 /** Most seconds one /v1/voice/usage report may charge; the worker reports about every 30 s. */
 const LIVE_USAGE_MAX_SECONDS = 60
 

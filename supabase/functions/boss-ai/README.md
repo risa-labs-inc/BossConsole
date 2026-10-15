@@ -227,7 +227,7 @@ into it. The caller sends an inference-scoped bearer:
 {
   "agent_url": "https://<fluck origin>/api/voice/agent",
   "agent_token": "<32..256 chars>",
-  "max_seconds": 1800
+  "max_seconds": 3600
 }
 ```
 
@@ -235,14 +235,15 @@ into it. The caller sends an inference-scoped bearer:
   `http://localhost` are accepted only when `BOSS_AI_ALLOW_LOCAL_AGENT=1` (local testing).
 - `agent_token`: opaque per-call secret, 32 to 256 printable characters. It is only relayed to the
   worker in the dispatch metadata.
-- `max_seconds`: 60 to 3600, default 1800. Other fields are rejected (400).
+- `max_seconds`: 60 to 3600, default 3600 (a call ends at one hour or when the caller hangs up).
+  Other fields are rejected (400).
 
 The caller needs a policy for `max-stt` (the voice pool; 403 otherwise) with at least 60 seconds
 left in its smallest period, else 429 `allowance_exceeded` with the pool `usage`. Nothing is
 reserved here: talk time is metered by the worker's `max-tts` speech calls and its `/v1/voice/usage`
 reports (below).
 
-The proxy creates room `fluck-call-<uuid>` (`emptyTimeout` 60, `departureTimeout` 20,
+The proxy creates room `fluck-call-<uuid>` (`emptyTimeout` 60, `departureTimeout` 120,
 `maxParticipants` 2), dispatches agent `fluck-voice` with JSON metadata
 `{agent_url, agent_token, inference: {base_url, token}, stt_model: "max-stt", tts_model: "max-tts",
 max_seconds, user}`,
