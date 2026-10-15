@@ -204,7 +204,7 @@ Operator data (applied by hand, not a migration), for a shared hour of talk time
 ```sql
 INSERT INTO boss_ai_models (id, display_name, connection_id, upstream_model, kind, voice, context_length, max_output_tokens, published, enabled)
 VALUES ('max-stt','Max STT','openrouter-optimist','nvidia/parakeet-tdt-0.6b-v3','transcription',NULL,1024,60,true,true),
-       ('max-tts','Max TTS','openrouter-optimist','elevenlabs/eleven-flash-v2.5','speech','sarah',1024,60,true,true);
+       ('max-tts','Max TTS','openrouter-optimist','elevenlabs/eleven-flash-v2.5','speech','sarah',1024,20,true,true);
 UPDATE boss_ai_models SET allowance_model_id='max-stt' WHERE id='max-tts';
 INSERT INTO boss_ai_allowances (model_id, permission_name, tokens_per_day, tokens_per_week, tokens_per_month, max_concurrent)
 VALUES ('max-stt','ai.use',3600,3600,3600,6);
