@@ -1,7 +1,18 @@
-import { bearer, HttpError, mintToken, signingKey, verifyToken } from "./auth.ts"
+import {
+  bearer,
+  HttpError,
+  mintToken,
+  mintVoiceToken,
+  Scope,
+  signingKey,
+  verifyToken,
+} from "./auth.ts"
+import { LiveKit, liveKitClients, LiveKitConfig } from "./livekit.ts"
 import {
   capped,
+  isMultipart,
   MAX_AUDIO_OUTPUT_BYTES,
+  multipartTranscription,
   Remaining,
   smallestRemaining,
   speechBody,
@@ -38,6 +49,31 @@ export interface Dependencies {
   upstreamTimeoutMs?: number
   settlementTimeoutMs?: number
   audit?: (event: string, requestId: string) => void
+  /** LiveKit clients for /v1/voice/live; tests inject fakes. */
+  livekit?: (config: LiveKitConfig) => LiveKit
+}
+const AUDIO_PATHS = ["/v1/audio/transcriptions", "/v1/audio/speech"]
+const LIVE_AGENT = "max-voice-agent"
+const LIVE_STT_MODEL = "max-stt"
+const LIVE_TTS_MODEL = "max-tts"
+const LIVE_MIN_SECONDS = 60
+/** A call ends at one hour or when the caller hangs up. */
+export const LIVE_MAX_SECONDS = 3600
+/** Most seconds one /v1/voice/usage report may charge; the worker reports about every 30 s. */
+const LIVE_USAGE_MAX_SECONDS = 60
+
+/** https only; loopback http only for local testing behind BOSS_AI_ALLOW_LOCAL_AGENT=1. */
+function validAgentUrl(value: unknown, allowLocal: boolean): value is string {
+  if (typeof value !== "string" || value.length > 2048) return false
+  try {
+    const url = new URL(value)
+    if (url.username || url.password || url.hash) return false
+    if (url.protocol === "https:") return true
+    return allowLocal && url.protocol === "http:" &&
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost")
+  } catch {
+    return false
+  }
 }
 const ROUTES: Record<string, Model["kind"]> = {
   "/v1/chat/completions": "chat",
@@ -57,8 +93,13 @@ function failure(error: unknown, requestId: string): Response {
   const e = error instanceof HttpError
     ? error
     : new HttpError(503, "unavailable", "BOSS AI is temporarily unavailable.")
-  return json({ error: { code: e.code, message: e.message, ...e.extra } }, e.status, requestId)
+  return json({ error: { ...e.extra, code: e.code, message: e.message } }, e.status, requestId)
 }
+
+// A header value must be an ISO timestamp: Date.parse alone accepts text with control characters.
+const validResetsAt = (value: string) =>
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}(:?\d{2})?)$/.test(value) &&
+  Number.isFinite(Date.parse(value))
 
 /** Pool quota after settlement. Best effort: a failure or slow read omits it. */
 async function remainingQuota(
@@ -121,7 +162,110 @@ async function settleReservation(
   }
 }
 
+/**
+ * The function's public address, for the voice worker to call back: inside the edge runtime the request URL is
+ * an internal host. BOSS_AI_PUBLIC_URL (e.g. https://api.risaboss.com/functions/v1/boss-ai) wins, else SUPABASE_URL.
+ */
+function publicBase(deps: Dependencies): string {
+  const explicit = deps.secret("BOSS_AI_PUBLIC_URL")?.replace(/\/+$/, "")
+  if (explicit) return explicit
+  const supabase = deps.secret("SUPABASE_URL")?.replace(/\/+$/, "")
+  if (!supabase) throw new HttpError(503, "voice_unavailable", "Voice calls are not configured.")
+  return `${supabase}/functions/v1/boss-ai`
+}
+
 export function createHandler(deps: Dependencies): (request: Request) => Promise<Response> {
+  const startLiveCall = async (
+    request: Request,
+    user: string,
+    key: Uint8Array,
+    requestId: string,
+  ): Promise<Response> => {
+    const input = await readJson(request.body, 8 * 1024)
+    if (Object.keys(input).some((k) => !["agent_url", "agent_token", "max_seconds"].includes(k))) {
+      throw new HttpError(400, "invalid_request", "The request body is not valid.")
+    }
+    if (!validAgentUrl(input.agent_url, deps.secret("BOSS_AI_ALLOW_LOCAL_AGENT") === "1")) {
+      throw new HttpError(400, "invalid_agent_url", "agent_url must be an https URL.")
+    }
+    if (
+      typeof input.agent_token !== "string" || !/^[\x21-\x7e]{32,256}$/.test(input.agent_token)
+    ) {
+      throw new HttpError(400, "invalid_agent_token", "agent_token must be 32 to 256 characters.")
+    }
+    const maxSeconds = input.max_seconds ?? LIVE_MAX_SECONDS
+    if (
+      typeof maxSeconds !== "number" || !Number.isInteger(maxSeconds) || maxSeconds < 60 ||
+      maxSeconds > LIVE_MAX_SECONDS
+    ) {
+      throw new HttpError(
+        400,
+        "invalid_max_seconds",
+        `max_seconds must be 60 to ${LIVE_MAX_SECONDS}.`,
+      )
+    }
+    const url = deps.secret("LIVEKIT_URL")
+    const apiKey = deps.secret("LIVEKIT_API_KEY")
+    const apiSecret = deps.secret("LIVEKIT_API_SECRET")
+    if (!url || !apiKey || !apiSecret) {
+      throw new HttpError(503, "voice_unavailable", "Voice calls are temporarily unavailable.")
+    }
+    // The caller needs a policy for the voice pool, and at least a minute left in it.
+    const usage = await deps.rpc("boss_ai_usage", { p_user_id: user, p_model_id: LIVE_STT_MODEL })
+    if (usage === null || usage === undefined) {
+      throw new HttpError(403, "forbidden", "Voice calls are not available for your account.")
+    }
+    const quota = smallestRemaining(usage)
+    if (!quota || quota.remaining_seconds < LIVE_MIN_SECONDS) {
+      throw new HttpError(
+        429,
+        "allowance_exceeded",
+        "Your voice allowance has insufficient remaining time. Check BOSS AI usage for reset times.",
+        { usage },
+      )
+    }
+    const livekit = (deps.livekit ?? liveKitClients)({ url, apiKey, apiSecret })
+    const room = `fluck-call-${crypto.randomUUID()}`
+    const call = await mintVoiceToken(user, key, maxSeconds)
+    const metadata = JSON.stringify({
+      agent_url: input.agent_url,
+      agent_token: input.agent_token,
+      inference: {
+        base_url: `${publicBase(deps)}/v1`,
+        token: call.token,
+      },
+      stt_model: LIVE_STT_MODEL,
+      tts_model: LIVE_TTS_MODEL,
+      max_seconds: maxSeconds,
+      user,
+    })
+    await livekit.createRoom({
+      name: room,
+      emptyTimeout: 60,
+      // A dropped caller (network change, locked phone) has two minutes to come back before the room closes.
+      departureTimeout: 120,
+      maxParticipants: 2,
+    })
+    await livekit.createDispatch(room, LIVE_AGENT, metadata)
+    const participantToken = await livekit.participantToken({
+      room,
+      identity: `user-${user.slice(0, 8)}`,
+      name: "You",
+      ttlSeconds: maxSeconds + 300,
+    })
+    return json(
+      {
+        server_url: url,
+        participant_token: participantToken,
+        room,
+        expires_at: call.expires_at,
+        quota,
+      },
+      200,
+      requestId,
+    )
+  }
+
   return async (request) => {
     const requestId = crypto.randomUUID()
     const auditedEvents = new Set<string>()
@@ -170,7 +314,12 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         }
         return json(await mintToken(user, key), 200, requestId)
       }
-      const user = await verifyToken(token, key)
+      const scopes: Scope[] = path === "/v1/voice/usage"
+        ? ["voice"]
+        : AUDIO_PATHS.includes(path)
+        ? ["inference", "voice"]
+        : ["inference"]
+      const user = await verifyToken(token, key, scopes)
       if (request.method === "GET" && path === "/v1/provider") {
         return json(
           {
@@ -198,9 +347,54 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           requestId,
         )
       }
-      const kind = request.method === "POST" ? ROUTES[path] : undefined
+      if (request.method === "POST" && path === "/v1/voice/live") {
+        phase = "live_call"
+        return await startLiveCall(request, user, key, requestId)
+      }
+      if (request.method === "POST" && path === "/v1/voice/usage") {
+        // A live call's STT runs on LiveKit Inference; the worker reports the caller's speech seconds here
+        // so they are charged to the same max-stt pool the proxied transcriptions used.
+        phase = "voice_usage"
+        const input = await readJson(request.body, 1024)
+        const reported = input.seconds
+        if (
+          Object.keys(input).some((k) => k !== "seconds") || typeof reported !== "number" ||
+          !Number.isFinite(reported) || reported <= 0
+        ) {
+          throw new HttpError(400, "invalid_seconds", "seconds must be a positive number.")
+        }
+        const seconds = Math.min(LIVE_USAGE_MAX_SECONDS, Math.ceil(reported))
+        phase = "reservation"
+        const result = await deps.rpc("boss_ai_reserve", {
+          p_user_id: user,
+          p_model_id: LIVE_STT_MODEL,
+          p_request_id: requestId,
+        }) as { error?: string; usage?: unknown } | null
+        if (!result || result.error === "forbidden") {
+          throw new HttpError(403, "forbidden", "Voice calls are not available for your account.")
+        }
+        if (result.error === "allowance_exceeded") {
+          throw new HttpError(
+            429,
+            result.error,
+            "Your voice allowance has insufficient remaining time. Check BOSS AI usage for reset times.",
+            result.usage === undefined ? {} : { usage: result.usage },
+          )
+        }
+        if (result.error) {
+          throw new HttpError(429, "busy", "Too many requests for this model. Try again shortly.")
+        }
+        await settleReservation(deps, requestId, seconds, audit)
+        const quota = await remainingQuota(deps, user, LIVE_STT_MODEL)
+        return json({ billed_seconds: seconds, ...quota }, 200, requestId)
+      }
+      const kind = request.method === "POST" && Object.hasOwn(ROUTES, path)
+        ? ROUTES[path]
+        : undefined
       if (!kind) throw new HttpError(404, "not_found", "Unknown BOSS AI endpoint.")
-      const input = await readJson(request.body)
+      const input = kind === "transcription" && isMultipart(request)
+        ? await multipartTranscription(request)
+        : await readJson(request.body)
       if (typeof input.model !== "string" || !/^[a-z0-9][a-z0-9._-]{0,99}$/.test(input.model)) {
         throw new HttpError(400, "invalid_model", "Choose a published BOSS model.")
       }
@@ -308,7 +502,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           ? result.model.context_length
           : result.model.max_output_tokens
         if (tokens !== null && tokens > reserved) {
-          audit("usage_exceeds_configured_context")
+          audit(kind === "chat" ? "usage_exceeds_configured_context" : "usage_exceeds_reservation")
         }
         phase = "settlement"
         await settleReservation(deps, requestId, tokens, audit)
@@ -327,7 +521,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           await settleWithRetry(measuredTokens)
           reservation = undefined
           // A retained reservation (unknown duration) bills the full reserved window.
-          const billed = Math.min(measuredTokens ?? Infinity, result.model.max_output_tokens)
+          const billed = measuredTokens ?? result.model.max_output_tokens
           const quota = await remainingQuota(deps, user, input.model as string)
           return json(
             { text: payload.text, usage: { seconds, billed_seconds: billed, ...quota } },
@@ -339,26 +533,41 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         }
       }
       if (kind === "speech") {
-        if (!upstream.body) {
+        const source = upstream.body
+        if (!source) {
           cleanup()
           throw new HttpError(502, "upstream_error", "The model returned an invalid response.")
         }
-        measuredTokens = Math.min(prepared.seconds!, result.model.max_output_tokens)
-        await settleWithRetry(measuredTokens)
-        reservation = undefined
-        const quota = await remainingQuota(deps, user, input.model as string)
-        return new Response(capped(upstream.body, MAX_AUDIO_OUTPUT_BYTES, cleanup), {
-          headers: {
-            ...(quota && {
-              "X-Remaining-Seconds": String(quota.remaining_seconds),
-              "X-Resets-At": quota.resets_at,
-            }),
-            "Content-Type": "audio/mpeg",
-            "Cache-Control": "no-store",
-            "X-Request-ID": requestId,
-            "X-Billed-Seconds": String(measuredTokens),
-          },
-        })
+        let out: ReadableStream<Uint8Array> | undefined
+        try {
+          // prepare() bounded the input by max_output_tokens, so this never exceeds the reservation.
+          measuredTokens = prepared.seconds!
+          await settleWithRetry(measuredTokens)
+          reservation = undefined
+          const quota = await remainingQuota(deps, user, input.model as string)
+          const resets = quota && validResetsAt(quota.resets_at) ? quota : null
+          out = capped(source, MAX_AUDIO_OUTPUT_BYTES, cleanup)
+          return new Response(out, {
+            headers: {
+              ...(resets && {
+                "X-Remaining-Seconds": String(resets.remaining_seconds),
+                "X-Resets-At": resets.resets_at,
+              }),
+              "Content-Type": "audio/mpeg",
+              "Cache-Control": "no-store",
+              "X-Request-ID": requestId,
+              "X-Billed-Seconds": String(measuredTokens),
+            },
+          })
+        } catch (error) {
+          // capped owns the reader and runs cleanup once on cancel; otherwise do both here.
+          if (out) await out.cancel().catch(() => {})
+          else {
+            await source.cancel().catch(() => {})
+            cleanup()
+          }
+          throw error
+        }
       }
       if (input.stream !== true) {
         try {
