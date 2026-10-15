@@ -133,7 +133,18 @@ export function smallestRemaining(usage: unknown): Remaining | null {
 }
 
 export function speechBody(input: Obj, model: Model): { body: Obj; seconds: number } {
-  onlyKeys(input, ["model", "input", "voice"])
+  // OpenAI's optional speech fields, as SDK clients send them, are accepted and ignored: the output is always mp3
+  // streamed as bytes, at normal speed.
+  onlyKeys(input, [
+    "model",
+    "input",
+    "voice",
+    "response_format",
+    "speed",
+    "stream_format",
+    "instructions",
+  ])
+  if (input.response_format !== undefined && input.response_format !== "mp3") throw invalid()
   const text = input.input
   if (typeof text !== "string" || !text.length || text.length > MAX_SPEECH_CHARS) {
     throw new HttpError(400, "invalid_input", "Speech input must be 1 to 2000 characters.")

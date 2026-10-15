@@ -1127,3 +1127,25 @@ Deno.test("transcription accepts OpenAI's multipart upload and forwards it as in
     language: "en",
   })
 })
+
+Deno.test("speech accepts and ignores OpenAI's optional fields; only mp3 output", async () => {
+  const f = await fixture({ kind: "speech" })
+  const ok = await f.handler(
+    f.request(
+      { ...tts, response_format: "mp3", speed: 1, stream_format: "sse", instructions: "calm" },
+      f.token,
+      "audio/speech",
+    ),
+  )
+  assertEquals(ok.status, 200)
+  await ok.body?.cancel()
+  const sent = await f.requests[0].json()
+  assertEquals(sent.response_format, "mp3")
+  assertEquals("speed" in sent || "stream_format" in sent || "instructions" in sent, false)
+  const g = await fixture({ kind: "speech" })
+  assertEquals(
+    (await g.handler(g.request({ ...tts, response_format: "wav" }, g.token, "audio/speech")))
+      .status,
+    400,
+  )
+})
