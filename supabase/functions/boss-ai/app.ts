@@ -57,6 +57,8 @@ const LIVE_AGENT = "fluck-voice"
 const LIVE_STT_MODEL = "max-stt"
 const LIVE_TTS_MODEL = "max-tts"
 const LIVE_MIN_SECONDS = 60
+/** Most seconds one /v1/voice/usage report may charge; the worker reports about every 30 s. */
+const LIVE_USAGE_MAX_SECONDS = 60
 
 /** https only; loopback http only for local testing behind BOSS_AI_ALLOW_LOCAL_AGENT=1. */
 function validAgentUrl(value: unknown, allowLocal: boolean): value is string {
@@ -305,7 +307,11 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         }
         return json(await mintToken(user, key), 200, requestId)
       }
-      const scopes: Scope[] = AUDIO_PATHS.includes(path) ? ["inference", "voice"] : ["inference"]
+      const scopes: Scope[] = path === "/v1/voice/usage"
+        ? ["voice"]
+        : AUDIO_PATHS.includes(path)
+        ? ["inference", "voice"]
+        : ["inference"]
       const user = await verifyToken(token, key, scopes)
       if (request.method === "GET" && path === "/v1/provider") {
         return json(
@@ -337,6 +343,43 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       if (request.method === "POST" && path === "/v1/voice/live") {
         phase = "live_call"
         return await startLiveCall(request, user, key, requestId)
+      }
+      if (request.method === "POST" && path === "/v1/voice/usage") {
+        // A live call's STT runs on LiveKit Inference; the worker reports the caller's speech seconds here
+        // so they are charged to the same max-stt pool the proxied transcriptions used.
+        phase = "voice_usage"
+        const input = await readJson(request.body, 1024)
+        const reported = input.seconds
+        if (
+          Object.keys(input).some((k) => k !== "seconds") || typeof reported !== "number" ||
+          !Number.isFinite(reported) || reported <= 0
+        ) {
+          throw new HttpError(400, "invalid_seconds", "seconds must be a positive number.")
+        }
+        const seconds = Math.min(LIVE_USAGE_MAX_SECONDS, Math.ceil(reported))
+        phase = "reservation"
+        const result = await deps.rpc("boss_ai_reserve", {
+          p_user_id: user,
+          p_model_id: LIVE_STT_MODEL,
+          p_request_id: requestId,
+        }) as { error?: string; usage?: unknown } | null
+        if (!result || result.error === "forbidden") {
+          throw new HttpError(403, "forbidden", "Voice calls are not available for your account.")
+        }
+        if (result.error === "allowance_exceeded") {
+          throw new HttpError(
+            429,
+            result.error,
+            "Your voice allowance has insufficient remaining time. Check BOSS AI usage for reset times.",
+            result.usage === undefined ? {} : { usage: result.usage },
+          )
+        }
+        if (result.error) {
+          throw new HttpError(429, "busy", "Too many requests for this model. Try again shortly.")
+        }
+        await settleReservation(deps, requestId, seconds, audit)
+        const quota = await remainingQuota(deps, user, LIVE_STT_MODEL)
+        return json({ billed_seconds: seconds, ...quota }, 200, requestId)
       }
       const kind = request.method === "POST" && Object.hasOwn(ROUTES, path)
         ? ROUTES[path]

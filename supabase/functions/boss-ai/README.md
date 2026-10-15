@@ -239,7 +239,8 @@ into it. The caller sends an inference-scoped bearer:
 
 The caller needs a policy for `max-stt` (the voice pool; 403 otherwise) with at least 60 seconds
 left in its smallest period, else 429 `allowance_exceeded` with the pool `usage`. Nothing is
-reserved here: talk time is metered by the `max-stt` and `max-tts` audio calls the worker makes.
+reserved here: talk time is metered by the worker's `max-tts` speech calls and its `/v1/voice/usage`
+reports (below).
 
 The proxy creates room `fluck-call-<uuid>` (`emptyTimeout` 60, `departureTimeout` 20,
 `maxParticipants` 2), dispatches agent `fluck-voice` with JSON metadata
@@ -263,11 +264,21 @@ Response:
 Secrets: `LIVEKIT_URL` (wss), `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`. If any is missing the route
 returns 503 `voice_unavailable`. A LiveKit failure is a generic 503; no detail is returned.
 
+### Call speech usage (`POST /v1/voice/usage`)
+
+The worker transcribes on LiveKit Cloud Inference, so the caller's speech never passes through
+`/v1/audio/transcriptions`. It reports it instead, about every 30 s and at the end of the call:
+`{"seconds": 12.4}` (a positive number; other fields are 400). The proxy rounds up, caps one report
+at 60 s, reserves on `max-stt` with `boss_ai_reserve` and settles that many seconds with
+`boss_ai_settle`, then answers `{billed_seconds, remaining_seconds, resets_at}`. No policy is 403;
+an exhausted pool is 429 `allowance_exceeded` with `usage`, and the worker then ends the call.
+
 **Token scopes.** `inference` tokens (300 s max age) are accepted everywhere. The call-scoped
 `voice` token placed in the dispatch metadata uses the same signer, has `sub` = user and
 `exp = now + max_seconds + 300` (max age `exp - iat`, capped at 3900 s), and is accepted only by
-`/v1/audio/transcriptions` and `/v1/audio/speech`. `/v1/chat/completions`, `/v1/models`,
-`/v1/usage`, `/v1/provider` and `/v1/voice/live` take `inference` only (401 otherwise).
+`/v1/audio/transcriptions` and `/v1/audio/speech`; `/v1/voice/usage` takes `voice` only.
+`/v1/chat/completions`, `/v1/models`, `/v1/usage`, `/v1/provider` and `/v1/voice/live` take
+`inference` only (401 otherwise).
 
 ## Restricting a model to an organisation
 

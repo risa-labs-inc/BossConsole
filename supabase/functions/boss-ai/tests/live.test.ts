@@ -15,6 +15,7 @@ async function fixture(options: {
   env?: Record<string, string | undefined>
   usage?: unknown
   failRoom?: boolean
+  reserve?: unknown
 } = {}) {
   const calls: { name: string; args: unknown[] }[] = []
   const rpcs: { name: string; params: Obj }[] = []
@@ -34,6 +35,9 @@ async function fixture(options: {
     async rpc(name, params) {
       rpcs.push({ name, params })
       if (name === "boss_ai_usage") return "usage" in options ? options.usage : pool
+      if (name === "boss_ai_reserve") {
+        return "reserve" in options ? options.reserve : { model: { kind: "transcription" } }
+      }
       return null
     },
     livekit: (config) => {
@@ -285,4 +289,63 @@ Deno.test("the real participant token grants a single room only", async () => {
     canSubscribe: true,
     canPublishData: true,
   })
+})
+
+Deno.test("voice usage reserves and settles the reported seconds on max-stt", async () => {
+  const f = await fixture()
+  const response = await f.post("voice/usage", f.voice, { seconds: 12.2 })
+  assertEquals(response.status, 200)
+  assertEquals(await response.json(), {
+    billed_seconds: 13,
+    remaining_seconds: 3500,
+    resets_at: "2026-11-01T00:00:00Z",
+  })
+  assertEquals(f.rpcs.map((r) => r.name), ["boss_ai_reserve", "boss_ai_settle", "boss_ai_usage"])
+  const reserve = f.rpcs[0].params
+  assertEquals([reserve.p_user_id, reserve.p_model_id], [user, "max-stt"])
+  assertEquals(f.rpcs[1].params, { p_request_id: reserve.p_request_id, p_tokens: 13 })
+})
+
+Deno.test("voice usage caps one report at 60 seconds", async () => {
+  const f = await fixture()
+  const response = await f.post("voice/usage", f.voice, { seconds: 600 })
+  assertEquals((await response.json()).billed_seconds, 60)
+  assertEquals(f.rpcs.find((r) => r.name === "boss_ai_settle")!.params.p_tokens, 60)
+})
+
+Deno.test("voice usage takes voice tokens only", async () => {
+  const f = await fixture()
+  assertEquals((await f.post("voice/usage", f.inference, { seconds: 5 })).status, 401)
+  assertEquals((await f.post("voice/usage", "garbage", { seconds: 5 })).status, 401)
+  assertEquals(f.rpcs.length, 0)
+})
+
+Deno.test("voice usage rejects bad bodies before touching the ledger", async () => {
+  for (
+    const body of [{}, { seconds: 0 }, { seconds: -3 }, { seconds: "5" }, { seconds: 5, x: 1 }]
+  ) {
+    const f = await fixture()
+    const response = await f.post("voice/usage", f.voice, body as Obj)
+    assertEquals(response.status, 400, JSON.stringify(body))
+    assertEquals((await response.json()).error.code, "invalid_seconds")
+    assertEquals(f.rpcs.length, 0)
+  }
+})
+
+Deno.test("voice usage: an exhausted pool is 429 allowance_exceeded and nothing is settled", async () => {
+  const usage = { month: { ...month, remaining: 0 } }
+  const f = await fixture({ reserve: { error: "allowance_exceeded", usage } })
+  const response = await f.post("voice/usage", f.voice, { seconds: 30 })
+  assertEquals(response.status, 429)
+  const error = (await response.json()).error
+  assertEquals(error.code, "allowance_exceeded")
+  assertEquals(error.usage, usage)
+  assertEquals(f.rpcs.map((r) => r.name), ["boss_ai_reserve"])
+})
+
+Deno.test("voice usage without a voice policy is 403", async () => {
+  for (const reserve of [null, { error: "forbidden" }]) {
+    const f = await fixture({ reserve })
+    assertEquals((await f.post("voice/usage", f.voice, { seconds: 5 })).status, 403)
+  }
 })
