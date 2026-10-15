@@ -5,7 +5,8 @@
     "jsr:@std/internal@^1.0.10": "1.0.14",
     "npm:@electric-sql/pglite@0.3.14": "0.3.14",
     "npm:@supabase/supabase-js@2.58.0": "2.58.0",
-    "npm:jose@6.1.0": "6.1.0"
+    "npm:jose@6.1.0": "6.1.0",
+    "npm:livekit-server-sdk@2.19.1": "2.19.1"
   },
   "jsr": {
     "@std/assert@1.0.14": {
@@ -19,8 +20,17 @@
     }
   },
   "npm": {
+    "@bufbuild/protobuf@1.10.1": {
+      "integrity": "sha512-wJ8ReQbHxsAfXhrf9ixl0aYbZorRuOWpBNzm8pL8ftmSxQx/wnJD5Eg861NwJU/czy2VXFIebCeZnZrI9rktIQ=="
+    },
     "@electric-sql/pglite@0.3.14": {
       "integrity": "sha512-3DB258dhqdsArOI1fIt7cb9RpUOgcDg5hXWVgVHAeqVQ/qxtFy605QKs4gx6mFq3jWsSPqDN8TgSEsqC3OfV9Q=="
+    },
+    "@livekit/protocol@1.51.0": {
+      "integrity": "sha512-kEDEDaFvIcp5VlYBromdSKMJMEJKfPvXPfEaJPdEz1Qgo84gZAoLF2g58CcMlVYGsjrwE5XYgQxRS5B7KuEj3w==",
+      "dependencies": [
+        "@bufbuild/protobuf"
+      ]
     },
     "@supabase/auth-js@2.72.0": {
       "integrity": "sha512-4+bnUrtTDK1YD0/FCx2YtMiQH5FGu9Jlf4IQi5kcqRwRwqp2ey39V61nHNdH86jm3DIzz0aZKiWfTW8qXk1swQ==",
@@ -87,8 +97,19 @@
         "@types/node"
       ]
     },
+    "jose@5.10.0": {
+      "integrity": "sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg=="
+    },
     "jose@6.1.0": {
       "integrity": "sha512-TTQJyoEoKcC1lscpVDCSsVgYzUDg/0Bt3WE//WiTPK6uOCQC2KZS4MpugbMWt/zyjkopgZoXhZuCi00gLudfUA=="
+    },
+    "livekit-server-sdk@2.19.1": {
+      "integrity": "sha512-tqjM5oPDDNBrkb/64YReta9UWP32l1a2m0HHXq8WOuEzwxh4zsaXjeZZtPG4Er4eVAk4kjR+EMxH7lPKzg1g6g==",
+      "dependencies": [
+        "@bufbuild/protobuf",
+        "@livekit/protocol",
+        "jose@5.10.0"
+      ]
     },
     "tr46@0.0.3": {
       "integrity": "sha512-N3WMsuqV66lT30CrXNbEjx4GEwlow3v6rr4mCcv6prnfwhS01rkgyFdjPNBYd9br7LpXV1+Emh01fHnq2Gdgrw=="
@@ -114,7 +135,8 @@
     "dependencies": [
       "jsr:@std/assert@1.0.14",
       "npm:@supabase/supabase-js@2.58.0",
-      "npm:jose@6.1.0"
+      "npm:jose@6.1.0",
+      "npm:livekit-server-sdk@2.19.1"
     ]
   }
 }

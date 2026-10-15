@@ -15,7 +15,8 @@ desktop is needed.
 2. Set `BOSS_AI_SIGNING_SECRET` to at least 32 random bytes (encoded as a string). Set upstream API
    keys as secrets named `BOSS_AI_<NAME>`. The signing-secret name is explicitly prohibited as an
    upstream key in both SQL and the handler. Never put these keys in a shared vault entry. Supabase
-   supplies its URL and service-role key.
+   supplies its URL and service-role key. Voice calls also need `LIVEKIT_URL`, `LIVEKIT_API_KEY` and
+   `LIVEKIT_API_SECRET` (see Live calls); `BOSS_AI_ALLOW_LOCAL_AGENT=1` is for local testing only.
 3. Deploy `boss-ai` using this repository's `supabase/config.toml`. `verify_jwt=false` is required
    because `/auth/exchange` redeems a single-use ticket, `/auth/token` supports legacy BOSS
    sessions, and catalog/inference routes verify AI-scoped tokens.
@@ -216,6 +217,57 @@ UPDATE boss_ai_models SET allowance_model_id='max-stt' WHERE id='max-tts';
 INSERT INTO boss_ai_allowances (model_id, permission_name, tokens_per_day, tokens_per_week, tokens_per_month, max_concurrent)
 VALUES ('max-stt','ai.use',3600,3600,3600,6);
 ```
+
+### Live calls (`POST /v1/voice/live`)
+
+Starts a LiveKit Cloud room for a Fluck voice call and dispatches the `fluck-voice` agent worker
+into it. The caller sends an inference-scoped bearer:
+
+```json
+{
+  "agent_url": "https://<fluck origin>/api/voice/agent",
+  "agent_token": "<32..256 chars>",
+  "max_seconds": 1800
+}
+```
+
+- `agent_url`: https, at most 2048 characters, no credentials. `http://127.0.0.1` and
+  `http://localhost` are accepted only when `BOSS_AI_ALLOW_LOCAL_AGENT=1` (local testing).
+- `agent_token`: opaque per-call secret, 32 to 256 printable characters. It is only relayed to the
+  worker in the dispatch metadata.
+- `max_seconds`: 60 to 3600, default 1800. Other fields are rejected (400).
+
+The caller needs a policy for `max-stt` (the voice pool; 403 otherwise) with at least 60 seconds
+left in its smallest period, else 429 `allowance_exceeded` with the pool `usage`. Nothing is
+reserved here: talk time is metered by the `max-stt` and `max-tts` audio calls the worker makes.
+
+The proxy creates room `fluck-call-<uuid>` (`emptyTimeout` 60, `departureTimeout` 20,
+`maxParticipants` 2), dispatches agent `fluck-voice` with JSON metadata
+`{agent_url, agent_token, inference: {base_url, token}, stt_model: "max-stt", tts_model: "max-tts",
+max_seconds, user}`,
+and mints a participant token (identity `user-<first 8 of user id>`, name "You",
+join/publish/subscribe/publish-data for that room only, TTL `max_seconds + 300`).
+`inference.base_url` is the request origin plus `/functions/v1/boss-ai/v1`, so local stacks work.
+Response:
+
+```json
+{
+  "server_url": "wss://...",
+  "participant_token": "...",
+  "room": "fluck-call-...",
+  "expires_at": "<iso>",
+  "quota": { "remaining_seconds": 3500, "resets_at": "<iso>" }
+}
+```
+
+Secrets: `LIVEKIT_URL` (wss), `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`. If any is missing the route
+returns 503 `voice_unavailable`. A LiveKit failure is a generic 503; no detail is returned.
+
+**Token scopes.** `inference` tokens (300 s max age) are accepted everywhere. The call-scoped
+`voice` token placed in the dispatch metadata uses the same signer, has `sub` = user and
+`exp = now + max_seconds + 300` (max age `exp - iat`, capped at 3900 s), and is accepted only by
+`/v1/audio/transcriptions` and `/v1/audio/speech`. `/v1/chat/completions`, `/v1/models`,
+`/v1/usage`, `/v1/provider` and `/v1/voice/live` take `inference` only (401 otherwise).
 
 ## Restricting a model to an organisation
 

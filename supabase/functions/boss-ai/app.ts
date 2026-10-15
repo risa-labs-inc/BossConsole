@@ -1,4 +1,13 @@
-import { bearer, HttpError, mintToken, signingKey, verifyToken } from "./auth.ts"
+import {
+  bearer,
+  HttpError,
+  mintToken,
+  mintVoiceToken,
+  Scope,
+  signingKey,
+  verifyToken,
+} from "./auth.ts"
+import { LiveKit, liveKitClients, LiveKitConfig } from "./livekit.ts"
 import {
   capped,
   MAX_AUDIO_OUTPUT_BYTES,
@@ -38,6 +47,27 @@ export interface Dependencies {
   upstreamTimeoutMs?: number
   settlementTimeoutMs?: number
   audit?: (event: string, requestId: string) => void
+  /** LiveKit clients for /v1/voice/live; tests inject fakes. */
+  livekit?: (config: LiveKitConfig) => LiveKit
+}
+const AUDIO_PATHS = ["/v1/audio/transcriptions", "/v1/audio/speech"]
+const LIVE_AGENT = "fluck-voice"
+const LIVE_STT_MODEL = "max-stt"
+const LIVE_TTS_MODEL = "max-tts"
+const LIVE_MIN_SECONDS = 60
+
+/** https only; loopback http only for local testing behind BOSS_AI_ALLOW_LOCAL_AGENT=1. */
+function validAgentUrl(value: unknown, allowLocal: boolean): value is string {
+  if (typeof value !== "string" || value.length > 2048) return false
+  try {
+    const url = new URL(value)
+    if (url.username || url.password || url.hash) return false
+    if (url.protocol === "https:") return true
+    return allowLocal && url.protocol === "http:" &&
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost")
+  } catch {
+    return false
+  }
 }
 const ROUTES: Record<string, Model["kind"]> = {
   "/v1/chat/completions": "chat",
@@ -127,6 +157,92 @@ async function settleReservation(
 }
 
 export function createHandler(deps: Dependencies): (request: Request) => Promise<Response> {
+  const startLiveCall = async (
+    request: Request,
+    user: string,
+    key: Uint8Array,
+    requestId: string,
+  ): Promise<Response> => {
+    const input = await readJson(request.body, 8 * 1024)
+    if (Object.keys(input).some((k) => !["agent_url", "agent_token", "max_seconds"].includes(k))) {
+      throw new HttpError(400, "invalid_request", "The request body is not valid.")
+    }
+    if (!validAgentUrl(input.agent_url, deps.secret("BOSS_AI_ALLOW_LOCAL_AGENT") === "1")) {
+      throw new HttpError(400, "invalid_agent_url", "agent_url must be an https URL.")
+    }
+    if (
+      typeof input.agent_token !== "string" || !/^[\x21-\x7e]{32,256}$/.test(input.agent_token)
+    ) {
+      throw new HttpError(400, "invalid_agent_token", "agent_token must be 32 to 256 characters.")
+    }
+    const maxSeconds = input.max_seconds ?? 1800
+    if (
+      typeof maxSeconds !== "number" || !Number.isInteger(maxSeconds) || maxSeconds < 60 ||
+      maxSeconds > 3600
+    ) {
+      throw new HttpError(400, "invalid_max_seconds", "max_seconds must be 60 to 3600.")
+    }
+    const url = deps.secret("LIVEKIT_URL")
+    const apiKey = deps.secret("LIVEKIT_API_KEY")
+    const apiSecret = deps.secret("LIVEKIT_API_SECRET")
+    if (!url || !apiKey || !apiSecret) {
+      throw new HttpError(503, "voice_unavailable", "Voice calls are temporarily unavailable.")
+    }
+    // The caller needs a policy for the voice pool, and at least a minute left in it.
+    const usage = await deps.rpc("boss_ai_usage", { p_user_id: user, p_model_id: LIVE_STT_MODEL })
+    if (usage === null || usage === undefined) {
+      throw new HttpError(403, "forbidden", "Voice calls are not available for your account.")
+    }
+    const quota = smallestRemaining(usage)
+    if (!quota || quota.remaining_seconds < LIVE_MIN_SECONDS) {
+      throw new HttpError(
+        429,
+        "allowance_exceeded",
+        "Your voice allowance has insufficient remaining time. Check BOSS AI usage for reset times.",
+        { usage },
+      )
+    }
+    const livekit = (deps.livekit ?? liveKitClients)({ url, apiKey, apiSecret })
+    const room = `fluck-call-${crypto.randomUUID()}`
+    const call = await mintVoiceToken(user, key, maxSeconds)
+    const metadata = JSON.stringify({
+      agent_url: input.agent_url,
+      agent_token: input.agent_token,
+      inference: {
+        base_url: `${new URL(request.url).origin}/functions/v1/boss-ai/v1`,
+        token: call.token,
+      },
+      stt_model: LIVE_STT_MODEL,
+      tts_model: LIVE_TTS_MODEL,
+      max_seconds: maxSeconds,
+      user,
+    })
+    await livekit.createRoom({
+      name: room,
+      emptyTimeout: 60,
+      departureTimeout: 20,
+      maxParticipants: 2,
+    })
+    await livekit.createDispatch(room, LIVE_AGENT, metadata)
+    const participantToken = await livekit.participantToken({
+      room,
+      identity: `user-${user.slice(0, 8)}`,
+      name: "You",
+      ttlSeconds: maxSeconds + 300,
+    })
+    return json(
+      {
+        server_url: url,
+        participant_token: participantToken,
+        room,
+        expires_at: call.expires_at,
+        quota,
+      },
+      200,
+      requestId,
+    )
+  }
+
   return async (request) => {
     const requestId = crypto.randomUUID()
     const auditedEvents = new Set<string>()
@@ -175,7 +291,8 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         }
         return json(await mintToken(user, key), 200, requestId)
       }
-      const user = await verifyToken(token, key)
+      const scopes: Scope[] = AUDIO_PATHS.includes(path) ? ["inference", "voice"] : ["inference"]
+      const user = await verifyToken(token, key, scopes)
       if (request.method === "GET" && path === "/v1/provider") {
         return json(
           {
@@ -202,6 +319,10 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           200,
           requestId,
         )
+      }
+      if (request.method === "POST" && path === "/v1/voice/live") {
+        phase = "live_call"
+        return await startLiveCall(request, user, key, requestId)
       }
       const kind = request.method === "POST" && Object.hasOwn(ROUTES, path)
         ? ROUTES[path]
