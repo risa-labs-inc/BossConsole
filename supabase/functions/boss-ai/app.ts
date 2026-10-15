@@ -57,8 +57,13 @@ function failure(error: unknown, requestId: string): Response {
   const e = error instanceof HttpError
     ? error
     : new HttpError(503, "unavailable", "BOSS AI is temporarily unavailable.")
-  return json({ error: { code: e.code, message: e.message, ...e.extra } }, e.status, requestId)
+  return json({ error: { ...e.extra, code: e.code, message: e.message } }, e.status, requestId)
 }
+
+// A header value must be an ISO timestamp: Date.parse alone accepts text with control characters.
+const validResetsAt = (value: string) =>
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}(:?\d{2})?)$/.test(value) &&
+  Number.isFinite(Date.parse(value))
 
 /** Pool quota after settlement. Best effort: a failure or slow read omits it. */
 async function remainingQuota(
@@ -198,7 +203,9 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           requestId,
         )
       }
-      const kind = request.method === "POST" ? ROUTES[path] : undefined
+      const kind = request.method === "POST" && Object.hasOwn(ROUTES, path)
+        ? ROUTES[path]
+        : undefined
       if (!kind) throw new HttpError(404, "not_found", "Unknown BOSS AI endpoint.")
       const input = await readJson(request.body)
       if (typeof input.model !== "string" || !/^[a-z0-9][a-z0-9._-]{0,99}$/.test(input.model)) {
@@ -308,7 +315,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           ? result.model.context_length
           : result.model.max_output_tokens
         if (tokens !== null && tokens > reserved) {
-          audit("usage_exceeds_configured_context")
+          audit(kind === "chat" ? "usage_exceeds_configured_context" : "usage_exceeds_reservation")
         }
         phase = "settlement"
         await settleReservation(deps, requestId, tokens, audit)
@@ -327,7 +334,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           await settleWithRetry(measuredTokens)
           reservation = undefined
           // A retained reservation (unknown duration) bills the full reserved window.
-          const billed = Math.min(measuredTokens ?? Infinity, result.model.max_output_tokens)
+          const billed = measuredTokens ?? result.model.max_output_tokens
           const quota = await remainingQuota(deps, user, input.model as string)
           return json(
             { text: payload.text, usage: { seconds, billed_seconds: billed, ...quota } },
@@ -339,26 +346,41 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         }
       }
       if (kind === "speech") {
-        if (!upstream.body) {
+        const source = upstream.body
+        if (!source) {
           cleanup()
           throw new HttpError(502, "upstream_error", "The model returned an invalid response.")
         }
-        measuredTokens = Math.min(prepared.seconds!, result.model.max_output_tokens)
-        await settleWithRetry(measuredTokens)
-        reservation = undefined
-        const quota = await remainingQuota(deps, user, input.model as string)
-        return new Response(capped(upstream.body, MAX_AUDIO_OUTPUT_BYTES, cleanup), {
-          headers: {
-            ...(quota && {
-              "X-Remaining-Seconds": String(quota.remaining_seconds),
-              "X-Resets-At": quota.resets_at,
-            }),
-            "Content-Type": "audio/mpeg",
-            "Cache-Control": "no-store",
-            "X-Request-ID": requestId,
-            "X-Billed-Seconds": String(measuredTokens),
-          },
-        })
+        let out: ReadableStream<Uint8Array> | undefined
+        try {
+          // prepare() bounded the input by max_output_tokens, so this never exceeds the reservation.
+          measuredTokens = prepared.seconds!
+          await settleWithRetry(measuredTokens)
+          reservation = undefined
+          const quota = await remainingQuota(deps, user, input.model as string)
+          const resets = quota && validResetsAt(quota.resets_at) ? quota : null
+          out = capped(source, MAX_AUDIO_OUTPUT_BYTES, cleanup)
+          return new Response(out, {
+            headers: {
+              ...(resets && {
+                "X-Remaining-Seconds": String(resets.remaining_seconds),
+                "X-Resets-At": resets.resets_at,
+              }),
+              "Content-Type": "audio/mpeg",
+              "Cache-Control": "no-store",
+              "X-Request-ID": requestId,
+              "X-Billed-Seconds": String(measuredTokens),
+            },
+          })
+        } catch (error) {
+          // capped owns the reader and runs cleanup once on cancel; otherwise do both here.
+          if (out) await out.cancel().catch(() => {})
+          else {
+            await source.cancel().catch(() => {})
+            cleanup()
+          }
+          throw error
+        }
       }
       if (input.stream !== true) {
         try {

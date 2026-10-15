@@ -160,10 +160,12 @@ validated for base64 shape and forwarded undecoded as
 { "model": "max-tts", "input": "One sentence or a few.", "voice": "optional override" }
 ```
 
-`input` is 1 to 2000 characters (400 `invalid_input` otherwise). The proxy sends
-`response_format: "mp3"` and the voice, taken from the request, else the model row's `voice`, else
-omitted. The upstream body is streamed through as `audio/mpeg` without buffering and is cut off past
-16 MiB. Headers: `X-Request-ID`, `X-Billed-Seconds`, and `X-Remaining-Seconds` and `X-Resets-At`.
+`input` is 1 to 2000 characters and at most `max_output_tokens` x 14 characters (400 `invalid_input`
+otherwise; checked before and after admission, since the model row may change between). The proxy
+sends `response_format: "mp3"` and the voice, taken from the request, else the model row's `voice`,
+else omitted. The upstream body is streamed through as `audio/mpeg` without buffering and is cut off
+past 16 MiB. Headers: `X-Request-ID`, `X-Billed-Seconds`, and `X-Remaining-Seconds` and
+`X-Resets-At` (both omitted unless `resets_at` is an ISO timestamp).
 
 After settling, both routes read the pool with `boss_ai_usage` and report the period with the
 smallest remaining (`remaining_seconds`, `resets_at`). If that read fails or times out the fields
@@ -174,9 +176,14 @@ the actual `model_id`. Admission reserves `max_output_tokens` (the most seconds 
 bill) instead of `context_length`; `boss_ai_lookup`'s `misconfigured_allowance` check and the
 remaining-allowance check use the same amount. Settlement:
 
-- Transcription: `ceil(upstream usage.seconds)`; if missing, estimated from the WAV header and
-  length; otherwise the reservation is kept (`usage_unknown_reservation_retained`).
+- Transcription: `ceil(upstream usage.seconds)`, ignoring a negative, non-finite or non-numeric
+  value; if missing, estimated from the WAV (RIFF chunks parsed, PCM only, byte rate consistent with
+  the format and within 2,000 to 1,536,000 bytes/s, duration from the bytes actually present);
+  otherwise the reservation is kept (`usage_unknown_reservation_retained`). `billed_seconds` reports
+  the real seconds even above the reservation (`usage_exceeds_reservation`; the ledger itself still
+  caps the charge at the reservation).
 - Speech: `max(1, ceil(chars / 14))`, settled once upstream returns 200, before the stream starts.
+  Input is bounded so this never exceeds the reservation.
 - Upstream rejection that proves no work (400/401/402/403/404/405/406/413/415/422/429) settles 0;
   other failures keep the reservation, as for chat.
 
@@ -250,12 +257,13 @@ the request ledger for an audited correction; clients cannot refund themselves.
 
 Missing usage emits `usage_unknown_reservation_retained`; it is never silently treated as zero.
 Published connections must pass both streaming and non-streaming usage checks before rollout. An
-upstream reporting more than the configured context emits `usage_exceeds_configured_context`, and
-the charge is capped at the admitted reservation. Settlement retries and late stream truncation
-after a usage frame preserve the measured count rather than treating it as unknown. Investigate
-either diagnostic before continuing to publish the connection. Settlement is attempted twice; if
-both attempts fail, a successful completion is still returned and the full reservation remains
-charged. Each diagnostic event is emitted at most once per request, including across retries.
+upstream reporting more than the configured context emits `usage_exceeds_configured_context`
+(`usage_exceeds_reservation` for audio models), and the charge is capped at the admitted
+reservation. Settlement retries and late stream truncation after a usage frame preserve the measured
+count rather than treating it as unknown. Investigate either diagnostic before continuing to publish
+the connection. Settlement is attempted twice; if both attempts fail, a successful completion is
+still returned and the full reservation remains charged. Each diagnostic event is emitted at most
+once per request, including across retries.
 
 Each settlement attempt has a two-second deadline, including error and streaming cleanup paths.
 Timeouts retry safely because `boss_ai_settle` is first-writer-wins for a request ID. Two failed

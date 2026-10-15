@@ -123,7 +123,7 @@ Deno.test("voice: pooled seconds, per-kind reservation, catalog kind and pool gu
     await db.exec(`
       CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
       CREATE SCHEMA auth;
-      CREATE TABLE auth.users(id uuid PRIMARY KEY, banned_until timestamptz);
+      CREATE TABLE auth.users(id uuid PRIMARY KEY, banned_until timestamptz, is_anonymous boolean NOT NULL DEFAULT false);
       CREATE TABLE public.permissions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text UNIQUE, description text, is_system boolean);
       CREATE TABLE public.roles(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text UNIQUE);
       CREATE TABLE public.role_permissions(role_id uuid, permission_id uuid, UNIQUE(role_id,permission_id));
@@ -138,6 +138,11 @@ Deno.test("voice: pooled seconds, per-kind reservation, catalog kind and pool gu
         "20260912001000_boss_ai_hardening.sql",
         "20260912002000_boss_ai_validation.sql",
         "20260912003000_boss_ai_allowance_preflight.sql",
+        "20260912004000_boss_ai_exchange_tickets.sql",
+        "20260924231000_boss_ai_token_eligibility.sql",
+        "20261007000000_boss_ai_optimist_permission.sql",
+        "20261008000000_boss_ai_model_provider_routing.sql",
+        "20261008100000_boss_ai_reserve_ai_grants.sql",
         "20261015000000_boss_ai_voice.sql",
       ]
     ) {
@@ -248,6 +253,7 @@ Deno.test("voice: pooled seconds, per-kind reservation, catalog kind and pool gu
     assertEquals((await reserve("max-tts")).error, "forbidden")
     await db.exec("RESET ROLE; SET ROLE authenticated")
     await assertRejects(() => db.query("SELECT public.boss_ai_lookup($1,'max-tts')", [user]))
+    await assertRejects(() => db.query("SELECT public.boss_ai_usage($1,'max-tts')", [user]))
     await db.exec("RESET ROLE")
   } finally {
     await db.close()
