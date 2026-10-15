@@ -3,6 +3,7 @@ import {
   completion,
   endpoint,
   events,
+  GEMINI_CACHE_MIN_CHARS,
   Model,
   providerRouting,
   readJson,
@@ -631,11 +632,24 @@ Deno.test("anthropic and gemini upstreams on OpenRouter get prompt-cache breakpo
   assertEquals(messages[5].content, "done", "tool results are never marked")
   assertEquals(input.messages[0].content, "rules", "the caller's request is not edited in place")
 
+  // Gemini pays ~3 s to build an explicit cache: a short prompt goes unmarked, a large one is marked.
   const gemini: Model = { ...model, upstream_model: "google/gemini-3.8-flash" }
   assertEquals(
     (requestBody(input, gemini, "openai_chat", OR).messages as Record<string, unknown>[])[0]
       .content,
-    [{ type: "text", text: "rules", cache_control: mark }],
+    "rules",
+  )
+  const large = {
+    ...input,
+    messages: [
+      { role: "system", content: "r".repeat(GEMINI_CACHE_MIN_CHARS) },
+      ...input.messages.slice(1),
+    ],
+  }
+  assertEquals(
+    ((requestBody(large, gemini, "openai_chat", OR).messages as Record<string, unknown>[])[0]
+      .content as Record<string, unknown>[])[0].cache_control,
+    mark,
   )
 })
 

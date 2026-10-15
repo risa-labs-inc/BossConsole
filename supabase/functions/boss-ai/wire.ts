@@ -377,7 +377,7 @@ export function requestBody(
   if (type === "openai_chat") {
     if (tools) common.tools = tools
     if (common.stream) common.stream_options = { include_usage: true }
-    const cached = takesCacheControl(model.upstream_model, baseUrl)
+    const cached = takesCacheControl(model.upstream_model, baseUrl, messages)
       ? withPromptCache(messages)
       : messages
     return { ...common, messages: cached, max_completion_tokens: max }
@@ -417,9 +417,29 @@ export function requestBody(
 
 // Upstreams that cache only where the request marks it. OpenRouter forwards `cache_control` to
 // them; every other upstream caches automatically or not at all, and gets the request unchanged.
-function takesCacheControl(upstreamModel: string, baseUrl: string): boolean {
+// Gemini creates an explicit cache before answering (~3 s to the first token, measured), and caches
+// implicitly anyway: mark it only when the prompt is large enough for the cache to repay that.
+export const GEMINI_CACHE_MIN_CHARS = 16_000
+export function takesCacheControl(
+  upstreamModel: string,
+  baseUrl: string,
+  messages: Obj[] = [],
+): boolean {
   const id = upstreamModel.toLowerCase()
-  return isOpenRouter(baseUrl) && (id.startsWith("anthropic/") || id.startsWith("google/gemini"))
+  if (!isOpenRouter(baseUrl)) return false
+  if (id.startsWith("anthropic/")) return true
+  return id.startsWith("google/gemini") && textChars(messages) >= GEMINI_CACHE_MIN_CHARS
+}
+
+function textChars(messages: Obj[]): number {
+  let n = 0
+  for (const m of messages) {
+    if (typeof m.content === "string") n += m.content.length
+    else if (Array.isArray(m.content)) {
+      for (const p of m.content as Obj[]) if (typeof p.text === "string") n += p.text.length
+    }
+  }
+  return n
 }
 
 const EPHEMERAL = { type: "ephemeral" }
