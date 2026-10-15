@@ -1104,3 +1104,26 @@ Deno.test("prototype keys are not routes and extra cannot override the error env
   assertEquals(error.code, "allowance_exceeded")
   assertEquals(error.usage, { code: "x", message: "y" })
 })
+
+Deno.test("transcription accepts OpenAI's multipart upload and forwards it as input_audio", async () => {
+  const f = await fixture({ kind: "transcription" })
+  const bytes = Uint8Array.from(atob(stt.input_audio.data), (c) => c.charCodeAt(0))
+  const form = new FormData()
+  form.append("file", new File([bytes], "file.wav", { type: "audio/wav" }))
+  form.append("model", "boss-test")
+  form.append("language", "en")
+  form.append("response_format", "json")
+  const response = await f.handler(
+    new Request("https://boss-ai.example/functions/v1/boss-ai/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${f.token}` },
+      body: form,
+    }),
+  )
+  assertEquals(response.status, 200)
+  assertEquals(await f.requests[0].json(), {
+    model: "private-model",
+    input_audio: stt.input_audio,
+    language: "en",
+  })
+})

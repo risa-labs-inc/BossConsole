@@ -10,7 +10,9 @@ import {
 import { LiveKit, liveKitClients, LiveKitConfig } from "./livekit.ts"
 import {
   capped,
+  isMultipart,
   MAX_AUDIO_OUTPUT_BYTES,
+  multipartTranscription,
   Remaining,
   smallestRemaining,
   speechBody,
@@ -340,7 +342,9 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         ? ROUTES[path]
         : undefined
       if (!kind) throw new HttpError(404, "not_found", "Unknown BOSS AI endpoint.")
-      const input = await readJson(request.body)
+      const input = kind === "transcription" && isMultipart(request)
+        ? await multipartTranscription(request)
+        : await readJson(request.body)
       if (typeof input.model !== "string" || !/^[a-z0-9][a-z0-9._-]{0,99}$/.test(input.model)) {
         throw new HttpError(400, "invalid_model", "Choose a published BOSS model.")
       }

@@ -189,3 +189,56 @@ export function capped(
     },
   })
 }
+
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024
+const UPLOAD_FORMATS: Record<string, string> = {
+  "audio/wav": "wav",
+  "audio/x-wav": "wav",
+  "audio/wave": "wav",
+  "audio/mpeg": "mp3",
+  "audio/mp3": "mp3",
+  "audio/webm": "webm",
+  "audio/ogg": "ogg",
+  "audio/flac": "flac",
+  "audio/mp4": "m4a",
+  "audio/x-m4a": "m4a",
+}
+
+export function isMultipart(request: Request): boolean {
+  return /^multipart\/form-data\b/i.test(request.headers.get("content-type") ?? "")
+}
+
+/**
+ * OpenAI's own upload shape (multipart `file`, `model`, optional `language`), as SDK clients send it, turned into the
+ * JSON body transcriptionBody validates. Other OpenAI fields (response_format, prompt, temperature) are ignored.
+ */
+export async function multipartTranscription(request: Request): Promise<Obj> {
+  const declared = Number(request.headers.get("content-length") ?? "0")
+  if (declared > MAX_UPLOAD_BYTES) {
+    throw new HttpError(413, "too_large", "The AI request or response is too large.")
+  }
+  let form: FormData
+  try {
+    form = await request.formData()
+  } catch {
+    throw invalid()
+  }
+  const file = form.get("file")
+  const model = form.get("model")
+  if (!(file instanceof File) || typeof model !== "string") throw invalid()
+  if (file.size === 0 || file.size > MAX_UPLOAD_BYTES) {
+    throw new HttpError(413, "too_large", "The AI request or response is too large.")
+  }
+  const ext = file.name.split(".").pop()?.toLowerCase() ?? ""
+  const format = UPLOAD_FORMATS[file.type.toLowerCase()] ?? (FORMATS.includes(ext) ? ext : "")
+  if (!format) throw invalid()
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  let binary = ""
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  }
+  const body: Obj = { model, input_audio: { data: btoa(binary), format } }
+  const language = form.get("language")
+  if (typeof language === "string" && language) body.language = language
+  return body
+}
