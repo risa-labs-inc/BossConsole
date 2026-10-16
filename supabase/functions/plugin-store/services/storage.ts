@@ -27,7 +27,10 @@ export function normalizeStorageUrl(url: string): string {
 export async function getSignedDownloadUrl(
   supabase: SupabaseClient,
   jarPath: string,
-  expiresIn: number = 3600 // 1 hour default
+  expiresIn: number = 3600, // 1 hour default
+  // This function fetching the JAR itself (finalize's hash): the URL as storage issued it, reachable
+  // from here. Only URLs handed to clients are rewritten for where clients reach the stack.
+  { serverSide = false }: { serverSide?: boolean } = {},
 ): Promise<string> {
   const { data, error } = await supabase
     .storage
@@ -43,7 +46,7 @@ export async function getSignedDownloadUrl(
     throw new Error('Failed to create download URL: no URL returned')
   }
 
-  return normalizeStorageUrl(data.signedUrl)
+  return serverSide ? data.signedUrl : normalizeStorageUrl(data.signedUrl)
 }
 
 /**

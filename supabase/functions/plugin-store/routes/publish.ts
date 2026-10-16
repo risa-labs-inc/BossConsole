@@ -526,7 +526,7 @@ publish.openapi(finalizeVersionRoute, async (ctx) => {
     }
     const jarUrl = isExternal
       ? version.jarPath
-      : await getSignedDownloadUrl(supabase, version.jarPath)
+      : await getSignedDownloadUrl(supabase, version.jarPath, 3600, { serverSide: true })
 
     let computedSha256: string
     let observedBytes: number
