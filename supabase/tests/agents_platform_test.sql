@@ -1,7 +1,7 @@
 -- pgTAP tests for the agents platform (20261016130000).
 -- Run with: supabase test db
 begin;
-select plan(79);
+select plan(62);
 
 insert into auth.users (id, email, email_confirmed_at) values
     ('a9000000-0000-4000-8000-00000000000a', 'owner-a@agents.test', now()),
@@ -25,13 +25,12 @@ insert into org select 'b', id from public.organisations where slug = 'agentsb';
 -- ---- shape ----
 select ok((select bool_and(prosecdef and 'search_path=""' = any(proconfig)) from pg_proc where oid in (
     'public.publish_agent(uuid,int)'::regprocedure, 'public.review_agent(uuid,boolean)'::regprocedure,
-    'public.suspend_agent(uuid)'::regprocedure, 'public.promote_build(uuid,uuid)'::regprocedure,
+    'public.suspend_agent(uuid)'::regprocedure,
     'public.agent_can_join(text,text)'::regprocedure)), 'RPCs are security definer with an empty search_path');
 select ok(not has_function_privilege('anon', 'public.publish_agent(uuid,int)', 'EXECUTE')
       and not has_function_privilege('anon', 'public.review_agent(uuid,boolean)', 'EXECUTE')
       and has_function_privilege('anon', 'public.agent_can_join(text,text)', 'EXECUTE'), 'only agent_can_join is anon-callable');
-select ok((select not public from storage.buckets where id = 'agent-bundles')
-      and (select not public from storage.buckets where id = 'agent-builds'), 'both buckets are private');
+select ok((select not public from storage.buckets where id = 'agent-bundles'), 'agent-bundles is private');
 select is((select value from public.platform_flags where key = 'agent_creation_open'), 'false'::jsonb, 'agent_creation_open seeded false');
 select ok(not has_table_privilege('authenticated', 'public.agents', 'DELETE')
       and not has_column_privilege('authenticated', 'public.agents', 'status', 'UPDATE')
@@ -48,7 +47,6 @@ select is((select status::text from public.agents where slug = 'acme'), 'draft',
 select lives_ok($q$ update public.agents set name = 'Acme 2' where slug = 'acme' $q$, 'org admin updates their agent');
 select is((select name from public.agents where slug = 'acme'), 'Acme 2', 'the update landed');
 select throws_ok($q$ update public.agents set status = 'live' where slug = 'acme' $q$, '42501', null, 'status is not directly writable');
-select throws_ok($q$ update public.agents set live_build_id = gen_random_uuid() where slug = 'acme' $q$, '42501', null, 'live_build_id is not directly writable');
 select throws_ok($q$ insert into public.agents (slug, org_id, name, status, created_by)
     values ('sneaky', (select id from org where k = 'a'), 'S', 'live', 'a9000000-0000-4000-8000-00000000000a') $q$, '42501', null, 'cannot insert with a status');
 select throws_ok($q$ insert into public.agents (slug, org_id, name, created_by)
@@ -140,56 +138,17 @@ select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000c
 select is((select array_agg(instance_id) from public.agent_installs), array['inst-c'], 'user reads only their own install');
 select throws_ok($q$ update public.agent_installs set state = 'failed' $q$, '42501', null, 'user cannot write installs');
 
--- ---- evolution requests ----
-reset role;
--- installer c has a running install (above); agent is live. org B admin = stranger.
-set local role authenticated;
-select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000c', true);
-create temp table ev (k text primary key, id uuid);
-grant all on ev to authenticated;
-select lives_ok($q$ insert into ev select 'inst', public.request_agent_evolution((select id from ag), 'make the greeting friendlier please') $q$, 'installer requests an evolution');
-select throws_ok($q$ select public.request_agent_evolution((select id from ag), 'too short') $q$, '23514', null, 'brief too short refused');
-select is((select count(*)::int from public.agent_evolution_requests), 0, 'installer cannot read requests');
-select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000e', true);
-select throws_ok($q$ select public.request_agent_evolution((select id from ag), 'a stranger asking for changes here') $q$, '42501', 'not installed', 'stranger/installer-only refused');
-select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
-select lives_ok($q$ insert into ev select 'adm', public.request_agent_evolution((select id from ag), 'admin wants the tone changed to formal') $q$, 'org admin requests an evolution');
-select is((select string_agg(source, ',' order by source) from public.agent_evolution_requests), 'admin,agent', 'sources recorded');
-select lives_ok($q$ update public.agent_evolution_requests set status = 'discarded' where id = (select id from ev where k = 'adm') $q$, 'admin discards');
-select throws_ok($q$ update public.agent_evolution_requests set status = 'built' where id = (select id from ev where k = 'inst') $q$, '42501', null, 'admin cannot set built');
-select throws_ok($q$ update public.agent_evolution_requests set brief = 'rewritten brief that is long enough' $q$, '42501', null, 'admin cannot edit the brief');
-select throws_ok($q$ insert into public.agent_evolution_requests (agent_id, source, brief) values ((select id from ag), 'admin', 'direct insert is not allowed here') $q$, '42501', null, 'no direct inserts');
-
--- non-live agent refused for installer
-reset role;
-select set_config('request.jwt.claims', '{"role":"service_role"}', true);
-update public.agents set status = 'suspended' where slug = 'acme';
-set local role authenticated;
-select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000c', true);
-select throws_ok($q$ select public.request_agent_evolution((select id from ag), 'installer asks while not live now') $q$, 'P0001', 'agent not live', 'installer refused on a non-live agent');
-reset role;
-update public.agents set status = 'live' where slug = 'acme';
-
--- ---- auto_promote ----
-set local role authenticated;
-select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
-select lives_ok($q$ update public.agents set auto_promote = true where slug = 'acme' $q$, 'admin sets auto_promote');
-select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000c', true);
-select is_empty($q$ update public.agents set auto_promote = false where slug = 'acme' returning 1 $q$, 'non-admin cannot set auto_promote');
-
 -- ---- brand bucket ----
+set local role authenticated;
 select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
 select lives_ok($q$ insert into storage.objects (bucket_id, name) values ('agent-brand', (select id::text from ag) || '/logo.png') $q$, 'admin uploads under own agent folder');
 select throws_ok($q$ insert into storage.objects (bucket_id, name) values ('agent-brand', 'a9000000-0000-4000-8000-0000000000ee/logo.png') $q$, '42501', null, 'upload under another agent folder refused');
 reset role;
 select ok((select public and file_size_limit = 2097152 from storage.buckets where id = 'agent-brand'), 'agent-brand is public with a 2 MiB limit');
-select ok((select file_size_limit = 209715200 from storage.buckets where id = 'agent-builds'), 'agent-builds allows 200 MiB');
 
--- ---- agent-bundles / agent-builds storage ----
+-- ---- agent-bundles storage ----
 reset role;
-insert into storage.objects (bucket_id, name) values
-    ('agent-builds', (select id::text from ag) || '/b1.patch'),
-    ('agent-bundles', (select id::text from ag) || '/persona-0.zip');
+insert into storage.objects (bucket_id, name) values ('agent-bundles', (select id::text from ag) || '/persona-0.zip');
 set local role authenticated;
 select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
 select lives_ok($q$ insert into storage.objects (bucket_id, name) values ('agent-bundles', (select id::text from ag) || '/persona-1.zip') $q$, 'admin uploads a bundle under own agent');
@@ -198,10 +157,8 @@ select is((select count(*)::int from storage.objects where bucket_id = 'agent-bu
 select is_empty($q$ update storage.objects set name = name || 'x' where bucket_id = 'agent-bundles' returning 1 $q$, 'bundles are immutable: no update');
 select is((select count(*)::int from pg_policies where schemaname = 'storage' and tablename = 'objects'
     and policyname like 'agent-bundles%' and cmd in ('DELETE', 'UPDATE', 'ALL')), 0, 'bundles are immutable: no update/delete policy');
-select is((select count(*)::int from storage.objects where bucket_id = 'agent-builds'), 1, 'admin reads own build patch');
-select throws_ok($q$ insert into storage.objects (bucket_id, name) values ('agent-builds', (select id::text from ag) || '/evil.jar') $q$, '42501', null, 'clients cannot write builds');
 select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000c', true);
-select is((select count(*)::int from storage.objects where bucket_id in ('agent-bundles', 'agent-builds')), 0, 'non-admin sees no bundles or builds');
+select is((select count(*)::int from storage.objects where bucket_id = 'agent-bundles'), 0, 'non-admin sees no bundles');
 
 -- ---- platform_flags ----
 select is((select value from public.platform_flags where key = 'agent_creation_open'), 'false'::jsonb, 'any signed-in user reads flags');
