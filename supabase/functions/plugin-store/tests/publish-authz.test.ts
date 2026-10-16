@@ -17,6 +17,7 @@ import { assert, assertEquals, assertFalse } from "@std/assert"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import {
   authorizeExistingPluginPublish,
+  authorizeVersionPublish,
   authorizeNewPluginPublish,
   preflightPublishAuthz,
 } from "../services/publish-authz.ts"
@@ -285,6 +286,58 @@ Deno.test("an API key is judged by its owner's live roles", async () => {
   // And with neither, it is refused.
   const none = stub({ probe: false, canPublish: { [ORG_MINE]: false }, orgs: [member(ORG_MINE)] })
   assertEquals(refused(await authorizeExistingPluginPublish(none.client, withKey, ORG_MINE)).status, 403)
+})
+
+// ---------------------------------------------------------------------------
+// Co-maintainers (owner decision 2026-10-16): an org admin may version their org's plugin
+// ---------------------------------------------------------------------------
+
+const AUTHOR = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+const NOT_OWNER = "Not authorized to publish to this plugin"
+
+Deno.test("a non-author org admin may publish a new version of their org's plugin", async () => {
+  const { client } = stub({ canPublish: { [ORG_MINE]: true }, orgs: [member(ORG_MINE)] })
+  const result = await authorizeVersionPublish(client, user(), AUTHOR, ORG_MINE, NOT_OWNER)
+  assertEquals(allowed(result), { orgId: ORG_MINE, orgScoped: true })
+})
+
+Deno.test("a non-author member the org's publish policy does not admit is refused with the old message", async () => {
+  const { client } = stub({ canPublish: { [ORG_MINE]: false }, orgs: [member(ORG_MINE)] })
+  const result = refused(await authorizeVersionPublish(client, user(), AUTHOR, ORG_MINE, NOT_OWNER))
+  assertEquals(result, { status: 403, error: NOT_OWNER })
+})
+
+Deno.test("a non-author outside the plugin's org is refused", async () => {
+  const { client } = stub({ canPublish: { [ORG_OTHER]: true }, orgs: [member(ORG_MINE)] })
+  assertEquals(refused(await authorizeVersionPublish(client, user(), AUTHOR, ORG_OTHER, NOT_OWNER)).error, NOT_OWNER)
+})
+
+Deno.test("a plugins.create holder who is not the author cannot version someone else's plugin", async () => {
+  // Public/boss-owned (no org) and org-owned alike: the permission arm is never org-scoped.
+  const a = stub({})
+  assertEquals(refused(await authorizeVersionPublish(a.client, creator(), AUTHOR, null, NOT_OWNER)).status, 403)
+  const b = stub({ canPublish: { [ORG_OTHER]: true }, orgs: [member(ORG_MINE)] })
+  assertEquals(refused(await authorizeVersionPublish(b.client, creator(), AUTHOR, ORG_OTHER, NOT_OWNER)).error, NOT_OWNER)
+})
+
+Deno.test("the author is judged exactly as before, with or without a non-org-scoped grant", async () => {
+  const held = stub({})
+  assertEquals(allowed(await authorizeVersionPublish(held.client, creator({ userId: AUTHOR }), AUTHOR, null, NOT_OWNER)).orgScoped, false)
+  const org = stub({ canPublish: { [ORG_MINE]: true }, orgs: [member(ORG_MINE)] })
+  assertEquals(allowed(await authorizeVersionPublish(org.client, user({ userId: AUTHOR }), AUTHOR, ORG_MINE, NOT_OWNER)).orgScoped, true)
+  const bad = stub({ canPublish: { [ORG_MINE]: false }, orgs: [member(ORG_MINE)] })
+  assertEquals(refused(await authorizeVersionPublish(bad.client, user({ userId: AUTHOR }), AUTHOR, ORG_MINE, NOT_OWNER)).status, 403)
+})
+
+Deno.test("an unreadable membership list still surfaces as a 500 for a non-author", async () => {
+  const { client } = stub({ failing: ["get_my_organisations"] })
+  assertEquals(refused(await authorizeVersionPublish(client, user(), AUTHOR, ORG_MINE, NOT_OWNER)).status, 500)
+})
+
+Deno.test("all four version-publishing sites use authorizeVersionPublish, not a bare author check", () => {
+  const src = Deno.readTextFileSync(new URL("../routes/publish.ts", import.meta.url))
+  assertEquals(src.match(/authorizeVersionPublish\(/g)?.length, 4)
+  assertEquals(src.match(/authorId !== user\.userId/g)?.length ?? 0, 0)
 })
 
 // ---------------------------------------------------------------------------

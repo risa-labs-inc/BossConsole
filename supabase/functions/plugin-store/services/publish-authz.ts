@@ -160,10 +160,14 @@ export async function preflightPublishAuthz(
  * a property of the plugin (see `resolvePublishOrg`'s own note), so re-deriving here would let a
  * membership change move somebody else's plugin.
  *
- * Authorship is NOT checked here. Every route that calls this already refuses
- * `plugin.authorId !== user.userId` before reaching it, for every caller including admins, and
- * this deliberately does not widen that to "any admin of the owning organisation" - that is a
- * separate product decision about co-maintainers.
+ * Authorship is NOT checked here; `authorizeVersionPublish` layers it on top.
+ *
+ * Owner decision (2026-10-16): organisation admins may publish new versions of their organisation's
+ * plugins even when they are not the original author (co-maintainers). That is allowed only when
+ * this returns ok with `orgScoped === true`, i.e. the caller is an active member of the plugin's
+ * recorded organisation and passes its publish policy. A `plugins.create` holder who is not the
+ * author is NOT let in through the permission arm (`orgScoped: false`): that grant must not reach
+ * somebody else's plugin.
  */
 export async function authorizeExistingPluginPublish(
   supabase: SupabaseClient,
@@ -191,4 +195,24 @@ export async function authorizeExistingPluginPublish(
   if (!allowed) return { ok: false, status: 403, error: POLICY_REFUSAL }
 
   return { ok: true, orgId: pluginOrgId, orgScoped: true }
+}
+
+/**
+ * Gate a new version of an existing plugin: the author (as before), or - since 2026-10-16 - an
+ * organisation admin of the plugin's recorded organisation (see `authorizeExistingPluginPublish`).
+ * Non-authors who do not qualify get `notOwnerError` with 403, the message the per-route author
+ * check used to give; an unavailable org lookup still surfaces as its 500.
+ */
+export async function authorizeVersionPublish(
+  supabase: SupabaseClient,
+  user: AuthResult,
+  pluginAuthorId: string | null,
+  pluginOrgId: string | null,
+  notOwnerError: string,
+): Promise<PublishAuthz> {
+  const authz = await authorizeExistingPluginPublish(supabase, user, pluginOrgId)
+  if (pluginAuthorId === user.userId) return authz
+  if (authz.ok && authz.orgScoped) return authz
+  if (!authz.ok && authz.status === 500) return authz
+  return { ok: false, status: 403, error: notOwnerError }
 }

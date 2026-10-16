@@ -364,6 +364,7 @@ Deno.test("every publish handler gates on something", () => {
 
   const GATES = [
     "authorizeNewPluginPublish(",
+    "authorizeVersionPublish(",
     "authorizeExistingPluginPublish(",
     "preflightPublishAuthz(",
     "requiredPermission:",
