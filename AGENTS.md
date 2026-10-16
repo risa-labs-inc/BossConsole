@@ -365,9 +365,17 @@ Deliberately out of scope, so nobody assumes more than exists:
 - **A failed plan is not rolled back.** A dependency installed on its own is harmless and may
   already be wanted by something else; deleting it to tidy up a failure would be the one outcome
   worse than the failure.
-- **`PluginDependency.version` is ignored.** Presence is by id, matching `checkCanUnload`. A
-  plugin needing 2.x is satisfied by 1.x, and a prompt could not usefully fix a wrong-version
-  install anyway.
+- **The dependency prompt checks presence; activation checks versions.** `DynamicPluginManager`
+  checks required dependency ranges before loading an enabled plugin and on every registration
+  route (enable, restart and access grant included). It also refuses an incoming dependency that
+  would violate a running consumer's range. Optional and disabled consumers do not veto updates.
+  `VersionRequirement` supports exact versions, `*`, and whitespace-separated comparison bounds;
+  unsupported ranges and unknown installed versions cannot satisfy a required constraint. Missing
+  plugins retain the advisory install flow. Incompatible installed versions fail with the required
+  range and installed version; automatic dependency upgrading is not part of that dialog.
+  Startup loads required dependencies before consumers regardless of persisted insertion order.
+  Version refusals retain a visible manager error and reload recovery; reload validates the disk
+  candidate before unloading the working plugin.
 - **`NOT_USER_INSTALLABLE` ids are never offered**: the microkernel runtime (which
   `loadPlugin` refuses outright and `DefaultPlugin` skips on scan, so it looks missing to every
   manifest naming it) and the api plugin (whose install is an unload-all / swap / reload-all hot
