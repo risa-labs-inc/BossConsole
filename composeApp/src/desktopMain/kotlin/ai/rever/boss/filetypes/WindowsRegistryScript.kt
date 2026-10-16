@@ -24,8 +24,8 @@ package ai.rever.boss.filetypes
  * never passes through a command line at all, so the question does not arise.
  */
 internal object WindowsRegistryScript {
-    /** `reg import` requires this exact header for a Unicode script. */
-    private const val HEADER = "Windows Registry Editor Version 5.00"
+    /** `reg import` requires this exact header for a Unicode script; shared with protocol registration. */
+    internal const val HEADER = "Windows Registry Editor Version 5.00"
 
     private const val CLASSES = """HKEY_CURRENT_USER\Software\Classes"""
 

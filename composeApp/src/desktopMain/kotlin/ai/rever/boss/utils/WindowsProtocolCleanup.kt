@@ -181,10 +181,10 @@ internal object WindowsProtocolCleanup {
                 CleanupDecision.Report(WindowsProtocolHandler.UnregisterOutcome.ABSENT)
             }
 
-            // Root key exists and reg positively reports no command value: a partial
-            // registration this code produced (performRegistration issues four independent
-            // `reg add`s and only logs when some fail). registerProtocol already self-heals it
-            // by re-registering, so cleanup owns it too rather than orphaning keys forever.
+            // Root key exists and reg positively reports no command value: a partial `.reg`
+            // import may have written the root and metadata before failing, or an orphan root
+            // may have been left without a handler. registerProtocol already self-heals this
+            // state by re-importing, so cleanup owns it rather than orphaning keys forever.
             command is CommandState.Missing -> {
                 CleanupDecision.Delete
             }
