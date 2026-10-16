@@ -9,6 +9,17 @@ import kotlin.test.assertNull
 
 class PluginHealthCenterTest {
     @Test
+    fun `dependency refusal without a loader offers reload recovery`() {
+        val info =
+            plugin("notes", "Notes", PluginState.ERROR, errorMessage = "requires engine >=1.1.1")
+                .copy(dependencyVersionError = "requires engine >=1.1.1")
+        val row = pluginHealthRows(mapOf("notes" to info), emptyMap(), emptySet(), emptySet(), emptySet()).single()
+        assertEquals(PluginHealthStatus.NEEDS_ATTENTION, row.status)
+        assertEquals(PluginHealthAction.RELOAD, row.action)
+        assertEquals("requires engine >=1.1.1", row.detail)
+    }
+
+    @Test
     fun `failed registration remains visible even when manager disables plugin`() {
         val info = plugin("notes", "Notes", PluginState.DISABLED, errorMessage = "registration failed")
         val rows = pluginHealthRows(mapOf("notes" to info), emptyMap(), emptySet(), emptySet(), emptySet())

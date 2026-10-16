@@ -1,5 +1,6 @@
 package ai.rever.boss.components.plugin
 
+import ai.rever.boss.plugin.PluginLoaderDelegateImpl
 import ai.rever.boss.plugin.api.PanelRegistry
 import ai.rever.boss.plugin.api.Plugin
 import ai.rever.boss.plugin.api.PluginContext
@@ -7,6 +8,7 @@ import ai.rever.boss.plugin.api.PluginDependency
 import ai.rever.boss.plugin.api.PluginManifest
 import ai.rever.boss.plugin.api.PluginState
 import ai.rever.boss.plugin.api.TabRegistry
+import ai.rever.boss.plugin.launchpad.DevPluginArtifacts
 import ai.rever.boss.plugin.sandbox.PluginSandboxManagerImpl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -197,7 +199,94 @@ class PluginDependencyVersionsTest {
         }
     }
 
+    @Test
+    fun `dependency refusal remains visible and reload recovers after upgrade`(): Unit =
+        runBlocking {
+            val fixture = Fixture()
+            try {
+                fixture.install("com.example.version.engine", "1.0.172").getOrThrow()
+                assertTrue(fixture.install("com.example.version.consumer", "1.0.0", requirement = ">=1.1.1").isFailure)
+                val refused = checkNotNull(fixture.manager.getPluginInfo("com.example.version.consumer"))
+                assertEquals(PluginState.ERROR, refused.state)
+                assertTrue(refused.errorMessage.orEmpty().contains(">=1.1.1"))
+                fixture.manager.uninstallPlugin("com.example.version.engine", force = true).getOrThrow()
+                fixture.install("com.example.version.engine", "1.1.1").getOrThrow()
+                fixture.manager.reloadPlugin("com.example.version.consumer").getOrThrow()
+                assertEquals(PluginState.LOADED, fixture.manager.getPluginInfo("com.example.version.consumer")?.state)
+            } finally {
+                fixture.close()
+            }
+        }
+
+    @Test
+    fun `reload refuses incompatible disk replacement without unloading working plugin`(): Unit =
+        runBlocking {
+            val fixture = Fixture()
+            try {
+                fixture.install("com.example.version.engine", "1.1.1").getOrThrow()
+                val original =
+                    fixture.install("com.example.version.consumer", "1.0.0", requirement = ">=1.1.1").getOrThrow()
+                val candidate = fixture.jar("com.example.version.consumer", "2.0.0", requirement = ">=2.0.0")
+                DevPluginArtifacts.stagingRootOverride = tempDir.toFile()
+                fixture.manager.persistedReloadJarPath = { candidate.toString() }
+                assertTrue(fixture.manager.reloadPlugin("com.example.version.consumer").isFailure)
+                assertEquals(original, fixture.manager.getPluginInfo("com.example.version.consumer"))
+                assertEquals(1, fixture.registered.count { it == "com.example.version.consumer" })
+            } finally {
+                fixture.close()
+                DevPluginArtifacts.stagingRootOverride = null
+            }
+        }
+
+    @Test
+    fun `startup loads required engine before earlier persisted consumer`(): Unit =
+        runBlocking {
+            val fixture = Fixture()
+            try {
+                fixture.requireEngine = true
+                val consumer = fixture.jar("com.example.version.consumer", "1.0.0", requirement = ">=1.1.1")
+                val engine = fixture.jar("com.example.version.engine", "1.1.1")
+                val results =
+                    fixture.manager.loadPersistedPlugins(
+                        listOf(
+                            PersistedPluginEntry("com.example.version.consumer", consumer.toString(), true),
+                            PersistedPluginEntry("com.example.version.engine", engine.toString(), true),
+                        ),
+                        allowedRoots = listOf(tempDir.toFile()),
+                    )
+                assertTrue(results.values.all { it.isSuccess }, results.toString())
+                assertEquals(
+                    listOf("com.example.version.engine", "com.example.version.consumer"),
+                    fixture.registered.toList(),
+                )
+            } finally {
+                fixture.close()
+            }
+        }
+
+    @Test
+    fun `delegate reload refuses incompatible candidate without unloading working plugin`(): Unit =
+        runBlocking {
+            val fixture = Fixture()
+            try {
+                fixture.install("com.example.version.engine", "1.1.1").getOrThrow()
+                val original =
+                    fixture.install("com.example.version.consumer", "1.0.0", requirement = ">=1.1.1").getOrThrow()
+                val candidate = fixture.jar("com.example.version.consumer", "2.0.0", requirement = ">=2.0.0")
+                DevPluginArtifacts.stagingRootOverride = tempDir.toFile()
+                val delegate =
+                    PluginLoaderDelegateImpl(fixture.manager, persistedJarPathForPlugin = { candidate.toString() })
+                assertEquals(null, delegate.reloadPlugin("com.example.version.consumer"))
+                assertEquals(original, fixture.manager.getPluginInfo("com.example.version.consumer"))
+                assertEquals(1, fixture.registered.count { it == "com.example.version.consumer" })
+            } finally {
+                fixture.close()
+                DevPluginArtifacts.stagingRootOverride = null
+            }
+        }
+
     private inner class Fixture {
+        var requireEngine = false
         val registered = CopyOnWriteArrayList<String>()
         val spawned = CopyOnWriteArrayList<String>()
         private val sandbox = PluginSandboxManagerImpl()
@@ -217,7 +306,14 @@ class PluginDependencyVersionsTest {
 
                         override fun <T : Any> getPluginAPI(apiClass: Class<T>): T? =
                             if (apiClass == Runnable::class.java) {
-                                apiClass.cast(Runnable { registered += id })
+                                apiClass.cast(
+                                    Runnable {
+                                        if (requireEngine && id == "com.example.version.consumer") {
+                                            check(registered.contains("com.example.version.engine"))
+                                        }
+                                        registered += id
+                                    },
+                                )
                             } else {
                                 null
                             }
@@ -244,7 +340,16 @@ class PluginDependencyVersionsTest {
             optional: Boolean = false,
             enabled: Boolean = true,
             isolation: String = "in-process",
-        ): Result<DynamicPluginInfo> {
+        ): Result<DynamicPluginInfo> =
+            manager.installPlugin(jar(id, version, requirement, optional, isolation).toString(), enabled = enabled)
+
+        fun jar(
+            id: String,
+            version: String,
+            requirement: String? = null,
+            optional: Boolean = false,
+            isolation: String = "in-process",
+        ): Path {
             val dependency =
                 requirement?.let {
                     """[{"pluginId":"com.example.version.engine","version":"$it","optional":$optional}]"""
@@ -269,7 +374,7 @@ class PluginDependencyVersionsTest {
                 output.write(pluginClass.classLoader.getResourceAsStream(entry)!!.use { it.readBytes() })
                 output.closeEntry()
             }
-            return manager.installPlugin(jar.toString(), enabled = enabled)
+            return jar
         }
 
         suspend fun close() {

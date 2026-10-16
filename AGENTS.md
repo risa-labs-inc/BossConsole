@@ -373,6 +373,9 @@ Deliberately out of scope, so nobody assumes more than exists:
   unsupported ranges and unknown installed versions cannot satisfy a required constraint. Missing
   plugins retain the advisory install flow. Incompatible installed versions fail with the required
   range and installed version; automatic dependency upgrading is not part of that dialog.
+  Startup loads required dependencies before consumers regardless of persisted insertion order.
+  Version refusals retain a visible manager error and reload recovery; reload validates the disk
+  candidate before unloading the working plugin.
 - **`NOT_USER_INSTALLABLE` ids are never offered**: the microkernel runtime (which
   `loadPlugin` refuses outright and `DefaultPlugin` skips on scan, so it looks missing to every
   manifest naming it) and the api plugin (whose install is an unload-all / swap / reload-all hot

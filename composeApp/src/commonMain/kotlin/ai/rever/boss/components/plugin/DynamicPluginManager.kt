@@ -75,6 +75,8 @@ data class DynamicPluginInfo(
     val loadedAt: Long,
     val enabled: Boolean,
     val errorMessage: String? = null,
+    // Only host-generated dependency diagnostics are suitable for the health summary.
+    val dependencyVersionError: String? = null,
 )
 
 /**
@@ -220,6 +222,15 @@ class DynamicPluginManager(
             }
         }
     }
+
+    internal fun validateReloadDependencies(
+        jarPath: String,
+        enabled: Boolean = true,
+    ): Result<Unit> =
+        runCatching {
+            val candidate = PluginManifestReader.readFromJar(jarPath)
+            requireDependencyVersions(candidate, activating = enabled && canAccess(candidate))
+        }
 
     private fun registerWithDependencies(
         loadedPlugin: LoadedPlugin,
@@ -1022,7 +1033,27 @@ class DynamicPluginManager(
                     val incomingManifest =
                         ai.rever.boss.plugin.loader.PluginManifestReader
                             .readFromJar(jarPath)
-                    requireDependencyVersions(incomingManifest, activating = enabled && canAccess(incomingManifest))
+                    try {
+                        requireDependencyVersions(incomingManifest, activating = enabled && canAccess(incomingManifest))
+                    } catch (error: IllegalStateException) {
+                        // Keep a running installation intact when its replacement is refused.
+                        if (pluginLoader.getPlugin(incomingManifest.pluginId) == null) {
+                            updatePluginState(
+                                incomingManifest.pluginId,
+                                DynamicPluginInfo(
+                                    manifest = incomingManifest,
+                                    jarPath = jarPath,
+                                    state = PluginState.ERROR,
+                                    loadedAt = System.currentTimeMillis(),
+                                    enabled = enabled,
+                                    errorMessage = error.message,
+                                    dependencyVersionError = error.message,
+                                ),
+                            )
+                        }
+                        notifyListeners { it.pluginLoadFailed(incomingManifest, error) }
+                        return@withLock Result.failure(error)
+                    }
 
                     // Load the plugin
                     val loadResult = pluginLoader.loadPlugin(jarPath)
@@ -2200,6 +2231,14 @@ class DynamicPluginManager(
             ),
         )
 
+        // Refuse incompatible disk candidates while the current loader and views still exist.
+        val admission = validateReloadDependencies(jarPath, enabled = wasEnabled)
+        admission.exceptionOrNull()?.let { return Result.failure(it) }
+        // A dependency refusal is visible in manager state without creating a loader.
+        if (pluginLoader.getPlugin(pluginId) == null) {
+            return installPlugin(jarPath, enabled = wasEnabled)
+        }
+
         val uninstallResult = uninstallPlugin(pluginId, force = true)
         if (uninstallResult.isFailure) {
             logger.error(
@@ -2373,6 +2412,36 @@ class DynamicPluginManager(
      */
     fun getRegistrationTracker(): PluginRegistrationTracker = registrationTracker
 
+    /** Stable dependency-first startup, including required dependencies installed after consumers. */
+    private fun dependencyOrderedPlugins(
+        plugins: List<PersistedPluginEntry>,
+        allowedRoots: List<java.io.File>,
+    ): List<PersistedPluginEntry> {
+        val byId = plugins.associateBy { it.pluginId }
+        val visited = mutableSetOf<String>()
+        val ordered = mutableListOf<PersistedPluginEntry>()
+
+        fun visit(entry: PersistedPluginEntry) {
+            // Mark before descending so malformed cycles cannot recurse forever.
+            if (!visited.add(entry.pluginId)) return
+            val manifest =
+                runCatching {
+                    check(isContainedPath(entry.jarPath, allowedRoots))
+                    val file = java.io.File(entry.jarPath)
+                    val jar = if (file.isFile) file else findRelocatedPluginJar(file.parentFile, entry.pluginId)
+                    check(jar != null && isContainedPath(jar.absolutePath, allowedRoots))
+                    ai.rever.boss.plugin.loader.PluginManifestReader
+                        .readFromJar(jar.absolutePath)
+                }.getOrNull()
+            manifest?.dependencies?.filter { !it.optional }?.forEach { dependency ->
+                byId[dependency.pluginId]?.let(::visit)
+            }
+            ordered += entry
+        }
+        plugins.forEach(::visit)
+        return ordered
+    }
+
     /**
      * Load plugins from persisted state.
      * This should be called during application startup to restore previously installed plugins.
@@ -2401,7 +2470,7 @@ class DynamicPluginManager(
             ),
         )
 
-        for (entry in plugins) {
+        for (entry in dependencyOrderedPlugins(plugins, allowedRoots)) {
             try {
                 // The check canonicalizes; the loaded path keeps its persisted
                 // spelling, so in-root entries behave exactly as before.

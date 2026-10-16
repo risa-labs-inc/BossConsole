@@ -50,6 +50,9 @@ import javax.swing.SwingUtilities
  */
 class PluginLoaderDelegateImpl(
     private val dynamicPluginManager: DynamicPluginManager,
+    private val persistedJarPathForPlugin: (String) -> String? = { id ->
+        PluginPersistence.getInstalledPlugins().firstOrNull { it.pluginId == id }?.jarPath
+    },
 ) : PluginLoaderDelegate {
     private val logger = BossLogger.forComponent("PluginLoaderDelegate")
 
@@ -430,7 +433,7 @@ class PluginLoaderDelegateImpl(
         withContext(Dispatchers.IO) {
             val persistedJarPath =
                 confinedPersistedJarPath(
-                    PluginPersistence.getInstalledPlugins().firstOrNull { it.pluginId == pluginId }?.jarPath,
+                    persistedJarPathForPlugin(pluginId),
                 ) { refused ->
                     logger.warn(
                         LogCategory.SYSTEM,
@@ -502,6 +505,12 @@ class PluginLoaderDelegateImpl(
             ) {
                 withContext(Dispatchers.IO) { deferReloadToRestart(pluginId, jarPath, loadedJarPath) }
                 return dynamicPluginManager.getPluginInfo(pluginId)?.let(::toLoadedPluginInfo)
+            }
+
+            // The delegate has its own reload route; admit before destroying the current instance.
+            dynamicPluginManager.validateReloadDependencies(jarPath).getOrThrow()
+            if (dynamicPluginManager.getPluginInfo(pluginId)?.dependencyVersionError != null) {
+                return loadPlugin(jarPath, reportDependencies = false)
             }
 
             // Unload
