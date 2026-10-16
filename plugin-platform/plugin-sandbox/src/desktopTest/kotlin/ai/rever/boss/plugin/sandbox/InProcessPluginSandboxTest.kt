@@ -1,19 +1,28 @@
 package ai.rever.boss.plugin.sandbox
 
+import ai.rever.boss.plugin.logging.BossLogger
+import ai.rever.boss.plugin.logging.LogEntry
+import ai.rever.boss.plugin.logging.LogLevel
+import ai.rever.boss.plugin.logging.LogListener
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.system.measureTimeMillis
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -339,6 +348,248 @@ class InProcessPluginSandboxTest {
             }
     }
 
+    /**
+     * The sandbox-owned portion of teardown: cooperative sandbox coroutines finish
+     * before [InProcessPluginSandbox.stop] returns. Independent plugin scopes are outside this test.
+     *
+     * The distinction is the bug. `job.cancel()` marks and returns; the coroutines are still
+     * unwinding afterwards. Nothing else in `stop()` covered them either - `awaitTermination`
+     * bounds tasks running on the sandbox's own pool, and a coroutine parked at a suspension point
+     * off that pool is not a task the pool has ever seen, so the pool terminated instantly while
+     * the coroutine was very much alive. The caller then closed the plugin's classloader and the
+     * coroutine resumed into classes that no longer resolved.
+     *
+     * These tests therefore park a coroutine OFF the sandbox pool deliberately, and assert on when
+     * its own cleanup ran rather than on how the wait is implemented.
+     */
+    @Nested
+    inner class TeardownJoinTests {
+        /**
+         * The regression test. It fails against `cancel()` alone and passes against
+         * `cancel()` + a bounded `join()`.
+         */
+        @Test
+        fun `stop waits for a coroutine suspended off the sandbox pool to finish unwinding`() =
+            runBlocking {
+                sandbox.start()
+                val parked = CompletableDeferred<Unit>()
+                val unwound = AtomicBoolean(false)
+
+                sandbox.sandboxScope.launch {
+                    try {
+                        // Off the pool on purpose: this is what awaitTermination cannot see.
+                        withContext(Dispatchers.IO) {
+                            parked.complete(Unit)
+                            awaitCancellation()
+                        }
+                    } finally {
+                        // A real plugin teardown suspends - closing a pty, flushing a session -
+                        // and runs after cancellation, so it needs NonCancellable to get there.
+                        withContext(NonCancellable + Dispatchers.IO) {
+                            delay(UNWIND_MS)
+                            unwound.set(true)
+                        }
+                    }
+                }
+                parked.await()
+
+                sandbox.stop()
+
+                assertTrue(
+                    unwound.get(),
+                    "stop() returned while a plugin coroutine was still unwinding - the caller " +
+                        "would now close its classloader underneath it",
+                )
+            }
+
+        /**
+         * A plugin can decline to be cancelled, and hanging an unload on one for ever would be
+         * worse than the fault it is trying to avoid. The wait gives up and lets the unload run.
+         */
+        @Test
+        fun `stop is bounded when a plugin declines to be cancelled`() =
+            runBlocking {
+                sandbox.start()
+                val stubborn = CompletableDeferred<Unit>()
+                val release = CompletableDeferred<Unit>()
+                sandbox.sandboxScope.launch {
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        stubborn.complete(Unit)
+                        release.await()
+                    }
+                }
+                stubborn.await()
+
+                try {
+                    val elapsed = measureTimeMillis { assertTrue(sandbox.stop().isSuccess) }
+
+                    // Waited at all - a stop that returned instantly would mean the join was
+                    // skipped, which is the bug this pins.
+                    assertTrue(elapsed >= WAITED_AT_ALL_MS, "stop() did not wait at all: ${elapsed}ms")
+                    // ...and gave up. Generous: the join's bound and the pool teardown's own
+                    // bound sit end to end, and this only has to fail an UNbounded wait.
+                    assertTrue(elapsed < BOUNDED_CEILING_MS, "stop() was not bounded: ${elapsed}ms")
+                } finally {
+                    release.complete(Unit)
+                }
+            }
+
+        /** Giving up is never silent: the line has to name the plugin and the bound it spent. */
+        @Test
+        fun `an expired teardown wait is logged with the plugin and the timeout`() =
+            runBlocking {
+                val warnings = CopyOnWriteArrayList<LogEntry>()
+                val listener = LogListener { entry -> if (entry.level == LogLevel.WARN) warnings += entry }
+                val restoreLevel = BossLogger.globalLevel
+                BossLogger.setGlobalLevel(LogLevel.WARN)
+                BossLogger.addListener(listener)
+
+                val release = CompletableDeferred<Unit>()
+                try {
+                    sandbox.start()
+                    val stubborn = CompletableDeferred<Unit>()
+                    sandbox.sandboxScope.launch {
+                        withContext(NonCancellable + Dispatchers.IO) {
+                            stubborn.complete(Unit)
+                            release.await()
+                        }
+                    }
+                    stubborn.await()
+
+                    sandbox.stop()
+                } finally {
+                    release.complete(Unit)
+                    BossLogger.removeListener(listener)
+                    BossLogger.setGlobalLevel(restoreLevel)
+                }
+
+                val expiry =
+                    assertNotNull(
+                        warnings.firstOrNull { it.message.contains("still unwinding") },
+                        "a teardown wait that expired said nothing: $warnings",
+                    )
+                assertEquals("test-plugin", expiry.data?.get("pluginId"))
+                val reportedTimeout =
+                    assertNotNull(
+                        expiry.data
+                            ?.get("timeoutMs")
+                            ?.toString()
+                            ?.toLongOrNull(),
+                        "the warning did not report the bound it spent",
+                    )
+                assertTrue(reportedTimeout > 0, "the warning reported a nonsense bound: $reportedTimeout")
+            }
+
+        /**
+         * The asymmetry is deliberate. A restart swaps the pool underneath the SAME classloader,
+         * so a coroutine that resumes late still resolves its own classes and there is nothing for
+         * a wait to protect. Waiting here would only make every watchdog restart pay a stubborn
+         * plugin's full bound, inside the RESTARTING state the sandbox must not stop in.
+         */
+        @Test
+        fun `restart does not wait on a plugin that declines to be cancelled`() =
+            runBlocking {
+                sandbox.start()
+                val stubborn = CompletableDeferred<Unit>()
+                val release = CompletableDeferred<Unit>()
+                sandbox.sandboxScope.launch {
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        stubborn.complete(Unit)
+                        release.await()
+                    }
+                }
+                stubborn.await()
+
+                try {
+                    val elapsed = measureTimeMillis { assertTrue(sandbox.restart().isSuccess) }
+
+                    assertTrue(
+                        elapsed < WAITED_AT_ALL_MS,
+                        "restart waited on a cancelled coroutine it had no reason to: ${elapsed}ms",
+                    )
+                    assertEquals(SandboxState.RUNNING, sandbox.state.value)
+                } finally {
+                    release.complete(Unit)
+                }
+            }
+    }
+
+    @Nested
+    inner class RetiredScopeTeardownTests {
+        @Test
+        fun `stop waits for cleanup belonging to a previous restart generation`() =
+            runBlocking {
+                sandbox.start()
+                val parked = CompletableDeferred<Unit>()
+                val cleanupStarted = CompletableDeferred<Unit>()
+                val release = CompletableDeferred<Unit>()
+                val oldJob =
+                    sandbox.sandboxScope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                parked.complete(Unit)
+                                awaitCancellation()
+                            }
+                        } finally {
+                            withContext(NonCancellable + Dispatchers.IO) {
+                                cleanupStarted.complete(Unit)
+                                release.await()
+                            }
+                        }
+                    }
+                parked.await()
+                sandbox.restart().getOrThrow()
+                cleanupStarted.await()
+                val stopped = CompletableDeferred<Unit>()
+                val stopping =
+                    launch(Dispatchers.Default) {
+                        sandbox.stop().getOrThrow()
+                        stopped.complete(Unit)
+                    }
+                try {
+                    assertEquals(null, withTimeoutOrNull(300) { stopped.await() })
+                    release.complete(Unit)
+                    assertNotNull(withTimeoutOrNull(5_000) { stopped.await() })
+                    assertTrue(oldJob.isCompleted)
+                } finally {
+                    release.complete(Unit)
+                    stopping.join()
+                    oldJob.join()
+                }
+            }
+
+        @Test
+        fun `cancelled caller still drains sandbox cleanup`() =
+            runBlocking {
+                sandbox.start()
+                val parked = CompletableDeferred<Unit>()
+                val unwound = AtomicBoolean(false)
+                val worker =
+                    sandbox.sandboxScope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                parked.complete(Unit)
+                                awaitCancellation()
+                            }
+                        } finally {
+                            withContext(NonCancellable + Dispatchers.IO) {
+                                delay(300)
+                                unwound.set(true)
+                            }
+                        }
+                    }
+                parked.await()
+                val caller =
+                    launch {
+                        coroutineContext[kotlinx.coroutines.Job]!!.cancel()
+                        sandbox.stop()
+                        assertTrue(unwound.get(), "cancelled unload caller skipped the teardown wait")
+                    }
+                caller.join()
+                worker.join()
+            }
+    }
+
     @Nested
     inner class CancelledRestartTests {
         /**
@@ -448,5 +699,27 @@ class InProcessPluginSandboxTest {
 
             assertEquals(null, PluginException.getPluginId(error))
         }
+    }
+
+    private companion object {
+        /**
+         * How long a cancelled coroutine's cleanup takes in
+         * [TeardownJoinTests]. Long enough that a `stop()` which did not wait
+         * for it returns first, short enough to keep the test quick.
+         */
+        const val UNWIND_MS = 300L
+
+        /**
+         * Above scheduling noise and below the sandbox's own teardown bound, so
+         * it reads as "a wait happened" from either side: a `stop()` that
+         * waited exceeds it, a `restart()` that correctly did not stays under.
+         */
+        const val WAITED_AT_ALL_MS = 1_000L
+
+        /**
+         * Only has to fail an UNBOUNDED wait, so it sits well clear of the
+         * teardown's own bounds rather than measuring them.
+         */
+        const val BOUNDED_CEILING_MS = 10_000L
     }
 }
