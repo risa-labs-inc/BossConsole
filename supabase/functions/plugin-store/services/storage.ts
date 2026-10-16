@@ -6,10 +6,12 @@ const BUCKET_NAME = 'plugin-jars'
  * Normalize storage URLs to be accessible from outside Docker network.
  * Replaces internal Docker hostnames (kong:8000) with the public Supabase URL.
  */
-function normalizeStorageUrl(url: string): string {
+export function normalizeStorageUrl(url: string): string {
   // Get the public host port from environment (set by local Supabase)
   const hostPort = Deno.env.get("SUPABASE_INTERNAL_HOST_PORT") || "54321"
-  const publicUrl = `http://127.0.0.1:${hostPort}`
+  // Local stacks only: where clients reach this stack when it is not 127.0.0.1 (e.g. a test cluster
+  // behind TLS). Production URLs never match the internal hosts below, so this never applies there.
+  const publicUrl = (Deno.env.get("PLUGIN_STORE_PUBLIC_URL") || `http://127.0.0.1:${hostPort}`).replace(/\/+$/, "")
 
   // Replace internal Docker hostnames with public URL
   // kong:8000 is the internal API gateway in local Supabase
