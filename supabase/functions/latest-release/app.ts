@@ -82,6 +82,7 @@ interface ReleaseRow {
   channel: string
   prerelease: boolean
   release_notes: string
+  min_os?: Record<string, string>
   assets: ReleaseAsset[]
   published_at: string
 }
@@ -298,6 +299,7 @@ app.get("/", async (c) => {
     prerelease: release.prerelease,
     published_at: release.published_at,
     release_notes: release.release_notes,
+    min_os: release.min_os ?? {},
     assets: release.assets,
   }, 200, { "Cache-Control": "no-store" })
 })
