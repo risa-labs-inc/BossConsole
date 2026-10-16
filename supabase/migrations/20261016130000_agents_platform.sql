@@ -1,10 +1,10 @@
 -- ============================================================================
 -- Agents platform: business-owned Fluck agents served at <slug>.bossconsole.ai
 -- ============================================================================
--- Org admins (public.is_org_admin) manage their own agents. status and the live_* pointers
--- move only through the definer RPCs below (column privileges deny direct writes). Platform
--- admin = public.is_user_admin(auth.uid()). Pods reach bundles/jars via signed URLs minted by
--- the provisioner (service role); the buckets have no storage policies, so they are deny-all.
+-- Org admins (public.is_org_admin) manage their own agents. status and live_version move only
+-- through the definer RPCs below (column privileges deny direct writes). Platform admin =
+-- public.is_user_admin(auth.uid()). The persona and engine live in the adapter plugin published
+-- to the plugin store; the console records the live store version through publish_agent.
 -- ============================================================================
 
 CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA extensions;
@@ -40,28 +40,15 @@ CREATE TABLE IF NOT EXISTS public.agents (
         CHECK (signup_policy->>'mode' IN ('open', 'domain', 'invite')),
     allowed_connectors   text[],
     allowed_tools        text[],
-    live_persona_version int,
+    -- Id of the agent's adapter plugin in the plugin store; set once by the org admin at creation.
+    plugin_id            text UNIQUE
+        CHECK (plugin_id ~ '^ai\.rever\.boss\.plugin\.dynamic\.agent\.[a-z][a-z0-9.]*$'),
+    live_version         text,
     created_by           uuid REFERENCES auth.users(id) ON DELETE SET NULL,
     created_at           timestamptz NOT NULL DEFAULT now(),
     updated_at           timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_agents_org ON public.agents (org_id);
-
-CREATE TABLE IF NOT EXISTS public.agent_persona_versions (
-    agent_id    uuid NOT NULL REFERENCES public.agents(id) ON DELETE CASCADE,
-    version     int NOT NULL CHECK (version > 0),
-    -- Signed by the provisioner with the service role, so the path is pinned to this row's own bundle.
-    bundle_path text NOT NULL
-        CHECK (bundle_path = 'agent-bundles/' || agent_id::text || '/persona-' || version::text || '.zip'),
-    sha256      text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
-    created_by  uuid REFERENCES auth.users(id) ON DELETE SET NULL,
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (agent_id, version)
-);
-
-ALTER TABLE public.agents
-    ADD CONSTRAINT agents_live_persona_fk FOREIGN KEY (id, live_persona_version)
-        REFERENCES public.agent_persona_versions(agent_id, version) MATCH SIMPLE;
 
 CREATE TABLE IF NOT EXISTS public.agent_installs (
     user_id     uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -94,6 +81,9 @@ BEGIN
         IF EXISTS (SELECT 1 FROM public.agent_reserved_slugs r WHERE r.slug = NEW.slug) THEN
             RAISE EXCEPTION 'slug_reserved' USING ERRCODE = 'P0001';
         END IF;
+    END IF;
+    IF TG_OP = 'UPDATE' AND OLD.plugin_id IS NOT NULL AND NEW.plugin_id IS DISTINCT FROM OLD.plugin_id THEN
+        RAISE EXCEPTION 'plugin_id_immutable' USING ERRCODE = 'P0001';
     END IF;
     NEW.updated_at := now();
     RETURN NEW;
@@ -129,26 +119,20 @@ GRANT EXECUTE ON FUNCTION public.is_agent_org_admin(uuid) TO authenticated, serv
 -- Grants and RLS. Table-level grants are revoked first: default privileges hand anon and
 -- authenticated everything on new tables. status/live_* have no column grant for clients.
 -- ----------------------------------------------------------------------------
-REVOKE ALL ON public.agents, public.agent_persona_versions,
-    public.agent_installs, public.agent_invites, public.agent_reserved_slugs,
+REVOKE ALL ON public.agents, public.agent_installs, public.agent_invites, public.agent_reserved_slugs,
     public.platform_flags FROM PUBLIC, anon, authenticated;
-GRANT ALL ON public.agents, public.agent_persona_versions,
-    public.agent_installs, public.agent_invites, public.agent_reserved_slugs,
+GRANT ALL ON public.agents, public.agent_installs, public.agent_invites, public.agent_reserved_slugs,
     public.platform_flags TO service_role;
 
 GRANT SELECT ON public.agents TO authenticated;
-GRANT INSERT (slug, org_id, name, brand, model, signup_policy, allowed_connectors, allowed_tools, created_by)
+GRANT INSERT (slug, org_id, name, brand, model, signup_policy, allowed_connectors, allowed_tools, plugin_id, created_by)
     ON public.agents TO authenticated;
 GRANT UPDATE (name, brand, model, signup_policy, allowed_connectors, allowed_tools)
     ON public.agents TO authenticated;
-GRANT SELECT ON public.agent_persona_versions TO authenticated;
-GRANT INSERT (agent_id, version, bundle_path, sha256, created_by)
-    ON public.agent_persona_versions TO authenticated;
 GRANT SELECT, INSERT, DELETE ON public.agent_invites TO authenticated;
 GRANT SELECT ON public.agent_installs TO authenticated;
 
 ALTER TABLE public.agents ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.agent_persona_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_installs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_invites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_reserved_slugs ENABLE ROW LEVEL SECURITY;
@@ -165,14 +149,6 @@ DROP POLICY IF EXISTS "agents org admin update" ON public.agents;
 CREATE POLICY "agents org admin update" ON public.agents
     FOR UPDATE TO authenticated
     USING (public.is_org_admin(org_id)) WITH CHECK (public.is_org_admin(org_id));
-
-DROP POLICY IF EXISTS "agent_persona_versions admin select" ON public.agent_persona_versions;
-CREATE POLICY "agent_persona_versions admin select" ON public.agent_persona_versions
-    FOR SELECT TO authenticated USING (public.is_agent_org_admin(agent_id));
-DROP POLICY IF EXISTS "agent_persona_versions admin insert" ON public.agent_persona_versions;
-CREATE POLICY "agent_persona_versions admin insert" ON public.agent_persona_versions
-    FOR INSERT TO authenticated
-    WITH CHECK (public.is_agent_org_admin(agent_id) AND created_by = (SELECT auth.uid()));
 
 DROP POLICY IF EXISTS "agent_invites admin all" ON public.agent_invites;
 CREATE POLICY "agent_invites admin all" ON public.agent_invites
@@ -191,7 +167,7 @@ COMMENT ON COLUMN public.agents.brand IS
 -- Public login-page view: owner-rights (not security_invoker) so anon sees live rows only.
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE VIEW public.agent_public WITH (security_barrier = true) AS
-    SELECT a.slug, a.name, a.brand, a.signup_policy->>'mode' AS signup_mode, a.status
+    SELECT a.slug, a.name, a.brand, a.signup_policy->>'mode' AS signup_mode, a.status, a.plugin_id
     FROM public.agents a
     WHERE a.status = 'live';
 REVOKE ALL ON public.agent_public FROM PUBLIC, anon, authenticated;
@@ -200,7 +176,7 @@ GRANT SELECT ON public.agent_public TO anon, authenticated, service_role;
 -- ----------------------------------------------------------------------------
 -- RPCs
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.publish_agent(p_agent_id uuid, p_persona_version int)
+CREATE OR REPLACE FUNCTION public.publish_agent(p_agent_id uuid, p_version text)
 RETURNS public.agent_status LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
     a public.agents%ROWTYPE;
@@ -216,14 +192,16 @@ BEGIN
     IF a.status = 'suspended' THEN
         RAISE EXCEPTION 'agent_suspended' USING ERRCODE = 'P0001';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM public.agent_persona_versions v
-                   WHERE v.agent_id = p_agent_id AND v.version = p_persona_version) THEN
-        RAISE EXCEPTION 'persona_version_not_found' USING ERRCODE = 'P0001';
+    IF p_version IS NULL OR p_version !~ '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$' THEN
+        RAISE EXCEPTION 'invalid_version' USING ERRCODE = 'P0001';
+    END IF;
+    IF a.plugin_id IS NULL THEN
+        RAISE EXCEPTION 'plugin_id_not_set' USING ERRCODE = 'P0001';
     END IF;
     new_status := CASE WHEN COALESCE((SELECT f.value = 'true'::jsonb FROM public.platform_flags f
                                       WHERE f.key = 'agent_creation_open'), false)
                        THEN 'live' ELSE 'pending_review' END;
-    UPDATE public.agents SET live_persona_version = p_persona_version, status = new_status
+    UPDATE public.agents SET live_version = p_version, status = new_status
         WHERE id = p_agent_id;
     RETURN new_status;
 END;
@@ -290,24 +268,23 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.publish_agent(uuid, int), public.review_agent(uuid, boolean),
+REVOKE ALL ON FUNCTION public.publish_agent(uuid, text), public.review_agent(uuid, boolean),
     public.suspend_agent(uuid),
     public.agent_can_join(text, text) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.publish_agent(uuid, int), public.review_agent(uuid, boolean),
+GRANT EXECUTE ON FUNCTION public.publish_agent(uuid, text), public.review_agent(uuid, boolean),
     public.suspend_agent(uuid) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.agent_can_join(text, text) TO anon, authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
--- Buckets: agent-bundles is private (admin policies below; pods use signed URLs); agent-brand is public
+-- Bucket: agent-brand is public (logos)
 -- ----------------------------------------------------------------------------
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types) VALUES
-    ('agent-bundles', 'agent-bundles', false, NULL, NULL),
     ('agent-brand', 'agent-brand', true, 2 * 1024 * 1024,
      ARRAY['image/png', 'image/jpeg', 'image/svg+xml', 'image/webp'])
 ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public,
     file_size_limit = EXCLUDED.file_size_limit, allowed_mime_types = EXCLUDED.allowed_mime_types;
 
--- Folder rule shared by agent-brand and agent-bundles: the first path segment is an agent id
+-- Folder rule for agent-brand: the first path segment is an agent id
 -- whose org the caller administers. agent-brand is public, so reads need no policy there.
 CREATE OR REPLACE FUNCTION public.is_agent_folder_admin(p_name text) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
@@ -329,13 +306,6 @@ DROP POLICY IF EXISTS "agent-brand admin delete" ON storage.objects;
 CREATE POLICY "agent-brand admin delete" ON storage.objects FOR DELETE TO authenticated
     USING (bucket_id = 'agent-brand' AND public.is_agent_folder_admin(name));
 
--- agent-bundles: admins add (immutable versions: no UPDATE/DELETE) and read back their agent's bundles.
-DROP POLICY IF EXISTS "agent-bundles admin insert" ON storage.objects;
-CREATE POLICY "agent-bundles admin insert" ON storage.objects FOR INSERT TO authenticated
-    WITH CHECK (bucket_id = 'agent-bundles' AND public.is_agent_folder_admin(name));
-DROP POLICY IF EXISTS "agent-bundles admin select" ON storage.objects;
-CREATE POLICY "agent-bundles admin select" ON storage.objects FOR SELECT TO authenticated
-    USING (bucket_id = 'agent-bundles' AND public.is_agent_folder_admin(name));
 
 -- ----------------------------------------------------------------------------
 -- platform_flags: flags hold no secrets, so every signed-in user may read them (the console
@@ -349,38 +319,6 @@ DROP POLICY IF EXISTS "platform_flags admin update" ON public.platform_flags;
 CREATE POLICY "platform_flags admin update" ON public.platform_flags FOR UPDATE TO authenticated
     USING (public.is_user_admin((SELECT auth.uid())))
     WITH CHECK (public.is_user_admin((SELECT auth.uid())));
-
--- ----------------------------------------------------------------------------
--- Persona versions are gapless: next_persona_version for the console, trigger as the guard.
--- ----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.next_persona_version(p_agent_id uuid) RETURNS int
-    LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
-BEGIN
-    IF NOT public.is_agent_org_admin(p_agent_id) THEN
-        RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
-    END IF;
-    RETURN COALESCE((SELECT max(v.version) FROM public.agent_persona_versions v
-                     WHERE v.agent_id = p_agent_id), 0) + 1;
-END;
-$$;
-REVOKE ALL ON FUNCTION public.next_persona_version(uuid) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.next_persona_version(uuid) TO authenticated, service_role;
-
-CREATE OR REPLACE FUNCTION public.agent_persona_versions_guard() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
-BEGIN
-    -- Serialise concurrent inserts for one agent so two tabs cannot both take the same number.
-    PERFORM 1 FROM public.agents a WHERE a.id = NEW.agent_id FOR UPDATE;
-    IF NEW.version <> COALESCE((SELECT max(v.version) FROM public.agent_persona_versions v
-                                WHERE v.agent_id = NEW.agent_id), 0) + 1 THEN
-        RAISE EXCEPTION 'version_not_next' USING ERRCODE = 'P0001';
-    END IF;
-    RETURN NEW;
-END;
-$$;
-DROP TRIGGER IF EXISTS agent_persona_versions_guard_on_insert ON public.agent_persona_versions;
-CREATE TRIGGER agent_persona_versions_guard_on_insert BEFORE INSERT ON public.agent_persona_versions
-    FOR EACH ROW EXECUTE FUNCTION public.agent_persona_versions_guard();
 
 -- ----------------------------------------------------------------------------
 -- Platform-admin review queue
@@ -428,15 +366,11 @@ $$;
 REVOKE ALL ON FUNCTION public.is_agents_provisioner() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.is_agents_provisioner() TO authenticated, service_role;
 
--- Read-only on agents and persona versions; read/write (never delete) on installs; read on bundles.
+-- Read-only on agents; read/write (never delete) on installs.
 -- Table SELECT grants for authenticated already exist above; these policies widen the rows only.
 DROP POLICY IF EXISTS "agents provisioner select" ON public.agents;
 CREATE POLICY "agents provisioner select" ON public.agents
     FOR SELECT TO authenticated USING (public.is_agents_provisioner());
-DROP POLICY IF EXISTS "agent_persona_versions provisioner select" ON public.agent_persona_versions;
-CREATE POLICY "agent_persona_versions provisioner select" ON public.agent_persona_versions
-    FOR SELECT TO authenticated USING (public.is_agents_provisioner());
-
 GRANT INSERT (user_id, agent_id, instance_id, port, data_dir, state, detail)
     ON public.agent_installs TO authenticated;
 GRANT UPDATE (user_id, agent_id, instance_id, port, data_dir, state, detail)
@@ -451,7 +385,3 @@ DROP POLICY IF EXISTS "agent_installs provisioner update" ON public.agent_instal
 CREATE POLICY "agent_installs provisioner update" ON public.agent_installs
     FOR UPDATE TO authenticated
     USING (public.is_agents_provisioner()) WITH CHECK (public.is_agents_provisioner());
-
-DROP POLICY IF EXISTS "agent-bundles provisioner select" ON storage.objects;
-CREATE POLICY "agent-bundles provisioner select" ON storage.objects FOR SELECT TO authenticated
-    USING (bucket_id = 'agent-bundles' AND public.is_agents_provisioner());
