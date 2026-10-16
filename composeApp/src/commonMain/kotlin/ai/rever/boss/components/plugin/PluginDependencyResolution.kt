@@ -161,11 +161,10 @@ object PluginDependencyResolution {
      * the thing a user would want to know at install time - but they are flagged so the
      * prompt can be a suggestion rather than a warning.
      *
-     * **Presence is by id only.** `PluginDependency.version` is ignored, so a plugin needing
-     * 2.x is satisfied by 1.x being installed. That matches the one other reader of these
-     * declarations (`DynamicPluginManager.checkCanUnload`); resolving version ranges would be a
-     * different feature, and a prompt that offered to "install" something already present at
-     * the wrong version could not do anything useful about it anyway.
+     * This advisory prompt checks presence by id. Version compatibility is enforced separately
+     * by `DynamicPluginManager` before activation and before replacing a running consumer's
+     * dependency. An incompatible installed version fails with its required range and installed
+     * version; the presence dialog does not automatically upgrade it.
      */
     fun missingFor(
         manifest: PluginManifest,
@@ -350,9 +349,8 @@ object PluginDependencyResolution {
      * the same shape as the optional case above, and the reason shown would name a plugin the
      * user had already turned off.
      *
-     * **Presence is by id only.** `PluginDependency.version` is ignored, matching [missingFor]:
-     * a dependent needing 2.x is "satisfied" by 1.x here too, so this never refuses an unload
-     * over a version range it has no way to act on.
+     * Unloading removes every version, so the veto is by id rather than a version range.
+     * Installing and activating plugins enforce version ranges separately in `DynamicPluginManager`.
      *
      * @param isDisabled whether a dependent is switched off; the host asks its `_pluginStates`.
      *   Deliberately **has no default**, so a new call site has to answer rather than silently

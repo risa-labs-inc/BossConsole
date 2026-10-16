@@ -197,6 +197,38 @@ class DynamicPluginManager(
         )
     }
 
+    private fun requireDependencyVersions(
+        manifest: PluginManifest,
+        activating: Boolean = true,
+    ) {
+        val installed =
+            pluginLoader
+                .getLoadedPlugins()
+                .associate { it.manifest.pluginId to it.manifest.version }
+                .toMutableMap()
+        pluginLoader.currentApiVersion?.let { installed[ai.rever.boss.plugin.loader.ApiClassLoader.API_PLUGIN_ID] = it }
+        if (activating) PluginDependencyVersions.requireCompatible(manifest, installed)
+
+        // An incoming dependency must also preserve the ranges of running consumers.
+        // Disabled and access-hidden consumers do not veto updates; they are checked on activation.
+        val proposed = installed + (manifest.pluginId to manifest.version)
+        for (dependent in _pluginStates.value.values) {
+            if (dependent.manifest.pluginId != manifest.pluginId &&
+                dependent.enabled && dependent.state == PluginState.LOADED
+            ) {
+                PluginDependencyVersions.requireCompatible(dependent.manifest, proposed)
+            }
+        }
+    }
+
+    private fun registerWithDependencies(
+        loadedPlugin: LoadedPlugin,
+        context: PluginContext,
+    ) {
+        requireDependencyVersions(loadedPlugin.manifest)
+        loadedPlugin.instance.register(context)
+    }
+
     /**
      * Tracks registrations by plugin for cleanup.
      */
@@ -987,6 +1019,11 @@ class DynamicPluginManager(
                         ),
                     )
 
+                    val incomingManifest =
+                        ai.rever.boss.plugin.loader.PluginManifestReader
+                            .readFromJar(jarPath)
+                    requireDependencyVersions(incomingManifest, activating = enabled && canAccess(incomingManifest))
+
                     // Load the plugin
                     val loadResult = pluginLoader.loadPlugin(jarPath)
                     if (loadResult.isFailure) {
@@ -1082,7 +1119,7 @@ class DynamicPluginManager(
 
                             if (shouldActivate) {
                                 try {
-                                    loadedPlugin.instance.register(trackingContext)
+                                    registerWithDependencies(loadedPlugin, trackingContext)
                                 } catch (e: Exception) {
                                     logger.error(
                                         LogCategory.SYSTEM,
@@ -1214,7 +1251,7 @@ class DynamicPluginManager(
                             // anything it kicks off from there inherits the scope, so a fault on
                             // this path names the plugin even when its own frames are gone.
                             PluginExecutionBoundary.runAttributed(manifest.pluginId) {
-                                loadedPlugin.instance.register(trackingContext)
+                                registerWithDependencies(loadedPlugin, trackingContext)
                             }
                         } catch (e: Throwable) {
                             // Catch Throwable (not just Exception) because binary incompatibility
@@ -1743,7 +1780,7 @@ class DynamicPluginManager(
                     // catch below turns it into Result.failure - which an earlier
                     // version of this comment claimed and was wrong about.
                     PluginExecutionBoundary.runAttributed(pluginId) {
-                        loadedPlugin.instance.register(trackingContext)
+                        registerWithDependencies(loadedPlugin, trackingContext)
                     }
 
                     // Enable sandbox
@@ -1917,7 +1954,7 @@ class DynamicPluginManager(
                     PluginExecutionBoundary.runAttributed(pluginId) {
                         reregisterInPlace(
                             unregisterAll = { trackingContext.unregisterAll() },
-                            register = { loadedPlugin.instance.register(trackingContext) },
+                            register = { registerWithDependencies(loadedPlugin, trackingContext) },
                         )
                     }
                 outcome
@@ -2718,7 +2755,7 @@ class DynamicPluginManager(
                 if (trackingContext != null && loadedPlugin != null) {
                     oopLifecycleLock(pluginId).withLock {
                         try {
-                            loadedPlugin.instance.register(trackingContext)
+                            registerWithDependencies(loadedPlugin, trackingContext)
                             if (info.manifest.isolationMode == "out-of-process") {
                                 outOfProcessSpawner
                                     ?.spawn(info.manifest, info.jarPath)
