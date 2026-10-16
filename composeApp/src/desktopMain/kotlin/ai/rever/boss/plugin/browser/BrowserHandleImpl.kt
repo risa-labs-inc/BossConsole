@@ -196,6 +196,7 @@ internal data class ContextMenuTarget(
     val srcUrl: String = "",
     val linkUrl: String = "",
     val selectedText: String = "",
+    // Retain frame metadata to pin frame-independent mapping in regression tests.
     val isMainFrame: Boolean = true,
 )
 
@@ -211,7 +212,7 @@ internal data class ContextMenuTarget(
  * info. This allows plugins to route context-menu editor actions precisely to the exact frame
  * that was clicked, rather than relying on global/focused frame inference that can be stale.
  *
- * Two deliberate narrowings:
+ * Target mapping rules:
  * - [BrowserContextMenuInfo.hasImage] is only reported together with a resolvable
  *   [BrowserContextMenuInfo.imageUrl]. Chromium reports MEDIA_IMAGE for targets that have
  *   no source URL (`<canvas>`, CSS backgrounds, some inline SVG), and every image action a
@@ -219,14 +220,9 @@ internal data class ContextMenuTarget(
  *   An inline image's source is a `data:` URL of the whole encoded image, which this is
  *   the first path to hand to plugins; past [MAX_INLINE_IMAGE_URL_LENGTH] it counts as no
  *   address rather than shipping megabytes of base64 into every menu.
- * - Editable is reported for the main frame only. The reason used to be the credential fill,
- *   which ran against `browser.mainFrame()` and `document.activeElement`, so offering it for a
- *   field inside an iframe could write a password into whatever main-frame input happened to be
- *   focused. That method is gone and filling now belongs to the caller, which targets an element
- *   it already identified - so this gate is no longer holding a fill path back.
- *   `cut`/`copySelection`/`paste`/`selectAll` go through [BrowserHandleImpl.editorCommand], which
- *   targets `focusedFrame()` and would work inside an iframe already; this gate is what stops the
- *   menu offering them there, and widening it is now a self-contained change.
+ * - Editability follows Chromium's clicked target in any frame. Credential filling belongs
+ *   to the caller that identified the element. Menu editor commands use the captured
+ *   [BrowserMenuContext], so a stale focused frame cannot redirect an iframe action.
  */
 internal fun ContextMenuTarget.toContextMenuInfo(
     pageUrl: String,
@@ -257,7 +253,7 @@ internal fun ContextMenuTarget.toContextMenuInfo(
     return BrowserContextMenuInfo(
         linkUrl = linkUrl.takeIf { it.isNotBlank() },
         selectedText = selectedText.takeIf { it.isNotBlank() },
-        isEditable = isMainFrame && contentTypes.contains(ContextMenuContentType.EDITABLE),
+        isEditable = contentTypes.contains(ContextMenuContentType.EDITABLE),
         hasVideo = isVideo,
         hasImage = isImage,
         imageUrl = source.takeIf { isImage },
@@ -1938,7 +1934,7 @@ internal class BrowserHandleImpl(
 
                 // Secret auto-fill needs details Chromium does not report (field name, id,
                 // autocomplete). That means a JS round-trip, so it happens off this thread —
-                // against the main frame, which isEditable is gated to.
+                // against the clicked frame supplied by params.frame(). This also covers editable iframes.
                 contextMenuScope.launch {
                     // Raced rather than wrapped: executeJavaScript blocks, so a cancelled
                     // withTimeoutOrNull would have no suspension point to land on and could
