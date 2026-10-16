@@ -1,6 +1,7 @@
 package ai.rever.boss.service.filesystem
 
 import ai.rever.boss.ipc.auth.ProcessAuthority
+import ai.rever.boss.ipc.proto.services.DeleteFileRequest
 import ai.rever.boss.ipc.proto.services.FileSystemServiceGrpcKt
 import ai.rever.boss.ipc.proto.services.ReadFileRequest
 import ai.rever.boss.ipc.proto.services.ScanDirectoryRequest
@@ -26,6 +27,7 @@ import java.io.RandomAccessFile
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
+import java.nio.file.Paths
 import java.nio.file.StandardWatchEventKinds.ENTRY_CREATE
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.Executors
@@ -310,6 +312,10 @@ class FileSystemLimitsTest {
     @Test
     fun `watch emits real changes and releases its slot after collection`() =
         runBlocking {
+            // Capture the process-wide baseline up front: cancellation reaches the server
+            // asynchronously, so wait for these slots back before the next suite in the same
+            // JVM starts counting on them.
+            val streamsBefore = WatchResources.streams.availablePermits()
             repeat(34) { iteration ->
                 withTimeout(10_000) {
                     val received =
@@ -325,6 +331,72 @@ class FileSystemLimitsTest {
                     assertTrue(received.await().path.startsWith(root.toString()))
                 }
             }
+            withTimeout(30_000) {
+                while (WatchResources.streams.availablePermits() != streamsBefore) delay(10)
+            }
+        }
+
+    @Test
+    fun `a symlinked parent directory does not carry the denylist past its resolved location`() =
+        runBlocking {
+            if (Platform.isWindows()) return@runBlocking
+            val linked = Files.createDirectory(root.resolve("linked"))
+            Files.createSymbolicLink(linked.resolve("into-etc"), Paths.get("/etc"))
+            val failure =
+                assertFailsWith<StatusException> {
+                    stub.readFile(
+                        ReadFileRequest
+                            .newBuilder()
+                            .setPath(linked.resolve("into-etc").resolve("hostname").toString())
+                            .setMaxBytes(8)
+                            .build(),
+                    )
+                }
+            // The message names the resolved location, not the requested one.
+            assertEquals(
+                Status.Code.PERMISSION_DENIED,
+                failure.status.code,
+                "denied paths must remain distinguishable over the wire",
+            )
+            // The canonical spelling of the denylist is the alias that matters on macOS, where
+            // `/etc` is `/private/etc`; elsewhere the symlink into it dangles and the scan simply
+            // reports a missing directory.
+            if (Platform.isMac()) {
+                val traversal = Files.createSymbolicLink(root.resolve("private-etc"), Paths.get("/private/etc"))
+                assertFailsWith<StatusException> {
+                    stub.scanDirectory(
+                        ScanDirectoryRequest.newBuilder().setPath(traversal.toString()).build(),
+                    )
+                }
+            }
+            assertFalse(Files.exists(root.resolve("linked").resolve("passwd")), "nothing was read or written")
+        }
+
+    @Test
+    fun `a refused delete is reported instead of returning Empty as success`() =
+        runBlocking {
+            val occupied = Files.createDirectory(root.resolve("occupied"))
+            Files.writeString(occupied.resolve("child"), "preserved")
+            val failure =
+                assertFailsWith<StatusException> {
+                    stub.deleteFile(
+                        DeleteFileRequest
+                            .newBuilder()
+                            .setPath(occupied.toString())
+                            .build(),
+                    )
+                }
+            assertEquals(Status.Code.FAILED_PRECONDITION, failure.status.code)
+            assertTrue(
+                failure.status.description
+                    .orEmpty()
+                    .contains("occupied"),
+                "got: ${failure.status.description}",
+            )
+            val deleted = root.resolve("deletable")
+            Files.writeString(deleted, "content")
+            stub.deleteFile(DeleteFileRequest.newBuilder().setPath(deleted.toString()).build())
+            assertFalse(Files.exists(deleted), "a successful delete still returns Empty")
         }
 }
 

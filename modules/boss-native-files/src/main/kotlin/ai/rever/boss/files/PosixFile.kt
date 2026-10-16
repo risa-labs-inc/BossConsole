@@ -2,12 +2,14 @@ package ai.rever.boss.files
 
 import java.nio.ByteBuffer
 import java.nio.channels.ClosedChannelException
+import java.nio.channels.NonReadableChannelException
 import java.nio.channels.NonWritableChannelException
 import java.nio.channels.SeekableByteChannel
 
 internal class PosixFile(
     private val descriptor: Int,
     private val writable: Boolean,
+    private val readable: Boolean = true,
 ) : SeekableByteChannel {
     private var closed = false
     private var offset = 0L
@@ -29,6 +31,7 @@ internal class PosixFile(
 
     @Synchronized
     override fun read(dst: ByteBuffer): Int {
+        if (!readable) throw NonReadableChannelException()
         if (!dst.hasRemaining()) return 0
         val buffer = ByteArray(minOf(dst.remaining(), 65_536))
         val arguments = arrayOf<Any>(handle(), buffer, buffer.size.toLong(), offset)

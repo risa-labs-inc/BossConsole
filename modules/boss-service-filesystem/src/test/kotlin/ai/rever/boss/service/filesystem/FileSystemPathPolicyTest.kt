@@ -23,15 +23,15 @@ class FileSystemPathPolicyTest {
             val allowed = Files.createDirectory(root.resolve("blocked-neighbor"))
             val policy = FileSystemPathPolicy(listOf(blocked))
             policy.validate(allowed.resolve("new.txt").toString())
-            assertDenied { policy.validate(blocked.resolve("missing/child").toString()) }
+            assertPermissionDenied { policy.resolve(blocked.resolve("missing/child")) }
             val link = root.resolve("alias")
             try {
                 Files.createSymbolicLink(link, blocked)
             } catch (e: Exception) {
                 assumeNoException("Symbolic links unavailable", e)
             }
-            assertDenied { policy.validate(link.resolve("new/child").toString()) }
-            assertDenied { policy.validate(link.toString()) }
+            assertPermissionDenied { policy.resolve(link.resolve("new/child")) }
+            assertPermissionDenied { policy.resolve(link) }
         } finally {
             Files.walk(root).use { paths ->
                 paths.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
@@ -44,6 +44,19 @@ class FileSystemPathPolicyTest {
         val policy = FileSystemPathPolicy(emptyList())
         assertDenied { policy.validate("/tmp/../blocked") }
         assertDenied { policy.validate("bad\u0000path") }
+    }
+
+    @Test
+    fun `ordinary dotted names are not parent traversal`() {
+        val root = Files.createTempDirectory("path-policy-dots-").toRealPath()
+        try {
+            val policy = FileSystemPathPolicy(emptyList())
+            for (name in listOf("report..txt", "..hidden", "a..b")) {
+                policy.validate(root.resolve(name).toString())
+            }
+        } finally {
+            root.toFile().deleteRecursively()
+        }
     }
 
     @Test
@@ -71,5 +84,10 @@ class FileSystemPathPolicyTest {
     private fun assertDenied(block: () -> Unit) {
         val failure = assertFailsWith<StatusRuntimeException>(block = block)
         assertEquals(Status.Code.INVALID_ARGUMENT, failure.status.code)
+    }
+
+    private fun assertPermissionDenied(block: () -> Unit) {
+        val failure = assertFailsWith<FilePathDeniedException>(block = block)
+        assertEquals(Status.Code.PERMISSION_DENIED, failure.status.code)
     }
 }
