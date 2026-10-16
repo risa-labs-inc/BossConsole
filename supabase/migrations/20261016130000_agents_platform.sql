@@ -317,8 +317,8 @@ DROP POLICY IF EXISTS "platform_flags read" ON public.platform_flags;
 CREATE POLICY "platform_flags read" ON public.platform_flags FOR SELECT TO authenticated USING (true);
 DROP POLICY IF EXISTS "platform_flags admin update" ON public.platform_flags;
 CREATE POLICY "platform_flags admin update" ON public.platform_flags FOR UPDATE TO authenticated
-    USING (public.is_user_admin((SELECT auth.uid())))
-    WITH CHECK (public.is_user_admin((SELECT auth.uid())));
+    USING ((SELECT public.is_user_admin((SELECT auth.uid()))))
+    WITH CHECK ((SELECT public.is_user_admin((SELECT auth.uid()))));
 
 -- ----------------------------------------------------------------------------
 -- Platform-admin review queue
@@ -370,18 +370,69 @@ GRANT EXECUTE ON FUNCTION public.is_agents_provisioner() TO authenticated, servi
 -- Table SELECT grants for authenticated already exist above; these policies widen the rows only.
 DROP POLICY IF EXISTS "agents provisioner select" ON public.agents;
 CREATE POLICY "agents provisioner select" ON public.agents
-    FOR SELECT TO authenticated USING (public.is_agents_provisioner());
+    FOR SELECT TO authenticated USING ((SELECT public.is_agents_provisioner()));
 GRANT INSERT (user_id, agent_id, instance_id, port, data_dir, state, detail)
     ON public.agent_installs TO authenticated;
 GRANT UPDATE (user_id, agent_id, instance_id, port, data_dir, state, detail)
     ON public.agent_installs TO authenticated;
 DROP POLICY IF EXISTS "agent_installs provisioner select" ON public.agent_installs;
 CREATE POLICY "agent_installs provisioner select" ON public.agent_installs
-    FOR SELECT TO authenticated USING (public.is_agents_provisioner());
+    FOR SELECT TO authenticated USING ((SELECT public.is_agents_provisioner()));
 DROP POLICY IF EXISTS "agent_installs provisioner insert" ON public.agent_installs;
 CREATE POLICY "agent_installs provisioner insert" ON public.agent_installs
-    FOR INSERT TO authenticated WITH CHECK (public.is_agents_provisioner());
+    FOR INSERT TO authenticated WITH CHECK ((SELECT public.is_agents_provisioner()));
 DROP POLICY IF EXISTS "agent_installs provisioner update" ON public.agent_installs;
 CREATE POLICY "agent_installs provisioner update" ON public.agent_installs
     FOR UPDATE TO authenticated
-    USING (public.is_agents_provisioner()) WITH CHECK (public.is_agents_provisioner());
+    USING ((SELECT public.is_agents_provisioner())) WITH CHECK ((SELECT public.is_agents_provisioner()));
+
+-- ----------------------------------------------------------------------------
+-- Install gate: an agent's users are not org members, yet its adapter is an org plugin. Redefines
+-- user_can_install_plugin (20260805000000) with every existing clause unchanged plus one: the caller
+-- has a non-removed install of a LIVE agent whose plugin_id is this plugin's. Installs are written
+-- only by the provisioner after agent_can_join admitted the person. Listing/search
+-- (user_can_view_plugin_row) is deliberately NOT widened.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION "public"."user_can_install_plugin"(
+    "p_user_id" "uuid",
+    "p_plugin_id" "uuid"
+) RETURNS boolean
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM public.plugins p
+        WHERE p.id = p_plugin_id
+          AND (
+              public.user_can_view_plugin_row(
+                  p_user_id, p.visibility, p.org_id, p.author_id, p.published)
+              OR (
+                  p.visibility = 'unlisted'
+                  AND p.published
+                  AND p_user_id IS NOT NULL
+                  AND public.user_is_org_member(p_user_id, p.org_id)
+              )
+              OR (
+                  p.published
+                  AND p_user_id IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM public.agents a
+                      JOIN public.agent_installs i ON i.agent_id = a.id
+                      WHERE a.plugin_id = p.plugin_id
+                        AND a.status = 'live'
+                        AND i.user_id = p_user_id
+                        AND i.state <> 'removed'
+                  )
+              )
+          )
+    );
+$$;
+
+REVOKE EXECUTE ON FUNCTION "public"."user_can_install_plugin"("uuid", "uuid")
+    FROM PUBLIC, "anon", "authenticated";
+GRANT  EXECUTE ON FUNCTION "public"."user_can_install_plugin"("uuid", "uuid") TO "service_role";
+
+COMMENT ON FUNCTION "public"."user_can_install_plugin"("uuid", "uuid") IS
+'Whether a user may download a plugin. Wider than user_can_view_plugin by two cases: an unlisted published plugin is installable by any member of its organisation, and a published plugin that is the adapter of a live agent is installable by anyone holding a non-removed install of that agent. Called by the plugin-store download route with the service-role client.';

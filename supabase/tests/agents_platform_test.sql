@@ -1,7 +1,7 @@
 -- pgTAP tests for the agents platform (20261016130000).
 -- Run with: supabase test db
 begin;
-select plan(82);
+select plan(92);
 
 insert into auth.users (id, email, email_confirmed_at) values
     ('a9000000-0000-4000-8000-00000000000a', 'owner-a@agents.test', now()),
@@ -222,6 +222,38 @@ reset role;
 set local role anon;
 select throws_ok($q$ select public.is_agents_provisioner() $q$, '42501', null, 'anon cannot call is_agents_provisioner');
 reset role;
+
+-- ---- install gate for agent adapters ----
+reset role;
+select set_config('request.jwt.claims', '{"role":"service_role"}', true);
+update public.agents set status = 'live' where slug = 'acme';
+insert into public.plugins (author_id, author_name, plugin_id, display_name, type, api_version, published, visibility, org_id)
+values ('a9000000-0000-4000-8000-00000000000a', 'A', 'ai.rever.boss.plugin.dynamic.agent.acme', 'Acme', 'panel', '1.0', true, 'org', (select id from org where k = 'a')),
+       ('a9000000-0000-4000-8000-00000000000b', 'B', 'ai.rever.boss.plugin.dynamic.agent.globex', 'Globex', 'panel', '1.0', true, 'org', (select id from org where k = 'b'));
+insert into public.agents (slug, org_id, name, plugin_id, created_by)
+values ('globexagent', (select id from org where k = 'b'), 'Globex', 'ai.rever.boss.plugin.dynamic.agent.globex', 'a9000000-0000-4000-8000-00000000000b');
+update public.agents set status = 'live' where slug = 'globexagent';
+create temp table pl (k text primary key, id uuid);
+insert into pl select 'acme', id from public.plugins where plugin_id = 'ai.rever.boss.plugin.dynamic.agent.acme';
+insert into pl select 'globex', id from public.plugins where plugin_id = 'ai.rever.boss.plugin.dynamic.agent.globex';
+select is(public.user_can_install_plugin('a9000000-0000-4000-8000-00000000000c', (select id from pl where k = 'acme')), true, 'a non-member with an install of the live agent can install its adapter');
+select is(public.user_can_install_plugin('a9000000-0000-4000-8000-00000000000e', (select id from pl where k = 'acme')), false, 'a non-member without an install cannot');
+select is(public.user_can_install_plugin('a9000000-0000-4000-8000-00000000000a', (select id from pl where k = 'acme')), true, 'an org member is unaffected');
+select is(public.user_can_install_plugin('a9000000-0000-4000-8000-00000000000c', (select id from pl where k = 'globex')), false, 'an install of another agent does not open another org''s adapter');
+select is(public.user_can_install_plugin(null, (select id from pl where k = 'acme')), false, 'anonymous cannot install an org adapter');
+select is(public.user_can_view_plugin('a9000000-0000-4000-8000-00000000000c', (select id from pl where k = 'acme')), false, 'listing visibility is not widened');
+update public.agent_installs set state = 'removed' where instance_id = 'inst-c';
+select is(public.user_can_install_plugin('a9000000-0000-4000-8000-00000000000c', (select id from pl where k = 'acme')), false, 'a removed install no longer admits');
+update public.agent_installs set state = 'running' where instance_id = 'inst-c';
+update public.agents set status = 'suspended' where slug = 'acme';
+select is(public.user_can_install_plugin('a9000000-0000-4000-8000-00000000000c', (select id from pl where k = 'acme')), false, 'a suspended agent no longer admits');
+update public.agents set status = 'live' where slug = 'acme';
+update public.plugins set published = false where plugin_id = 'ai.rever.boss.plugin.dynamic.agent.acme';
+select is(public.user_can_install_plugin('a9000000-0000-4000-8000-00000000000c', (select id from pl where k = 'acme')), false, 'an unpublished adapter is not installable through an install');
+update public.plugins set published = true where plugin_id = 'ai.rever.boss.plugin.dynamic.agent.acme';
+select ok(not has_function_privilege('authenticated', 'public.user_can_install_plugin(uuid,uuid)', 'EXECUTE')
+      and not has_function_privilege('anon', 'public.user_can_install_plugin(uuid,uuid)', 'EXECUTE')
+      and has_function_privilege('service_role', 'public.user_can_install_plugin(uuid,uuid)', 'EXECUTE'), 'the gate stays service-role only');
 
 -- nothing in the agents surface leans on the service role
 select is((select count(*)::int from pg_proc p where p.pronamespace = 'public'::regnamespace
