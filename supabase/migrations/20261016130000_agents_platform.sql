@@ -50,7 +50,9 @@ CREATE INDEX IF NOT EXISTS idx_agents_org ON public.agents (org_id);
 CREATE TABLE IF NOT EXISTS public.agent_persona_versions (
     agent_id    uuid NOT NULL REFERENCES public.agents(id) ON DELETE CASCADE,
     version     int NOT NULL CHECK (version > 0),
-    bundle_path text NOT NULL,
+    -- Signed by the provisioner with the service role, so the path is pinned to this row's own bundle.
+    bundle_path text NOT NULL
+        CHECK (bundle_path = 'agent-bundles/' || agent_id::text || '/persona-' || version::text || '.zip'),
     sha256      text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
     created_by  uuid REFERENCES auth.users(id) ON DELETE SET NULL,
     created_at  timestamptz NOT NULL DEFAULT now(),

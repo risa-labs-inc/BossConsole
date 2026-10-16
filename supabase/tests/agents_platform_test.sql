@@ -1,7 +1,7 @@
 -- pgTAP tests for the agents platform (20261016130000).
 -- Run with: supabase test db
 begin;
-select plan(62);
+select plan(66);
 
 insert into auth.users (id, email, email_confirmed_at) values
     ('a9000000-0000-4000-8000-00000000000a', 'owner-a@agents.test', now()),
@@ -68,7 +68,7 @@ create temp table ag (id uuid);
 grant all on ag to authenticated;
 insert into ag select id from public.agents where slug = 'acme';
 select lives_ok($q$ insert into public.agent_persona_versions (agent_id, version, bundle_path, sha256, created_by)
-    values ((select id from ag), 1, 'p1.zip', repeat('a', 64), 'a9000000-0000-4000-8000-00000000000a') $q$, 'admin adds a persona version');
+    values ((select id from ag), 1, 'agent-bundles/' || (select id::text from ag) || '/persona-1.zip', repeat('a', 64), 'a9000000-0000-4000-8000-00000000000a') $q$, 'admin adds a persona version');
 select is(public.publish_agent((select id from ag), 1)::text, 'pending_review', 'publish -> pending_review while the flag is false');
 
 reset role;
@@ -172,11 +172,19 @@ select is((select value from public.platform_flags where key = 'agent_creation_o
 select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
 select is(public.next_persona_version((select id from ag)), 2, 'next_persona_version = max + 1');
 select throws_ok($q$ insert into public.agent_persona_versions (agent_id, version, bundle_path, sha256, created_by)
-    values ((select id from ag), 3, 'p3.zip', repeat('b', 64), 'a9000000-0000-4000-8000-00000000000a') $q$, 'P0001', 'version_not_next', 'a skipped version is rejected');
+    values ((select id from ag), 3, 'agent-bundles/' || (select id::text from ag) || '/persona-3.zip', repeat('b', 64), 'a9000000-0000-4000-8000-00000000000a') $q$, 'P0001', 'version_not_next', 'a skipped version is rejected');
 select throws_ok($q$ insert into public.agent_persona_versions (agent_id, version, bundle_path, sha256, created_by)
-    values ((select id from ag), 1, 'p1b.zip', repeat('b', 64), 'a9000000-0000-4000-8000-00000000000a') $q$, 'P0001', 'version_not_next', 'a duplicate version is rejected');
+    values ((select id from ag), 1, 'agent-bundles/' || (select id::text from ag) || '/persona-1.zip', repeat('b', 64), 'a9000000-0000-4000-8000-00000000000a') $q$, 'P0001', 'version_not_next', 'a duplicate version is rejected');
+select throws_ok($q$ insert into public.agent_persona_versions (agent_id, version, bundle_path, sha256, created_by)
+    values ((select id from ag), 2, 'agent-bundles/a9000000-0000-4000-8000-0000000000ee/persona-2.zip', repeat('b', 64), 'a9000000-0000-4000-8000-00000000000a') $q$, '23514', null, 'a path under another agent is refused');
+select throws_ok($q$ insert into public.agent_persona_versions (agent_id, version, bundle_path, sha256, created_by)
+    values ((select id from ag), 2, 'agent-brand/' || (select id::text from ag) || '/persona-2.zip', repeat('b', 64), 'a9000000-0000-4000-8000-00000000000a') $q$, '23514', null, 'a path in another bucket is refused');
+select throws_ok($q$ insert into public.agent_persona_versions (agent_id, version, bundle_path, sha256, created_by)
+    values ((select id from ag), 2, 'agent-bundles/' || (select id::text from ag) || '/persona-9.zip', repeat('b', 64), 'a9000000-0000-4000-8000-00000000000a') $q$, '23514', null, 'a path with the wrong version number is refused');
+select throws_ok($q$ insert into public.agent_persona_versions (agent_id, version, bundle_path, sha256, created_by)
+    values ((select id from ag), 2, upper('agent-bundles/' || (select id::text from ag) || '/persona-2.zip'), repeat('b', 64), 'a9000000-0000-4000-8000-00000000000a') $q$, '23514', null, 'the path match is case-sensitive');
 select lives_ok($q$ insert into public.agent_persona_versions (agent_id, version, bundle_path, sha256, created_by)
-    values ((select id from ag), 2, 'p2.zip', repeat('b', 64), 'a9000000-0000-4000-8000-00000000000a') $q$, 'the next version is accepted');
+    values ((select id from ag), 2, 'agent-bundles/' || (select id::text from ag) || '/persona-2.zip', repeat('b', 64), 'a9000000-0000-4000-8000-00000000000a') $q$, 'the next version is accepted');
 select is(public.next_persona_version((select id from ag)), 3, 'the counter advances');
 select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000c', true);
 select throws_ok($q$ select public.next_persona_version((select id from ag)) $q$, '42501', null, 'non-admin cannot ask for the next version');
