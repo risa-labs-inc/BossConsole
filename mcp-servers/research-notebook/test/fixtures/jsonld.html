@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>JSON-LD Backed Article</title>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "name": "Research Weekly"
+      },
+      {
+        "@type": "ScholarlyArticle",
+        "headline": "Graph Neural Networks in Practice",
+        "author": [
+          { "@type": "Person", "name": "Grace Hopper" },
+          { "@type": "Person", "name": "Katherine Johnson" }
+        ],
+        "datePublished": "2021-11-02",
+        "publisher": { "@type": "Organization", "name": "Research Weekly" },
+        "description": "An applied survey of GNNs."
+      }
+    ]
+  }
+  </script>
+</head>
+<body><h1>Ignored</h1></body>
+</html>
