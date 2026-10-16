@@ -402,3 +402,56 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.list_pending_agents() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.list_pending_agents() TO authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- Provisioner bot: the provisioner signs in as an ordinary auth user (no service-role key) whose
+-- access is exactly what the policies below grant. The bot user is created BY HAND (Auth admin) and
+-- its id inserted once into agents_service_accounts by the service role / a migration; there is
+-- no client path to that table.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.agents_service_accounts (
+    user_id    uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    purpose    text NOT NULL CHECK (purpose = 'provisioner'),
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.agents_service_accounts ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.agents_service_accounts FROM PUBLIC, anon, authenticated;
+GRANT ALL ON public.agents_service_accounts TO service_role;
+
+CREATE OR REPLACE FUNCTION public.is_agents_provisioner() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.agents_service_accounts s
+        WHERE s.user_id = auth.uid() AND s.purpose = 'provisioner'
+    );
+$$;
+REVOKE ALL ON FUNCTION public.is_agents_provisioner() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.is_agents_provisioner() TO authenticated, service_role;
+
+-- Read-only on agents and persona versions; read/write (never delete) on installs; read on bundles.
+-- Table SELECT grants for authenticated already exist above; these policies widen the rows only.
+DROP POLICY IF EXISTS "agents provisioner select" ON public.agents;
+CREATE POLICY "agents provisioner select" ON public.agents
+    FOR SELECT TO authenticated USING (public.is_agents_provisioner());
+DROP POLICY IF EXISTS "agent_persona_versions provisioner select" ON public.agent_persona_versions;
+CREATE POLICY "agent_persona_versions provisioner select" ON public.agent_persona_versions
+    FOR SELECT TO authenticated USING (public.is_agents_provisioner());
+
+GRANT INSERT (user_id, agent_id, instance_id, port, data_dir, state, detail)
+    ON public.agent_installs TO authenticated;
+GRANT UPDATE (user_id, agent_id, instance_id, port, data_dir, state, detail)
+    ON public.agent_installs TO authenticated;
+DROP POLICY IF EXISTS "agent_installs provisioner select" ON public.agent_installs;
+CREATE POLICY "agent_installs provisioner select" ON public.agent_installs
+    FOR SELECT TO authenticated USING (public.is_agents_provisioner());
+DROP POLICY IF EXISTS "agent_installs provisioner insert" ON public.agent_installs;
+CREATE POLICY "agent_installs provisioner insert" ON public.agent_installs
+    FOR INSERT TO authenticated WITH CHECK (public.is_agents_provisioner());
+DROP POLICY IF EXISTS "agent_installs provisioner update" ON public.agent_installs;
+CREATE POLICY "agent_installs provisioner update" ON public.agent_installs
+    FOR UPDATE TO authenticated
+    USING (public.is_agents_provisioner()) WITH CHECK (public.is_agents_provisioner());
+
+DROP POLICY IF EXISTS "agent-bundles provisioner select" ON storage.objects;
+CREATE POLICY "agent-bundles provisioner select" ON storage.objects FOR SELECT TO authenticated
+    USING (bucket_id = 'agent-bundles' AND public.is_agents_provisioner());

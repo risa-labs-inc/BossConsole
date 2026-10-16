@@ -1,7 +1,7 @@
 -- pgTAP tests for the agents platform (20261016130000).
 -- Run with: supabase test db
 begin;
-select plan(66);
+select plan(94);
 
 insert into auth.users (id, email, email_confirmed_at) values
     ('a9000000-0000-4000-8000-00000000000a', 'owner-a@agents.test', now()),
@@ -136,7 +136,9 @@ insert into public.agent_installs (user_id, agent_id, instance_id, port, data_di
 set local role authenticated;
 select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000c', true);
 select is((select array_agg(instance_id) from public.agent_installs), array['inst-c'], 'user reads only their own install');
-select throws_ok($q$ update public.agent_installs set state = 'failed' $q$, '42501', null, 'user cannot write installs');
+select is_empty($q$ update public.agent_installs set state = 'failed' returning 1 $q$, 'user cannot update installs');
+select throws_ok($q$ insert into public.agent_installs (user_id, agent_id, instance_id, port, data_dir, state)
+    values ('a9000000-0000-4000-8000-00000000000c', (select id from ag), 'inst-x', 8899, 'agents/acme', 'pending') $q$, '42501', null, 'user cannot insert installs');
 
 -- ---- brand bucket ----
 set local role authenticated;
@@ -201,6 +203,62 @@ reset role;
 set local role anon;
 select throws_ok($q$ select * from public.list_pending_agents() $q$, '42501', null, 'anon cannot list the review queue');
 reset role;
+
+-- ---- provisioner bot ----
+reset role;
+select set_config('request.jwt.claims', '{"role":"service_role"}', true);
+insert into auth.users (id, email, email_confirmed_at) values ('a9000000-0000-4000-8000-00000000000f', 'bot@agents.test', now());
+insert into public.agents_service_accounts (user_id, purpose) values ('a9000000-0000-4000-8000-00000000000f', 'provisioner');
+insert into storage.objects (bucket_id, name) values ('app-releases', 'other/x.bin');
+select throws_ok($q$ insert into public.agents_service_accounts values (gen_random_uuid(), 'other') $q$, '23514', null, 'only the provisioner purpose is allowed');
+select ok(not has_table_privilege('authenticated', 'public.agents_service_accounts', 'SELECT')
+      and not has_table_privilege('anon', 'public.agents_service_accounts', 'SELECT')
+      and not has_function_privilege('anon', 'public.is_agents_provisioner()', 'EXECUTE')
+      and not has_table_privilege('authenticated', 'public.agent_installs', 'DELETE'), 'no client grants on the accounts table, no anon, no install delete');
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000f', true);
+select is(public.is_agents_provisioner(), true, 'the bot is the provisioner');
+select ok((select count(*) from public.agents) >= 1, 'bot reads all agents');
+select ok((select count(*) from public.agent_persona_versions) >= 2, 'bot reads all persona versions');
+select ok((select count(*) from public.agent_installs) >= 2, 'bot reads all installs');
+select lives_ok($q$ insert into public.agent_installs (user_id, agent_id, instance_id, port, data_dir, state)
+    values ('a9000000-0000-4000-8000-00000000000a', (select id from ag), 'inst-a', 8812, 'agents/acme', 'pending') $q$, 'bot inserts an install');
+select lives_ok($q$ update public.agent_installs set state = 'running', detail = 'ok' where instance_id = 'inst-a' $q$, 'bot updates an install');
+select is((select state from public.agent_installs where instance_id = 'inst-a'), 'running', 'the bot update landed');
+select ok((select count(*) from storage.objects where bucket_id = 'agent-bundles') >= 2, 'bot reads any agent-bundles object');
+select is((select count(*)::int from storage.objects where bucket_id not in ('agent-bundles')), 0, 'bot reads no other bucket (agent-brand included)');
+select is_empty($q$ update public.agents set name = 'bot' returning 1 $q$, 'bot cannot update agents');
+select throws_ok($q$ insert into public.agent_persona_versions (agent_id, version, bundle_path, sha256, created_by)
+    values ((select id from ag), 3, 'agent-bundles/' || (select id::text from ag) || '/persona-3.zip', repeat('c', 64), 'a9000000-0000-4000-8000-00000000000f') $q$, '42501', null, 'bot cannot insert persona versions');
+select is((select count(*)::int from public.agent_invites), 0, 'bot cannot read agent_invites');
+select throws_ok($q$ insert into public.agent_invites (agent_id, email) values ((select id from ag), 'bot@x.test') $q$, '42501', null, 'bot cannot write agent_invites');
+select is_empty($q$ update public.platform_flags set value = 'true'::jsonb returning 1 $q$, 'bot cannot update platform_flags');
+select throws_ok($q$ delete from public.agent_installs $q$, '42501', null, 'bot cannot delete installs');
+select throws_ok($q$ insert into storage.objects (bucket_id, name) values ('agent-bundles', (select id::text from ag) || '/persona-9.zip') $q$, '42501', null, 'bot cannot write bundles');
+select throws_ok($q$ select * from public.agents_service_accounts $q$, '42501', null, 'bot cannot read the accounts table');
+
+-- normal users
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000b', true);
+select is(public.is_agents_provisioner(), false, 'is_agents_provisioner is false for a normal user');
+select is((select count(*)::int from public.agents), 0, 'org B admin still sees no org A agents');
+select is((select count(*)::int from public.agent_persona_versions), 0, 'org B admin sees no org A persona rows');
+select is((select array_agg(instance_id) from public.agent_installs), array['inst-b'], 'a normal user reads only their own install');
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
+select is(public.is_agents_provisioner(), false, 'is_agents_provisioner is false for an org admin');
+reset role;
+set local role anon;
+select throws_ok($q$ select public.is_agents_provisioner() $q$, '42501', null, 'anon cannot call is_agents_provisioner');
+reset role;
+
+-- nothing in the agents surface leans on the service role
+select is((select count(*)::int from pg_proc p where p.pronamespace = 'public'::regnamespace
+    and (p.proname like 'agent%' or p.proname in ('publish_agent', 'review_agent', 'suspend_agent', 'next_persona_version',
+         'list_pending_agents', 'is_agents_provisioner', 'is_agent_org_admin', 'is_agent_folder_admin'))
+    and p.prosrc ilike '%service_role%'), 0, 'no agents function references service_role');
+select is((select count(*)::int from pg_policies where (schemaname = 'public' and tablename like 'agent%' or tablename = 'platform_flags'
+         or (schemaname = 'storage' and policyname like 'agent-%'))
+    and (qual ilike '%service_role%' or with_check ilike '%service_role%' or 'service_role' = any(roles::text[]))), 0, 'no agents policy references service_role');
 
 select * from finish();
 rollback;
