@@ -12,6 +12,7 @@ This directory contains detailed release notes for each version of BOSS.
 <!-- RELEASE_INDEX_START -->
 | Version | Date | Summary |
 |---------|------|---------|
+| [v9.5.45](v9.5.45.md) | 2026-10-16 | Required plugin dependency version ranges are enforced at activation, updates that would break a running plugin's range are refused, and dependencies load before their consumers at startup (#1898). |
 | [v9.5.44](v9.5.44.md) | 2026-10-13 | The host carries boss-plugin-api 1.0.99 for plugins using AI Gateway prompt caching and the latest Fluck core (#1881). Fixes session import file detection on Windows and release sync after build retries (#1869). |
 | [v9.5.43](v9.5.43.md) | 2026-10-09 | On macOS BOSS stays in the Dock after its last window closes and installs automatic updates while idle (#1844). Smoother collapsed sidebar reveal (#1853), JxBrowser 9.5.3 (#1849) and headless session import (#1833). |
 | [v9.5.42](v9.5.42.md) | 2026-10-07 | Editor saves are staged and atomically replaced, so a failed write can no longer truncate your file (#427). Fixes a macOS maximized-window startup freeze and keeps tab favicons readable in both themes (#1843). |
