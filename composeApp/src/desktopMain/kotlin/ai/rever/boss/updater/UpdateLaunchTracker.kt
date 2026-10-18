@@ -1,5 +1,6 @@
 package ai.rever.boss.updater
 
+import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.AppVersion
 import ai.rever.boss.utils.Version
 import ai.rever.boss.utils.logging.BossLogger
@@ -76,7 +77,7 @@ internal class UpdateLaunchTracker(
                     .digest(installation.toByteArray(Charsets.UTF_8))
                     .take(12)
                     .joinToString("") { "%02x".format(it) }
-            return UpdateLaunchTracker(File(System.getProperty("user.home"), ".boss/updater/launch-versions/$id.json"))
+            return UpdateLaunchTracker(BossDirectories.resolve("updater/launch-versions/$id.json"))
         }
     }
 }

@@ -169,9 +169,8 @@ object BossLogger {
      * default-on was raised on #394 and not yet answered, and off is the reading that cannot
      * surprise anyone's disk. Flipping this is the whole change to make it default-on.
      *
-     * Note for the flip: defaultLogFilePath() is `~/.boss/logs/boss.log` and does not follow
-     * BossDirectories' dev-mode switch to `~/.boss_debug`, so until that is reconciled a dev
-     * run with the default on would write into the production data directory.
+     * [defaultLogFilePath] follows the same production-versus-development root selection as the
+     * host without introducing a runtime dependency from this published logging library.
      */
     private const val FILE_LOGGING_ON_BY_DEFAULT = false
     private val recentLogs = ArrayDeque<LogEntry>(MAX_LOG_ENTRIES)
@@ -247,8 +246,29 @@ object BossLogger {
                 ?.let { name -> LogLevel.entries.find { it.name.equals(name, ignoreCase = true) } }
         }
 
+    internal fun stateRootDirectory(
+        userHome: String,
+        propertyDevMode: String?,
+        environmentDevMode: String?,
+    ): File {
+        val devMode = isTruthy(propertyDevMode) || isTruthy(environmentDevMode)
+        return File(userHome, if (devMode) ".boss_debug" else ".boss")
+    }
+
+    private fun isTruthy(value: String?): Boolean =
+        value?.trim()?.let { it.equals("true", ignoreCase = true) || it == "1" || it.equals("yes", ignoreCase = true) }
+            ?: false
+
     /** Where the host log goes when nothing names a path and file logging is on by default. */
-    fun defaultLogFilePath(): String = File(System.getProperty("user.home"), ".boss/logs/boss.log").path
+    fun defaultLogFilePath(): String =
+        File(
+            stateRootDirectory(
+                userHome = System.getProperty("user.home"),
+                propertyDevMode = System.getProperty("boss.dev.mode"),
+                environmentDevMode = System.getenv("BOSS_DEV_MODE"),
+            ),
+            "logs/boss.log",
+        ).path
 
     /**
      * Configure the logger from environment or system properties.
@@ -270,8 +290,8 @@ object BossLogger {
         // whatever that makes of "" - shadowing both the system property and the dev-mode default
         // with a level nobody chose. Same rule as ConfigLoader.resolve.
         val isDevMode =
-            System.getProperty("boss.dev.mode")?.toBoolean() == true ||
-                System.getenv("BOSS_DEV_MODE")?.toBoolean() == true
+            isTruthy(System.getProperty("boss.dev.mode")) ||
+                isTruthy(System.getenv("BOSS_DEV_MODE"))
         globalLevel =
             resolveLevel(
                 envLevel = System.getenv("BOSS_LOG_LEVEL"),

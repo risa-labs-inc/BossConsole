@@ -2,6 +2,7 @@ package ai.rever.boss.service.workspace
 
 import ai.rever.boss.ipc.proto.Empty
 import ai.rever.boss.ipc.proto.services.*
+import ai.rever.boss.plugin.pathutils.BossDirectories
 import io.grpc.Status
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -34,7 +35,7 @@ import java.util.concurrent.ConcurrentHashMap
  * every mutation and read once at startup.
  */
 class WorkspaceServiceImpl(
-    storageDirectory: File = File(System.getProperty("user.home"), ".boss/workspaces"),
+    storageDirectory: File = BossDirectories.resolve("workspaces"),
 ) : WorkspaceServiceGrpcKt.WorkspaceServiceCoroutineImplBase() {
     private val logger = LoggerFactory.getLogger(WorkspaceServiceImpl::class.java)
 
