@@ -2,6 +2,7 @@ package ai.rever.boss.plugin.loader
 
 import ai.rever.boss.plugin.api.Plugin
 import ai.rever.boss.plugin.api.PluginContext
+import ai.rever.boss.plugin.api.PluginUnloadDeferredException
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.util.jar.JarEntry
@@ -10,6 +11,8 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
@@ -122,6 +125,28 @@ class PluginUnloadOrderingTest {
             assertEquals(ClassLoaderState.UNLOADED, classLoader.state)
         }
 
+    @Test
+    fun `deferred disposal retains active loader and permits a later unload retry`() =
+        runBlocking<Unit> {
+            val loader = DynamicPluginLoaderImpl()
+            loader.loadPlugin(probePluginJar()).getOrThrow()
+            val classLoader = assertNotNull(loader.getClassLoaderManager().getClassLoader(FIXTURE_ID))
+            System.setProperty(FAIL_PROPERTY, "defer")
+            assertIs<PluginUnloadDeferredException>(loader.unloadPlugin(FIXTURE_ID).exceptionOrNull())
+            assertNotNull(loader.getPlugin(FIXTURE_ID))
+            assertEquals(ClassLoaderState.ACTIVE, classLoader.state)
+            assertEquals(classLoader, loader.getClassLoaderManager().getClassLoader(FIXTURE_ID))
+            assertFailsWith<PluginUnloadDeferredException> { loader.disposeAll() }
+            assertEquals(ClassLoaderState.ACTIVE, classLoader.state)
+            assertFailsWith<IllegalStateException> {
+                loader.swapApiLayer(File(System.getProperty("java.io.tmpdir")))
+            }
+            System.clearProperty(FAIL_PROPERTY)
+            loader.unloadPlugin(FIXTURE_ID).getOrThrow()
+            assertNull(loader.getPlugin(FIXTURE_ID))
+            assertEquals(ClassLoaderState.UNLOADED, classLoader.state)
+        }
+
     private companion object {
         const val FIXTURE_ID = "com.example.unload.ordering"
     }
@@ -159,6 +184,9 @@ class OrderProbePlugin : Plugin {
                 .invoke(loader)
                 .toString()
         System.setProperty(STATE_PROPERTY, state)
+        if (System.getProperty(FAIL_PROPERTY) == "defer") {
+            throw PluginUnloadDeferredException("Work is still draining")
+        }
         if (System.getProperty(FAIL_PROPERTY) == "true") {
             throw NoClassDefFoundError("missing disposal dependency")
         }
