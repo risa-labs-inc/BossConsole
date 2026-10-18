@@ -1,6 +1,7 @@
 package ai.rever.boss.services.auth
 
 import ai.rever.boss.components.auth.AuthDeepLink
+import ai.rever.boss.utils.DefaultHandlerState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -455,6 +456,37 @@ class OAuthSignInFlowTest {
         assertNull(preferredBrowserCommand(OAuthProviderKind.GOOGLE, "Mac OS X", url))
         assertNull(preferredBrowserCommand(OAuthProviderKind.APPLE, "Windows 11", url))
         assertNull(preferredBrowserCommand(OAuthProviderKind.APPLE, "Linux", url))
+    }
+
+    @Test
+    fun `Google uses Safari when default browser cannot open external sign in`() {
+        val url = "https://example.com/authorize?provider=google&redirect_to=boss://auth/callback"
+        listOf(
+            DefaultHandlerState.Ours,
+            DefaultHandlerState.OurEngine,
+            DefaultHandlerState.Other(null),
+            null,
+        ).forEach { handler ->
+            assertTrue(requiresExternalSignInBrowser(handler))
+            assertEquals(
+                listOf("open", "-a", "Safari", url),
+                preferredBrowserCommand(
+                    OAuthProviderKind.GOOGLE,
+                    "Mac OS X",
+                    url,
+                    requiresExternalSignInBrowser(handler),
+                ),
+            )
+        }
+        assertFalse(
+            requiresExternalSignInBrowser(
+                DefaultHandlerState.Other("com.apple.Safari"),
+            ),
+        )
+        assertEquals(
+            listOf("open", "-n", "-a", "Google Chrome", "--args", "--new-window", url),
+            signInBrowserWindowCommands("Mac OS X", url).first(),
+        )
     }
 
     @Test
