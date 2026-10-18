@@ -142,10 +142,11 @@ export function isLiveSessionsRedirect(redirectTo: string | undefined): boolean 
   return !!redirectTo && LIVE_SESSIONS_REDIRECTS.has(redirectTo)
 }
 
-// The fluck-web page (functions/fluck-web, fluck.risaboss.com) is the same web arm under its own
+// The Fluck portals (fluck.ai and fluck.risaboss.com) use the same web arm under their own
 // brand. Same EXACT-match rule and lockstep set: config.toml additional_redirect_urls,
 // fluck-web/utils/config.ts (+ FLUCK_WEB_PUBLIC_BASE_URL), and both email templates' `$fluck`.
 export const FLUCK_WEB_REDIRECTS: ReadonlySet<string> = new Set([
+  "https://fluck.ai/auth",
   "https://fluck.risaboss.com/auth", // vanity host: a Cloudflare Worker proxies it onto the function
   "https://api.risaboss.com/functions/v1/fluck-web/auth",
   "http://127.0.0.1:54321/functions/v1/fluck-web/auth", // local `supabase start` stack

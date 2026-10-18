@@ -12,6 +12,7 @@ This directory contains detailed release notes for each version of BOSS.
 <!-- RELEASE_INDEX_START -->
 | Version | Date | Summary |
 |---------|------|---------|
+| [v9.5.43](v9.5.43.md) | 2026-10-09 | On macOS BOSS stays in the Dock after its last window closes and installs automatic updates while idle (#1844). Smoother collapsed sidebar reveal (#1853), JxBrowser 9.5.3 (#1849) and headless session import (#1833). |
 | [v9.5.42](v9.5.42.md) | 2026-10-07 | Editor saves are staged and atomically replaced, so a failed write can no longer truncate your file (#427). Fixes a macOS maximized-window startup freeze and keeps tab favicons readable in both themes (#1843). |
 | [v9.5.41](v9.5.41.md) | 2026-10-06 | Organisation secrets keep their ownership, management permissions and share attribution when they reach plugins, in process and in KERNEL mode (#554). The IPC contract moves to 1.5.0. |
 | [v9.5.40](v9.5.40.md) | 2026-10-06 | A fresh macOS install no longer crashes on first launch: BOSS restarts itself after the browser engine download, carrying queued links and files across (#1834). The hidden sidebar no longer opens at the window edge in fullscreen. |
