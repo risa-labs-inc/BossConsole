@@ -1,8 +1,11 @@
 package ai.rever.boss.files
 
+import org.junit.Assume.assumeTrue
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
@@ -66,6 +69,7 @@ class NativeDirectoryTest {
     fun `held directory cannot be redirected by replacing its pathname with a link`() {
         val root = Files.createTempDirectory("native-directory-").toRealPath()
         try {
+            assumeSymlinksSupported(root)
             val inside = Files.createDirectory(root.resolve("inside"))
             val outside = Files.createDirectory(root.resolve("outside"))
             Files.writeString(outside.resolve("sentinel"), "unchanged")
@@ -130,6 +134,7 @@ class NativeDirectoryTest {
     fun `links cannot be opened but can be inspected renamed and unlinked`() {
         val root = Files.createTempDirectory("native-directory-").toRealPath()
         try {
+            assumeSymlinksSupported(root)
             val target = Files.writeString(root.resolve("target"), "sentinel")
             Files.createSymbolicLink(root.resolve("link"), target)
             NativeDirectory.open(root).use { directory ->
@@ -145,5 +150,26 @@ class NativeDirectoryTest {
         } finally {
             root.toFile().deleteRecursively()
         }
+    }
+
+    private fun assumeSymlinksSupported(root: Path) {
+        val probe = root.resolve("symlink-support-probe")
+        try {
+            // The target need not exist. A dangling target avoids leaving a directory cycle
+            // behind if cleanup itself fails after the privilege probe succeeds.
+            Files.createSymbolicLink(probe, root.resolve("symlink-probe-target"))
+        } catch (_: UnsupportedOperationException) {
+            assumeTrue("This filesystem does not support symbolic links", false)
+            return
+        } catch (e: IOException) {
+            // Standard Windows users need Developer Mode or SeCreateSymbolicLinkPrivilege.
+            // On POSIX, an IOException indicates a real fixture/environment failure that the
+            // security-sensitive tests must surface rather than silently skip.
+            if (!System.getProperty("os.name").startsWith("Windows")) throw e
+            assumeTrue("Symbolic link creation is not permitted on this Windows host", false)
+            return
+        }
+        // Do not misclassify a cleanup failure as lack of symlink support.
+        Files.delete(probe)
     }
 }

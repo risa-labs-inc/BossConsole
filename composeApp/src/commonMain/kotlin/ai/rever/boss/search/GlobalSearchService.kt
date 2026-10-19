@@ -1,6 +1,7 @@
 package ai.rever.boss.search
 
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
+import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.keymap.model.formatShortcutLabel
@@ -334,8 +335,37 @@ object GlobalSearchService {
      * Only [FluckTabInfo.currentUrl] and [EditorTabInfo.filePath] are populated on the result - a
      * tab of neither type (terminal, diff, …) still matches on title alone, with both left null.
      */
-    private fun searchTabs(query: String): List<SearchResult.TabResult> {
-        val tabs = TopOfMindStateHolder.activeTabs.value
+    private suspend fun snapshotSearchTabs(): List<SearchResult.TabResult> =
+        withContext(Dispatchers.Main) {
+            // The holder is a snapshot - refreshed when the search dialog opens and by the plugin
+            // adapter's ~2s poll - so a tab closed since the last refresh is still listed here, and
+            // returning it offers activation of a tab that no longer exists: a phantom result the
+            // caller acts on and then retries. The registry is live state rather than a snapshot -
+            // a closed window unregisters and a closed tab has no location - so an entry with no
+            // live location must not come back as actionable.
+            TopOfMindStateHolder.activeTabs.value.mapNotNull { tab ->
+                if (SplitViewStateRegistry.getState(tab.windowId)?.findTabLocation(tab.tabInfo.id) == null) {
+                    null
+                } else {
+                    SearchResult.TabResult(
+                        title = tab.tabInfo.title,
+                        tabId = tab.tabInfo.id,
+                        workspaceName = tab.workspaceName,
+                        windowId = tab.windowId,
+                        panelId = tab.panelId,
+                        tabType = tab.tabInfo.typeId.typeId,
+                        url = (tab.tabInfo as? FluckTabInfo)?.currentUrl?.takeIf { it.isNotBlank() },
+                        filePath = (tab.tabInfo as? EditorTabInfo)?.filePath?.takeIf { it.isNotBlank() },
+                        score = 0,
+                        matchRanges = emptyList(),
+                    )
+                }
+            }
+        }
+
+    private suspend fun searchTabs(query: String): List<SearchResult.TabResult> {
+        // Only immutable values cross back to the search dispatcher. Matching stays off Main.
+        val tabs = snapshotSearchTabs()
         if (tabs.isEmpty()) {
             return emptyList()
         }
@@ -344,9 +374,9 @@ object GlobalSearchService {
         val results = mutableListOf<SearchResult.TabResult>()
 
         for (tab in tabs) {
-            val title = tab.tabInfo.title
-            val url = (tab.tabInfo as? FluckTabInfo)?.currentUrl?.takeIf { it.isNotBlank() }
-            val filePath = (tab.tabInfo as? EditorTabInfo)?.filePath?.takeIf { it.isNotBlank() }
+            val title = tab.title
+            val url = tab.url
+            val filePath = tab.filePath
 
             val titleMatch = FuzzyMatcher.match(query, title, title.lowercase())
             val titleScore = titleMatch?.score?.takeIf { it >= MIN_SCORE }
@@ -356,15 +386,7 @@ object GlobalSearchService {
             val bestScore = listOfNotNull(titleScore, urlScore, filePathScore).maxOrNull()
             if (bestScore != null) {
                 results.add(
-                    SearchResult.TabResult(
-                        title = title,
-                        tabId = tab.tabInfo.id,
-                        workspaceName = tab.workspaceName,
-                        windowId = tab.windowId,
-                        panelId = tab.panelId,
-                        tabType = tab.tabInfo.typeId.typeId,
-                        url = url,
-                        filePath = filePath,
+                    tab.copy(
                         score = bestScore + 30, // Bonus for tabs (currently visible)
                         // Only ever highlights the title: a URL/file-path-only hit has nothing in
                         // the title to underline, and TabResultItem never renders these fields' own
@@ -424,52 +446,120 @@ object GlobalSearchService {
 
     /**
      * Convert a PluginSearchResult to a SearchResult.
+     *
+     * Every known category maps to the SearchResult type its rows and activation handler
+     * understand - previously only "bookmarks" produced a result and every other category
+     * silently vanished, so a plugin's file or command hits read as "no results" to whoever
+     * asked. An unknown category, or a known one missing the fields its type needs to be
+     * actionable, is dropped with a WARN naming the value instead.
      */
     private fun convertPluginSearchResult(result: PluginSearchResult): SearchResult? {
-        // Map category string to SearchCategory
-        val category =
-            when (result.category.lowercase()) {
-                "bookmarks" -> SearchCategory.BOOKMARKS
-                "files" -> SearchCategory.FILES
-                "tabs" -> SearchCategory.TABS
-                "run configs", "run_configs" -> SearchCategory.RUN_CONFIGS
-                "commands" -> SearchCategory.COMMANDS
-                else -> SearchCategory.BOOKMARKS // Default to bookmarks for plugin results
-            }
-
-        // Convert match ranges
         val matchRanges = result.matchRanges.map { MatchRange(it.start, it.end) }
-
-        return when (category) {
-            SearchCategory.BOOKMARKS -> {
-                val url =
-                    when (val action = result.action) {
-                        is SearchResultAction.OpenUrl -> action.url
-                        else -> null
-                    }
-                val filePath =
-                    when (val action = result.action) {
-                        is SearchResultAction.OpenFile -> action.path
-                        else -> null
-                    }
-
-                SearchResult.BookmarkResult(
-                    title = result.title,
-                    bookmarkId = result.id,
-                    collectionId = result.metadata["collectionId"] ?: "",
-                    collectionName = result.metadata["collectionName"] ?: result.providerId,
-                    tabType = result.metadata["tabType"] ?: "browser",
-                    url = url,
-                    filePath = filePath,
-                    score = result.score,
-                    matchRanges = matchRanges,
-                )
-            }
-
-            else -> {
-                null
-            } // Other categories handled by dedicated search methods
+        return when (result.category.lowercase()) {
+            "bookmarks" -> pluginBookmarkResult(result, matchRanges)
+            "files" -> pluginFileResult(result, matchRanges)
+            "tabs" -> pluginTabResult(result, matchRanges)
+            "run configs", "run_configs" -> pluginRunConfigResult(result, matchRanges)
+            "commands" -> pluginCommandResult(result)
+            else -> dropPluginResult(result, "unknown category")
         }
+    }
+
+    private fun pluginBookmarkResult(
+        result: PluginSearchResult,
+        matchRanges: List<MatchRange>,
+    ) = SearchResult.BookmarkResult(
+        title = result.title,
+        bookmarkId = result.id,
+        collectionId = result.metadata["collectionId"] ?: "",
+        collectionName = result.metadata["collectionName"] ?: result.providerId,
+        tabType = result.metadata["tabType"] ?: "browser",
+        url = (result.action as? SearchResultAction.OpenUrl)?.url,
+        filePath = (result.action as? SearchResultAction.OpenFile)?.path,
+        score = result.score,
+        matchRanges = matchRanges,
+    )
+
+    /**
+     * A plugin "files" result needs a real path for `onFileSelect` to open; one that names
+     * no file is unactionable, so it is dropped and logged rather than drawn as a dead row.
+     */
+    private fun pluginFileResult(
+        result: PluginSearchResult,
+        matchRanges: List<MatchRange>,
+    ): SearchResult.FileResult? {
+        val path =
+            (result.action as? SearchResultAction.OpenFile)?.path
+                ?: result.metadata["path"]
+                ?: result.metadata["filePath"]
+                ?: return dropPluginResult(result, "a files result with no path")
+        return SearchResult.FileResult(
+            name = result.title,
+            path = path,
+            relativePath = result.metadata["relativePath"] ?: path,
+            score = result.score,
+            matchRanges = matchRanges,
+        )
+    }
+
+    /**
+     * A plugin "tabs" result activates through the host's tab ids, which live in metadata;
+     * a row whose ids do not resolve no-ops on select, which the tab-select handler already logs.
+     */
+    private fun pluginTabResult(
+        result: PluginSearchResult,
+        matchRanges: List<MatchRange>,
+    ) = SearchResult.TabResult(
+        title = result.title,
+        tabId = result.metadata["tabId"] ?: result.id,
+        workspaceName = result.metadata["workspaceName"] ?: result.providerId,
+        windowId = result.metadata["windowId"] ?: "",
+        panelId = result.metadata["panelId"] ?: "",
+        tabType = result.metadata["tabType"] ?: "browser",
+        url = (result.action as? SearchResultAction.OpenUrl)?.url,
+        filePath = (result.action as? SearchResultAction.OpenFile)?.path,
+        score = result.score,
+        matchRanges = matchRanges,
+    )
+
+    private fun pluginRunConfigResult(
+        result: PluginSearchResult,
+        matchRanges: List<MatchRange>,
+    ) = SearchResult.RunConfigResult(
+        name = result.title,
+        configId = result.metadata["configId"] ?: result.id,
+        language = result.metadata["language"] ?: "",
+        filePath =
+            (result.action as? SearchResultAction.OpenFile)?.path
+                ?: result.metadata["filePath"] ?: "",
+        configType = result.metadata["configType"] ?: "",
+        score = result.score,
+        matchRanges = matchRanges,
+    )
+
+    private fun pluginCommandResult(result: PluginSearchResult) =
+        SearchResult.CommandResult(
+            actionId = result.metadata["actionId"] ?: result.id,
+            description = result.subtitle?.takeIf { it.isNotBlank() } ?: result.title,
+            shortcut = result.metadata["shortcut"],
+            score = result.score,
+        )
+
+    private fun dropPluginResult(
+        result: PluginSearchResult,
+        reason: String,
+    ): Nothing? {
+        logger.warn(
+            LogCategory.SYSTEM,
+            "Dropping a plugin search result",
+            mapOf(
+                "providerId" to result.providerId,
+                "category" to result.category,
+                "resultId" to result.id,
+                "reason" to reason,
+            ),
+        )
+        return null
     }
 
     /**

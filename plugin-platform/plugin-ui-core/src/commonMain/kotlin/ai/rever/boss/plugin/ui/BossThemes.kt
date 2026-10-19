@@ -329,8 +329,22 @@ object BossThemes {
             material = darkMaterial(BossNvidiaColorScheme),
         )
 
+    val LIQUID_GLASS_DARK =
+        BLUEPRINT.copy(
+            id = "liquid-glass-dark",
+            name = "Liquid Glass Dark",
+            blurb = "Blue on dark native glass",
+        )
+    val LIQUID_GLASS_LIGHT =
+        BLUEPRINT_LIGHT.copy(
+            id = "liquid-glass-light",
+            name = "Liquid Glass Light",
+            blurb = "Light native glass with blue accents",
+        )
+
     /** All selectable themes, in display order. */
-    val all: List<BossAppTheme> = listOf(BLUEPRINT, BLUEPRINT_LIGHT, OPERATOR, DAYLIGHT, CLEAN, NVIDIA)
+    val all: List<BossAppTheme> =
+        listOf(BLUEPRINT, BLUEPRINT_LIGHT, LIQUID_GLASS_DARK, LIQUID_GLASS_LIGHT, OPERATOR, DAYLIGHT, CLEAN, NVIDIA)
 
     /** The theme [DEFAULT_ID] names — resolved, never restated. */
     private val default: BossAppTheme get() = all.first { it.id == DEFAULT_ID }

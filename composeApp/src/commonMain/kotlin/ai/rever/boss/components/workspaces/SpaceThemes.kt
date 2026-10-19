@@ -99,6 +99,10 @@ val TEMPLATE_SPACE_THEMES: Map<String, String> =
         PredefinedWorkspaces.DUAL_TERMINAL_ID to BossThemes.OPERATOR.id,
         // The Windows default layout, on the Windows default theme.
         PredefinedWorkspaces.BROWSER_ONLY_ID to BossThemes.WINDOWS_DEFAULT_ID,
+        // Persona presets: Data Science Studio, Academic Research, and DevOps & Infrastructure.
+        PredefinedWorkspaces.DATA_SCIENCE_STUDIO_ID to BossThemes.BLUEPRINT.id,
+        PredefinedWorkspaces.ACADEMIC_RESEARCH_ID to BossThemes.BLUEPRINT_LIGHT.id,
+        PredefinedWorkspaces.DEVOPS_INFRA_ID to BossThemes.OPERATOR.id,
     )
 
 /**

@@ -1,11 +1,14 @@
 package ai.rever.boss.plugin.browser
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -100,6 +103,10 @@ object BrowserSettingsManager {
                     BrowserSettings.availableProfiles.addAll(settings.availableProfiles)
                 }
             }
+        } catch (e: SerializationException) {
+            // Decoder messages contain the input document. Browser settings may hold custom
+            // user-agent/profile values and must not copy them into the host log.
+            logger.warn(LogCategory.BROWSER, "Failed to load browser settings", decodeFailure(e))
         } catch (e: Exception) {
             logger.warn(LogCategory.BROWSER, "Failed to load browser settings", error = e)
         }
@@ -124,7 +131,7 @@ object BrowserSettingsManager {
                     )
 
                 val content = json.encodeToString(settings)
-                settingsFile.writeText(content)
+                settingsFile.atomicWriteText(content)
             } catch (e: Exception) {
                 logger.warn(LogCategory.BROWSER, "Failed to save browser settings", error = e)
             }

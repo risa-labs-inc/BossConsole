@@ -29,6 +29,11 @@ class MasteryExecutor(
     /**
      * Execute a mastery definition, streaming progress events.
      *
+     * Persisted definitions are re-read at this seam as trusted data, so a structurally hostile
+     * document — an oversized graph, a blank, duplicate, or INPUT-reserved node id, a dangling
+     * edge endpoint, or a cycle — is refused with a [MasteryProgress.Failed] verdict before a
+     * single capability invocation.
+     *
      * @param mastery The mastery DAG to execute
      * @param input   Initial key-value input (available to nodes as "INPUT.key")
      * @return [Flow] of [MasteryProgress] events emitted in real time
@@ -38,6 +43,13 @@ class MasteryExecutor(
         input: Map<String, String>,
     ): Flow<MasteryProgress> =
         channelFlow {
+            // Load-time re-validation: persisted definitions are re-read here as trusted data,
+            // so a hostile document is refused before a single capability invocation.
+            val violation = structuralViolation(mastery)
+            if (violation != null) {
+                send(MasteryProgress.Failed(violation, mastery.id))
+                return@channelFlow
+            }
             val startTime = System.currentTimeMillis()
             send(MasteryProgress.Started(mastery.id, mastery.nodes.size))
 
@@ -48,17 +60,7 @@ class MasteryExecutor(
 
             try {
                 reserveOutput("INPUT", input, outputBudget)
-                val levels =
-                    TopologicalSort.sort(
-                        nodes = mastery.nodes,
-                        getId = { it.id },
-                        getDeps = { node ->
-                            mastery.edges
-                                .filter { it.toNode == node.id }
-                                .map { it.fromNode }
-                                .filter { it != "INPUT" }
-                        },
-                    )
+                val levels = topoLevels(mastery)
 
                 for (level in levels) {
                     // All nodes in a level are independent — execute in parallel
@@ -84,6 +86,86 @@ class MasteryExecutor(
             } catch (e: NodeExecutionException) {
                 send(MasteryProgress.Failed(e.message ?: "Node execution failed", e.nodeId))
             }
+        }
+
+    /**
+     * Sort nodes into parallelizable levels, sharing one dependency view between pre-flight
+     * validation and execution so the two can never drift apart.
+     */
+    private fun topoLevels(mastery: MasteryDefinition): List<List<MasteryNode>> =
+        TopologicalSort.sort(
+            nodes = mastery.nodes,
+            getId = { it.id },
+            getDeps = { node ->
+                mastery.edges
+                    .filter { it.toNode == node.id }
+                    .map { it.fromNode }
+                    .filter { it != INPUT_NODE_ID }
+            },
+        )
+
+    /**
+     * Structural re-validation at the load/execute seam. Persisted definitions are re-read as
+     * trusted data, so the executor refuses a hostile-but-schema-valid document — an oversized
+     * graph, a blank, duplicate, or INPUT-reserved node id, a dangling edge endpoint, or a
+     * cycle — before emitting [MasteryProgress.Started]. Returns the refusal reason handed to
+     * [MasteryProgress.Failed], or null when the DAG is walkable.
+     */
+    private fun structuralViolation(mastery: MasteryDefinition): String? {
+        val nodeIds = mutableSetOf<String>()
+        var duplicateId: String? = null
+        for (node in mastery.nodes) {
+            if (!nodeIds.add(node.id)) duplicateId = node.id
+        }
+        val danglingSource =
+            mastery.edges
+                .firstOrNull { edge ->
+                    edge.fromNode != INPUT_NODE_ID && edge.fromNode !in nodeIds
+                }?.fromNode
+        val danglingTarget =
+            mastery.edges.firstOrNull { edge -> edge.toNode !in nodeIds }?.toNode
+        return when {
+            mastery.nodes.size > MAX_NODES -> {
+                "Definition exceeds the runtime budget of $MAX_NODES nodes (${mastery.nodes.size})"
+            }
+
+            mastery.edges.size > MAX_EDGES -> {
+                "Definition exceeds the runtime budget of $MAX_EDGES edges (${mastery.edges.size})"
+            }
+
+            mastery.nodes.any { it.id.isBlank() || it.id == INPUT_NODE_ID } -> {
+                "Node id is blank or claims the reserved '$INPUT_NODE_ID' id of the caller's input"
+            }
+
+            duplicateId != null -> {
+                "Duplicate node id '$duplicateId'"
+            }
+
+            danglingSource != null -> {
+                "Edge source '$danglingSource' does not match any node"
+            }
+
+            danglingTarget != null -> {
+                "Edge target '$danglingTarget' does not match any node"
+            }
+
+            else -> {
+                walkViolation(mastery)
+            }
+        }
+    }
+
+    /**
+     * The final structural check: the definition must be a walkable DAG. [TopologicalSort]
+     * refuses cycles with an [IllegalArgumentException]; its message becomes the refusal
+     * reason handed to [MasteryProgress.Failed].
+     */
+    private fun walkViolation(mastery: MasteryDefinition): String? =
+        try {
+            topoLevels(mastery)
+            null
+        } catch (conflict: IllegalArgumentException) {
+            conflict.message ?: "Definition is not a walkable DAG"
         }
 
     private suspend fun executeNode(
@@ -219,6 +301,15 @@ class MasteryExecutor(
             }.associate { it.key to it.value }
     }
 
+    private companion object {
+        /** Runtime budget, mirroring the persistence-side definition caps. */
+        const val MAX_NODES = 128
+        const val MAX_EDGES = 512
+
+        /** Reserved id of the virtual source node that carries the caller's input. */
+        const val INPUT_NODE_ID = "INPUT"
+    }
+
     private class NodeExecutionException(
         val nodeId: String,
         message: String,
@@ -248,6 +339,11 @@ sealed class MasteryProgress {
         val nodeId: String,
         val error: String,
         val willRetry: Boolean,
+    ) : MasteryProgress()
+
+    data class NodeSkipped(
+        val nodeId: String,
+        val reason: String,
     ) : MasteryProgress()
 
     data class Completed(

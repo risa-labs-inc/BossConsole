@@ -1,5 +1,6 @@
 package ai.rever.boss.components.auth.screens
 
+import ai.rever.boss.components.auth.AuthDeepLinks
 import ai.rever.boss.components.bars.horizontal.HorizontalBar
 import ai.rever.boss.layout.BossChrome
 import ai.rever.boss.plugin.ui.BossTheme
@@ -42,15 +43,26 @@ fun PasskeyBrowserScreen(
 
     passkeyBrowserLogger.debug(LogCategory.AUTH, "Displaying WebAuthn page", mapOf("url" to LogSanitizer.maskUriParams(url)))
 
-    // Monitor for passkey session events indicating success
-    val sessionEvent by ai.rever.boss.services.auth.PasskeySessionEventHandler.sessionEvents.collectAsState()
-    LaunchedEffect(sessionEvent) {
-        val event = sessionEvent
-        if (event != null && event.sessionId == sessionId) {
-            passkeyBrowserLogger.info(LogCategory.AUTH, "Passkey session event received, operation successful")
+    // Monitor for the deep link callback of THIS ceremony. The screen completes only the
+    // ceremony that opened it: the callback's session id must be the one that ceremony
+    // minted (sessionId). Anything else — a magic link, another session's callback, a link
+    // that does not parse — is left for BossAppWithAuth's collector to route; this screen
+    // does not act on it.
+    val deepLink by DeepLinkHandler.deepLinkFlow.collectAsState()
+    LaunchedEffect(deepLink) {
+        val link = deepLink
+        if (link != null && AuthDeepLinks.completesPasskeyCeremony(link, sessionId)) {
+            passkeyBrowserLogger.info(
+                LogCategory.AUTH,
+                "Deep link received, passkey ceremony completed",
+                mapOf("sessionId" to LogSanitizer.maskSessionId(sessionId)),
+            )
 
             // Add small delay for visual feedback
             delay(500)
+
+            // Clear the deep link
+            DeepLinkHandler.clearDeepLink()
 
             // Trigger success callback
             onSuccess()

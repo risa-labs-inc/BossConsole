@@ -8,16 +8,22 @@ import ai.rever.boss.utils.logging.LogListener
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.system.measureTimeMillis
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -35,6 +41,9 @@ class BoundedBrowserCallTest {
 
     /** Long enough that a *bounded* wait cannot reach it, short enough to fail a test run fast. */
     private val generous = 10_000L
+
+    /** Coarse clocks can report a deadline reached a hair early; a floor should not flake on that. */
+    private val clockSlackMs = 30L
 
     @Test
     fun `a call that returns is answered with its value`() {
@@ -446,4 +455,111 @@ class BoundedBrowserCallTest {
             call.shutdown()
         }
     }
+
+    // ==================== awaitQuiescent: the "await" half of #300 ====================
+    //
+    // Driven through a lambda rather than a real BoundedBrowserCall: the production caller reads
+    // four executors on a handle that needs a Chromium, and what wants pinning is the waiting
+    // itself - when it answers, what it answers, and that giving up actually stops it.
+
+    @Test
+    fun `an already idle handle is answered without waiting`() =
+        runBlocking {
+            var reads = 0
+            val idle = {
+                reads++
+                false
+            }
+            // A zero deadline is what separates the fast path from the loop: reached through
+            // withTimeoutOrNull, an expired budget answers null and an idle handle would read busy.
+            assertTrue(awaitQuiescent(timeoutMs = 0, pollMs = 50, hasPending = idle))
+            assertEquals(1, reads, "the fast path must answer on one read, without polling")
+        }
+
+    @Test
+    fun `a handle that goes idle is answered once it does, not after the full deadline`() =
+        runBlocking {
+            val pending = AtomicBoolean(true)
+            launch(Dispatchers.Default) {
+                delay(50)
+                pending.set(false)
+            }
+            val elapsed =
+                measureTimeMillis {
+                    assertTrue(awaitQuiescent(timeoutMs = generous, pollMs = 5) { pending.get() })
+                }
+            assertTrue(elapsed < generous / 2, "waited ${elapsed}ms, so it is not observing the change")
+        }
+
+    @Test
+    fun `work that never finishes is given up on at the deadline`() =
+        runBlocking {
+            val elapsed =
+                measureTimeMillis {
+                    assertFalse(awaitQuiescent(timeoutMs = timeout, pollMs = 5) { true })
+                }
+            assertTrue(elapsed >= timeout - clockSlackMs, "gave up after ${elapsed}ms, short of its deadline")
+            assertTrue(elapsed < generous, "the deadline did not bound the wait at all")
+        }
+
+    @Test
+    fun `a caller that gives up stops waiting instead of serving out the deadline`() =
+        runBlocking {
+            val waiter = async(Dispatchers.Default) { awaitQuiescent(timeoutMs = generous, pollMs = 5) { true } }
+            val elapsed = measureTimeMillis { waiter.cancelAndJoin() }
+            assertTrue(elapsed < generous / 2, "cancellation took ${elapsed}ms, so the wait is not cancellable")
+        }
+
+    @Test
+    fun `a nonsense poll interval still terminates at the deadline`() =
+        runBlocking {
+            // A zero or negative interval would make delay() a yield and the loop a spin, so it is
+            // floored. The deadline is what has to hold either way.
+            val elapsed =
+                measureTimeMillis {
+                    assertFalse(awaitQuiescent(timeoutMs = timeout, pollMs = 0) { true })
+                }
+            assertTrue(elapsed >= timeout - clockSlackMs, "gave up after ${elapsed}ms")
+            assertTrue(elapsed < generous, "a floored interval must not change the bound")
+        }
+
+    @Test
+    fun `an already cancelled caller is rejected rather than answered`() =
+        runBlocking {
+            var threw = false
+            val job =
+                launch(Dispatchers.Default) {
+                    cancel()
+                    try {
+                        awaitQuiescent(timeoutMs = generous, pollMs = 5) { false }
+                    } catch (e: CancellationException) {
+                        threw = true
+                        throw e
+                    }
+                }
+            job.join()
+            assertTrue(threw, "an idle handle handed a normal answer to a caller that had given up")
+        }
+
+    @Test
+    fun `a caller asking to wait forever is answered when the handle goes quiet, without spinning`() =
+        runBlocking {
+            // Long.MAX_VALUE is kotlinx's "no timeout", and what Duration.INFINITE.inWholeMilliseconds
+            // gives. Scaled to nanos it wrapped negative, so every remaining-budget read came out
+            // past the deadline and the clamp floored the sleep to 1ms - the answer still arrived,
+            // but the caller who asked to wait longest paid the busiest poll.
+            val pending = AtomicBoolean(true)
+            val reads = AtomicInteger(0)
+            launch(Dispatchers.Default) {
+                delay(400)
+                pending.set(false)
+            }
+            assertTrue(
+                awaitQuiescent(timeoutMs = Long.MAX_VALUE, pollMs = 100) {
+                    reads.incrementAndGet()
+                    pending.get()
+                },
+            )
+            assertTrue(reads.get() < 12, "${reads.get()} reads over 400ms at a 100ms interval, so it is spinning")
+        }
 }

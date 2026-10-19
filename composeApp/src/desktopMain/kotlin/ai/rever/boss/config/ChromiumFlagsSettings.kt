@@ -3,6 +3,7 @@ package ai.rever.boss.config
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -11,6 +12,7 @@ import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
 /**
@@ -195,6 +197,10 @@ object ChromiumFlagsSettingsManager {
     private val _currentSettings = MutableStateFlow(bootSettings)
     val currentSettings: StateFlow<ChromiumFlagsSettings> = _currentSettings.asStateFlow()
 
+    internal fun reloadForTest() {
+        _currentSettings.value = loadSync()
+    }
+
     private fun loadSync(): ChromiumFlagsSettings =
         try {
             if (settingsFile.exists()) {
@@ -202,6 +208,15 @@ object ChromiumFlagsSettingsManager {
             } else {
                 ChromiumFlagsSettings()
             }
+        } catch (e: SerializationException) {
+            // Defaults, not a crash: this file decides how the browser composites, and a
+            // hand-edited or truncated one must not be able to stop the app booting.
+            logger.warn(
+                LogCategory.BROWSER,
+                "Error loading Chromium flag settings, using defaults",
+                decodeFailure(e),
+            )
+            ChromiumFlagsSettings()
         } catch (e: Exception) {
             // Defaults, not a crash: this file decides how the browser composites, and a
             // hand-edited or truncated one must not be able to stop the app booting.

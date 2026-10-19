@@ -1,10 +1,17 @@
 package ai.rever.boss.cli
 
+import ai.rever.boss.mcp.McpApprovalDisposition
+import ai.rever.boss.mcp.McpOperationLedger
+import ai.rever.boss.mcp.McpPolicyAction
 import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.utils.MAX_ARGUMENT_BYTES
 import ai.rever.boss.utils.SingleInstanceManager
 import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.parse
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 import java.nio.file.Files
@@ -68,6 +75,65 @@ class BossMcpCliTest {
             assertEquals(1, exit.statusCode)
         }
         assertFalse(invoked)
+    }
+
+    @Test
+    fun `mcp ledger secrets reads the file named by --file and filters by --secret`() {
+        val ledgerFile = runtimeDir.resolve("mcp-calls.jsonl").toFile()
+        val ledger = McpOperationLedger(ledgerFile = ledgerFile)
+        val id = "6f1d2c3e-4b5a-4c6d-8e7f-90a1b2c3d4e5"
+        for ((ref, disposition) in listOf(
+            "$id.password" to McpApprovalDisposition.APPROVED_ONCE,
+            "00000000-0000-4000-8000-000000000001.password" to McpApprovalDisposition.DENIED_BY_OPERATOR,
+        )) {
+            ledger.record(
+                toolName = "open_terminal",
+                providerId = "boss-workspace",
+                policyApplied = McpPolicyAction.ASK,
+                approvalDisposition = disposition,
+                durationMs = 1L,
+                isError = false,
+                rawArgs = emptyMap(),
+                secretRefs = listOf(ref),
+            )
+        }
+        assertTrue(ledger.awaitIdle())
+        val outContent = ByteArrayOutputStream()
+        System.setOut(PrintStream(outContent))
+
+        // Upper case on the command line: the selector is normalised, as recorded ids are.
+        createBossCLI().parse(
+            listOf("mcp", "ledger", "secrets", "--file", ledgerFile.path, "--secret", id.uppercase(), "--json"),
+        )
+
+        val secrets =
+            Json
+                .parseToJsonElement(outContent.toString())
+                .jsonObject
+                .getValue("secrets")
+                .jsonArray
+        assertEquals(
+            listOf(id),
+            secrets.map {
+                it.jsonObject
+                    .getValue("id")
+                    .jsonPrimitive.content
+            },
+        )
+    }
+
+    @Test
+    fun `mcp ledger refuses a --secret that is not a secret id instead of matching nothing`() {
+        val errContent = ByteArrayOutputStream()
+        System.setErr(PrintStream(errContent))
+
+        val exit =
+            assertFailsWith<ProgramResult> {
+                createBossCLI().parse(listOf("mcp", "ledger", "search", "--secret", "github"))
+            }
+
+        assertEquals(1, exit.statusCode)
+        assertTrue(errContent.toString().contains("Cannot read --secret 'github'"), errContent.toString())
     }
 
     @Test

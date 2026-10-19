@@ -1,9 +1,10 @@
 package ai.rever.boss.plugin.browser
 
-import ai.rever.boss.cache.FaviconCache
+import ai.rever.boss.cache.FaviconScheme
 import ai.rever.boss.components.overlays.OverlayCorner
 import ai.rever.boss.components.overlays.overlayCornerIsHeavyweight
 import ai.rever.boss.components.plugin.TabAudioSource
+import ai.rever.boss.components.window_panel.components.main_window_panels.LocalActivateMainWindowPanel
 import ai.rever.boss.components.window_panel.components.main_window_panels.LocalInMainWindowPanel
 import ai.rever.boss.config.AutoPipSettingsManager
 import ai.rever.boss.config.JxBrowserConfig
@@ -14,7 +15,9 @@ import ai.rever.boss.plugin.api.LocalIsPanelActive
 import ai.rever.boss.plugin.window.LocalWindowId
 import ai.rever.boss.tabfullscreen.FullscreenBrowserWindow
 import ai.rever.boss.tabfullscreen.TabFullscreenStateManager
+import ai.rever.boss.utils.CleanupRunner
 import ai.rever.boss.utils.MacOSGestureHandler
+import ai.rever.boss.utils.PinchZoomAccumulator
 import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -32,11 +35,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.layout.boundsInWindow
@@ -117,7 +120,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.awt.GraphicsEnvironment
 import java.awt.Window
-import java.lang.ref.WeakReference
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -265,34 +267,6 @@ internal fun ContextMenuTarget.toContextMenuInfo(
     )
 }
 
-/** Per-handle authority; navigation or callback replacement revokes previously issued tokens. */
-internal class BrowserMenuContextAuthority {
-    private val generation = AtomicLong()
-
-    fun invalidate() {
-        generation.incrementAndGet()
-    }
-
-    fun snapshot(): Long = generation.get()
-
-    fun capture(
-        frame: Frame?,
-        capturedGeneration: Long = snapshot(),
-    ): BrowserMenuContext = BrowserMenuContextImpl(WeakReference(frame), this, capturedGeneration)
-
-    fun resolve(context: BrowserMenuContext): Frame? {
-        val token = context as? BrowserMenuContextImpl ?: return null
-        val frame = token.frameRef.get()
-        return frame.takeIf { token.owner === this && token.generation == generation.get() }
-    }
-}
-
-private class BrowserMenuContextImpl(
-    val frameRef: WeakReference<Frame>,
-    val owner: BrowserMenuContextAuthority,
-    val generation: Long,
-) : BrowserMenuContext
-
 /**
  * Desktop implementation of [BrowserHandle] that wraps a JxBrowser [Browser] instance.
  *
@@ -409,6 +383,7 @@ internal class BrowserHandleImpl(
 
     private val menuContextAuthority = BrowserMenuContextAuthority()
     private val disposed = AtomicBoolean(false)
+    private val handleCleanup = BrowserHandleCleanup(disposed, id)
 
     /**
      * Latched when a synchronous RPC through this browser fails because its transport is gone.
@@ -496,6 +471,10 @@ internal class BrowserHandleImpl(
     // [shouldAllowPinch] for why, and for what replaces it.
     @Volatile private var pointerOverBrowserView = false
 
+    @Volatile private var appInputSurfaceToken: Any? = null
+
+    @Volatile private var activateAppInputPanel: () -> Unit = {}
+
     // This view's bounds in Compose-root coordinates, refreshed on every layout pass.
     // The HARDWARE_ACCELERATED substitute for hover: Compose knows where the view IS
     // even when it never learns the pointer entered it. Null until first layout.
@@ -529,29 +508,30 @@ internal class BrowserHandleImpl(
      * view and to refuse near its bottom edge.
      */
     private fun pointerInsideBrowserView(): Boolean? {
-        val bounds = browserViewBoundsInWindow
-        val window = gestureHostWindow
-        if (bounds == null || window == null) return null
+        val bounds = browserViewBoundsInWindow ?: return null
+        return pointerInContentPane()?.let {
+            pointerInsideBounds(boundsPx = bounds, pointerLogical = it, density = browserViewDensity)
+        }
+    }
+
+    /**
+     * The pointer in the host window's content pane, in AWT logical units, or null when there is
+     * no window or no pointer. See [pointerInsideBrowserView] for why the content pane.
+     */
+    private fun pointerInContentPane(): androidx.compose.ui.geometry.Offset? {
+        val window = gestureHostWindow ?: return null
         return try {
             // Read INSIDE the try, unlike before: getPointerInfo throws HeadlessException rather
             // than returning null in a headless JVM, so reading it outside made the KDoc's promise
             // of "null when there is no pointer" false in exactly the case it names.
-            val pointer =
-                java.awt.MouseInfo
-                    .getPointerInfo()
-                    ?.location
+            val pointer = sharedPointerOnScreen()
             val origin = (window as? javax.swing.RootPaneContainer)?.contentPane ?: window
             // convertPointFromScreen requires a showing component. Checked rather than relied on
             // because a window mid-teardown is an ordinary state here, not an error.
             if (pointer != null && origin.isShowing) {
                 javax.swing.SwingUtilities.convertPointFromScreen(pointer, origin)
-                pointerInsideBounds(
-                    boundsPx = bounds,
-                    pointerLogical =
-                        androidx.compose.ui.geometry
-                            .Offset(pointer.x.toFloat(), pointer.y.toFloat()),
-                    density = browserViewDensity,
-                )
+                androidx.compose.ui.geometry
+                    .Offset(pointer.x.toFloat(), pointer.y.toFloat())
             } else {
                 null
             }
@@ -566,37 +546,204 @@ internal class BrowserHandleImpl(
         }
     }
 
-    // Runs a pinch-triggered zoom only when the pointer is over this view and the
-    // handle is alive; logs suppressions with both inputs, because a wrong gate
-    // presents as pinch silently not working (or zooming a non-hovered view) and the
-    // two causes are indistinguishable from the outside.
-    private inline fun gatedPinchZoom(
-        direction: String,
-        zoom: () -> Unit,
+    // Smooths the magnification deltas the page declined into page-zoom steps.
+    private val pinchZoomAccumulator = PinchZoomAccumulator()
+
+    // Offers of pinch deltas to the page, bounded and on a deadline. See [PinchOffers].
+    private val pinchOffers = PinchOffers(maxPending = MAX_PENDING_PINCH_OFFERS, deadlineMs = PINCH_OFFER_DEADLINE_MS)
+
+    // The page's last answer to a pinch offer, so a change of answer is logged once rather than
+    // every delta. A page that claims every wheel event (see [BrowserPinchScript]) shows up here
+    // as "claimed" and nothing else, which tells it apart from a gate that never opens.
+    @Volatile private var lastPinchClaimed: Boolean? = null
+
+    // Unanswered offers in a row since the page last answered. Bounds how long a claim is
+    // carried by no answer: a slow frame keeps it, a hung renderer does not.
+    private val unansweredPinchOffers = AtomicInteger(0)
+
+    /**
+     * One macOS pinch delta, arriving on the EDT from the window-wide gesture listener.
+     *
+     * Gated first: only the browser under the pointer may act on it. Then offered to the page as
+     * a Ctrl+wheel event, the way Chrome and Safari deliver a pinch, so a canvas app zooms its
+     * canvas instead of BOSS zooming the whole page (#1565). Only a delta the page declines
+     * feeds page zoom.
+     *
+     * The pointer is read once, and the gate and the aim both use that read. Two reads could
+     * disagree if the pointer moved in between: the gate would pass on the first, and the aim
+     * would be clamped to a viewport edge on the second.
+     *
+     * The offer is asynchronous and bounded, see [PinchOffers]. It is not a blocking call on
+     * [pageInjectDispatcher], which would queue every delta behind a stalled renderer.
+     */
+    private fun onPinchMagnify(magnification: Double) {
+        if (!worthReadingPointer(magnification)) return
+        val pointer = pointerInContentPane()
+        val bounds = browserViewBoundsInWindow
+        val density = browserViewDensity
+        val geometric =
+            if (pointer != null && bounds != null) pointerInsideBounds(bounds, pointer, density) else null
+        if (!pinchGateOpen(geometric)) {
+            logPinchSuppressed(magnification, geometric)
+            return
+        }
+        val fraction =
+            if (pointer != null && bounds != null) pointerFractionInBounds(bounds, pointer, density) else null
+        val script = BrowserPinchScript.dispatch(magnification, fraction?.x?.toDouble(), fraction?.y?.toDouble())
+        pinchOffers.offer(
+            send = { answer, isStale -> sendPinchOffer(script, answer, isStale) },
+            onAnswer = { answer -> onPinchAnswer(magnification, answer) },
+        )
+    }
+
+    /**
+     * Cheap checks before the native pointer read, since every browser in the window hears every
+     * delta. Zero arrives at a gesture's begin and end phases and moves nothing; a dead handle
+     * cannot zoom; and under OFF_SCREEN, hover already says the pointer is elsewhere.
+     */
+    private fun worthReadingPointer(magnification: Double): Boolean {
+        val moves = magnification.isFinite() && magnification != 0.0
+        // Where the gate does not consult geometry it is decided in full here, by the same
+        // shouldAllowPinch, so this fast path cannot drift from the rule it shortcuts.
+        val gateAllows =
+            (pinchGateUsesGeometry(JxBrowserConfig.renderingMode) && isValid) || pinchGateOpen(null)
+        if (moves && !gateAllows) logPinchSuppressed(magnification, null)
+        return moves && gateAllows
+    }
+
+    private fun pinchGateOpen(pointerInsideBounds: Boolean?): Boolean =
+        shouldAllowPinch(
+            mode = JxBrowserConfig.renderingMode,
+            isValid = isValid,
+            pointerOverComposeView = pointerOverBrowserView,
+            pointerInsideBounds = pointerInsideBounds,
+        )
+
+    // Runs the offer script without waiting on the renderer, and off the EDT because mainFrame()
+    // is an IPC round trip and deltas arrive at trackpad rate. If that thread is busy the offer's
+    // deadline answers for it. Never throws: the browser can close between the gate and this
+    // call, and that counts as declined.
+    private fun sendPinchOffer(
+        script: String,
+        answer: (Boolean) -> Unit,
+        isStale: () -> Boolean,
     ) {
-        val geometric = pointerInsideBrowserView()
-        if (shouldAllowPinch(
-                mode = JxBrowserConfig.renderingMode,
-                isValid = isValid,
-                pointerOverComposeView = pointerOverBrowserView,
-                pointerInsideBounds = geometric,
-            )
-        ) {
-            zoom()
-        } else {
+        pageInjectScope.launch(pageInjectDispatcher) {
+            // An offer whose deadline already answered for it is dropped, not run late: a queue
+            // that backed up behind a stall would otherwise replay old wheel events into the
+            // canvas after the gesture ended.
+            if (!isStale()) sendPinchOfferNow(script, answer)
+        }
+    }
+
+    private fun sendPinchOfferNow(
+        script: String,
+        answer: (Boolean) -> Unit,
+    ) {
+        try {
+            val frame = browser.mainFrame().orElse(null)
+            if (frame == null) {
+                answer(false)
+            } else {
+                frame.executeJavaScript(script) { result: Any? -> answer(result == true) }
+            }
+        } catch (e: Exception) {
+            logger.debug(LogCategory.BROWSER, "Pinch offer to page failed", mapOf("error" to e.toString()))
+            answer(false)
+        }
+    }
+
+    private fun onPinchAnswer(
+        magnification: Double,
+        result: PinchAnswer,
+    ) {
+        val claimed = resolvePinchClaim(result)
+        // On the EDT, the only thread that touches the accumulator. That serializes its updates
+        // but does not restore gesture order: offers are answered in completion order, so a quick
+        // answer can land before a slower earlier one. For a running sum that only matters at a
+        // direction change within one gesture.
+        //
+        // The answer can arrive up to the offer deadline after the gate passed, by which time the
+        // tab may be closed or the pointer somewhere else, so the gate runs again, and BEFORE the
+        // accumulator: a step it had already completed and zeroed would otherwise be thrown away
+        // along with the delta.
+        SwingUtilities.invokeLater {
+            if (claimed) {
+                pinchZoomAccumulator.reset()
+                return@invokeLater
+            }
+            if (!pinchGateOpen(pointerInsideBrowserView())) return@invokeLater
+            when (pinchZoomAccumulator.add(magnification)) {
+                PinchZoomAccumulator.Step.IN -> zoomIn()
+                PinchZoomAccumulator.Step.OUT -> zoomOut()
+                null -> Unit
+            }
+        }
+    }
+
+    /**
+     * Whether a delta counts as claimed by the page, given how its offer ended.
+     *
+     * No answer in time means "as the page last answered": a canvas app busy zooming its canvas
+     * keeps its claim through a slow frame instead of having page zoom stacked on top. With no
+     * answer yet on this page, it falls back to page zoom, which is how every pinch behaved
+     * before #1565. Past [MAX_UNANSWERED_PINCH_CLAIMS] timeouts in a row the page is taken to be
+     * hung rather than busy, and deltas go back to page zoom; otherwise a renderer that hung
+     * after claiming would leave pinch doing nothing at all until the tab navigated.
+     *
+     * Only a timeout spends that budget. A skipped offer was never asked, so it carries the last
+     * claim for free: skips arrive at trackpad rate and would use up the whole budget inside one
+     * deadline while the page is merely slow.
+     */
+    private fun resolvePinchClaim(result: PinchAnswer): Boolean {
+        val answer =
+            when (result) {
+                PinchAnswer.CLAIMED -> true
+                PinchAnswer.DECLINED -> false
+                PinchAnswer.TIMED_OUT, PinchAnswer.SKIPPED -> null
+            }
+        if (answer == null) {
+            if (result == PinchAnswer.TIMED_OUT) unansweredPinchOffers.incrementAndGet()
+            return lastPinchClaimed == true && unansweredPinchOffers.get() <= MAX_UNANSWERED_PINCH_CLAIMS
+        }
+        unansweredPinchOffers.set(0)
+        if (lastPinchClaimed != answer) {
+            lastPinchClaimed = answer
             logger.debug(
                 LogCategory.BROWSER,
-                "Pinch zoom suppressed",
-                mapOf(
-                    "direction" to direction,
-                    "mode" to JxBrowserConfig.renderingMode.name,
-                    "hovered" to pointerOverBrowserView.toString(),
-                    "pointerInsideBounds" to geometric.toString(),
-                    "bounds" to browserViewBoundsInWindow.toString(),
-                    "valid" to isValid.toString(),
-                ),
+                if (answer) "Page claimed pinch" else "Page declined pinch, using page zoom",
+                mapOf("handleId" to id),
             )
         }
+        return answer
+    }
+
+    private fun logPinchSuppressed(
+        magnification: Double,
+        geometric: Boolean?,
+    ) {
+        // Shared by every handle, not one per handle: every browser in a window hears every
+        // delta, so a per-handle throttle still wrote one line per view per interval.
+        val skipped = pinchSuppressedSinceLog.incrementAndGet()
+        // nanoTime, not currentTimeMillis: a wall clock stepped backwards would mute the line.
+        val now = System.nanoTime()
+        val last = pinchSuppressedLoggedAt.get()
+        if (now - last < PINCH_SUPPRESSED_LOG_INTERVAL_NS || !pinchSuppressedLoggedAt.compareAndSet(last, now)) return
+        pinchSuppressedSinceLog.addAndGet(-skipped)
+        logger.debug(
+            LogCategory.BROWSER,
+            "Pinch zoom suppressed",
+            mapOf(
+                "magnification" to magnification.toString(),
+                "mode" to JxBrowserConfig.renderingMode.name,
+                "hovered" to pointerOverBrowserView.toString(),
+                "pointerInsideBounds" to geometric.toString(),
+                "bounds" to browserViewBoundsInWindow.toString(),
+                "valid" to isValid.toString(),
+                "handleId" to id,
+                "suppressedSinceLastLine" to skipped.toString(),
+            ),
+        )
     }
 
     /**
@@ -743,6 +890,9 @@ internal class BrowserHandleImpl(
 
     /** The Swing view inside [popOutFrame]; detached before the frame is disposed. */
     @Volatile private var popOutView: com.teamdev.jxbrowser.view.swing.BrowserView? = null
+
+    // EDT-confined: frame disposal may synchronously dispatch a callback that closes it again.
+    private var closingSurfacePopOut = false
 
     /**
      * The AWT window this handle's view is bound to, for the on-screen half of [viewComposed].
@@ -908,12 +1058,35 @@ internal class BrowserHandleImpl(
             )
         }
 
+    // Same hazard the executors above are built around: FaviconChanged lands on the JxBrowser
+    // callback thread, and the old handler did the BGRA→ARGB loop, bitmap conversion and the
+    // FaviconCache PNG encode right there - a rapid icon swap or a several-thousand-pixel icon
+    // stalled every navigation and menu callback behind it. The pipeline owns the cap and the
+    // keep-latest coalescing; this executor just gives that work its own daemon thread.
+    private val faviconExecutor =
+        DrainingBrowserExecutor("boss-favicon-$id")
+
+    private val faviconPipeline =
+        BrowserFaviconPipeline(
+            executor = faviconExecutor,
+            urlProvider = {
+                // The field read, not browser.url(): the cache key wants the committed page, and a
+                // synchronous round trip for it on this worker could still park behind a wedged
+                // renderer. The fallback covers only the window before the first navigation.
+                lastCommittedMainFrameUrl.ifBlank { runCatching { browser.url() }.getOrDefault("") }
+            },
+            notifyListeners = ::notifyFaviconListeners,
+            schemeProvider = { FaviconScheme.of(FluckEngine.isColorSchemeDark) },
+            warn = { message, data -> logger.warn(LogCategory.BROWSER, message, data) },
+        )
+
     private val ownedExecutors =
         listOf(
             handleCall.executor,
             frameProbeExecutor,
             contextMenuExecutor,
             pageInjectExecutor,
+            faviconExecutor,
         )
 
     private val nativeDisposal =
@@ -933,6 +1106,31 @@ internal class BrowserHandleImpl(
 
     /** Expose the raw JxBrowser instance for internal use (e.g. RPA recorder). */
     internal fun getRawBrowser(): Browser = browser
+
+    /** Exact live Compose surface for scoped remote input; hidden/relocated compositions retire authority. */
+    @Suppress("ReturnCount")
+    internal fun appInputSurface(window: Window): ai.rever.boss.sharing.AppBrowserInputSurface? {
+        val token = appInputSurfaceToken ?: return null
+        val bounds = browserViewBoundsInWindow ?: return null
+        val density = browserViewDensity
+        if (!isValid || frameStallHostWindow !== window || !window.isShowing) return null
+        if (!density.isFinite() || density <= 0 || bounds.isEmpty) return null
+        val origin = (window as? javax.swing.RootPaneContainer)?.contentPane ?: return null
+        return ai.rever.boss.sharing.AppBrowserInputSurface(
+            browser,
+            origin,
+            java.awt.geom.Rectangle2D.Double(
+                bounds.left.toDouble() / density,
+                bounds.top.toDouble() / density,
+                bounds.width.toDouble() / density,
+                bounds.height.toDouble() / density,
+            ),
+            activate = activateAppInputPanel,
+        ) {
+            appInputSurfaceToken === token && frameStallHostWindow === window &&
+                browserViewBoundsInWindow != null && isValid
+        }
+    }
 
     /** Expose the browser lock for creating [LockedBrowser] wrappers externally. */
     internal fun getBrowserLock(): ReentrantReadWriteLock = browserLock
@@ -1243,6 +1441,10 @@ internal class BrowserHandleImpl(
             browser.navigation().on(NavigationStarted::class.java) { _ ->
                 // Any frame navigation revokes menu tokens, including same-document transitions.
                 menuContextAuthority.invalidate()
+                // A pinch claim belongs to the page that made it. Carried over, a timed-out offer
+                // on the next page would read as claimed and page zoom would silently do nothing.
+                lastPinchClaimed = null
+                unansweredPinchOffers.set(0)
                 _isLoading = true
                 loadingListeners.forEach { listener ->
                     try {
@@ -1352,6 +1554,7 @@ internal class BrowserHandleImpl(
                             if (isValid) {
                                 navigationMainFrameOrNull(browser) {
                                     connectionDead.set(true)
+                                    BrowserTabOwnership.unbind(id)
                                     ActiveBrowserRegistry.republish()
                                     logger.debug(
                                         LogCategory.BROWSER,
@@ -1416,56 +1619,21 @@ internal class BrowserHandleImpl(
                 }
             }
 
-        // Favicon changed - save to cache and notify listeners with cache key
+        // Favicon changed - hand the icon to the worker pipeline and return. The callback only
+        // reads dimensions and the pixel array; conversion, the cache write and listener fan-out
+        // all run on faviconExecutor (see faviconPipeline for cap and coalescing).
         subscriptions +=
             browser.on(FaviconChanged::class.java) { event ->
                 try {
                     val favicon = event.favicon()
                     if (favicon == null || favicon.size().isEmpty) {
-                        // No favicon, notify with null
-                        faviconListeners.forEach { listener ->
-                            try {
-                                listener(null)
-                            } catch (e: Exception) {
-                                logger.warn(LogCategory.BROWSER, "Favicon listener threw exception", error = e)
-                            }
-                        }
+                        faviconPipeline.submit(0, 0) { null }
                     } else {
-                        // Convert JxBrowser Bitmap to AWT BufferedImage then to Compose ImageBitmap
                         val size = favicon.size()
-                        val width = size.width()
-                        val height = size.height()
-
-                        val bufferedImage = java.awt.image.BufferedImage(width, height, java.awt.image.BufferedImage.TYPE_INT_ARGB)
-                        val pixels = favicon.pixels()
-
-                        // Convert BGRA bytes to ARGB integers and set pixels
-                        var pixelIndex = 0
-                        for (y in 0 until height) {
-                            for (x in 0 until width) {
-                                val b = pixels[pixelIndex++].toInt() and 0xFF
-                                val g = pixels[pixelIndex++].toInt() and 0xFF
-                                val r = pixels[pixelIndex++].toInt() and 0xFF
-                                val a = pixels[pixelIndex++].toInt() and 0xFF
-                                val argb = (a shl 24) or (r shl 16) or (g shl 8) or b
-                                bufferedImage.setRGB(x, y, argb)
-                            }
-                        }
-
-                        val imageBitmap = bufferedImage.toComposeImageBitmap()
-                        val currentUrl = browser.url()
-                        val cacheKey = FaviconCache.saveFavicon(currentUrl, imageBitmap)
-
-                        faviconListeners.forEach { listener ->
-                            try {
-                                listener(cacheKey)
-                            } catch (e: Exception) {
-                                logger.warn(LogCategory.BROWSER, "Favicon listener threw exception", error = e)
-                            }
-                        }
+                        faviconPipeline.submit(size.width(), size.height()) { favicon.pixels() }
                     }
                 } catch (e: Exception) {
-                    logger.warn(LogCategory.BROWSER, "Error processing favicon", error = e)
+                    logger.warn(LogCategory.BROWSER, "Error queueing favicon", error = e)
                 }
             }
 
@@ -1500,6 +1668,10 @@ internal class BrowserHandleImpl(
         // injection path: between the two, every way the renderer can change is accounted for.
         subscriptions +=
             browser.on(RenderProcessTerminated::class.java) { event ->
+                // A dead renderer cannot be claiming anything. Reset exactly as NavigationStarted
+                // does, so the two claim fields always go stale together.
+                lastPinchClaimed = null
+                unansweredPinchOffers.set(0)
                 logger.debug(
                     LogCategory.BROWSER,
                     "Renderer terminated",
@@ -1636,7 +1808,10 @@ internal class BrowserHandleImpl(
         FluckEngine.setupKeyboardInterceptor(browser, ownerWindowId, zoomTarget = this)
 
         // Let a click in the page close any Swing popup menu open over it
-        FluckEngine.setupSwingPopupDismissOnPageClick(browser)
+        FluckEngine.setupSwingPopupDismissOnPageClick(browser) {
+            BrowserPagePressEvents.emit(currentWindowId)
+            focusPageAfterAddressEditing()
+        }
 
         // Setup screen capture handler
         FluckEngine.setupCaptureSessionHandler(browser)
@@ -1684,6 +1859,18 @@ internal class BrowserHandleImpl(
         browser.set(
             ShowContextMenuCallback::class.java,
             ShowContextMenuCallback { params, tell ->
+                val remoteClick =
+                    try {
+                        ai.rever.boss.sharing.AppBrowserMenuDispatch
+                            .consume(browser, params.location())
+                    } catch (_: Exception) {
+                        closeContextMenuQuietly(tell)
+                        return@ShowContextMenuCallback
+                    }
+                if (remoteClick != null && !runCatching(remoteClick.current).getOrDefault(false)) {
+                    closeContextMenuQuietly(tell)
+                    return@ShowContextMenuCallback
+                }
                 val callback = contextMenuCallback
                 if (callback == null) {
                     // Nobody is going to draw a menu, so hand the request back rather than
@@ -1713,7 +1900,7 @@ internal class BrowserHandleImpl(
                         // grant an old frame a new generation. Missing frames retain an invalid token.
                         val menuGeneration = menuContextAuthority.snapshot()
                         val frame = params.frame().orElse(null)
-                        val menuContext = menuContextAuthority.capture(frame, menuGeneration)
+                        val menuContext = menuContextAuthority.capture(frame, menuGeneration, remoteClick)
                         val target =
                             ContextMenuTarget(
                                 contentTypes = params.contentTypes(),
@@ -1788,7 +1975,7 @@ internal class BrowserHandleImpl(
                     // interrupt the blocking call either, so check before delivering rather
                     // than pushing a menu at a tab that is gone.
                     if (disposed.get()) return@launch
-                    deliverContextMenu(current, info.copy(formFieldInfo = formFieldInfo))
+                    deliverContextMenu(current, info.withFormField(formFieldInfo))
                 }
             },
         )
@@ -1809,8 +1996,8 @@ internal class BrowserHandleImpl(
      * `elementFromPoint`, or by deferring resolution until a fill is actually chosen - does not
      * need this to be right, and is the direction to go if it ever matters.
      */
-    private fun getFormFieldInfoFromJS(frame: com.teamdev.jxbrowser.frame.Frame): FormFieldInfo? {
-        return try {
+    private fun getFormFieldInfoFromJS(frame: com.teamdev.jxbrowser.frame.Frame): FormFieldInfo? =
+        try {
             val jsonString =
                 frame.executeJavaScript<String?>(
                     """
@@ -1834,69 +2021,11 @@ internal class BrowserHandleImpl(
                     """.trimIndent(),
                 )
 
-            if (jsonString.isNullOrBlank() || jsonString == "null") {
-                return null
-            }
-
-            // Parse JSON manually (simple extraction)
-            val extractValue = { key: String ->
-                val pattern = "\"$key\":\"([^\"]*)\""
-                val regex = Regex(pattern)
-                regex.find(jsonString)?.groupValues?.getOrNull(1) ?: ""
-            }
-
-            val inputType = extractValue("type").ifEmpty { "text" }
-            val fieldName = extractValue("name")
-            val fieldId = extractValue("id")
-            val placeholder = extractValue("placeholder")
-            val value = extractValue("value")
-            val formAction = extractValue("formAction").ifEmpty { null }
-            val autocomplete = extractValue("autocomplete")
-
-            // Determine field type
-            val fieldType =
-                when {
-                    inputType == "password" -> FormFieldType.PASSWORD
-
-                    inputType == "email" -> FormFieldType.EMAIL
-
-                    autocomplete.contains("username", ignoreCase = true) -> FormFieldType.USERNAME
-
-                    autocomplete.contains("email", ignoreCase = true) -> FormFieldType.EMAIL
-
-                    autocomplete.contains("password", ignoreCase = true) -> FormFieldType.PASSWORD
-
-                    fieldName.contains("user", ignoreCase = true) ||
-                        fieldId.contains("user", ignoreCase = true) ||
-                        fieldName.contains("login", ignoreCase = true) ||
-                        fieldId.contains("login", ignoreCase = true) -> FormFieldType.USERNAME
-
-                    fieldName.contains("email", ignoreCase = true) ||
-                        fieldId.contains("email", ignoreCase = true) -> FormFieldType.EMAIL
-
-                    fieldName.contains("pass", ignoreCase = true) ||
-                        fieldId.contains("pass", ignoreCase = true) -> FormFieldType.PASSWORD
-
-                    inputType == "text" -> FormFieldType.TEXT
-
-                    else -> FormFieldType.UNKNOWN
-                }
-
-            FormFieldInfo(
-                fieldType = fieldType,
-                fieldName = fieldName,
-                fieldId = fieldId,
-                fieldPlaceholder = placeholder,
-                fieldValue = value,
-                parentFormAction = formAction,
-                inputType = inputType,
-                autocomplete = autocomplete,
-            )
+            formFieldInfoFrom(jsonString)
         } catch (e: Exception) {
             logger.debug(LogCategory.BROWSER, "Failed to get form field info", mapOf("error" to e.message))
             null
         }
-    }
 
     /**
      * Injects the page-side helpers that outlive a navigation:
@@ -2597,6 +2726,7 @@ internal class BrowserHandleImpl(
         } catch (e: Exception) {
             if (isTransportFailure(e)) {
                 connectionDead.set(true)
+                BrowserTabOwnership.unbind(id)
                 // isValid has just flipped without a disposal, and nothing unregisters here -
                 // the registration is only dropped later by reconcileOrphanedBrowsers or at
                 // window teardown. ActiveBrowserRegistry recomputes only on register/unregister,
@@ -2678,6 +2808,24 @@ internal class BrowserHandleImpl(
     /** Diagnostic snapshot of every worker native disposal drains; never a disposal fence. */
     override val hasPendingBrowserCall: Boolean get() = ownedExecutors.any { it.pending > 0 }
 
+    /**
+     * See [BrowserHandle.awaitBrowserCallsQuiescent]. Polls the same workers, diagnostic only.
+     *
+     * Two properties of the count this waits on, deferred from #601's review because a single
+     * snapshot could absorb them and a wait cannot. A count pinned above zero makes one read
+     * merely wrong; it makes every teardown that gates on this burn its whole deadline.
+     *
+     * - `shutdownNow()` or a discarding rejection policy would strand admitted work that never
+     *   runs its decrement. Neither is on the shipped path - `BrowserNativeDisposal` calls
+     *   `shutdown()`, `DrainingBrowserExecutor.shutdownNow` compensates for what it discards, and
+     *   a rejected dispatch decrements - so this is a hazard to preserve, not a live bug.
+     * - The count also sees transient coroutine resumptions, so it can read busy for a moment with
+     *   no browser call outstanding. Over-reporting is the safe direction for a teardown gate; it
+     *   is the wrong direction for anything driving a busy indicator.
+     */
+    override suspend fun awaitBrowserCallsQuiescent(timeoutMs: Long): Boolean =
+        awaitQuiescent(timeoutMs, QUIESCENT_POLL_MS) { hasPendingBrowserCall }
+
     override fun getCurrentUrl(): String = syncCall("url", "") { browser.url() }
 
     override fun getTitle(): String = syncCall("title", "") { browser.title() }
@@ -2719,6 +2867,18 @@ internal class BrowserHandleImpl(
 
     override fun removeFaviconListener(listener: (String?) -> Unit) {
         faviconListeners.remove(listener)
+    }
+
+    // Runs on the favicon worker, not the JxBrowser callback thread - same non-UI dispatch class
+    // the inline version used, so listeners see no thread-contract change.
+    private fun notifyFaviconListeners(cacheKey: String?) {
+        faviconListeners.forEach { listener ->
+            try {
+                listener(cacheKey)
+            } catch (e: Exception) {
+                logger.warn(LogCategory.BROWSER, "Favicon listener threw exception", error = e)
+            }
+        }
     }
 
     override fun goBack() {
@@ -2903,7 +3063,7 @@ internal class BrowserHandleImpl(
                     val captureDeferred = CompletableDeferred<PopupCapture?>()
                     pendingPopupCaptures[popupBrowser] = captureDeferred
 
-                    val urlDeferred = CompletableDeferred<String>()
+                    val urlDeferred = CompletableDeferred<String?>()
                     val cleanedUp = AtomicBoolean(false)
                     val urlSubscriptions = mutableListOf<Subscription>()
                     val scope = CoroutineScope(Dispatchers.Default + Job())
@@ -2957,6 +3117,19 @@ internal class BrowserHandleImpl(
                             // had already committed by the time we got here.
                             resolveFromBrowser()
                         }
+
+                        // A popup that dies before naming a destination - a download navigation
+                        // destroys it without ever committing - would otherwise sit in
+                        // pendingPopupCaptures and hold its subscriptions until the URL timeout
+                        // ran out, so a window.open storm pinned one dead Browser per popup for
+                        // the full 3.5s. Completing both waits now lets the coroutine's cleanup
+                        // release the map entry and the subs immediately; the create-target
+                        // fallback still decides whether a tab is owed.
+                        urlSubscriptions +=
+                            popupBrowser.on(BrowserClosed::class.java) {
+                                urlDeferred.complete(null)
+                                captureDeferred.complete(null)
+                            }
                     } catch (e: Exception) {
                         urlSubscriptions.forEach { runCatching { it.unsubscribe() } }
                         pendingPopupCaptures.remove(popupBrowser)
@@ -3045,10 +3218,17 @@ internal class BrowserHandleImpl(
                                 )
                                 return@launch
                             }
-                            // Lets FluckEngine close this tab again if a download starts right
-                            // after it opens - a redirect to a file looks like a page until it
-                            // does not.
-                            FluckEngine.notifyTabOpened()
+                            // Admission cap: a window.open storm would otherwise
+                            // adopt every popup into a real tab, so past the cap the tab is
+                            // dropped - the popup browser above is already closed either way.
+                            if (!FluckEngine.notifyTabOpened()) {
+                                logger.debug(
+                                    LogCategory.BROWSER,
+                                    "Popup tab refused, auto-open cap reached",
+                                    mapOf("url" to LogSanitizer.maskUriParams(nav.url)),
+                                )
+                                return@launch
+                            }
 
                             val withDataCb = openInNewTabWithDataCallback
                             if (withDataCb != null) {
@@ -3269,6 +3449,34 @@ internal class BrowserHandleImpl(
                 .removePrefix("www.")
         }.getOrDefault("")
 
+    /** AppKit and Chromium must never retain independent keyboard focus while editing the URL. */
+    internal fun unfocusPageForAddressEditing() {
+        if (isValid) {
+            runCatching { browser.unfocus() }
+                .onFailure { logger.debug(LogCategory.BROWSER, "Could not unfocus page for address editing") }
+        }
+    }
+
+    private fun focusPageAfterAddressEditing() {
+        if (isValid) {
+            runCatching {
+                if (ai.rever.boss.window
+                        .releaseNativeAddressForPage(id)
+                ) {
+                    focusPageAfterAddressCommit()
+                }
+            }.onFailure { logger.debug(LogCategory.BROWSER, "Could not release address editor for page input") }
+        }
+    }
+
+    /** Explicit hand-off from the native address field after committing navigation. */
+    internal fun focusPageAfterAddressCommit() {
+        if (isValid && currentViewState != null) {
+            runCatching { browser.focus() }
+                .onFailure { logger.debug(LogCategory.BROWSER, "Could not focus page after address commit") }
+        }
+    }
+
     /**
      * Brings the window holding this tab back to the front.
      *
@@ -3281,6 +3489,7 @@ internal class BrowserHandleImpl(
      * plugin that never registered a fullscreen handler - this degrades to raising the window,
      * which is what it did before and is still useful.
      */
+
     private fun returnToTab() {
         runCatching { WindowFocusManager.focusWindow(currentWindowId) }
         ownerTabId?.let { tabId ->
@@ -3502,31 +3711,33 @@ internal class BrowserHandleImpl(
      * back to a frozen tab.
      */
     private fun closeSurfacePopOut() {
-        val frame = popOutFrame ?: return
-        popOutFrame = null
+        val frame = popOutFrame?.takeUnless { closingSurfacePopOut } ?: return
+        closingSurfacePopOut = true
         val view = popOutView
+        val released =
+            try {
+                closeBrowserPopOutResources(
+                    handleId = id,
+                    detachView = {
+                        view?.let {
+                            it.isVisible = false
+                            it.repaint()
+                            frame.contentPane.remove(it)
+                        }
+                        frame.contentPane.revalidate()
+                    },
+                    disableAlwaysOnTop = { frame.isAlwaysOnTop = false },
+                    disposeWindow = { frame.dispose() },
+                )
+            } finally {
+                closingSurfacePopOut = false
+            }
+        // Keep ownership after a failed dispose so the close button or repeated handle
+        // disposal can retry, even when the browser's once-only cleanup already ran.
+        if (!released) return
+        popOutFrame = null
         popOutView = null
         autoPoppedOut.set(false)
-        try {
-            view?.let {
-                it.isVisible = false
-                it.repaint()
-                frame.contentPane.remove(it)
-            }
-            frame.contentPane.revalidate()
-        } catch (e: Exception) {
-            logger.error(LogCategory.BROWSER, "Error detaching the surface pop-out view", error = e)
-        } finally {
-            // In a finally, because popOutFrame was nulled above: if the detach throws - and
-            // ObjectClosedException from a concurrently closing browser is live here - a dispose
-            // inside the try would be skipped and nothing could ever close this window again.
-            // Its own close button routes through this function, which now returns at the null
-            // check, so it would sit undecorated and always-on-top for the rest of the session.
-            runCatching {
-                frame.isAlwaysOnTop = false
-                frame.dispose()
-            }
-        }
         // The release delay is FullscreenBrowserWindow's SWING_RELEASE_DELAY: the disposed
         // Swing view needs a beat to let go of the rendering surface. Then the repair is the
         // file's own: bump [viewGeneration], which forces the BrowserView node out of
@@ -3602,6 +3813,7 @@ internal class BrowserHandleImpl(
         // this browser, and the host cannot work it out for itself - the tab is a dynamic
         // plugin's component type, which host code cannot name.
         ownerTabId = tabId
+        BrowserTabOwnership.bind(tabId, id)
 
         audioSource.bind(tabId)
 
@@ -3912,6 +4124,7 @@ internal class BrowserHandleImpl(
         // constraint. The comment explaining what they mean lives with the find-bar effect.
         val isPanelActive = LocalIsPanelActive.current
         val inMainPanel = LocalInMainWindowPanel.current
+        val activateInputPanel by rememberUpdatedState(LocalActivateMainWindowPanel.current)
 
         // Which browser the View menu's Zoom In / Zoom Out / Actual Size / Reload act on in this
         // window. Registered from here rather than from the tab component because the tab
@@ -3969,6 +4182,9 @@ internal class BrowserHandleImpl(
             // Published for the frame-stall gate, which needs to know whether the window this view
             // lives in is actually showing - composition alone stays alive while it is minimized.
             frameStallHostWindow = awtWindow
+            val inputSurfaceToken = Any()
+            appInputSurfaceToken = inputSurfaceToken
+            activateAppInputPanel = { activateInputPanel() }
 
             // Reuse a retained surface ONLY while it still belongs to this window. This effect is
             // keyed on hostWindowId precisely so a tab moved to another window rebinds (see the
@@ -4032,11 +4248,7 @@ internal class BrowserHandleImpl(
 
                     if (rootPane != null) {
                         gestureToken =
-                            MacOSGestureHandler.addMagnificationListener(
-                                rootPane,
-                                onZoomIn = { gatedPinchZoom("in") { zoomIn() } },
-                                onZoomOut = { gatedPinchZoom("out") { zoomOut() } },
-                            )
+                            MacOSGestureHandler.addMagnificationListener(rootPane) { onPinchMagnify(it) }
                         if (gestureToken != null) {
                             gesturePane = rootPane
                             // The gate needs this window to place the pointer in the same
@@ -4052,6 +4264,10 @@ internal class BrowserHandleImpl(
             }
 
             onDispose {
+                if (appInputSurfaceToken === inputSurfaceToken) {
+                    appInputSurfaceToken = null
+                    activateAppInputPanel = {}
+                }
                 pointerOverBrowserView = false
                 // Both gate inputs must go stale together with the listener they gate.
                 // A retained HARDWARE surface outlives this effect, so leaving stale
@@ -4261,142 +4477,185 @@ internal class BrowserHandleImpl(
     }
 
     override fun dispose() {
-        menuContextAuthority.invalidate()
-        audioSource.close()
-        swipeGestureClaim.close()
-        // Synchronously, and before the guard below: invokeLater would let browser.close() run
-        // first, and closing the browser under a still-attached Swing view is exactly the
-        // ordering that leaves an undecorated always-on-top window on screen with nothing able
-        // to dispose it.
-        //
-        // BOUNDED, not invokeAndWait, and copied from FullscreenBrowserWindow's own EDT hop for
-        // the same reason: disposeBrowser is a suspend function, so this can arrive off the EDT,
-        // and an unbounded block there deadlocks the moment the EDT is itself waiting on
-        // anything this thread holds. A timeout turns that into a late cleanup instead of a
-        // frozen app, and the task stays queued so the window is still disposed once the EDT
-        // frees up. On the EDT already - composition teardown - it runs inline.
-        val popOutCleanup = runCatching { closePopOutOnEdt() }
-        if (!disposed.compareAndSet(false, true)) {
-            popOutCleanup.getOrThrow()
-            return
-        }
-        try {
-            popOutCleanup.getOrThrow()
-            pageInjection.onGone()
-            // Shut the interaction bridge FIRST. Its only gate is this authority, and the
-            // collector flushes on `pagehide` — which is precisely when this runs. Closing the
-            // tracker first left a window between the two statements in which a batch arriving on
-            // the JS thread still read a non-null authority, so a tab close emitted PAGE_LEFT,
-            // TAB_CLOSED, and then clicks on a tab that was already gone: the exact race this
-            // pair exists to close. Nulling first cannot lose a visit, since closed() is guarded
-            // by its own `finished` flag and does not consult this.
-            currentPageAuthority = null
-            // Then flush the visit in progress. This is the only place a page's dwell time can be
-            // closed out when a tab is shut while still on a page — every other path ends a visit
-            // by starting the next one.
-            visitTracker.closed()
-            FullscreenBrowserWindow.exitFullscreen(browser)
-
-            // Stop co-browse capture so a disposed tab can never keep streaming.
-            coBrowseCapturing = false
-            coBrowseControlGranted = false
-            coBrowseSink = null
-            coBrowseBridge.onEvent = null
-            coBrowseScope.cancel()
-            // Same for the page event channel: a disposed tab must not deliver another event, and the
-            // sink belongs to a plugin that may itself be going away.
-            pageEventScript = null
-            pageEventBridge.onEvent = null
-            // The provider closes over `browser`, so it goes too rather than outliving the handle.
-            pageEventBridge.urlProvider = { "" }
-            pageEventScope.cancel()
-            // A pending frame-stall probe outlives the tab otherwise, and its next act is a blocking
-            // executeJavaScript against a browser that is being torn down. shutdown() not
-            // shutdownNow(), for the same reason as the context-menu executor: a round-trip already
-            // inside executeJavaScript cannot be interrupted, and the thread is daemon.
-            frameStallJob.getAndSet(null)?.cancel()
-            frameStallScope.cancel()
-            // Stops queued menu lookups from starting. A lookup already blocked inside
-            // executeJavaScript cannot be interrupted by cancellation — the delivery site
-            // checks `disposed` before handing anything back. shutdown() (not shutdownNow())
-            // for the same reason: the thread is daemon, so a wedged lookup cannot hold up
-            // exit, and interrupting it would buy nothing.
-            contextMenuScope.cancel()
-            // A pending commit follow-up outlives the tab otherwise, and its next act is a blocking
-            // round trip against a browser being torn down. shutdown() not shutdownNow(), for the
-            // reason the two above give: the thread is daemon and a call already inside JxBrowser
-            // cannot be interrupted, so interrupting would buy nothing.
-            pageInjectScope.cancel()
-            // Last of the four. Note what this ordering does NOT buy: coBrowseScope and pageEventScope
-            // were cancelled above, and cancelling a scope also cancels children that were dispatched but
-            // have not started - startCoroutineCancellable means DispatchedTask.run sees an inactive job
-            // and resumes with the cancellation instead of running the body. So the teardown queued by
-            // stopCoBrowseCapture (recordStop, setControlGuard(false)) does not run here, and did not
-            // before this change either, when both scopes were cancelled the same way on Main.
-            //
-            // Left alone rather than re-posted outside the cancelled scope: the native disposal below
-            // closes the browser after these workers drain, and capture delivery is already disabled.
-            // See [BoundedBrowserCall.shutdown] for why not shutdownNow().
-            // Drop this browser's injectors, WITHOUT unclaiming the shared callback slot - that slot
-            // belongs to BrowserInjectDispatcher on behalf of every registered injector, and removing
-            // it here would tear down another feature's hook as a side effect of this teardown.
-            //
-            // An earlier version of this comment claimed nothing leaked because the dispatcher keys its
-            // registry weakly. That was wrong: a WeakHashMap value strongly references whatever it
-            // captures, and these injectors are lambdas closing over `this` - which holds the key. So
-            // the entry pinned a whole BrowserHandleImpl per closed tab. unregister() is the fix.
-            BrowserInjectDispatcher.unregister(browser)
-            // The flags are latched SET rather than cleared: the entry has just been dropped, so a
-            // re-registration here would put an injector back on a browser that is closing. isValid is
-            // already false too, which is what stops setPageEventScript reaching this in the first place.
-            coBrowseInjectRegistered.set(true)
-            pageEventInjectRegistered.set(true)
-
-            // Unsubscribe from all events. runCatching, as in the BrowserPopupWindow handler: a
-            // browser that closed on its own reaches dispose() with the native side already gone,
-            // and a dead-transport throw here must not abort the teardown.
-            subscriptions.forEach { runCatching { it.unsubscribe() } }
-            subscriptions.clear()
-
-            // Clear listeners
-            navigationListeners.clear()
-            titleListeners.clear()
-            faviconListeners.clear()
-            loadingListeners.clear()
-            zoomListeners.clear()
-
-            // Release find-in-page state and its timers before closing the browser: a debounce that
-            // fires afterwards would search a closed object.
-            BrowserFindController.dispose(browser)
-        } finally {
-            // Unconditional, unlike the composition's token-guarded removal: the handle is gone, so
-            // there is no successor registration this could delete. Covers a handle disposed out from
-            // under a surface that is still composed - an engine generation bump does exactly that.
-            // In the finally, not the try: a throw anywhere above (a dead-transport unsubscribe,
-            // for instance) must not skip the unregister - pinning the handle for the session is the
-            // leak the BrowserClosed routing above exists to close.
-            ActiveBrowserRegistry.unregister(id)
-            // Do not turn a caller deadline into permission to close a live native call.
-            // This also covers direct plugin/window disposal and local teardown failures.
-            finishLocalBrowserDisposal(
-                detachView = {
+        handleCleanup.run(
+            teardown = { cleanup ->
+                releaseBrowserSurfaceResources(cleanup)
+                stopBrowserEventDelivery(cleanup)
+                releaseBrowserRegistrations(cleanup)
+            },
+            detachView = {
+                try {
                     currentViewState?.close()
+                } finally {
                     currentViewState = null
                     currentViewStateWindowId = null
-                },
-                requestNativeClose = { nativeDisposal.start() },
-            )
-            logger.debug(
-                LogCategory.BROWSER,
-                "Browser native disposal requested",
-                mapOf("handleId" to id),
-            )
+                }
+            },
+            requestNativeClose = { nativeDisposal.start() },
+            closePopOut = { closePopOutOnEdt() },
+        )
+    }
+
+    private fun releaseBrowserSurfaceResources(cleanup: CleanupRunner) {
+        cleanup.run("invalidate browser menu authority") { menuContextAuthority.invalidate() }
+        cleanup.run("release browser audio source") { audioSource.close() }
+        cleanup.run("release swipe gesture claim") { swipeGestureClaim.close() }
+        cleanup.run("retire page injection") { pageInjection.onGone() }
+        // Shut the interaction bridge FIRST. Its only gate is this authority, and the
+        // collector flushes on `pagehide` — which is precisely when this runs. Closing the
+        // tracker first left a window between the two statements in which a batch arriving on
+        // the JS thread still read a non-null authority, so a tab close emitted PAGE_LEFT,
+        // TAB_CLOSED, and then clicks on a tab that was already gone: the exact race this
+        // pair exists to close. Nulling first cannot lose a visit, since closed() is guarded
+        // by its own `finished` flag and does not consult this.
+        currentPageAuthority = null
+        // Then flush the visit in progress. This is the only place a page's dwell time can be
+        // closed out when a tab is shut while still on a page — every other path ends a visit
+        // by starting the next one.
+        cleanup.run("flush browser visit") { visitTracker.closed() }
+        cleanup.run("exit browser fullscreen") { FullscreenBrowserWindow.exitFullscreen(browser) }
+    }
+
+    private fun stopBrowserEventDelivery(cleanup: CleanupRunner) {
+        // Stop co-browse capture so a disposed tab can never keep streaming.
+        coBrowseCapturing = false
+        coBrowseControlGranted = false
+        coBrowseSink = null
+        coBrowseBridge.onEvent = null
+        cleanup.run("cancel co-browse capture") { coBrowseScope.cancel() }
+        // Same for the page event channel: a disposed tab must not deliver another event, and the
+        // sink belongs to a plugin that may itself be going away.
+        pageEventScript = null
+        pageEventBridge.onEvent = null
+        // The provider closes over `browser`, so it goes too rather than outliving the handle.
+        pageEventBridge.urlProvider = { "" }
+        cleanup.run("cancel page event delivery") { pageEventScope.cancel() }
+        // A pending frame-stall probe outlives the tab otherwise, and its next act is a blocking
+        // executeJavaScript against a browser that is being torn down. shutdown() not
+        // shutdownNow(), for the same reason as the context-menu executor: a round-trip already
+        // inside executeJavaScript cannot be interrupted, and the thread is daemon.
+        cleanup.run("cancel frame stall probe") { frameStallJob.getAndSet(null)?.cancel() }
+        cleanup.run("cancel frame stall scope") { frameStallScope.cancel() }
+        // Stops queued menu lookups from starting. A lookup already blocked inside
+        // executeJavaScript cannot be interrupted by cancellation — the delivery site
+        // checks `disposed` before handing anything back. shutdown() (not shutdownNow())
+        // for the same reason: the thread is daemon, so a wedged lookup cannot hold up
+        // exit, and interrupting it would buy nothing.
+        cleanup.run("cancel context menu delivery") { contextMenuScope.cancel() }
+        // A pending commit follow-up outlives the tab otherwise, and its next act is a blocking
+        // round trip against a browser being torn down. shutdown() not shutdownNow(), for the
+        // reason the two above give: the thread is daemon and a call already inside JxBrowser
+        // cannot be interrupted, so interrupting would buy nothing.
+        cleanup.run("cancel page injection scope") { pageInjectScope.cancel() }
+        // Last of the four. Note what this ordering does NOT buy: coBrowseScope and pageEventScope
+        // were cancelled above, and cancelling a scope also cancels children that were dispatched but
+        // have not started - startCoroutineCancellable means DispatchedTask.run sees an inactive job
+        // and resumes with the cancellation instead of running the body. So the teardown queued by
+        // stopCoBrowseCapture (recordStop, setControlGuard(false)) does not run here, and did not
+        // before this change either, when both scopes were cancelled the same way on Main.
+        //
+        // Left alone rather than re-posted outside the cancelled scope: the native disposal below
+        // closes the browser after these workers drain, and capture delivery is already disabled.
+        // See [BoundedBrowserCall.shutdown] for why not shutdownNow().
+        // Drop this browser's injectors, WITHOUT unclaiming the shared callback slot - that slot
+        // belongs to BrowserInjectDispatcher on behalf of every registered injector, and removing
+        // it here would tear down another feature's hook as a side effect of this teardown.
+        //
+        // An earlier version of this comment claimed nothing leaked because the dispatcher keys its
+        // registry weakly. That was wrong: a WeakHashMap value strongly references whatever it
+        // captures, and these injectors are lambdas closing over `this` - which holds the key. So
+        // the entry pinned a whole BrowserHandleImpl per closed tab. unregister() is the fix.
+        cleanup.run("unregister page injectors") { BrowserInjectDispatcher.unregister(browser) }
+        // The flags are latched SET rather than cleared: the entry has just been dropped, so a
+        // re-registration here would put an injector back on a browser that is closing. isValid is
+        // already false too, which is what stops setPageEventScript reaching this in the first place.
+        coBrowseInjectRegistered.set(true)
+        pageEventInjectRegistered.set(true)
+    }
+
+    private fun releaseBrowserRegistrations(cleanup: CleanupRunner) {
+        // A closed native transport must not stop release of the remaining subscriptions.
+        subscriptions.forEach { subscription ->
+            cleanup.run("unsubscribe browser event") { subscription.unsubscribe() }
         }
+        subscriptions.clear()
+
+        // Clear listeners
+        navigationListeners.clear()
+        titleListeners.clear()
+        faviconListeners.clear()
+        loadingListeners.clear()
+        zoomListeners.clear()
+
+        // Release find-in-page state and its timers before closing the browser: a debounce that
+        // fires afterwards would search a closed object.
+        cleanup.run("release find-in-page state") { BrowserFindController.dispose(browser) }
+        cleanup.run("unregister active browser") { ActiveBrowserRegistry.unregister(id) }
+        cleanup.run("unbind browser tab owner") { BrowserTabOwnership.unbind(id) }
     }
 
     companion object {
         /** How much of a page-authored co-browse status string reaches the log. */
         private const val STATUS_LOG_LIMIT = 80
+
+        /**
+         * How long the page gets to claim a pinch delta before it counts as declined. Long enough
+         * for a canvas app's wheel handler on a loaded page, short enough that a busy page still
+         * page-zooms within the gesture it was asked in.
+         */
+        private const val PINCH_OFFER_DEADLINE_MS = 150L
+
+        /** Unanswered pinch offers allowed at once; about a tenth of a second of trackpad events. */
+        private const val MAX_PENDING_PINCH_OFFERS = 8
+
+        /**
+         * Unanswered offers in a row that still count as the page's last claim. Two full sets of
+         * pending offers, about 300 ms at the offer deadline: past one slow canvas frame, well
+         * short of a pinch that visibly does nothing.
+         */
+        private const val MAX_UNANSWERED_PINCH_CLAIMS = 2 * MAX_PENDING_PINCH_OFFERS
+
+        /** At most one "Pinch zoom suppressed" line, across all handles, per this interval. */
+        private const val PINCH_SUPPRESSED_LOG_INTERVAL_NS = 1_000_000_000L
+
+        // One pointer read serves every handle that hears the same delta. Every browser in a
+        // window gets each magnification event, so without this the native read ran once per
+        // view per event. Screen coordinates, so it is valid for any window; the TTL is well
+        // under one trackpad event interval.
+        private const val SHARED_POINTER_TTL_NS = 4_000_000L
+
+        @Volatile private var sharedPointer: Pair<Long, java.awt.Point?>? = null
+
+        /** The pointer on screen, read at most once per [SHARED_POINTER_TTL_NS]; a copy each call. */
+        private fun sharedPointerOnScreen(): java.awt.Point? {
+            val now = System.nanoTime()
+            val cached = sharedPointer
+            val point =
+                if (cached != null && now - cached.first < SHARED_POINTER_TTL_NS) {
+                    cached.second
+                } else {
+                    java.awt.MouseInfo
+                        .getPointerInfo()
+                        ?.location
+                        .also { sharedPointer = now to it }
+                }
+            // A copy, because callers convert it in place with convertPointFromScreen.
+            return point?.let { java.awt.Point(it) }
+        }
+
+        // When "Pinch zoom suppressed" was last written (nanoTime), and how many suppressions it
+        // covers. Starts an interval in the past so the first suppression is always logged.
+        private val pinchSuppressedLoggedAt = AtomicLong(System.nanoTime() - PINCH_SUPPRESSED_LOG_INTERVAL_NS)
+        private val pinchSuppressedSinceLog = AtomicInteger(0)
+
+        /**
+         * How often [awaitBrowserCallsQuiescent] re-reads the workers.
+         *
+         * Short enough that a teardown deferred on it is not noticeably delayed once the work
+         * finishes, long enough that waiting out a full deadline costs a bounded number of reads
+         * of the owned workers' counters rather than a spin.
+         */
+        private const val QUIESCENT_POLL_MS = 25L
 
         /**
          * Popup browsers we are currently waiting to capture an upload body for.
@@ -4745,7 +5004,7 @@ internal fun shouldAllowPinch(
     pointerInsideBounds: Boolean?,
 ): Boolean {
     if (!isValid) return false
-    return if (mode == com.teamdev.jxbrowser.engine.RenderingMode.HARDWARE_ACCELERATED) {
+    return if (pinchGateUsesGeometry(mode)) {
         pointerInsideBounds == true
     } else {
         pointerOverComposeView

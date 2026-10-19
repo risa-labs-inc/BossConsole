@@ -15,6 +15,8 @@ import ai.rever.boss.focusmode.FocusModeSettingsManager
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.menu.MenuShortcutBridge
 import ai.rever.boss.keymap.model.KeymapActions
+import ai.rever.boss.mcp.McpToolRegistryImpl
+import ai.rever.boss.mcp.McpYoloPrompt
 import ai.rever.boss.plugin.api.PanelRegistry
 import ai.rever.boss.plugin.browser.ActiveBrowserRegistry
 import ai.rever.boss.plugin.browser.FluckEngine
@@ -26,13 +28,17 @@ import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.plugin.ui.LocalHeavyweightOverlays
 import ai.rever.boss.services.editor.EditorAPIAccess
+import ai.rever.boss.services.importer.BookmarkExport
 import ai.rever.boss.services.terminal.TerminalAPIAccess
 import ai.rever.boss.settings.MicrokernelModePreference
 import ai.rever.boss.settings.microkernelModeMenuLabel
 import ai.rever.boss.settings.needsMicrokernelModeConfirmation
+import ai.rever.boss.theme.LocalWindowGlass
 import ai.rever.boss.updater.UpdateCoordinator
 import ai.rever.boss.utils.CLIInstaller
+import ai.rever.boss.utils.CleanupRunner
 import ai.rever.boss.utils.DisplayUtils
+import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.WindowFocusManager
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -53,6 +59,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.toArgb
@@ -125,6 +132,7 @@ internal fun computeFitSize(
 fun ApplicationScope.BossWindow(
     windowState: BossWindowState,
     onCloseRequest: () -> Unit,
+    onQuitRequest: () -> Unit = { exitApplication() },
 ) {
     // Calculate adaptive window size based on window type and screen dimensions
     val windowSize =
@@ -140,7 +148,14 @@ fun ApplicationScope.BossWindow(
         rememberWindowState(
             position = windowState.position ?: WindowPosition.Aligned(Alignment.Center),
             size = windowSize,
-            placement = if (windowState.windowType == WindowType.MAIN) WindowPlacement.Maximized else WindowPlacement.Floating,
+            placement =
+                if (windowState.windowType ==
+                    WindowType.MAIN
+                ) {
+                    WindowPlacement.Maximized
+                } else {
+                    WindowPlacement.Floating
+                },
         )
 
     // Track full screen state for reactive menu text
@@ -159,8 +174,14 @@ fun ApplicationScope.BossWindow(
         state = composeWindowState,
         icon = BossWindowIcon.painter,
         alwaysOnTop = isAlwaysOnTop,
+        // Alpha backing is fixed at window creation; AppKit restores the native frame.
+        undecorated = SystemUtils.isMacOS,
+        transparent = SystemUtils.isMacOS,
     ) {
+        // First, before the window is shown maximized: see MaximizedBoundsPin.kt.
+        PinMaximizedBounds(window)
         ApplyBossWindowIcon(window)
+        val windowGlass = rememberNativeWindowGlass(window, isFullScreen)
 
         // Apply programmatic resize requests (BossTerm "Fit host to my screen").
         // Lives inside Window {} so it can read this window's `window` (AWT
@@ -250,10 +271,14 @@ fun ApplicationScope.BossWindow(
         // toArgb(), not value.toInt(): Compose Color.value packs ARGB in the
         // UPPER 32 bits of a ULong, so value.toInt() reads the empty low bits.
         window.background =
-            Color(
-                BossThemeController.current.colors.raised
-                    .toArgb(),
-            )
+            if (SystemUtils.isMacOS) {
+                Color(0, 0, 0, 0)
+            } else {
+                Color(
+                    BossThemeController.current.colors.raised
+                        .toArgb(),
+                )
+            }
 
         // Enable native macOS fullscreen support and extend content into title bar
         // This allows the green traffic light button to enter proper native fullscreen,
@@ -279,14 +304,54 @@ fun ApplicationScope.BossWindow(
             WindowFocusManager.updateWindowFullscreen(windowState.id, isFullScreen)
         }
 
+        // OS decorations outside macOS need explicit scoped commands, not global mouse injection.
+        val currentCloseRequest by rememberUpdatedState(onCloseRequest)
+        DisposableEffect(windowState.id, window) {
+            val controls =
+                if (!SystemUtils.isMacOS) {
+                    OwnedWindowControls.register(
+                        windowState.id,
+                        window,
+                        mapOf(
+                            "close" to { currentCloseRequest() },
+                            "minimize" to { composeWindowState.isMinimized = true },
+                            "maximize" to {
+                                if (window.isResizable) composeWindowState.placement = WindowPlacement.Maximized
+                            },
+                            "unmaximize" to {
+                                if (composeWindowState.placement == WindowPlacement.Maximized) {
+                                    composeWindowState.placement = WindowPlacement.Floating
+                                }
+                            },
+                            "restore" to { composeWindowState.isMinimized = false },
+                            "exit-fullscreen" to {
+                                if (composeWindowState.placement == WindowPlacement.Fullscreen) {
+                                    composeWindowState.placement = WindowPlacement.Floating
+                                }
+                            },
+                        ),
+                    )
+                } else {
+                    null
+                }
+            onDispose { controls?.close() }
+        }
+
         // Register window for focus management (deep links, etc.) and keyboard interception
         DisposableEffect(windowState.id, window) {
             WindowFocusManager.registerWindow(windowState.id, window)
+            ai.rever.boss.sharing.AppSharingService
+                .registerWindow(windowState.id, window, window.title)
             AWTKeyboardInterceptor.registerWindow(window, windowState.id)
             onDispose {
-                WindowFocusManager.unregisterWindow(windowState.id)
-                AWTKeyboardInterceptor.unregisterWindow(window)
-                MenuActionsHandler.cleanupWindow(windowState.id)
+                val cleanup = CleanupRunner("BossWindow", mapOf("windowId" to windowState.id))
+                cleanup.run("unregister focus") { WindowFocusManager.unregisterWindow(windowState.id) }
+                cleanup.run("unregister sharing") {
+                    ai.rever.boss.sharing.AppSharingService
+                        .unregisterWindow(windowState.id)
+                }
+                cleanup.run("unregister keyboard") { AWTKeyboardInterceptor.unregisterWindow(window) }
+                cleanup.run("remove menu actions") { MenuActionsHandler.cleanupWindow(windowState.id) }
             }
         }
 
@@ -301,6 +366,7 @@ fun ApplicationScope.BossWindow(
         // State for CLI installation dialog
         var showCLIInstallDialog by remember { mutableStateOf(false) }
         var isCliInstalled by remember { mutableStateOf<Boolean>(CLIInstaller.isInstalled()) }
+        val mcpYolo by McpToolRegistryImpl.yoloMode.collectAsState()
 
         // State for Reset Browser dialog
         var showResetBrowserDialog by remember { mutableStateOf(false) }
@@ -345,7 +411,12 @@ fun ApplicationScope.BossWindow(
         // currentWorkspace, which never sees a switch made anywhere else - so the menu's
         // "disable the active workspace" row greyed out whatever this instance had last
         // loaded (nothing, usually) rather than what the window is actually showing.
-        val workspaces by workspaceManager.workspaces.collectAsState()
+        val workspaces by workspaceManager.visibleWorkspaces.collectAsState()
+        val spaceMenuSettings by ai.rever.boss.components.workspaces.WorkspaceSettingsManager.currentSettings
+            .collectAsState()
+        val spaceGroups =
+            ai.rever.boss.components.workspaces
+                .spaceMenuGroups(workspaces, spaceMenuSettings.recentSpaceIds)
         val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
 
         // Get split enabled state (whether there are tabs to split)
@@ -470,7 +541,9 @@ fun ApplicationScope.BossWindow(
 
                 // Workspace submenu
                 Menu("Select Space") {
-                    workspaces.forEach { workspace ->
+                    Item("Create New Space…", onClick = { MenuActionsHandler.triggerCreateSpace(windowState.id) })
+                    Separator()
+                    spaceGroups.recent.forEach { workspace ->
                         Item(
                             text = workspace.name,
                             onClick = {
@@ -478,6 +551,27 @@ fun ApplicationScope.BossWindow(
                             },
                             enabled = currentWorkspace?.id != workspace.id, // Disable current workspace
                         )
+                    }
+
+                    if (spaceGroups.more.isNotEmpty()) {
+                        Menu("More") {
+                            spaceGroups.more.forEach { workspace ->
+                                Item(
+                                    workspace.name,
+                                    enabled = currentWorkspace?.id != workspace.id,
+                                    onClick = { MenuActionsHandler.triggerApplyWorkspace(windowState.id, workspace) },
+                                )
+                            }
+                        }
+                    }
+                    Separator()
+                    Menu("Template Spaces") {
+                        spaceGroups.templates.forEach { workspace ->
+                            Item(
+                                workspace.name,
+                                onClick = { MenuActionsHandler.triggerApplyWorkspace(windowState.id, workspace) },
+                            )
+                        }
                     }
 
                     if (workspaces.isEmpty()) {
@@ -551,6 +645,14 @@ fun ApplicationScope.BossWindow(
                 Separator()
 
                 Item(
+                    "Print...",
+                    shortcut = shortcutBridge.getKeyShortcut(KeymapActions.BROWSER_PRINT),
+                    enabled = hasBrowser,
+                    onClick = { MenuActionsHandler.triggerPrintBrowser(windowState.id) },
+                )
+                Separator()
+
+                Item(
                     "Settings",
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.SETTINGS_OPEN),
                     onClick = {
@@ -559,7 +661,7 @@ fun ApplicationScope.BossWindow(
                 )
                 Item(
                     "Quit BOSS",
-                    onClick = { exitApplication() },
+                    onClick = onQuitRequest,
                 )
             }
 
@@ -907,10 +1009,47 @@ fun ApplicationScope.BossWindow(
                         showCLIInstallDialog = true
                     },
                 )
+
+                // YOLO mode's second door, and the one that survives a hidden bottom bar (Focus
+                // mode hides it by default): the checkmark is its indicator, unchecking is its off
+                // switch. Checking only ASKS - the shared confirmation in BossAppDialogs - so the
+                // mark reflects the engine, never the click. Hidden when the deployment refuses
+                // the mode, unless it is somehow on, so it can always be turned off.
+                if (McpToolRegistryImpl.yoloAvailable || mcpYolo) {
+                    Separator()
+                    CheckboxItem(
+                        "MCP YOLO Mode",
+                        checked = mcpYolo,
+                        onCheckedChange = { on ->
+                            if (on) {
+                                McpYoloPrompt.request(windowState.id)
+                            } else {
+                                menuScope.launch { McpToolRegistryImpl.setYoloMode(false) }
+                            }
+                        },
+                    )
+                }
             }
 
             // Window Menu
             Menu("Window") {
+                Item("Share BossConsole Window", onClick = {
+                    ai.rever.boss.sharing.AppSharingService
+                        .start(windowState.id)
+                })
+                // Native menu and local-only title-bar actions share this capture-consent boundary.
+                Item("Share Selected BossConsole Windows", onClick = {
+                    ai.rever.boss.sharing.AppSharingService
+                        .startSelectedWindows()
+                })
+                Item("Stop BossConsole Sharing", onClick = {
+                    ai.rever.boss.sharing.AppSharingService
+                        .stop()
+                })
+                Item("Sharing Settings", onClick = {
+                    MenuActionsHandler.triggerOpenSettings(windowState.id, "SHARING")
+                })
+                Separator()
                 Item(
                     "Close Window",
                     shortcut = shortcutBridge.getKeyShortcut(KeymapActions.WINDOW_CLOSE),
@@ -944,8 +1083,6 @@ fun ApplicationScope.BossWindow(
                             }
                     },
                 )
-
-                Separator()
 
                 Separator()
 
@@ -1048,6 +1185,13 @@ fun ApplicationScope.BossWindow(
                     },
                 )
 
+                Item(
+                    "Export Bookmarks...",
+                    onClick = {
+                        menuScope.launch { BookmarkExport.runFromMenu() }
+                    },
+                )
+
                 Separator()
 
                 Item(
@@ -1103,7 +1247,7 @@ fun ApplicationScope.BossWindow(
                         shouldTriggerTestCrash = true
                     },
                 )
-                
+
                 Separator()
 
                 Item(
@@ -1123,7 +1267,9 @@ fun ApplicationScope.BossWindow(
         // here rather than defaulted on, because secondary windows (Settings) are composed from
         // inside this subtree and must opt back out - see SettingsWindow.
         CompositionLocalProvider(
+            LocalWindowGlass provides windowGlass,
             LocalAwtWindow provides window,
+            LocalWindowFullscreen provides isFullScreen,
             LocalHeavyweightOverlays provides true,
         ) {
             // Create independent component context for this window
@@ -1171,7 +1317,7 @@ fun ApplicationScope.BossWindow(
                     onDismiss = { showTaskManagerDialog = false }
                 )
             }
-            
+
             if (showSystemHealthDialog) {
                 ai.rever.boss.components.dialogs.BossSystemHealthDialog(
                     onDismiss = { showSystemHealthDialog = false }
@@ -1494,10 +1640,14 @@ fun ApplicationScope.BossWindow(
                         )
                     },
                     confirmButton = {
-                        TextButton(onClick = { ScreenCaptureNotifier.resolvePermissionRationale(true) }) { Text("Continue") }
+                        TextButton(
+                            onClick = { ScreenCaptureNotifier.resolvePermissionRationale(true) },
+                        ) { Text("Continue") }
                     },
                     dismissButton = {
-                        TextButton(onClick = { ScreenCaptureNotifier.resolvePermissionRationale(false) }) { Text("Not now") }
+                        TextButton(
+                            onClick = { ScreenCaptureNotifier.resolvePermissionRationale(false) },
+                        ) { Text("Not now") }
                     },
                 )
             }

@@ -1,5 +1,6 @@
 package ai.rever.boss.utils
 
+import ai.rever.boss.components.workspaces.ShellPathQuoting
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -14,10 +15,20 @@ import kotlin.system.exitProcess
 object ApplicationRestarter {
     private val logger = BossLogger.forComponent("ApplicationRestarter")
 
+    @Volatile
     private var isRestarting = false
 
+    /**
+     * Restarts BOSS.
+     *
+     * The relauncher is started before anything shuts down. It waits for this PID to exit, so
+     * starting it early changes nothing for a restart that works, and until it is running a failure
+     * can still be undone: with [onRelaunchNotStarted] the process stays up and the callback runs
+     * instead of exiting with nothing to bring BOSS back. Without it, a failure still exits, as
+     * every restart before it did.
+     */
     @OptIn(DelicateCoroutinesApi::class)
-    fun restartApplication() {
+    fun restartApplication(onRelaunchNotStarted: (() -> Unit)? = null) {
         if (isRestarting) return // Prevent multiple restart attempts
         isRestarting = true
 
@@ -28,9 +39,6 @@ object ApplicationRestarter {
                 // (process handle, code source) still reflects the running install.
                 val command = buildRelaunchCommand()
 
-                // Perform graceful shutdown
-                performGracefulShutdown()
-
                 logger.info(LogCategory.SYSTEM, "Restarting application", mapOf("command" to command.joinToString(" ")))
 
                 // Start the relauncher as a detached child. On Unix it is re-parented to
@@ -40,22 +48,46 @@ object ApplicationRestarter {
                 processBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD)
                 processBuilder.start()
-
-                // Give the relauncher a moment to spin up, then exit. The relauncher
-                // waits for this PID to terminate before launching the new instance.
-                delay(500)
-
-                // Exit current instance
-                exitProcess(0)
             } catch (e: Exception) {
                 logger.error(LogCategory.SYSTEM, "Failed to restart application", error = e)
                 isRestarting = false
+                if (onRelaunchNotStarted != null) {
+                    onRelaunchNotStarted()
+                    return@launch
+                }
 
                 // Show error and exit anyway
                 exitProcess(1)
             }
+
+            // Perform graceful shutdown
+            performGracefulShutdown()
+
+            // Give the relauncher a moment to spin up, then exit. The relauncher
+            // waits for this PID to terminate before launching the new instance.
+            delay(500)
+
+            // Exit current instance
+            exitProcess(0)
         }
     }
+
+    /**
+     * Whether this process is a packaged macOS `BOSS.app` that [restartApplication] can bring back
+     * through LaunchServices. False for Gradle/JAR development runs, whose relaunch commands are
+     * best-effort and must not be relied on to come back, and for a translocated bundle (below).
+     */
+    fun canRelaunchMacBundle(): Boolean =
+        runCatching {
+            SystemUtils.isMacOS &&
+                detectMacAppBundle(
+                    ProcessHandle
+                        .current()
+                        .info()
+                        .command()
+                        .orElse(null),
+                )?.let(MacBundleRelaunch::isRelaunchable) == true
+        }.getOrDefault(false)
 
     /**
      * Build the command that brings BOSS back up after this process exits.
@@ -87,7 +119,8 @@ object ApplicationRestarter {
         if (osName.contains("mac")) {
             val appPath = detectMacAppBundle(launcher)
             if (appPath != null) {
-                return listOf("/bin/sh", "-c", "${waitForPidPrefix(pid)}open ${shellQuote(appPath)}")
+                val open = MacBundleRelaunch.openCommand(shellQuote(appPath))
+                return listOf("/bin/sh", "-c", waitForPidPrefix(pid) + open)
             }
         }
 
@@ -129,13 +162,9 @@ object ApplicationRestarter {
 
         // Development fallbacks (previous behavior).
         val javaBin = System.getProperty("java.home") + File.separator + "bin" + File.separator + "java"
-        val currentJar =
-            runCatching {
-                File(
-                    ApplicationRestarter::class.java.protectionDomain.codeSource.location
-                        .toURI(),
-                )
-            }.getOrNull()
+        // File(URI) REJECTS a URI with an authority outright, so on a network-share
+        // install this was null and the restart fell through to the classpath form.
+        val currentJar = CodeSourceLocation.fileFor(ApplicationRestarter::class.java)
         return when {
             currentJar?.name?.endsWith(".jar") == true -> {
                 listOf(javaBin, "-jar", currentJar.path)
@@ -160,7 +189,7 @@ object ApplicationRestarter {
     private fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
     /** Single-quote a string for safe embedding in a PowerShell command. */
-    private fun psQuote(s: String): String = "'" + s.replace("'", "''") + "'"
+    private fun psQuote(s: String): String = ShellPathQuoting.powershell(s)
 
     /**
      * Locate the running macOS `.app` bundle, or null in dev mode. Mirrors the proven
@@ -190,11 +219,7 @@ object ApplicationRestarter {
         // c) Walk up from the code source looking for a .app bundle (these are real
         //    ancestors of the running code, so they exist by construction).
         runCatching {
-            var current: File? =
-                File(
-                    ApplicationRestarter::class.java.protectionDomain.codeSource.location
-                        .toURI(),
-                )
+            var current: File? = CodeSourceLocation.fileFor(ApplicationRestarter::class.java)
             repeat(6) {
                 val f = current ?: return@runCatching
                 if (f.name.endsWith(".app")) return f.absolutePath

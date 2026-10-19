@@ -267,12 +267,24 @@ expect object GitService {
         projectPathOverride: String? = null,
     ): GitOperationResult
 
+    /** Commit using Git's committer identity and trailer handling when sign-off is requested. */
+    suspend fun commit(
+        message: String,
+        amend: Boolean,
+        windowId: String?,
+        projectPathOverride: String?,
+        signOff: Boolean,
+    ): GitOperationResult
+
     /**
      * Get the last commit message (for amending).
      *
      * @return Last commit message, or null if no commits
      */
     suspend fun getLastCommitMessage(): String?
+
+    /** Read the amend draft from an explicitly selected repository. */
+    suspend fun getLastCommitMessage(projectPathOverride: String?): String?
 
     // ===== Commit Log =====
 

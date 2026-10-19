@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.launchpad
 
+import ai.rever.boss.plugin.loader.PluginManifestReader
 import ai.rever.boss.plugin.pathutils.BossDirectories
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -118,7 +119,7 @@ object DevPluginArtifacts {
         devRoot: File = stagingRoot(),
         deepValidate: Boolean = false,
     ): File? {
-        val pluginDir = File(devRoot, pluginId)
+        val pluginDir = resolveContainedPluginDir(pluginId, devRoot) ?: return null
         if (!pluginDir.exists() || !pluginDir.isDirectory) return null
 
         val versionDirs =
@@ -149,11 +150,50 @@ object DevPluginArtifacts {
 
     /**
      * Resolves the staging directory for a specific [pluginId] under [devRoot].
+     *
+     * @throws IllegalArgumentException if [pluginId] is not a valid plugin id or would
+     * resolve outside [devRoot]
      */
     fun pluginDevDir(
         pluginId: String,
         devRoot: File = stagingRoot(),
-    ): File = File(devRoot, pluginId)
+    ): File =
+        resolveContainedPluginDir(pluginId, devRoot)
+            ?: throw IllegalArgumentException("Invalid plugin id for dev staging: '$pluginId'")
+
+    /**
+     * Joins [pluginId] onto [devRoot] only when the id passes the manifest plugin-id
+     * charset check and the canonically resolved directory stays inside [devRoot].
+     * Returns null instead of touching the filesystem when either check fails, so
+     * callers never list or prune a directory outside the staging root.
+     */
+    private fun resolveContainedPluginDir(
+        pluginId: String,
+        devRoot: File,
+    ): File? {
+        if (!PluginManifestReader.isValidPluginId(pluginId)) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Rejected invalid plugin id for dev staging",
+                mapOf("pluginId" to pluginId),
+            )
+            return null
+        }
+        val pluginDir = File(devRoot, pluginId)
+        val contained =
+            runCatching {
+                pluginDir.canonicalFile.toPath().startsWith(devRoot.canonicalFile.toPath())
+            }.getOrDefault(false)
+        if (!contained) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Rejected dev plugin dir escaping staging root",
+                mapOf("pluginId" to pluginId),
+            )
+            return null
+        }
+        return pluginDir
+    }
 
     /**
      * Discovers all active dev plugin JARs under [devRoot].

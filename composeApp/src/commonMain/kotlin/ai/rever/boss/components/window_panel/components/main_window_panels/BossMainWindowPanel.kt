@@ -33,6 +33,7 @@ import ai.rever.boss.components.plugin.TabUpdateRegistry
 import ai.rever.boss.components.plugin.providers.publishSystemEvent
 import ai.rever.boss.components.plugin.tab_types.PanelHostTabInfo
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
+import ai.rever.boss.components.sidebar.rememberPaneStripMenu
 import ai.rever.boss.components.tabs_navigation.TabsNavigation
 import ai.rever.boss.components.window_panel.SplitDirection
 import ai.rever.boss.components.window_panel.SplitOrientation
@@ -64,11 +65,15 @@ import ai.rever.boss.plugin.tab.fluck.FluckTabType
 import ai.rever.boss.plugin.tab.jupyter.JupyterTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.plugin.workspace.uniqueId
 import ai.rever.boss.project.DefaultWorkingDirectory
 import ai.rever.boss.run.RUNNER_TERMINAL_PREFIX
 import ai.rever.boss.run.RunnerTerminalService
 import ai.rever.boss.services.bookmarks.BookmarkAPIAccess
 import ai.rever.boss.services.bookmarks.rememberBookmarkCollections
+import ai.rever.boss.theme.sidebarDividerColor
+import ai.rever.boss.theme.sidebarGlassEnabled
+import ai.rever.boss.utils.CleanupRunner
 import ai.rever.boss.utils.extractFileName
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
@@ -135,11 +140,9 @@ import com.arkivanov.decompose.DefaultComponentContext
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
 import com.arkivanov.decompose.value.Value
 import com.arkivanov.essenty.lifecycle.LifecycleRegistry
-import com.arkivanov.essenty.lifecycle.destroy
 import com.arkivanov.essenty.lifecycle.resume
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.time.Clock
 
 private val bossMainWindowPanelLogger = BossLogger.forComponent("BossMainWindowPanel")
 
@@ -856,8 +859,14 @@ fun BossTabsComponent.rememberTabBarState(
             if (index < tabsState.value.tabs.size - 1) {
                 if (vertical) {
                     Divider(
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                        color = BossTheme.colors.line,
+                        modifier =
+                            if (sidebarGlassEnabled) {
+                                Modifier.padding(start = 34.dp, end = 10.dp, top = 2.dp)
+                            } else {
+                                Modifier.padding(horizontal = 8.dp)
+                            },
+                        thickness = if (sidebarGlassEnabled) 0.5.dp else 1.dp,
+                        color = sidebarDividerColor(),
                     )
                 } else {
                     VDivider(modifier = Modifier.padding(vertical = 8.dp, horizontal = INTER_TAB_DIVIDER_PADDING))
@@ -945,10 +954,9 @@ fun BossTabsComponent.rememberTabBarState(
                     onCreateTab = { type, path ->
                         when (type) {
                             TabType.URL -> {
-                                val timestamp = Clock.System.now().toEpochMilliseconds()
                                 val fluckTab =
                                     ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo(
-                                        id = "fluck-$timestamp",
+                                        id = mintTabId("fluck", splitViewState),
                                         typeId = FluckTabType.typeId,
                                         _title =
                                             if (FluckTabInfo.isHomeUrl(path)) FluckTabInfo.HOME_TITLE else "Loading...",
@@ -958,12 +966,11 @@ fun BossTabsComponent.rememberTabBarState(
                             }
 
                             TabType.FILE -> {
-                                val timestamp = Clock.System.now().toEpochMilliseconds()
                                 val fileName = path.extractFileName().ifEmpty { "untitled.txt" }
                                 val fileIconInfo = FileIcons.forFile(fileName)
                                 val editorTab =
                                     EditorTabInfo(
-                                        id = "editor-$timestamp",
+                                        id = mintTabId("editor", splitViewState),
                                         title = fileName,
                                         typeId = CodeEditorTabType.typeId,
                                         icon = fileIconInfo.icon,
@@ -976,12 +983,11 @@ fun BossTabsComponent.rememberTabBarState(
                             }
 
                             TabType.TERMINAL -> {
-                                val timestamp = Clock.System.now().toEpochMilliseconds()
                                 // Get current project path for terminal working directory (per-window)
                                 val projectPath = windowProjectState?.selectedProject?.value?.path ?: ""
                                 val terminalTab =
                                     TerminalTabInfo(
-                                        id = "terminal-$timestamp",
+                                        id = mintTabId("terminal", splitViewState),
                                         typeId = ai.rever.boss.plugin.tab.terminal.TerminalTabType.typeId,
                                         title = "Terminal",
                                         icon = ai.rever.boss.plugin.tab.terminal.TerminalTabType.icon,
@@ -1155,7 +1161,7 @@ fun BossTabsComponent.BossMainPanel(
             splitViewState = splitViewState,
             currentPanelId = currentPanelId,
             focusRequester = focusRequester,
-            vertical = true,
+            vertical = false,
         )
 
     // Read here rather than passed down like `showTabBar`.
@@ -1256,6 +1262,9 @@ fun BossTabsComponent.BossMainPanel(
             CompositionLocalProvider(
                 LocalIsPanelActive provides isActivePanel,
                 LocalInMainWindowPanel provides true,
+                LocalActivateMainWindowPanel provides {
+                    currentPanelId?.let { splitViewState?.setActivePanel(it) }
+                },
             ) {
                 BossMainPanelContent(modifier = contentModifier)
             }
@@ -1292,7 +1301,7 @@ fun BossTabsComponent.BossMainPanel(
                 // The strip's empty space offers what the vertical bar's does, this pane's "+"
                 // included - so "New Tab" from a background pane's strip lands in THAT pane
                 // rather than in whichever one the bar happens to lead.
-                menuItems = rememberBarMenuItems(openNewTab = { paneNewTab?.invoke() }),
+                menuItems = rememberPaneStripMenu(openNewTab = { paneNewTab?.invoke() }),
                 // removeTab, the same call the tab's own Close Tab menu entry makes, so a tab
                 // closed from the strip and one closed from the sidebar go the same way.
                 onClose = { index -> removeTab(index) },
@@ -1400,7 +1409,9 @@ fun BossTabsComponent.BossMainPanelContent(modifier: Modifier) {
     val selectedProject by windowProjectState?.selectedProject?.collectAsState()
         ?: remember { mutableStateOf(Project("No Project", "", 0L)) }
 
-    Box(modifier = modifier) {
+    // Own the content tint once, outside plugin surfaces, just as BossTerm's root does.
+    val glass = ai.rever.boss.theme.LocalWindowGlass.current
+    Box(modifier = modifier.background(if (glass.installed) BossTheme.colors.ink else Color.Transparent)) {
         val activeTab = tabsState.value.activeTab
         val activeComponent = getActiveComponent()
 
@@ -1497,10 +1508,9 @@ fun BossTabsComponent.BossMainPanelContent(modifier: Modifier) {
             onCreateTab = { type, path ->
                 when (type) {
                     TabType.URL -> {
-                        val timestamp = Clock.System.now().toEpochMilliseconds()
                         val fluckTab =
                             ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo(
-                                id = "fluck-$timestamp",
+                                id = mintTabId("fluck"),
                                 typeId = FluckTabType.typeId,
                                 _title = if (FluckTabInfo.isHomeUrl(path)) FluckTabInfo.HOME_TITLE else "Loading...",
                                 url = path,
@@ -1512,12 +1522,11 @@ fun BossTabsComponent.BossMainPanelContent(modifier: Modifier) {
                     }
 
                     TabType.FILE -> {
-                        val timestamp = Clock.System.now().toEpochMilliseconds()
                         val fileName = path.extractFileName().ifEmpty { "untitled.txt" }
                         val fileIconInfo = FileIcons.forFile(fileName)
                         val editorTab =
                             EditorTabInfo(
-                                id = "editor-$timestamp",
+                                id = mintTabId("editor"),
                                 title = fileName,
                                 typeId = CodeEditorTabType.typeId,
                                 icon = fileIconInfo.icon,
@@ -1533,12 +1542,11 @@ fun BossTabsComponent.BossMainPanelContent(modifier: Modifier) {
                     }
 
                     TabType.TERMINAL -> {
-                        val timestamp = Clock.System.now().toEpochMilliseconds()
                         // Get current project path for terminal working directory (per-window)
                         val projectPath = selectedProject.path
                         val terminalTab =
                             TerminalTabInfo(
-                                id = "terminal-$timestamp",
+                                id = mintTabId("terminal"),
                                 typeId = ai.rever.boss.plugin.tab.terminal.TerminalTabType.typeId,
                                 title = "Terminal",
                                 icon = ai.rever.boss.plugin.tab.terminal.TerminalTabType.icon,
@@ -1595,6 +1603,24 @@ class BossTabsComponent(
 ) : ComponentContext by componentContext {
     // Unique ID for this component (used for TabUpdateRegistry)
     private val componentId = "${windowId}_${System.identityHashCode(this)}"
+
+    /**
+     * Mint a tab id no live tab already holds. [uniqueId]'s random suffix is what makes a
+     * same-millisecond collision vanishingly rare; the scan is the deterministic backstop,
+     * since a tab id keys this component's maps and every cross-pane move or MCP address.
+     * When [splitViewState] is known it answers for every workspace this window is running;
+     * this panel's own list is checked either way.
+     */
+    internal fun mintTabId(
+        prefix: String,
+        splitViewState: ai.rever.boss.components.window_panel.SplitViewState? = null,
+    ): String {
+        var id = uniqueId(prefix)
+        while (splitViewState?.findTabLocation(id) != null || tabsState.value.tabs.any { it.id == id }) {
+            id = uniqueId(prefix)
+        }
+        return id
+    }
 
     private val tabComponents = mutableStateMapOf<String, TabComponentWithUI>()
 
@@ -1867,7 +1893,7 @@ class BossTabsComponent(
         }
 
         override fun openNewTab(url: String): String? {
-            val newTabId = "browser_${System.currentTimeMillis()}"
+            val newTabId = bossTabsComponent.mintTabId("browser")
             val newTab =
                 FluckTabInfo(
                     id = newTabId,
@@ -2054,41 +2080,45 @@ class BossTabsComponent(
             if (recordForReopen && !it.id.startsWith(RUNNER_TERMINAL_PREFIX)) {
                 ClosedTabHistory.record(windowId, it)
             }
+            // Claim ownership and navigation before callbacks, which may synchronously
+            // close this tab again or close a sibling and shift its old index.
+            val component = tabComponents.remove(it.id)
+            val lifecycle = tabLifecycles.remove(it.id)
+            mruTabIds.remove(it.id)
+            tabCycleOrder = null
+            _pinnedCount.value = pinnedCountAfterRemove(pinnedCount, index)
+            tabsNavigation.removeTab(index)
+
             // Unregister tab from TabUpdateRegistry (ownership-checked: a no-op if a move
             // already re-registered this tab id to its destination component)
             TabUpdateRegistry.unregisterTab(it.id, componentId)
-            publishSystemEvent(TabEvent(tabId = it.id, tabType = TabEventType.CLOSED, windowId = windowId))
+            val cleanup = CleanupRunner("BossTabsComponent", mapOf("tabId" to it.id, "windowId" to windowId))
+            cleanup.run("Publish tab closed") {
+                publishSystemEvent(TabEvent(tabId = it.id, tabType = TabEventType.CLOSED, windowId = windowId))
+            }
 
             // Dispose the component if it has a dispose method
-            val component = tabComponents.remove(it.id)
             if (component is ai.rever.boss.components.plugin.tab_types.fluck.FluckTabComponent) {
-                component.dispose()
+                cleanup.run("Browser tab") { component.dispose() }
             }
             // Destroy the tab's own lifecycle so components that clean up in
             // lifecycle.onDestroy (dynamic plugin tabs like fluck-browser) release their
             // resources — without this a closed browser tab's Chromium process lives on.
-            tabLifecycles.remove(it.id)?.destroy()
+            if (lifecycle != null) destroyTabLifecycle(it.id, lifecycle)
             // Panel-host tabs keep an explicit close signal (the hosted panel component is
             // owned by PanelComponentStore, not the tab lifecycle — see PanelHostTab.kt):
             // decrements the hosted-as-tab count so the sidebar icon reopens the plugin
             // in its sidebar location once the last hosting tab is closed.
             if (component is ai.rever.boss.components.plugin.tab_types.PanelHostTabComponent) {
-                component.onClosed()
+                cleanup.run("Panel host tab") { component.onClosed() }
             }
 
             // If this is a runner terminal, notify the service to clean up tracking
             // This handles the case where user closes the tab directly (not via Stop button)
             if (it.id.startsWith(RUNNER_TERMINAL_PREFIX)) {
-                RunnerTerminalService.removeTerminal(windowId, it.id)
+                cleanup.run("Runner terminal") { RunnerTerminalService.removeTerminal(windowId, it.id) }
             }
-            // Drop the closed tab from MRU tracking and abandon any in-progress cycle.
-            mruTabIds.remove(it.id)
-            tabCycleOrder = null
         }
-        // Before the removal, while `index` still refers to the tab being closed. Every
-        // close-many helper funnels through here, so none of them has to know about pinning.
-        _pinnedCount.value = pinnedCountAfterRemove(pinnedCount, index)
-        tabsNavigation.removeTab(index)
     }
 
     // Remove a tab by ID - safer than index-based removal when state may have changed.
@@ -2121,9 +2151,20 @@ class BossTabsComponent(
         internal val component: TabComponentWithUI,
         internal val lifecycle: LifecycleRegistry?,
     ) {
+        private var destroyed = false
+
         /** Destroy the detached component instead of adopting it (fires its onDestroy cleanup). */
         fun destroy() {
-            lifecycle?.destroy()
+            if (destroyed) return
+            destroyed = true
+            val cleanup = CleanupRunner("DetachedTab", mapOf("tabId" to config.id))
+            if (component is ai.rever.boss.components.plugin.tab_types.fluck.FluckTabComponent) {
+                cleanup.run("Browser tab") { component.dispose() }
+            }
+            lifecycle?.let { cleanup.destroyLifecycle("Tab lifecycle", it) }
+            if (component is ai.rever.boss.components.plugin.tab_types.PanelHostTabComponent) {
+                cleanup.run("Panel host tab") { component.onClosed() }
+            }
         }
     }
 
@@ -2498,21 +2539,6 @@ class BossTabsComponent(
         }
     }
 
-    // Close the most recently opened tab (used for auto-closing download redirects)
-    fun closeMostRecentTab() {
-        val tabs = tabsState.value.tabs
-        if (tabs.isNotEmpty()) {
-            val lastIndex = tabs.size - 1
-            bossMainWindowPanelLogger.debug(LogCategory.UI, "Closing most recent tab", mapOf("index" to lastIndex))
-            // Not reopenable: the only caller is the download-redirect cleanup
-            // (setupDownloadTabCloseCallback), the same automatic closure as closeTabByUrl.
-            // The user did not close it, and reopening would re-run the download.
-            removeTab(lastIndex, recordForReopen = false)
-        } else {
-            bossMainWindowPanelLogger.debug(LogCategory.UI, "No tabs to close")
-        }
-    }
-
     /**
      * Synchronously dispose all browser tabs in this component.
      * Called when the window is closing to ensure JxBrowser instances
@@ -2522,18 +2548,26 @@ class BossTabsComponent(
      * disposed AWT window handles during rendering.
      */
     fun disposeAllTabsBlocking() {
-        tabComponents.values.toList().forEach { component ->
+        val components = tabComponents.toMap()
+        val lifecycles = tabLifecycles.toMap()
+        tabComponents.clear()
+        tabLifecycles.clear()
+        components.forEach { (tabId, component) ->
             if (component is ai.rever.boss.components.plugin.tab_types.fluck.FluckTabComponent) {
-                component.disposeBlocking()
+                CleanupRunner("BossTabsComponent", mapOf("tabId" to tabId, "windowId" to windowId))
+                    .run("Browser tab") { component.disposeBlocking() }
             }
         }
-        tabComponents.clear()
-        // Destroy the per-tab lifecycles so plugin components that clean up in
-        // lifecycle.onDestroy release their resources on window close too — same
-        // contract as removeTab. SplitViewState performs the window-scoped
-        // BrowserService fallback after every panel lifecycle has been destroyed.
-        tabLifecycles.values.toList().forEach { it.destroy() }
-        tabLifecycles.clear()
+        // Window-scoped BrowserService fallback runs after all panel lifecycles.
+        lifecycles.forEach { (tabId, lifecycle) -> destroyTabLifecycle(tabId, lifecycle) }
+    }
+
+    private fun destroyTabLifecycle(
+        tabId: String,
+        lifecycle: LifecycleRegistry,
+    ) {
+        CleanupRunner("BossTabsComponent", mapOf("tabId" to tabId, "windowId" to windowId))
+            .destroyLifecycle("Tab lifecycle", lifecycle)
     }
 }
 
@@ -2593,3 +2627,6 @@ internal fun convertTabInfoToTabConfig(tabInfo: TabInfo): TabConfig =
  * Defaults to `false`, so the only thing that reads as a main-panel surface is one that actually is.
  */
 val LocalInMainWindowPanel: ProvidableCompositionLocal<Boolean> = compositionLocalOf { false }
+
+/** Direct Chromium input bypasses Compose's pointer handler; activate only its owning panel. */
+val LocalActivateMainWindowPanel: ProvidableCompositionLocal<() -> Unit> = compositionLocalOf { {} }

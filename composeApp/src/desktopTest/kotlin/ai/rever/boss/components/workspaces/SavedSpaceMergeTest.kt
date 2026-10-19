@@ -241,7 +241,7 @@ class SavedSpaceMergeTest {
         assertTrue(first.id !in PredefinedWorkspaces.allIds)
         assertTrue(
             !first.id.substringAfter("workspace-").all { it.isDigit() },
-            "`generateId()` is workspace-<epoch millis>, so an adopted id must not look like one",
+            "an adopted id must not look like a timestamp-only workspace id",
         )
     }
 

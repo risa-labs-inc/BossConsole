@@ -1,0 +1,244 @@
+package ai.rever.boss.mcp
+
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlin.random.Random
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+/**
+ * The contract of [McpArgumentSanitizer], stated as a property over generated input rather than
+ * as one example per bug report: a credential carried in any of the shapes below, wrapped in any
+ * of the contexts below, never reaches the approval dialog or the ledger, and a command that
+ * carries no credential comes out byte-identical, because the operator approves what they can
+ * read.
+ *
+ * Each shape is a way a real command or file labels a secret (an assignment, a header, a flag, a
+ * URI authority, a JSON body, a vendor-prefixed token); each context is a way the same text is
+ * wrapped on its way through a tool argument (quotes, `export`, a JSON string with its escapes,
+ * a chained command line, a nested argument object). The four sanitizer issues so far (#836,
+ * #837, #886 and this) were each one cell of that table found by hand; this walks the table.
+ *
+ * The generator runs from a fixed seed by default, so every run of this suite, on every machine,
+ * walks the same table: a failure here is reproducible by whoever reads the report, and a green
+ * run is evidence about the same inputs the last green run covered. Pass
+ * `BOSS_SANITIZER_FUZZ_SEED=<long>` to walk a different table (a nightly job or a local hunt can
+ * pass a random one); the seed in the failure message is then the one to pass back to replay it.
+ * An environment variable rather than a system property because Gradle passes the environment to
+ * the test JVM as it is, while a `-D` on the Gradle command line reaches the daemon and stops
+ * there (the `Test` task in `composeApp/build.gradle.kts` forwards only `user.home`).
+ *
+ * A shape or a context is added by adding a line, not a test.
+ */
+class McpArgumentSanitizerFuzzTest {
+    /**
+     * A value that cannot occur by accident in the surrounding text: letters and digits only.
+     *
+     * That choice is what makes `output.contains(secret)` mean anything, and it is also the
+     * property's largest blind spot, stated here because this file is written as the contract:
+     * a generated secret can never contain a character that ENDS a value for these rules
+     * (whitespace, `&`, `,`, `;`, `}`, or a matching quote), so no generated cell can discover
+     * that `password=Xk9&mQ2` leaves `mQ2` in the clear. Shapes whose real values routinely carry
+     * such characters need an example test rather than a cell here.
+     */
+    private val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
+
+    /**
+     * The seed this run walks: the fixed default, or the override variable.
+     *
+     * Read once per instance and reported on failure, so the seed in a report is always a value
+     * that can be handed back to reproduce that exact run. An unparseable override is a typo, not
+     * a request for a random table, so it fails loudly rather than silently testing something
+     * other than what was asked for.
+     */
+    private val seed: Long =
+        System.getenv(SEED_VARIABLE)?.let {
+            it.toLongOrNull() ?: error("$SEED_VARIABLE must be a Long, was '$it'")
+        } ?: DEFAULT_SEED
+
+    private fun Random.secret(length: Int = nextInt(12, 40)): String =
+        buildString { repeat(length) { append(alphabet[nextInt(alphabet.length)]) } }
+
+    private fun interface Shape {
+        fun render(secret: String): String
+    }
+
+    private fun interface Context {
+        fun wrap(text: String): String
+    }
+
+    /** How a secret is labelled. Each entry is one real command line, config line or request body. */
+    private val shapes: List<Pair<String, Shape>> =
+        listOf(
+            "env assignment" to Shape { "export DB_PASSWORD=$it" },
+            "env assignment, suffixed name" to Shape { "export AWS_SECRET_ACCESS_KEY=$it" },
+            "env assignment, secret prefix" to Shape { "SECRET_KEY_BASE=$it rails server" },
+            "env assignment, quoted" to Shape { "TOKEN=\"$it\" ./run.sh" },
+            "yaml-ish key" to Shape { "password: $it" },
+            "json body" to Shape { "curl -d '{\"password\":\"$it\"}' https://api.example.invalid/login" },
+            "json body, spaced" to Shape { "curl -d '{\"api_key\": \"$it\"}' https://api.example.invalid" },
+            "json header object" to Shape { "{\"Authorization\":\"Basic $it\"}" },
+            "authorization bearer" to Shape { "curl -H 'Authorization: Bearer $it' https://api.example.invalid" },
+            "authorization basic" to Shape { "curl -H \"Authorization: Basic $it\" https://api.example.invalid" },
+            "custom api key header" to Shape { "curl -H 'X-API-Key: $it' https://api.example.invalid" },
+            "cookie header" to Shape { "curl -H 'Cookie: session=$it; theme=dark' https://app.example.invalid" },
+            "cookie short flag" to Shape { "curl -b 'session=$it' https://app.example.invalid" },
+            "cookie long flag" to Shape { "curl --cookie \"session=$it\" https://app.example.invalid" },
+            "long flag with equals" to Shape { "mysql --password=$it -e 'select 1'" },
+            "long flag with space" to Shape { "mysql --password $it -e 'select 1'" },
+            "token flag with space" to Shape { "vault login --token $it" },
+            "docker login" to Shape { "docker login -u deploy --password $it registry.example.invalid" },
+            "sshpass" to Shape { "sshpass -p $it ssh deploy@host.example.invalid" },
+            "curl basic auth" to Shape { "curl -u admin:$it https://api.example.invalid/health" },
+            "uri userinfo" to Shape { "psql postgres://admin:$it@db.example.invalid/app" },
+            "uri userinfo, git" to Shape { "git clone https://oauth2:$it@git.example.invalid/org/repo.git" },
+            "npm auth token" to Shape { "npm config set //registry.npmjs.org/:_authToken $it" },
+            "github token" to Shape { "gh auth login --with-token <<< ghp_$it" },
+            "vendor sk key" to Shape { "export OPENAI_API_KEY=sk-$it" },
+            "jwt" to Shape { "curl -H 'X-Auth: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.$it'" },
+            "aws access key id" to Shape { "aws configure set aws_access_key_id AKIA${awsKeyBody(it)}" },
+            "pem block" to
+                Shape { "printf '%s' '-----BEGIN RSA PRIVATE KEY-----\n$it\n-----END RSA PRIVATE KEY-----' > id_rsa" },
+            "encrypted pem block" to
+                Shape {
+                    "openssl rsa -aes256 -out id_rsa # -----BEGIN RSA PRIVATE KEY-----\n" +
+                        "Proc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,3F17A9B4C2D1\n\n$it\n" +
+                        "-----END RSA PRIVATE KEY-----"
+                },
+        )
+
+    /** How the same text is wrapped by the time it is a tool argument. */
+    private val contexts: List<Pair<String, Context>> =
+        listOf(
+            "plain" to Context { it },
+            "single quoted" to Context { "sh -c '$it'" },
+            "double quoted" to Context { "bash -lc \"$it\"" },
+            "chained after another command" to Context { "cd /srv/app && $it" },
+            "chained before another command" to Context { "$it; echo done" },
+            "piped" to Context { "$it | tee /tmp/out.log" },
+            "multiline script" to Context { "#!/bin/sh\nset -e\n$it\necho finished\n" },
+            "json string value" to Context { jsonString(it) },
+            "surrounded by prose" to Context { "Please run the following and report back: $it (this is important)" },
+            "unicode neighbours" to Context { "ünïcödé → $it ← 終わり" },
+        )
+
+    /** The documented shape is 16 upper-case alphanumerics after the prefix; the secret supplies them. */
+    private fun awsKeyBody(secret: String): String {
+        val body = secret.uppercase().filter { it.isLetterOrDigit() }
+        return body.take(16).padEnd(16, '7')
+    }
+
+    private fun jsonString(text: String): String = Json.encodeToString(kotlinx.serialization.serializer<String>(), text)
+
+    private fun sanitizedCommand(text: String): String {
+        val sanitized = McpArgumentSanitizer.sanitize(mapOf("command" to text))
+        return sanitized["command"]!!
+    }
+
+    @Test
+    fun `no credential shape survives any context`() {
+        val random = Random(seed)
+        val failures = mutableListOf<String>()
+        repeat(3) {
+            for ((shapeName, shape) in shapes) {
+                for ((contextName, context) in contexts) {
+                    val secret = random.secret()
+                    val input = context.wrap(shape.render(secret))
+                    val output = sanitizedCommand(input)
+                    // The aws shape renders AKIA + an uppercased, truncated secret, so the raw
+                    // secret is not in the input at all and contains(secret) would be vacuous.
+                    // Probe for the rendered key body instead - that is what must not survive.
+                    val probe = if (shapeName == "aws access key id") "AKIA${awsKeyBody(secret)}" else secret
+                    if (output.contains(probe)) {
+                        val shown = input.replace("\n", "\\n")
+                        val got = output.replace("\n", "\\n")
+                        failures += "$shapeName / $contextName\n    in:  $shown\n    out: $got"
+                    }
+                }
+            }
+        }
+        // One entry per shape and context: each failure string embeds that repetition's random
+        // secret, so a plain distinct() would collapse nothing and `repeat(3)` would report every
+        // leaking cell three times.
+        val distinct = failures.distinctBy { it.substringBefore('\n') }
+        val report = distinct.joinToString("\n")
+        assertTrue(
+            distinct.isEmpty(),
+            "$SEED_VARIABLE=$seed reproduces this run; ${distinct.size} leaking cell(s):\n$report",
+        )
+    }
+
+    @Test
+    fun `a credential survives nowhere in a nested argument either`() {
+        val random = Random(seed)
+        for ((shapeName, shape) in shapes) {
+            val secret = random.secret()
+            val rendered = shape.render(secret)
+            val nested =
+                mapOf(
+                    "steps" to listOf(mapOf("run" to rendered), "echo ok"),
+                    "config" to mapOf("script" to listOf(rendered)),
+                    "raw" to Json.parseToJsonElement("""{"cmd": ${jsonString(rendered)}}""") as JsonObject,
+                )
+            val out = McpArgumentSanitizer.sanitize(nested).values.joinToString("\n")
+            assertTrue(
+                !out.contains(secret),
+                "$SEED_VARIABLE=$seed reproduces this run; $shapeName leaked through a nested argument:\n$out",
+            )
+        }
+    }
+
+    /**
+     * The other half of the contract. Every line here is a command an operator must be able to
+     * read in the dialog exactly as the agent wrote it; a rule that touches any of them hides the
+     * thing approval exists to show.
+     */
+    private val benign =
+        listOf(
+            "git push -u origin main",
+            "git log --author=alice@example.com --oneline",
+            "python -u train.py --epochs 3",
+            "curl -u admin https://api.example.invalid/health",
+            "open https://example.com/@handle/status/1",
+            "docker run -p 8080:80 nginx",
+            "docker run -u 1000:1000 nginx",
+            "docker run --user=1000:1000 nginx",
+            "podman run --user 0:0 alpine id",
+            "git checkout -b feature/login-fix",
+            "cp -b src.txt dst.txt",
+            "ssh -b 10.0.0.1 host.example.invalid",
+            "ssh -p 2222 deploy@host.example.invalid",
+            "grep -rn 'password' src/ --include='*.kt'",
+            "cat docs/tokens.md",
+            "echo 'the secret to good tea is patience'",
+            "npm token list",
+            "kubectl get secret -n default",
+            "aws s3 ls s3://bucket/keys/",
+            "ls ~/.ssh",
+            "cat '-----BEGIN PUBLIC KEY-----MFkw' > pub",
+            "export PATH=/usr/local/bin:\$PATH",
+            "export EDITOR=vim",
+            "redis-cli -u redis://cache.example.invalid:6379 ping",
+            "psql postgres://db.example.invalid/app -c 'select 1'",
+            "make -j4 && ./gradlew test",
+        )
+
+    @Test
+    fun `a command without a credential is untouched`() {
+        for (line in benign) {
+            for ((_, context) in contexts) {
+                val input = context.wrap(line)
+                assertEquals(input, sanitizedCommand(input), "a benign command was altered")
+            }
+        }
+    }
+
+    private companion object {
+        /** Override with `BOSS_SANITIZER_FUZZ_SEED=<long>`; see the class KDoc. */
+        const val SEED_VARIABLE = "BOSS_SANITIZER_FUZZ_SEED"
+
+        /** Fixed so the suite is reproducible; any Long would do, this one is the date it was written. */
+        const val DEFAULT_SEED = 20260919L
+    }
+}

@@ -1,7 +1,6 @@
 package ai.rever.boss.components.window_panel.components.main_window_panels
 
 import ai.rever.boss.components.bars.vertical.VerticalBar
-import ai.rever.boss.components.home.HomeNavigationButton
 import ai.rever.boss.components.home.isHomeTab
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
@@ -9,6 +8,7 @@ import ai.rever.boss.components.overlays.contextMenu
 import ai.rever.boss.components.plugin.MissingPluginOffer
 import ai.rever.boss.components.window_panel.SplitViewState
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.theme.sidebarGlassEnabled
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.LocalWindowId
@@ -38,6 +38,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.Dp
@@ -193,6 +194,7 @@ fun WindowVerticalTabBar(
     expansion: TabGroupExpansion,
     width: Dp,
     collapsed: Boolean = false,
+    surfacePainted: Boolean = false,
     onToggleCollapse: (() -> Unit)? = null,
     onPin: (() -> Unit)? = null,
     tabDragComponent: TabDraggableComponent? = null,
@@ -267,7 +269,7 @@ fun WindowVerticalTabBar(
 
     VerticalBar(
         width = verticalTabBarWidth(collapsed = collapsed, width = width),
-        backgroundColor = BossTheme.colors.panel,
+        backgroundColor = if (sidebarGlassEnabled && surfacePainted) Color.Transparent else BossTheme.colors.panel,
         modifier =
             Modifier
                 .hoverable(barInteraction)
@@ -350,6 +352,7 @@ fun BoxScope.WindowRevealedTabBarDrawer(
      */
     footer: @Composable () -> Unit = {},
     belowMap: @Composable () -> Unit = {},
+    railWidth: Dp = tabBarRailWidth,
 ) {
     // Built here rather than taken as a parameter: dismissing a drawer is the drawer's own
     // business, and the pointer state it needs is a composable read the caller had to make on the
@@ -362,7 +365,7 @@ fun BoxScope.WindowRevealedTabBarDrawer(
         hoverSource = reveal.drawerHover,
         hoverEnabled = bar.hoverExpand,
         width = bar.width,
-        railWidth = tabBarRailWidth,
+        railWidth = railWidth,
         panelRegion = contentRegion,
         onDismissOutside = reveal.dismissOutside,
     ) {
@@ -564,15 +567,10 @@ private fun ExpandedGroups(
     zoomed: Boolean,
     onExitZoom: () -> Unit,
 ) {
-    val windowId = LocalWindowId.current
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().padding(horizontal = if (sidebarGlassEnabled) 6.dp else 0.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        HomeNavigationButton(
-            selected = lead.state.tabs.isEmpty() || isHomeTab(lead.state.tabs.getOrNull(lead.state.activeIndex)),
-            onClick = { windowId?.let { MenuActionsHandler.triggerGoHome(it) } },
-        )
         WindowTabBarFavorites(
             lead = lead,
             onToggleCollapse = onToggleCollapse,
@@ -639,6 +637,7 @@ private fun WindowTabBarFavorites(
 ) {
     TabBarFavorites(
         bookmarks = lead.state.favorites,
+        homeSelected = lead.state.tabs.isEmpty() || isHomeTab(lead.state.tabs.getOrNull(lead.state.activeIndex)),
         pluginInstalled = lead.state.bookmarksInstalled,
         apiReachable = lead.state.bookmarksApiReachable,
         onOpen = lead.state.openFavorite,

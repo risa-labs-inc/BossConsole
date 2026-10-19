@@ -32,7 +32,12 @@ class PluginUpdateCancellationTest {
 
     private fun manager(repository: PluginRepository): PluginUpdateManager {
         val repos = PluginRepositoryManager().apply { addRepository(repository) }
-        return PluginUpdateManager(repositoryManager = repos, hostBossVersion = "9.9.9")
+        return PluginUpdateManager(
+            repositoryManager = repos,
+            hostBossVersion = "9.9.9",
+            // Not this suite's subject - an always-accept vet keeps the pre-wire behaviour.
+            verifyDownloadedJar = { _, _ -> Result.success(Unit) },
+        )
     }
 
     private fun candidate() =

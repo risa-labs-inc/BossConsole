@@ -186,11 +186,9 @@ private fun findBrowserForTab(
         val selectedTab =
             activeFluckTabs.find { activeTab ->
                 val tabInfo = activeTab.tabInfo
-                when (tabInfo) {
-                    is ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo -> tabInfo.id == tabId
-                    is FluckTabComponent -> tabInfo.config.id == tabId
-                    else -> false
-                }
+                // Dynamic browser plugins implement TabInfo without being a host FluckTabInfo.
+                // Match the shared identity so they can reach the dynamic-handle lookup below.
+                tabInfo.id == tabId
             }
 
         if (selectedTab != null) {

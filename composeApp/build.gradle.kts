@@ -7,6 +7,7 @@ import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import java.io.ByteArrayOutputStream
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Properties
@@ -99,7 +100,21 @@ val versionPropsProvider =
     providers.of(VersionPropertiesValueSource::class.java) {
         parameters.propertiesFile.set(versionPropsFile)
     }
-val appVersion = versionPropsProvider.map { it.getProperty("app.version", "8.8.0") }.get()
+val testAutoUpdateBuild =
+    providers
+        .gradleProperty("testAutoUpdate")
+        .map(String::toBoolean)
+        .orElse(false)
+        .get()
+val desktopOutputDirectory = if (testAutoUpdateBuild) "compose-auto-update-test" else "compose"
+
+// Part of the toolkit preload agent stamp (see prepareToolkitPreloadAgent); read here because
+// `libs` is shadowed inside the compose DSL blocks.
+val jxbrowserVersionForStamp: String =
+    libs.versions.jxbrowser
+        .asProvider()
+        .get()
+val appVersion = if (testAutoUpdateBuild) "1.0.0" else versionPropsProvider.map { it.getProperty("app.version", "8.8.0") }.get()
 // Base version (without prerelease suffix) for native package formats that don't support semver prereleases
 val baseVersion = appVersion.substringBefore("-")
 
@@ -262,6 +277,7 @@ val generateVersionConstants =
 
         // Use providers for configuration cache compatibility
         val propsProvider = versionPropsProvider
+        val autoUpdateTest = testAutoUpdateBuild
         val majorProvider = propsProvider.map { it.getProperty("app.version.major", "8") }
         val minorProvider = propsProvider.map { it.getProperty("app.version.minor", "8") }
         val patchProvider = propsProvider.map { it.getProperty("app.version.patch", "0") }
@@ -280,10 +296,10 @@ val generateVersionConstants =
         outputs.upToDateWhen { false }
 
         doLast {
-            val major = majorProvider.get()
-            val minor = minorProvider.get()
-            val patch = patchProvider.get()
-            val prerelease = prereleaseProvider.get().takeIf { it.isNotBlank() }
+            val major = if (autoUpdateTest) "1" else majorProvider.get()
+            val minor = if (autoUpdateTest) "0" else minorProvider.get()
+            val patch = if (autoUpdateTest) "0" else patchProvider.get()
+            val prerelease = if (autoUpdateTest) null else prereleaseProvider.get().takeIf { it.isNotBlank() }
             val pluginApiVer = pluginApiProvider.get()
             val jxVersion = jxVersionProvider.get()
 
@@ -825,6 +841,80 @@ val prepareBundledPluginsResources =
         into(layout.buildDirectory.dir("bundled-plugins-resources/common/bundled-plugins"))
     }
 
+// Capture helpers are built for the packaging host, never downloaded or resolved from PATH at runtime.
+val prepareAppCaptureResources =
+    tasks.register<Exec>("prepareAppCaptureResources") {
+        group = "build"
+        description = "Builds the exact native window capture helper for Windows or Linux"
+        // Execution predicates must capture values, not the enclosing Gradle script.
+        // The script object is unavailable when the configuration cache is restored.
+        val onMacHost = isMacOSHost
+        onlyIf { !onMacHost }
+        val helperSource = layout.projectDirectory.dir("../native/app-capture")
+        val helperBuild = layout.buildDirectory.dir("native/app-capture")
+        val resourceDir = layout.buildDirectory.dir("bundled-plugins-resources/common/app-capture")
+        inputs.dir(helperSource)
+        inputs.file(layout.projectDirectory.file("../scripts/build-app-capture.py"))
+        outputs.dir(resourceDir)
+        commandLine(
+            if (System.getProperty("os.name").startsWith("Windows")) "python" else "python3",
+            layout.projectDirectory
+                .file("../scripts/build-app-capture.py")
+                .asFile.absolutePath,
+            "--source",
+            helperSource.asFile.absolutePath,
+            "--build",
+            helperBuild.get().asFile.absolutePath,
+            "--output",
+            resourceDir.get().asFile.absolutePath,
+        )
+    }
+
+// The macOS toolkit preload agent (native/toolkit-preload-agent): loads JxBrowser's libtoolkit
+// from Agent_OnLoad, before the JVM starts GC/JIT threads that can free() during its malloc zone
+// swap. Universal so one build serves arm64 and x64. It lands in the app's resources, which the
+// launcher references as $APPDIR/resources/toolkit-preload; verifyToolkitPreloadAgent fails the
+// build if a packaged app references it without carrying it, because a missing -agentpath library
+// stops the JVM from starting at all.
+val toolkitPreloadAgentRelativePath = "toolkit-preload/libbosstoolkitpreload.dylib"
+val prepareToolkitPreloadAgent =
+    tasks.register<Exec>("prepareToolkitPreloadAgent") {
+        description = "Builds the macOS native toolkit preload agent"
+        val onMacHost = isMacOSHost
+        onlyIf { onMacHost }
+        val source = layout.projectDirectory.file("../native/toolkit-preload-agent/boss_toolkit_preload.c")
+        val output =
+            layout.buildDirectory.file("bundled-plugins-resources/macos/$toolkitPreloadAgentRelativePath")
+        // JNI/JVMTI headers from the JDK running the build; they are stable across 17+.
+        val jdkInclude = File(System.getProperty("java.home"), "include")
+        inputs.file(source)
+        outputs.file(output)
+        doFirst {
+            output
+                .get()
+                .asFile.parentFile
+                .mkdirs()
+        }
+        commandLine(
+            "clang",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-O2",
+            "-arch",
+            "arm64",
+            "-arch",
+            "x86_64",
+            "-mmacosx-version-min=13.0",
+            "-dynamiclib",
+            "-I${jdkInclude.absolutePath}",
+            "-I${File(jdkInclude, "darwin").absolutePath}",
+            "-o",
+            output.get().asFile.absolutePath,
+            source.asFile.absolutePath,
+        )
+    }
+
 // Task to generate versioned CLI scripts from templates
 val generateVersionedCLIScripts =
     tasks.register("generateVersionedCLIScripts") {
@@ -921,6 +1011,8 @@ kotlin {
                 }
             }
         val desktopTest = getByName("desktopTest")
+        // Synthetic benchmark modules are served by AppSharingAssets only in the test classpath.
+        desktopTest.resources.srcDir(rootProject.file("scripts"))
 
         // Add generated source directory to commonMain
         commonMain {
@@ -1101,10 +1193,12 @@ kotlin {
                 implementation(project(":plugin-platform:plugin-api-ipc"))
             }
         }
-        // Without the IPC module (Windows ARM64) the drift test can't compile;
-        // drop it from the source set — every other platform still enforces it.
+        // Without the IPC module (Windows ARM64) the drift test and the Downloads
+        // consistency test can't compile; drop them from the source set - every other
+        // platform still enforces them.
         if (findProject(":plugin-platform:plugin-api-ipc") == null) {
             desktopTest.kotlin.exclude("**/SkipListDriftTest.kt")
+            desktopTest.kotlin.exclude("**/DownloadsDirectoryConsistencyTest.kt")
         }
         // Mirror of the desktopMain exclusions above: **/kernel/** and
         // **/plugin/remote/** aren't compiled on Windows ARM64 (no boss-ipc, no
@@ -1119,6 +1213,10 @@ kotlin {
                 // Not under either directory, but they assert on boss-ipc's IpcVersion, and
                 // that module is dropped from the dependency list above on this platform.
                 // Found by WindowsArm64SourceIsolationTest rather than by a build breaking.
+                "**/plugin/OopPluginDisableLifecycleTest.kt",
+                "**/plugin/OutOfProcessPluginSpawnerLifecycleTest.kt",
+                // Exercises the OOP spawner implementation, excluded from this platform.
+                "**/plugin/OutOfProcessSpawnerEpochFencingTest.kt",
                 "**/plugin/IpcCompatibilityTest.kt",
                 "**/plugin/PluginStoreSetupIpcGateTest.kt",
                 "**/plugin/PluginStateDeltaTest.kt",
@@ -1126,6 +1224,9 @@ kotlin {
                 "**/plugin/PluginProcessIdTest.kt",
                 // The source-isolation guard rejects this test's IPC package import.
                 "**/run/DesktopRunnerTerminalServiceTest.kt",
+                // Same IpcEventBridge dependency - the capture seam it uses lives in
+                // the boss-ipc module dropped on this platform.
+                "**/git/GitRunInTerminalQuotingTest.kt",
             )
         }
     }
@@ -1277,6 +1378,13 @@ compose.desktop {
                     // Used by FullscreenBrowserWindow/WindowFocusManager; tested on Java 17+.
                     // Falls back to a display-sized borderless overlay if unavailable.
                     add("--add-opens=java.desktop/com.apple.eawt=ALL-UNNAMED")
+                    // Native toolkit preload agent (see prepareToolkitPreloadAgent). The stamp
+                    // ties the agent's manifest to this exact build; the empty result property
+                    // must be declared for the agent to be able to write it (JVMTI can only set
+                    // properties that exist). The run task rewrites the $APPDIR path.
+                    add("-Dboss.toolkit.preload.stamp=$appVersion+jxbrowser-$jxbrowserVersionForStamp")
+                    add("-Dboss.toolkit.preload.agent=")
+                    add("-agentpath:\$APPDIR/resources/$toolkitPreloadAgentRelativePath")
                     // NOT -Dapple.awt.application.appearance here any more. The window's
                     // appearance follows the BOSS theme, not the OS's, and applyMacAppearanceFromTheme
                     // sets the property from the theme before AWT starts - which overrode whatever
@@ -1353,6 +1461,12 @@ compose.desktop {
                 }
             }
         jvmArgs(*platformJvmArgs.toTypedArray())
+        // Packaged distributions are release builds; Gradle's JavaExec launches override this below.
+        jvmArgs("-Dboss.build.type=${if (testAutoUpdateBuild) "debug" else "release"}")
+        if (testAutoUpdateBuild) {
+            jvmArgs("-Dboss.autoUpdate.test=true")
+            jvmArgs("-Dboss.autoUpdate.settings.dir=${layout.buildDirectory.dir("auto-update-test-settings").get().asFile.absolutePath}")
+        }
 
         // Bake Supabase config into the packaged app launcher so the shared Supabase
         // client AND the self-updater use the CI-provided values at runtime (via
@@ -1366,6 +1480,7 @@ compose.desktop {
         System.getenv("SUPABASE_FUNCTION_URL")?.takeIf { it.isNotBlank() }?.let { jvmArgs("-DSUPABASE_FUNCTION_URL=$it") }
 
         nativeDistributions {
+            outputBaseDir.set(layout.buildDirectory.dir("$desktopOutputDirectory/binaries"))
             targetFormats(
                 TargetFormat.Dmg, // macOS
                 TargetFormat.Msi, // Windows
@@ -1651,6 +1766,7 @@ tasks.register("runProduction") {
 // Configure all JavaExec tasks with boss.log.level from gradle.properties
 // Also enable dev mode so ./gradlew run uses ~/.boss_debug (not ~/.boss)
 tasks.withType<JavaExec>().configureEach {
+    systemProperty("boss.build.type", "debug")
     val bossLogLevel = project.findProperty("boss.log.level") as? String
     if (bossLogLevel != null) {
         systemProperty("boss.log.level", bossLogLevel)
@@ -1746,7 +1862,7 @@ tasks.register("stripForeignPlatformNatives") {
     // Configuration cache: capture everything the action needs at configuration
     // time. The doLast lambda must not reach the enclosing script object nor
     // call Task.project at execution time -- same rule as extractCLIToAppResources.
-    val appDirProvider = layout.buildDirectory.dir("compose/binaries/main/app")
+    val appDirProvider = layout.buildDirectory.dir("$desktopOutputDirectory/binaries/main/app")
     val osName = System.getProperty("os.name").lowercase()
     val osArch = System.getProperty("os.arch").lowercase()
 
@@ -1869,6 +1985,53 @@ tasks.register("stripForeignPlatformNatives") {
     }
 }
 
+// A packaged launcher that names an -agentpath library it does not carry cannot start the JVM,
+// so the app image is checked rather than trusted: the cfg must reference the agent, the agent
+// must be in the bundle, and it must carry both architectures.
+tasks.register("verifyToolkitPreloadAgent") {
+    description = "Fails the build when the macOS app image references a toolkit agent it does not contain"
+    group = "verification"
+    val onMacHost = isMacOSHost
+    onlyIf { onMacHost }
+    mustRunAfter("createDistributable")
+    val appDirProvider = layout.buildDirectory.dir("$desktopOutputDirectory/binaries/main/app")
+    val relative = toolkitPreloadAgentRelativePath
+    val injected = project.objects.newInstance<InjectedExecOps>()
+    doLast {
+        val app =
+            appDirProvider
+                .get()
+                .asFile
+                .listFiles()
+                ?.find { it.name.endsWith(".app") }
+                ?: throw GradleException("verifyToolkitPreloadAgent: no .app under ${appDirProvider.get().asFile}")
+        val cfg =
+            File(app, "Contents/app").listFiles()?.find { it.name.endsWith(".cfg") }
+                ?: throw GradleException("verifyToolkitPreloadAgent: no launcher .cfg in $app")
+        val expectedOption = "java-options=-agentpath:\$APPDIR/resources/$relative"
+        if (cfg.readLines().none { it == expectedOption }) {
+            throw GradleException("verifyToolkitPreloadAgent: ${cfg.name} does not carry '$expectedOption'")
+        }
+        val agent = File(app, "Contents/app/resources/$relative")
+        if (!agent.isFile) throw GradleException("verifyToolkitPreloadAgent: $agent is missing")
+        val archs = ByteArrayOutputStream()
+        injected.execOps.exec {
+            commandLine("lipo", "-archs", agent.absolutePath)
+            standardOutput = archs
+        }
+        val found =
+            archs
+                .toString()
+                .trim()
+                .split(" ")
+                .toSet()
+        if (!found.containsAll(setOf("arm64", "x86_64"))) {
+            throw GradleException("verifyToolkitPreloadAgent: $agent carries $found, expected arm64 and x86_64")
+        }
+        println("✅ Toolkit preload agent present in ${app.name} ($found)")
+    }
+}
+
 // Extract CLI script to app bundle Resources for Homebrew installation
 tasks.register("extractCLIToAppResources") {
     description = "Extracts CLI script to BOSS.app/Contents/Resources for Homebrew binary stanza"
@@ -1882,7 +2045,7 @@ tasks.register("extractCLIToAppResources") {
     val onMacHost = isMacOSHost
     val signingDisabledProvider = macOSSigningDisabledProvider
     val developerId = macOSDeveloperId
-    val appDirProvider = layout.buildDirectory.dir("compose/binaries/main/app")
+    val appDirProvider = layout.buildDirectory.dir("$desktopOutputDirectory/binaries/main/app")
     val generatedCliDirProvider = layout.buildDirectory.dir("generated/resources/cli")
     val entitlementsFile = project.file("src/desktopMain/resources/BOSS.entitlements")
 
@@ -1987,7 +2150,7 @@ tasks.register("signPty4jBinaries") {
     val onMacHost = isMacOSHost
     val signingDisabledProvider = macOSSigningDisabledProvider
     val developerId = macOSDeveloperId
-    val appDirProvider = layout.buildDirectory.dir("compose/binaries/main/app")
+    val appDirProvider = layout.buildDirectory.dir("$desktopOutputDirectory/binaries/main/app")
     val entitlementsFile = project.file("src/desktopMain/resources/BOSS.entitlements")
 
     // Only run on macOS and when signing is enabled (resolved at execution time)
@@ -2306,7 +2469,36 @@ tasks.register<FixLinuxDesktopFileTask>("fixLinuxDesktopFile") {
     val isLinux = System.getProperty("os.name").lowercase().contains("linux")
     onlyIf { isLinux }
 
-    debDir.set(layout.buildDirectory.dir("compose/binaries/main/deb"))
+    debDir.set(layout.buildDirectory.dir("$desktopOutputDirectory/binaries/main/deb"))
+}
+
+// jpackage copies an older-SDK launcher even on a modern build runner. AppKit uses
+// that SDK opt-in for native toolbar glass, so normalize the packaged launcher after
+// all app-image mutations. Keep the deployment target and launcher code unchanged.
+tasks.register("prepareMacOSAppearance") {
+    group = "distribution"
+    description = "Enables native macOS toolbar styling in the packaged launcher"
+    val onMacHost = isMacOSHost
+    val signingDisabled = macOSSigningDisabledProvider
+    val developerId = macOSDeveloperId
+    val app = layout.buildDirectory.dir("$desktopOutputDirectory/binaries/main/app/BOSS.app")
+    val script = rootProject.file("scripts/prepare-macos-appearance.py")
+    val entitlements = project.file("src/desktopMain/resources/BOSS.entitlements")
+    val injected = project.objects.newInstance<InjectedExecOps>()
+    onlyIf { onMacHost }
+    doLast {
+        injected.execOps.exec {
+            commandLine(
+                "python3",
+                script.absolutePath,
+                app.get().asFile.absolutePath,
+                "--identity",
+                if (signingDisabled.get()) "-" else developerId,
+                "--entitlements",
+                entitlements.absolutePath,
+            )
+        }
+    }
 }
 
 // Configure task dependencies for DMG packaging
@@ -2316,9 +2508,25 @@ afterEvaluate {
         dependsOn("extractJcefNatives")
     }
 
+    // A Gradle run has no $APPDIR: point the agent at the built library instead.
+    if (isMacOSHost) {
+        val builtAgent =
+            prepareToolkitPreloadAgent
+                .get()
+                .outputs.files.singleFile.absolutePath
+        tasks.named<JavaExec>("run") {
+            dependsOn(prepareToolkitPreloadAgent)
+            val packaged = "-agentpath:\$APPDIR/resources/$toolkitPreloadAgentRelativePath"
+            doFirst {
+                val exec = this as JavaExec
+                exec.jvmArgs = exec.jvmArgs.orEmpty().map { if (it == packaged) "-agentpath:$builtAgent" else it }
+            }
+        }
+    }
+
     // Ensure prepareAppResources depends on prepareBundledPluginsResources
     tasks.findByName("prepareAppResources")?.apply {
-        dependsOn("prepareBundledPluginsResources")
+        dependsOn("prepareBundledPluginsResources", "prepareAppCaptureResources", "prepareToolkitPreloadAgent")
     }
 
     val isMacOS = isMacOSHost
@@ -2328,7 +2536,7 @@ afterEvaluate {
         // Ensure CLI scripts are generated before distribution tasks run
         dependsOn("generateVersionedCLIScripts")
         // Ensure bundled plugins are prepared
-        dependsOn("prepareBundledPluginsResources")
+        dependsOn("prepareBundledPluginsResources", "prepareAppCaptureResources", "prepareToolkitPreloadAgent")
 
         // Every platform trims the app image; only macOS signs it afterwards.
         finalizedBy("stripForeignPlatformNatives")
@@ -2340,7 +2548,8 @@ afterEvaluate {
         // signing is disabled, signPty4jBinaries skips itself via its own onlyIf
         // and the CLI extraction still runs.
         if (isMacOS) {
-            finalizedBy("signPty4jBinaries", "extractCLIToAppResources")
+            finalizedBy("verifyToolkitPreloadAgent")
+            finalizedBy("signPty4jBinaries", "extractCLIToAppResources", "prepareMacOSAppearance")
             println(
                 "📝 createDistributable will be finalized by signPty4jBinaries (skips itself when signing is disabled) and extractCLIToAppResources",
             )
@@ -2371,10 +2580,14 @@ afterEvaluate {
         println("📝 extractCLIToAppResources will depend on generateVersionedCLIScripts")
     }
 
+    tasks.named("prepareMacOSAppearance") {
+        mustRunAfter("createDistributable", "stripForeignPlatformNatives", "signPty4jBinaries", "extractCLIToAppResources")
+    }
+
     // Ensure packageDmg runs after all signing/CLI tasks (ordering only, see above)
     tasks.findByName("packageDmg")?.apply {
         if (isMacOS) {
-            mustRunAfter("signPty4jBinaries", "extractCLIToAppResources")
+            mustRunAfter("signPty4jBinaries", "extractCLIToAppResources", "prepareMacOSAppearance")
             println("📝 packageDmg will run after PTY4J signing and CLI extraction")
         }
     }
@@ -2515,6 +2728,17 @@ tasks.withType<Test> {
     doFirst {
         testHome.deleteRecursively()
         testHome.mkdirs()
+    }
+
+    // ToolkitPreloadAgentIntegrationTest runs the real agent in a child JVM on macOS.
+    if (isMacOSHost) {
+        dependsOn(prepareToolkitPreloadAgent)
+        systemProperty(
+            "boss.test.toolkitAgent",
+            prepareToolkitPreloadAgent
+                .get()
+                .outputs.files.singleFile.absolutePath,
+        )
     }
 }
 

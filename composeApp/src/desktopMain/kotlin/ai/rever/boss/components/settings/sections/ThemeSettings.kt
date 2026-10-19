@@ -1,11 +1,15 @@
 package ai.rever.boss.components.settings.sections
 
+import ai.rever.boss.components.settings.shared.SettingsDropdown
 import ai.rever.boss.components.settings.shared.SettingsSection
+import ai.rever.boss.components.settings.shared.SettingsSlider
 import ai.rever.boss.plugin.ui.BossAppTheme
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.plugin.ui.BossThemes
 import ai.rever.boss.theme.AppThemeSettingsManager
+import ai.rever.boss.theme.isGlassTheme
+import ai.rever.boss.utils.SystemUtils
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,6 +27,11 @@ import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,6 +52,7 @@ fun ThemeSettings() {
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        if (isGlassTheme(selectedId)) GlassThemeSettings()
         SettingsSection(
             title = "App Theme",
             description = "Choose the BOSS look. Applies instantly across the app.",
@@ -138,5 +148,77 @@ private fun Swatch(
                 .clip(RoundedCornerShape(3.dp))
                 .background(color)
                 .border(1.dp, border, RoundedCornerShape(3.dp)),
+    )
+}
+
+@Composable
+private fun GlassThemeSettings() {
+    val settings by AppThemeSettingsManager.settings.collectAsState()
+    var tint by remember(settings.glassTint) { mutableStateOf(settings.glassTint) }
+    SettingsSection(
+        title = "Glass",
+        description =
+            if (SystemUtils.isMacOS) {
+                "Native Liquid Glass on macOS 26, vibrancy on earlier macOS. " +
+                    "Browser pages and opaque plugin content keep their backgrounds."
+            } else {
+                "Native glass currently requires macOS. " +
+                    "Surfaces use the opaque glass palette on this platform."
+            },
+    ) {
+        val coverage = linkedMapOf("Off" to "off", "Sidebar and bars" to "sidebar", "App surfaces" to "window")
+        SettingsDropdown(
+            label = "Glass coverage",
+            options = coverage.keys.toList(),
+            selectedOption =
+                coverage.entries.firstOrNull { it.value == settings.glassCoverage }?.key ?: "App surfaces",
+            onOptionSelected = {
+                AppThemeSettingsManager.updateGlass(coverage.getValue(it), settings.glassStyle, settings.glassTint)
+            },
+        )
+        SettingsDropdown(
+            label = "Glass style",
+            options = listOf("Regular", "Clear"),
+            selectedOption = if (settings.glassStyle == "clear") "Clear" else "Regular",
+            onOptionSelected = {
+                AppThemeSettingsManager.updateGlass(settings.glassCoverage, it.lowercase(), settings.glassTint)
+            },
+            description = "Regular and Clear use the native macOS 26 material.",
+        )
+        SettingsSlider(
+            label = "Glass tint",
+            value = tint,
+            onValueChange = { tint = it },
+            onValueChangeFinished = {
+                AppThemeSettingsManager.updateGlass(settings.glassCoverage, settings.glassStyle, tint)
+            },
+            valueRange = 0f..1f,
+            valueDisplay = { "${(it * 100).toInt()}%" },
+            description = "Color over the glass. Lower values show more of the native backdrop.",
+        )
+        GlassBackgroundOpacity()
+    }
+}
+
+@Composable
+private fun GlassBackgroundOpacity() {
+    val settings by AppThemeSettingsManager.settings.collectAsState()
+    var opacity by remember(settings.glassOpacity) { mutableStateOf(settings.glassOpacity) }
+    if (settings.glassCoverage != "window") return
+    SettingsSlider(
+        label = "Background opacity",
+        value = opacity,
+        onValueChange = { opacity = it },
+        onValueChangeFinished = {
+            AppThemeSettingsManager.updateGlass(
+                settings.glassCoverage,
+                settings.glassStyle,
+                settings.glassTint,
+                opacity,
+            )
+        },
+        valueRange = 0f..1f,
+        valueDisplay = { "${(it * 100).toInt()}%" },
+        description = "Opacity of app content; Glass tint adds theme color above it, as in BossTerm.",
     )
 }

@@ -50,22 +50,42 @@ object PluginShortcutRegistryImpl {
     /** All registered plugin shortcuts (interceptor + settings UI read this). */
     val shortcuts: StateFlow<List<RegisteredPluginShortcut>> = _shortcuts.asStateFlow()
 
-    fun register(provider: ShortcutActionProvider) {
-        // Snapshot outside any lock; a throwing provider registers with none.
+    /** Host-owned marker that prevents a prepared registration from being wrapped again on replay. */
+    private interface ProviderSnapshot
+
+    /**
+     * Capture metadata once so restore does not call [ShortcutActionProvider.shortcuts] again.
+     * Delegation intentionally retains the original provider for eventual `onAction` dispatch.
+     */
+    internal fun snapshotProvider(provider: ShortcutActionProvider): ShortcutActionProvider {
+        val providerId = provider.providerId
         val specs =
             try {
-                provider.shortcuts()
+                provider.shortcuts().toList()
             } catch (t: Throwable) {
                 logger.warn(
                     LogCategory.SYSTEM,
                     "Shortcut provider shortcuts() failed; registering with none",
                     mapOf(
-                        "providerId" to provider.providerId,
+                        "providerId" to providerId,
                         "error" to (t.message ?: t::class.simpleName),
                     ),
                 )
                 emptyList()
             }
+        return object : ShortcutActionProvider by provider, ProviderSnapshot {
+            override val providerId = providerId
+
+            override fun shortcuts(): List<PluginShortcutSpec> = specs
+        }
+    }
+
+    fun register(provider: ShortcutActionProvider) {
+        // Snapshot outside any lock. Window arbitration passes a snapshot provider here, so
+        // restoring another window reuses its cached list and original action delegate.
+        val prepared = if (provider is ProviderSnapshot) provider else snapshotProvider(provider)
+        val providerId = prepared.providerId
+        val specs = prepared.shortcuts()
 
         val valid =
             specs
@@ -76,7 +96,7 @@ object PluginShortcutRegistryImpl {
                             LogCategory.SYSTEM,
                             "Plugin shortcut rejected: actionId must start with '$ACTION_ID_PREFIX'",
                             mapOf(
-                                "providerId" to provider.providerId,
+                                "providerId" to providerId,
                                 "actionId" to spec.actionId,
                             ),
                         )
@@ -93,7 +113,7 @@ object PluginShortcutRegistryImpl {
                             LogCategory.SYSTEM,
                             "Plugin shortcut default requires Cmd/Ctrl/Alt; registering unbound",
                             mapOf(
-                                "providerId" to provider.providerId,
+                                "providerId" to providerId,
                                 "actionId" to spec.actionId,
                                 "chord" to "${default.modifiers}+${default.key}",
                             ),
@@ -105,7 +125,7 @@ object PluginShortcutRegistryImpl {
                 }
 
         _shortcuts.update { existing ->
-            val others = existing.filterNot { it.providerId == provider.providerId }
+            val others = existing.filterNot { it.providerId == providerId }
             val taken = others.map { it.spec.actionId }.toHashSet()
             others +
                 valid.mapNotNull { spec ->
@@ -114,13 +134,13 @@ object PluginShortcutRegistryImpl {
                             LogCategory.SYSTEM,
                             "Duplicate plugin shortcut actionId skipped",
                             mapOf(
-                                "providerId" to provider.providerId,
+                                "providerId" to providerId,
                                 "actionId" to spec.actionId,
                             ),
                         )
                         null
                     } else {
-                        RegisteredPluginShortcut(provider.providerId, spec, provider)
+                        RegisteredPluginShortcut(providerId, spec, prepared)
                     }
                 }
         }
@@ -128,7 +148,7 @@ object PluginShortcutRegistryImpl {
             LogCategory.SYSTEM,
             "Plugin shortcuts registered",
             mapOf(
-                "providerId" to provider.providerId,
+                "providerId" to providerId,
                 "count" to valid.size,
             ),
         )

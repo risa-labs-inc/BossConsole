@@ -5,6 +5,7 @@
 import { assertEquals, assertExists } from "jsr:@std/assert"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { listUserPasskeys, deleteUserPasskey, updatePasskeyDisplayName } from "../services/management.ts"
+import { maskPasskeyId } from "../utils/logging.ts"
 import { createMockSupabaseClient, mockPasskey } from "./helpers/mocks.ts"
 
 Deno.test("listUserPasskeys - should return all active passkeys for user", async () => {
@@ -123,6 +124,24 @@ Deno.test("deleteUserPasskey - should soft delete passkey for user", async () =>
   // In a complete test, verify update was called with { active: false }
   const history = mockClient.getQueryHistory()
   console.log('Delete operation history:', history)
+})
+
+Deno.test("deleteUserPasskey - logs mask the passkey id", async () => {
+  const mockClient = createMockSupabaseClient()
+  mockClient.mockResponse('user_passkeys', { data: mockPasskey, error: null })
+
+  const logs: string[] = []
+  const originalLog = console.log
+  console.log = (...args: unknown[]) => logs.push(args.join(' '))
+  try {
+    const result = await deleteUserPasskey(mockClient as unknown as SupabaseClient, 'user-456', 'passkey-123')
+    assertEquals(result.success, true)
+  } finally {
+    console.log = originalLog
+  }
+
+  assertEquals(logs.some(line => line.includes(maskPasskeyId('passkey-123'))), true)
+  assertEquals(logs.some(line => line.includes('passkey-123')), false)
 })
 
 Deno.test("deleteUserPasskey - should reject deleting another user's passkey", async () => {

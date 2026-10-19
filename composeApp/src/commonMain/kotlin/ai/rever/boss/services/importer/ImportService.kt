@@ -317,11 +317,8 @@ object ImportService {
         index: Int,
     ): Bookmark =
         Bookmark(
-            // Bookmark.generateId() is a bare millisecond timestamp, so a bulk
-            // insert would hand hundreds of entries the same id — and
-            // removeBookmark filters by id, so deleting one would delete them
-            // all. Unique per entry AND per run: a deterministic id would make
-            // re-importing the same export collide with the previous run.
+            // Use one import-run id and an entry index to identify each imported bookmark.
+            // Re-importing the same export must not reuse ids from the previous run.
             id = "imported-$importRunId-$index-${url.hashCode()}",
             tabConfig = TabConfig(type = "browser", title = title, url = url),
             workspaceName = "",

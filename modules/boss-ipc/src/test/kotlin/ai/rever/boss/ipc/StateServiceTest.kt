@@ -1,8 +1,13 @@
 package ai.rever.boss.ipc
 
+import ai.rever.boss.ipc.auth.ProcessAuthority
+import ai.rever.boss.ipc.auth.ProcessIdentity
+import ai.rever.boss.ipc.auth.ProcessIdentityInterceptor
 import ai.rever.boss.ipc.proto.*
 import ai.rever.boss.ipc.services.StateServiceImpl
 import com.google.protobuf.ByteString
+import io.grpc.Context
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -181,4 +186,136 @@ class StateServiceTest {
 
             assertTrue(resultKeys.containsAll(keys), "All stored keys should be listed")
         }
+
+    @Test
+    fun `watchState delivers an update that lands after the snapshot`() =
+        runBlocking {
+            withTimeout(10_000) {
+                withHostIdentity {
+                    stateService.setState(stateUpdate("watch.gap.key", "initial"))
+                    val received = mutableListOf<StateValue>()
+                    val snapshotDelivered = CompletableDeferred<Unit>()
+                    val releaseWatcher = CompletableDeferred<Unit>()
+                    val followUpDelivered = CompletableDeferred<Unit>()
+                    val watcher =
+                        launch {
+                            stateService.watchState(stateKey("watch.gap.key")).collect { value ->
+                                received.add(value)
+                                if (received.size == 1) {
+                                    snapshotDelivered.complete(Unit)
+                                    // Hold the watcher before it can move past the
+                                    // snapshot while the update below is emitted.
+                                    releaseWatcher.await()
+                                } else if (received.size == 2) {
+                                    followUpDelivered.complete(Unit)
+                                }
+                            }
+                        }
+                    snapshotDelivered.await()
+                    // The update lands after the snapshot was read and delivered, while
+                    // the watcher is still held. A snapshot-then-subscribe order left this
+                    // emit with no subscriber, and replay=0 drops it for good.
+                    stateService.setState(stateUpdate("watch.gap.key", "updated"))
+                    releaseWatcher.complete(Unit)
+                    followUpDelivered.await()
+                    watcher.cancel()
+                    val values = received.map { it.value.toStringUtf8() }
+                    assertEquals(listOf("initial", "updated"), values)
+                    assertEquals(listOf(1L, 2L), received.map { it.version })
+                }
+            }
+        }
+
+    @Test
+    fun `watchState emits the current value then every change without duplicates`() =
+        runBlocking {
+            withTimeout(10_000) {
+                withHostIdentity {
+                    stateService.setState(stateUpdate("watch.plain.key", "v1"))
+                    val received = mutableListOf<StateValue>()
+                    val snapshotDelivered = CompletableDeferred<Unit>()
+                    val allChangesDelivered = CompletableDeferred<Unit>()
+                    val watcher =
+                        launch {
+                            stateService.watchState(stateKey("watch.plain.key")).collect { value ->
+                                received.add(value)
+                                if (received.size == 1) snapshotDelivered.complete(Unit)
+                                if (received.size == 3) allChangesDelivered.complete(Unit)
+                            }
+                        }
+                    snapshotDelivered.await()
+                    stateService.setState(stateUpdate("watch.plain.key", "v2"))
+                    stateService.setState(stateUpdate("watch.plain.key", "v3"))
+                    allChangesDelivered.await()
+                    watcher.cancel()
+                    val values = received.map { it.value.toStringUtf8() }
+                    val versions = received.map { it.version }
+                    assertEquals(listOf("v1", "v2", "v3"), values)
+                    assertEquals(listOf(1L, 2L, 3L), versions)
+                }
+            }
+        }
+
+    @Test
+    fun `watchState delivers a burst of rapid updates in order`() =
+        runBlocking {
+            withTimeout(10_000) {
+                withHostIdentity {
+                    stateService.setState(stateUpdate("watch.burst.key", "seed"))
+                    val received = mutableListOf<StateValue>()
+                    val snapshotDelivered = CompletableDeferred<Unit>()
+                    val burstDelivered = CompletableDeferred<Unit>()
+                    val updates = 25
+                    val watcher =
+                        launch {
+                            stateService.watchState(stateKey("watch.burst.key")).collect { value ->
+                                received.add(value)
+                                if (received.size == 1) snapshotDelivered.complete(Unit)
+                                if (received.size == updates + 1) burstDelivered.complete(Unit)
+                            }
+                        }
+                    snapshotDelivered.await()
+                    repeat(updates) { i ->
+                        stateService.setState(stateUpdate("watch.burst.key", "v$i"))
+                    }
+                    burstDelivered.await()
+                    watcher.cancel()
+                    val expected = listOf("seed") + (0 until updates).map { "v$it" }
+                    assertEquals(expected, received.map { it.value.toStringUtf8() })
+                    assertEquals((1L..(updates + 1L)).toList(), received.map { it.version })
+                }
+            }
+        }
+
+    private suspend fun <T> withHostIdentity(block: suspend () -> T): T {
+        val identity =
+            ProcessIdentity(
+                "state.watch.test",
+                "state.watch.test.instance",
+                ProcessAuthority.HOST,
+                null,
+            )
+        val context =
+            Context.current().withValue(ProcessIdentityInterceptor.CURRENT_PRINCIPAL) { identity }
+        val previous = context.attach()
+        return try {
+            block()
+        } finally {
+            context.detach(previous)
+        }
+    }
+
+    private fun stateUpdate(
+        key: String,
+        value: String,
+    ): StateUpdate =
+        StateUpdate
+            .newBuilder()
+            .setKey(key)
+            .setValue(ByteString.copyFromUtf8(value))
+            .setValueType("string")
+            .setSourceProcess("state.watch.test")
+            .build()
+
+    private fun stateKey(key: String): StateKey = StateKey.newBuilder().setKey(key).build()
 }

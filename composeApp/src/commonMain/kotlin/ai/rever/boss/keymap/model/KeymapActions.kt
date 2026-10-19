@@ -52,6 +52,7 @@ object KeymapActions {
 
     // Browser Control Actions
     const val BROWSER_RELOAD = "browser.reload"
+    const val BROWSER_PRINT = "browser.print"
     const val BROWSER_ZOOM_RESET = "browser.zoom_reset"
     const val BROWSER_ZOOM_IN = "browser.zoom_in"
     const val BROWSER_ZOOM_OUT = "browser.zoom_out"
@@ -139,6 +140,7 @@ object KeymapActions {
             TAB_SELECT_8 to "Switch to the 8th tab",
             TAB_SELECT_LAST to "Switch to the last tab",
             BROWSER_RELOAD to "Reload the current browser tab",
+            BROWSER_PRINT to "Print browser page or save as PDF",
             BROWSER_ZOOM_RESET to "Reset browser zoom to 100%",
             BROWSER_ZOOM_IN to "Increase browser zoom level",
             BROWSER_ZOOM_OUT to "Decrease browser zoom level",
@@ -194,6 +196,7 @@ object KeymapActions {
             TAB_SELECT_8 to Categories.TAB_MANAGEMENT,
             TAB_SELECT_LAST to Categories.TAB_MANAGEMENT,
             BROWSER_RELOAD to Categories.BROWSER_CONTROLS,
+            BROWSER_PRINT to Categories.BROWSER_CONTROLS,
             BROWSER_ZOOM_RESET to Categories.BROWSER_CONTROLS,
             BROWSER_ZOOM_IN to Categories.BROWSER_CONTROLS,
             BROWSER_ZOOM_OUT to Categories.BROWSER_CONTROLS,
@@ -249,6 +252,7 @@ object KeymapActions {
             TAB_SELECT_8 to ShortcutContext.GLOBAL,
             TAB_SELECT_LAST to ShortcutContext.GLOBAL,
             BROWSER_RELOAD to ShortcutContext.BROWSER,
+            BROWSER_PRINT to ShortcutContext.BROWSER,
             BROWSER_ZOOM_RESET to ShortcutContext.BROWSER,
             BROWSER_ZOOM_IN to ShortcutContext.BROWSER,
             BROWSER_ZOOM_OUT to ShortcutContext.BROWSER,
@@ -304,6 +308,7 @@ object KeymapActions {
             TAB_SELECT_8,
             TAB_SELECT_LAST,
             BROWSER_RELOAD,
+            BROWSER_PRINT,
             BROWSER_ZOOM_RESET,
             BROWSER_ZOOM_IN,
             BROWSER_ZOOM_OUT,

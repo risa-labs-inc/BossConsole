@@ -3,13 +3,45 @@ import type { PluginVersion, PluginDependency } from "../types/plugin.ts"
 import { signVersionAnchor } from "../utils/signing.ts"
 
 /**
+ * Sentinel sha256 that `createVersion` stamps on a row whose JAR has not been
+ * uploaded and verified yet. Only `finalizeVersion` replaces it (together with
+ * the real byte count), so any row still carrying it — or a zero jar_size —
+ * is an UNFINALIZED publish (#912): its artifact may not exist yet, and its
+ * sha anchor is meaningless. Store consumers must never resolve such a row
+ * as a downloadable version; see `getLatestVersion` and `getVersion`.
+ */
+export const PENDING_SHA256 = 'pending'
+
+/**
+ * How long a pending version row may squat on its UNIQUE(plugin_id, version)
+ * slot before a fresh publish of the same version string may reap it
+ * (`deleteStalePendingVersion`). Aligned with the signed upload URL's 1h TTL
+ * (services/storage.ts): once that URL has expired the original attempt can
+ * never finalize, so the row can only ever be retried, never completed.
+ */
+export const PENDING_VERSION_STALE_MS = 60 * 60 * 1000
+
+/**
  * Get all versions of a plugin
+ *
+ * These rows carry jar_path and sha256 (the reason the migration gates them),
+ * so the detail page passes the viewer here exactly as it does for the plugin
+ * row itself: the service-role client makes the no-viewer variant answer for
+ * auth.uid() = NULL, hiding an organisation's own plugins from its members
+ * (issue #852).
  */
 export async function getPluginVersions(
   supabase: SupabaseClient,
-  pluginId: string
+  pluginId: string,
+  /** Who is asking, or null for an anonymous lookup. Mirrors listPlugins. */
+  viewerId: string | null = null
 ): Promise<PluginVersion[]> {
-  const { data, error } = await supabase
+  const { data, error } = viewerId
+    ? await supabase.rpc('get_plugin_versions_for_viewer', {
+      p_plugin_id: pluginId,
+      p_viewer_id: viewerId
+    })
+    : await supabase
     .rpc('get_plugin_versions', {
       p_plugin_id: pluginId
     })
@@ -37,7 +69,17 @@ export async function getPluginVersions(
 }
 
 /**
- * Get the latest version of a plugin
+ * Get the latest version of a plugin.
+ *
+ * Finalization gate (#912): a version row exists BEFORE its JAR does —
+ * publish.ts inserts it with sha256='pending' and jar_size=0, and only the
+ * finalize route replaces those once the uploaded bytes have been hashed and
+ * manifest-checked. Without a gate, the newest row wins the published_at
+ * ordering the moment it is inserted, so a publish that dies mid-way leaves
+ * every consumer of "latest" pointing at a sha of 'pending' and a jar key
+ * that 404s (or holds bytes a prior failed attempt left behind) — permanently.
+ * Gating on BOTH the sentinel sha and a non-zero size is fail-closed: either
+ * half alone would leave a partially-finalized row resolvable.
  */
 export async function getLatestVersion(
   supabase: SupabaseClient,
@@ -47,6 +89,8 @@ export async function getLatestVersion(
     .from('plugin_versions')
     .select('*')
     .eq('plugin_id', pluginUuid)
+    .neq('sha256', PENDING_SHA256)
+    .gt('jar_size', 0)
     .order('published_at', { ascending: false })
     .limit(1)
     .single()
@@ -75,7 +119,14 @@ export async function getLatestVersion(
 }
 
 /**
- * Get a specific version by plugin UUID and version string
+ * Get a specific version by plugin UUID and version string.
+ *
+ * Same finalization gate as getLatestVersion (#912). This lookup backs the
+ * download-info route for an explicit version, so serving an unfinalized row
+ * here would hand out sha256='pending' and a signed URL to an artifact that
+ * does not exist yet. A pending version must be indistinguishable from a
+ * nonexistent one — the route 404s, fail-closed. (The finalize route reads the
+ * row by id via getVersionById instead, which deliberately stays ungated.)
  */
 export async function getVersion(
   supabase: SupabaseClient,
@@ -87,6 +138,8 @@ export async function getVersion(
     .select('*')
     .eq('plugin_id', pluginUuid)
     .eq('version', version)
+    .neq('sha256', PENDING_SHA256)
+    .gt('jar_size', 0)
     .single()
 
   if (error) {
@@ -173,7 +226,7 @@ export async function createVersion(
       min_api_version: minApiVersion,
       dependencies,
       jar_path: jarPath,
-      sha256: 'pending', // Will be updated after upload
+      sha256: PENDING_SHA256, // Replaced only by finalizeVersion, once the JAR is verified
       jar_size: 0
     })
     .select('id')
@@ -226,6 +279,51 @@ export async function finalizeVersion(
     console.error('Error finalizing version:', error)
     throw new Error(`Failed to finalize version: ${error.message}`)
   }
+}
+
+/**
+ * Reap a stale unfinalized version row so its UNIQUE(plugin_id, version) slot
+ * can be re-published (#912).
+ *
+ * A publish that dies between createVersion and finalizeVersion leaves a
+ * pending row that is invisible to every consumer (see the gates above) but
+ * still squats on the version string, so the publisher's next attempt 400s
+ * with "Version already exists" forever. This only touches rows that are
+ * STILL pending (sentinel sha AND zero bytes) and whose upload window has
+ * provably lapsed: published_at is the insert time, and once it is older than
+ * the signed upload URL's TTL the original attempt can never finalize. A
+ * finalized row, or a pending row still inside its upload window, is never
+ * deleted. The match is the exact negation of the finalization gate, so a
+ * hidden row is always reapable. Returns true only when a row was actually
+ * removed.
+ */
+export async function deleteStalePendingVersion(
+  supabase: SupabaseClient,
+  pluginUuid: string,
+  version: string,
+  staleAfterMs: number = PENDING_VERSION_STALE_MS
+): Promise<boolean> {
+  const cutoff = new Date(Date.now() - staleAfterMs).toISOString()
+
+  const { data, error } = await supabase
+    .from('plugin_versions')
+    .delete()
+    .eq('plugin_id', pluginUuid)
+    .eq('version', version)
+    // The exact negation of the finalization gate in getLatestVersion /
+    // getVersion: a row the gate hides must also be reapable, or the version
+    // slot wedges forever - a real sha with jar_size 0/NULL is wreckage, not
+    // an in-flight state (finalize writes both columns in one UPDATE).
+    .or(`sha256.eq.${PENDING_SHA256},jar_size.is.null,jar_size.lte.0`)
+    .lt('published_at', cutoff)
+    .select('id')
+
+  if (error) {
+    console.error('Error reaping stale pending version:', error)
+    throw new Error(`Failed to reap stale pending version: ${error.message}`)
+  }
+
+  return (data?.length ?? 0) > 0
 }
 
 /**

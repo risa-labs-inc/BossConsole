@@ -2,6 +2,8 @@
 
 The **Plugin Launchpad** provides developer tooling and a high-performance CLI suite for scaffolding, validating, and hot-reloading third-party plugins in BossConsole.
 
+For the in-app workflow, follow **[Create and publish with Tool Creator, a coding agent, and GitHub](https://github.com/risa-labs-inc/BossConsole/wiki/Create-and-Publish-a-Plugin)**. Start at **Toolbox → Create**; the CLI reference below is the manual alternative.
+
 ---
 
 ## Command Reference

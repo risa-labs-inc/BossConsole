@@ -25,7 +25,39 @@ import ai.rever.boss.plugin.git.GitOperationResult.Success as GitSuccess
 private const val PUBLIC_CLONE_TIMEOUT_MILLIS = 5_000L
 private const val PUBLIC_CLONE_LONG_TIMEOUT_MILLIS = 30_000L
 private const val PUBLIC_CLONE_WAIT_SECONDS = 10L
+private const val PUBLIC_CLONE_CONNECT_SECONDS = 20L
 private const val PUBLIC_CLONE_TEST_TIMEOUT_SECONDS = 45L
+private const val REMOTE_HELPER_WARM_UP_SECONDS = 30L
+
+/**
+ * Runs git's HTTP transport once per JVM, against a port nothing listens on, before any test
+ * times a clone through it.
+ *
+ * `git clone http://...` is two processes: `git` itself, and `git-remote-http` with libcurl and
+ * the TLS and compression libraries behind it, loaded on first use. On the Windows runner that
+ * first use is what the two timed tests below were waiting on, and on a slow day it does not
+ * fit their budget: in runs 35326476015 and 35394973890 every git process start took 1-2 s
+ * instead of 0.15 s (the whole desktopTest task ran 2.5-3x its usual time), the first HTTP
+ * clone of the JVM never connected within its 10 s budget, and in one of the two runs the very
+ * next HTTP clone connected within 5 s, once the helper was warm. Nothing about the clone
+ * lifecycle was wrong; the assertion that failed was the precondition "git has connected",
+ * and the cold start of the transport was inside the window it measured.
+ *
+ * The connection is refused immediately, so the only cost is the process start this exists
+ * to pay early. The exit code is deliberately ignored: a git that cannot run at all is what
+ * the ordinary clone tests report, with a better message than this could.
+ */
+private val gitRemoteHelperWarmedUp: Unit by lazy {
+    val closedPort = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
+    val process =
+        ProcessBuilder("git", "ls-remote", "http://127.0.0.1:$closedPort/warm-up.git")
+            .redirectErrorStream(true)
+            .start()
+    process.inputStream.use { it.readBytes() }
+    if (!process.waitFor(REMOTE_HELPER_WARM_UP_SECONDS, TimeUnit.SECONDS)) {
+        process.destroyForcibly()
+    }
+}
 
 @Timeout(PUBLIC_CLONE_TEST_TIMEOUT_SECONDS)
 class GitCloneRepositoryLifecycleTest {
@@ -33,6 +65,7 @@ class GitCloneRepositoryLifecycleTest {
     fun `public clone timeout removes its partial destination and permits retry`(
         @TempDir tempDirectory: Path,
     ) = runBlocking {
+        gitRemoteHelperWarmedUp
         val target = tempDirectory.resolve("timeout-target").toFile()
 
         val result =
@@ -69,6 +102,7 @@ class GitCloneRepositoryLifecycleTest {
     fun `public clone cancellation removes its partial destination and permits retry`(
         @TempDir tempDirectory: Path,
     ) = runBlocking {
+        gitRemoteHelperWarmedUp
         val target = tempDirectory.resolve("cancellation-target").toFile()
 
         StalledHttpServer().use { server ->
@@ -250,9 +284,14 @@ private class StalledHttpServer : Closeable {
     val repositoryUrl: String =
         "http://127.0.0.1:${server.localPort}/ordinary.git"
 
+    /**
+     * Twenty seconds rather than the ten the other waits use: this one covers two process
+     * starts on whatever the runner is doing today, and the class budget of 45 s leaves room
+     * for it beside the 5 s clone timeout and the retry clone that follow.
+     */
     fun awaitConnection(): Boolean =
         connectionAccepted.await(
-            PUBLIC_CLONE_WAIT_SECONDS,
+            PUBLIC_CLONE_CONNECT_SECONDS,
             TimeUnit.SECONDS,
         )
 

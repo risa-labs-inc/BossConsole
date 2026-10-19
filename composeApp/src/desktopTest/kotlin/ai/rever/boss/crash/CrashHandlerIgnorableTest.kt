@@ -49,6 +49,32 @@ class CrashHandlerIgnorableTest {
                 )
         }
 
+    // Frames copied from the BossConsole#1739 release-testing crash trace, not inferred from SDK source.
+    private fun realtimeHeartbeatRace(): IllegalStateException =
+        IllegalStateException("Websocket not yet initialized").apply {
+            stackTrace =
+                arrayOf(
+                    StackTraceElement(
+                        "io.github.jan.supabase.realtime.RealtimeImpl",
+                        "getWebsocket",
+                        "RealtimeImpl.kt",
+                        58,
+                    ),
+                    StackTraceElement(
+                        "io.github.jan.supabase.realtime.RealtimeImpl",
+                        "sendHeartbeat",
+                        "RealtimeImpl.kt",
+                        263,
+                    ),
+                    StackTraceElement(
+                        "io.github.jan.supabase.realtime.RealtimeImpl",
+                        "startHeartbeating",
+                        "RealtimeImpl.kt",
+                        198,
+                    ),
+                )
+        }
+
     @Test
     @OptIn(SupabaseInternal::class)
     fun `installed SDK delayed rejoin produces the recognized failure`() =
@@ -84,6 +110,42 @@ class CrashHandlerIgnorableTest {
     fun `issue 28 stale realtime rejoin is recoverable`() {
         assertTrue(CrashHandler.isIgnorable(staleRealtimeRejoin()))
         assertTrue(CrashHandler.isIgnorable(RuntimeException("background retry failed", staleRealtimeRejoin())))
+    }
+
+    @Test
+    fun `issue 1739 realtime heartbeat disconnect race is recoverable`() {
+        assertTrue(CrashHandler.isIgnorable(realtimeHeartbeatRace()))
+        assertTrue(CrashHandler.isIgnorable(RuntimeException("heartbeat tick failed", realtimeHeartbeatRace())))
+    }
+
+    @Test
+    fun `heartbeat race lookalikes remain reportable`() {
+        val frames = realtimeHeartbeatRace().stackTrace
+        assertFalse(CrashHandler.isIgnorable(IllegalStateException("another failure").apply { stackTrace = frames }))
+        val wrongType = RuntimeException("Websocket not yet initialized").apply { stackTrace = frames }
+        assertFalse(CrashHandler.isIgnorable(wrongType))
+        assertFalse(
+            CrashHandler.isIgnorable(
+                IllegalStateException("Websocket not yet initialized").apply {
+                    stackTrace =
+                        frames
+                            .map {
+                                StackTraceElement("other.library.Realtime", it.methodName, it.fileName, it.lineNumber)
+                            }.toTypedArray()
+                },
+            ),
+        )
+        val empty = realtimeHeartbeatRace().apply { stackTrace = emptyArray() }
+        assertFalse(CrashHandler.isIgnorable(empty))
+        // Pins the deliberate two-frame boundary: an app frame past the prefix stays
+        // ignorable, because only the library's own getter throws this message and the
+        // third frame varies with coroutine stack recovery.
+        val appFramePastPrefix =
+            realtimeHeartbeatRace().apply {
+                stackTrace = stackTrace.take(2).toTypedArray() +
+                    StackTraceElement("ai.rever.boss.Application", "onCrashed", "Application.kt", 1)
+            }
+        assertTrue(CrashHandler.isIgnorable(appFramePastPrefix))
     }
 
     @Test

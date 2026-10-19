@@ -6,6 +6,13 @@ package ai.rever.boss.run
  */
 object ShellUtils {
     /**
+     * Every character PowerShell's tokenizer reads as a double quote: ASCII `"` and the three
+     * typographic ones (U+201C, U+201D, U+201E). Escaping only the ASCII one let a folder name
+     * carrying a typographic quote end the string early.
+     */
+    private const val POWERSHELL_DOUBLE_QUOTES = "\"\u201C\u201D\u201E"
+
+    /**
      * Whether we're running on Windows.
      */
     val isWindows: Boolean = System.getProperty("os.name").lowercase().contains("windows")
@@ -69,7 +76,8 @@ object ShellUtils {
             // PowerShell escaping: backtick is the escape character
             str
                 .replace("`", "``") // Backtick must be escaped first
-                .replace("\"", "`\"") // Double quotes
+                .map { if (it in POWERSHELL_DOUBLE_QUOTES) "`$it" else it.toString() } // Double quotes
+                .joinToString("")
                 .replace("\$", "`\$") // Dollar sign (prevents variable expansion)
         } else {
             // Unix shell escaping

@@ -118,6 +118,23 @@ class TerminalLimitsTest {
         }
 
     @Test
+    fun `a missing working directory fails fast without consuming admission`() =
+        runBlocking {
+            withTimeout(10_000) {
+                val missing =
+                    request("echo")
+                        .toBuilder()
+                        .setWorkingDirectory(root.resolve("missing-working-dir").toString())
+                        .build()
+                assertEquals(
+                    Status.Code.INVALID_ARGUMENT,
+                    assertFailsWith<StatusException> { stub.createSession(missing) }.status.code,
+                )
+                assertTrue(start("echo").isNotBlank())
+            }
+        }
+
+    @Test
     fun `late subscription replays output and completes with the exit notification`() =
         runBlocking {
             withTimeout(10_000) {

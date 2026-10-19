@@ -4,6 +4,10 @@ import io.github.jan.supabase.auth.exception.TokenExpiredException
 import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -45,5 +49,17 @@ class SessionRecoveryPolicyTest {
         assertEquals(40.seconds, SessionRecoveryPolicy.nextBackoff(20.seconds))
         assertEquals(60.seconds, SessionRecoveryPolicy.nextBackoff(40.seconds))
         assertEquals(60.seconds, SessionRecoveryPolicy.nextBackoff(60.seconds))
+    }
+
+    @Test
+    fun `a session replaced during recovery is not cleared`() {
+        val now = Clock.System.now()
+        // The import landed while recovery's refresh of the old token was in flight.
+        assertTrue(SessionRecoveryPolicy.replacedSince("old", "new", now + 1.hours, now))
+        assertTrue(SessionRecoveryPolicy.replacedSince("old", "new", now - 1.hours, now))
+        assertTrue(SessionRecoveryPolicy.replacedSince("old", "old", now + 1.hours, now))
+        // Still the expired session recovery diagnosed, or nothing left: clear as before.
+        assertFalse(SessionRecoveryPolicy.replacedSince("old", "old", now - 1.hours, now))
+        assertFalse(SessionRecoveryPolicy.replacedSince("old", null, null, now))
     }
 }

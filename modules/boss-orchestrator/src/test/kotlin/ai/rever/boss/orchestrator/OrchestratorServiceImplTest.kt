@@ -86,6 +86,34 @@ class OrchestratorServiceImplTest {
     // ---- the approval response says what happened ----
 
     @Test
+    fun `tuned restart propagates jvm args to the returned repair action`() =
+        runTest(hostContext) {
+            var capturedArgs: List<String>? = null
+            val service = OrchestratorServiceImpl(engine(onRequestRestart = { _, args -> capturedArgs = args }))
+            val request = report("tuned-process", RepairStrategy.REPAIR_STRATEGY_RESTART_TUNED)
+            val action = service.reportFailure(request)
+
+            assertTrue(action.hasRestart(), "Expected a RestartAction but got ${action.repairDetailCase}")
+            val jvmArgs = action.restart.jvmArgsOverrideList
+            assertEquals(listOf("-Xmx512m"), jvmArgs, "The RepairAction should contain the tuning args")
+            assertEquals(listOf("-Xmx512m"), capturedArgs, "The callback should also receive the args")
+        }
+
+    @Test
+    fun `plain restart propagates empty overrides to the returned repair action`() =
+        runTest(hostContext) {
+            var capturedArgs: List<String>? = null
+            val service = OrchestratorServiceImpl(engine(onRequestRestart = { _, args -> capturedArgs = args }))
+            val request = report("plain-process", RepairStrategy.REPAIR_STRATEGY_RESTART)
+            val action = service.reportFailure(request)
+
+            assertTrue(action.hasRestart(), "Expected a RestartAction but got ${action.repairDetailCase}")
+            val jvmArgs = action.restart.jvmArgsOverrideList
+            assertTrue(jvmArgs.isEmpty(), "A plain restart must have no tuning args")
+            assertEquals(emptyList<String>(), capturedArgs, "The callback should also receive empty args")
+        }
+
+    @Test
     fun `full multibyte history fits the default grpc receive limit`() =
         runTest(hostContext) {
             val service = OrchestratorServiceImpl(engine())

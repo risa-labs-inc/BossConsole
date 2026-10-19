@@ -48,7 +48,7 @@ internal class WorkspaceHealthCollector(
         source: () -> T,
     ): T? =
         try {
-            source()
+            source().also { HealthSourceWarnings.recovered(area.wireName) }
         } catch (e: Exception) {
             unreadable(area, e)
         } catch (e: LinkageError) {
@@ -59,6 +59,8 @@ internal class WorkspaceHealthCollector(
         area: HealthArea,
         error: Throwable,
     ): Nothing? {
+        // Once per failing area until it reads cleanly again: the status bar re-reads every few seconds.
+        if (!HealthSourceWarnings.failed(area.wireName)) return null
         logger.warn(
             LogCategory.SYSTEM,
             "Workspace health source could not be read",

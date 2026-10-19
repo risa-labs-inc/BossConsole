@@ -66,6 +66,11 @@ internal fun savedSpaceNames(workspaces: List<LayoutWorkspace>): Set<String> =
  * delete dialog and refused by the manager - the shipped Codex answers to that name, and after the
  * merge stopped keying on names those are two different Spaces.
  *
+ * Case sensitivity is deliberate (#1646): [isUserOwnedSpace] tests exact membership
+ * (`!in PredefinedWorkspaces.allIds`) against canonical in-memory IDs. In contrast,
+ * [isSpaceSlot] folds case (`ignoreCase = true`) because slot IDs map directly to on-disk file
+ * names on case-insensitive filesystems (macOS/Windows) where case differences collide on disk.
+ *
  * The session record is "the user's" here, which is not obviously right and is unchanged
  * behaviour: it was never a predefined NAME either, so the dialog has always listed it.
  */
@@ -103,7 +108,13 @@ internal fun deletableWorkspaces(workspaces: List<LayoutWorkspace>): List<Layout
  * record by that name, so a second claim on it would make which one restores a matter of scan
  * order.
  */
-internal fun isSpaceSlot(id: String): Boolean = id in PredefinedWorkspaces.allIds || id == LAST_SESSION_ID
+internal fun isSpaceSlot(id: String): Boolean =
+    // Case-folded, because an id becomes a FILE name and the default filesystems on macOS and
+    // Windows fold case: `Last-Session` writes `Last-Session.json`, which there IS the record's
+    // `last-session.json`. Stricter than the collision on a case-sensitive filesystem, and a
+    // wrongly-slotted id only means a save makes a new Space instead of overwriting (#1590).
+    id.equals(LAST_SESSION_ID, ignoreCase = true) ||
+        PredefinedWorkspaces.allIds.any { it.equals(id, ignoreCase = true) }
 
 /**
  * The Space an explicit save should write when the current one is a [isSpaceSlot].
@@ -238,7 +249,7 @@ internal fun mergeSavedWorkspaces(
 /**
  * What a legacy file's id becomes when it is adopted.
  *
- * Deliberately not something `generateId()` could produce (`workspace-<epoch millis>`), so an
+ * Deliberately not something `generateId()` could produce (`workspace-<epoch millis>-<entropy>`), so an
  * adopted id is recognisable as one and can never be mistaken for a Space the user saved normally.
  */
 

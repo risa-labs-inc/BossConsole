@@ -959,6 +959,7 @@ object KeymapPresets {
                     listOf("Cmd", "Alt"),
                     alternates = listOf(KeyStroke("OpenBracket", listOf("Cmd", "Shift"))),
                 ),
+                browserBinding(KeymapActions.BROWSER_PRINT, "P", listOf("Cmd")),
                 browserBinding(KeymapActions.BROWSER_BACK, "OpenBracket", listOf("Cmd")),
                 browserBinding(KeymapActions.BROWSER_FORWARD, "CloseBracket", listOf("Cmd")),
                 browserBinding(KeymapActions.BROWSER_DEVTOOLS, "I", listOf("Cmd", "Alt")),

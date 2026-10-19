@@ -4,6 +4,7 @@ import ai.rever.boss.plugin.ui.BossThemeController
 import ai.rever.boss.plugin.ui.BossThemes
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,12 +17,18 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlin.time.Clock
 
 /**
- * Manages layout workspaces with file-based storage
+ * Manages layout workspaces with file-based storage.
+ *
+ * `fileManager` is a test seam: pass a manager pointed at a directory the test controls.
+ * The app passes nothing, which resolves against the user's real documents location.
  */
-class WorkspaceManager {
+class WorkspaceManager(
+    private val fileManager: WorkspaceFileManager = WorkspaceFileManager(),
+) {
     private val logger = BossLogger.forComponent("WorkspaceManager")
     private val _currentWorkspace = MutableStateFlow<LayoutWorkspace?>(null)
     val currentWorkspace: StateFlow<LayoutWorkspace?> = _currentWorkspace.asStateFlow()
@@ -134,8 +141,14 @@ class WorkspaceManager {
      */
     fun savedCopyOf(workspaceId: String): LayoutWorkspace? = _workspaces.value.firstOrNull { it.id == workspaceId }
 
-    private val fileManager = WorkspaceFileManager()
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    /** Picker list; recovery records remain available internally even when the slot is hidden. */
+    val visibleWorkspaces: StateFlow<List<LayoutWorkspace>> =
+        combine(workspaces, WorkspaceSettingsManager.currentSettings) { spaces, settings ->
+            visibleSessionSpaces(spaces, settings.enableLastSessionSpace)
+                .filterNot { it.id in PredefinedWorkspaces.allIds || isRecoverySnapshot(it) }
+        }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     /**
      * The file each Space was LOADED from, by id, for the ones whose path predates
@@ -290,20 +303,56 @@ class WorkspaceManager {
                         fileManager.listWorkspaces()
                     }
                 savedWorkspaces.forEach { fileInfo ->
-                    // The session-set record lives in this directory and is not a Space. The scan
-                    // is "every *.json", so without this it is deserialized as one on every
-                    // launch, fails, and logs a warning for ever. See LAST_SESSION_SET_FILE.
-                    if (fileInfo.fileName == LAST_SESSION_SET_FILE) return@forEach
-                    // And the Space-to-theme record, beside it and not a Space either. See
-                    // SPACE_THEMES_FILE.
-                    if (fileInfo.fileName == SPACE_THEMES_FILE) return@forEach
+                    // The reserved record files live in this directory and are not Spaces - the
+                    // session-set store and the Space-theme store. The scan is "every *.json",
+                    // so without this each is deserialized as a Space on every launch, fails,
+                    // and logs a warning for ever. The list lives in WorkspaceFileManagerCommon,
+                    // shared with the write-side guard, which extends it with the session-record
+                    // spellings it must refuse too, so the two cannot drift apart (#926).
+                    if (WorkspaceFileManagerCommon.isReservedDocumentFileName(fileInfo.fileName)) return@forEach
                     val workspace =
                         withContext(Dispatchers.IO) {
                             fileManager.loadWorkspace(fileInfo.fileName)
                         }
                     workspace?.let {
                         // Ensure workspace has an ID
-                        val withId = if (it.id.isEmpty()) it.copy(id = LayoutWorkspace.generateId()) else it
+                        val withId = it.withStableId()
+                        if (fileInfo.fileName == ".json") {
+                            // A legacy id-less build wrote the literal file ".json" - and that
+                            // file IS a real Space (the last id-less import, the one that
+                            // survived the overwrite). Adopt it: save the Space under its own
+                            // <id>.json and remove the nameless file so it is not re-adopted
+                            // every launch. Never write it back AS ".json".
+                            val adoptedName = WorkspaceFileManagerCommon.fileNameForId(withId.id)
+                            if (fileManager.saveWorkspace(withId, adoptedName) != null) {
+                                runCatching { fileManager.deleteWorkspace(".json") }
+                            } else {
+                                logger.warn(
+                                    LogCategory.WORKSPACE,
+                                    "Could not adopt a legacy nameless workspace file - it will be retried next launch",
+                                )
+                            }
+                            saved.add(withId)
+                            loadedFileNames[withId.id] = adoptedName
+                            return@forEach
+                        }
+                        if (withId !== it) {
+                            // A file carrying no id minted a fresh one on EVERY launch, so the
+                            // Space's identity - session-set membership, preserved-state keys -
+                            // never matched across a relaunch. Write the minted id back into the
+                            // file it came from, once, and the next load reads a stable id. The
+                            // serializer re-emits the model, so a hand-maintained file loses its
+                            // formatting and unknown keys: BOSS takes ownership of the file on
+                            // first launch. If the write fails the next launch would mint yet
+                            // another id - the original bug, silently - so say so.
+                            if (fileManager.saveWorkspace(withId, fileInfo.fileName) == null) {
+                                logger.warn(
+                                    LogCategory.WORKSPACE,
+                                    "Could not persist a minted workspace id - it will be re-minted next launch",
+                                    mapOf("fileName" to fileInfo.fileName),
+                                )
+                            }
+                        }
                         saved.add(withId)
                         // Remember the file it came from, so a legacy path keeps being this
                         // Space's file. A file already named `<id>.json` records the same answer
@@ -321,7 +370,10 @@ class WorkspaceManager {
             // Space was a built-in - which is the Save button not working. See
             // `mergeSavedWorkspaces`, which also says what becomes of a legacy file whose id IS a
             // built-in's.
-            _workspaces.value = mergeSavedWorkspaces(PredefinedWorkspaces.allWorkspaces, saved)
+            _workspaces.value =
+                mergeSavedWorkspaces(PredefinedWorkspaces.allWorkspaces, saved).let { spaces ->
+                    if (spaces.any { it.id == DefaultSpace.ID }) spaces else listOf(DefaultSpace.planetBerul) + spaces
+                }
         }
     }
 
@@ -341,12 +393,44 @@ class WorkspaceManager {
     fun loadWorkspace(workspace: LayoutWorkspace) {
         _currentWorkspace.value = workspace
         applySpaceTheme(workspace.id)
+        if (workspace.id !in PredefinedWorkspaces.allIds && !isRecoverySnapshot(workspace)) {
+            scope.launch {
+                val settings = WorkspaceSettingsManager.currentSettings.value
+                val recent = listOf(workspace.id) + settings.recentSpaceIds.filterNot { it == workspace.id }
+                WorkspaceSettingsManager.updateSettings(settings.copy(recentSpaceIds = recent))
+            }
+        }
+    }
+
+    /** Persist a new empty Space before offering it for switching. */
+    suspend fun createSpace(name: String): LayoutWorkspace? {
+        val space =
+            DefaultSpace.planetBerul.copy(
+                id = LayoutWorkspace.generateId(),
+                name = uniqueWorkspaceName(name.trim().ifBlank { "New Space" }, savedSpaceNames(_workspaces.value)),
+                timestamp = Clock.System.now().toEpochMilliseconds(),
+                layout =
+                    ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel(
+                        PanelConfig(id = "panel-${LayoutWorkspace.generateId()}", tabs = emptyList()),
+                    ),
+            )
+        val fileName = fileNameFor(space)
+        withContext(Dispatchers.IO) { fileManager.saveWorkspace(space, fileName) } ?: return null
+        loadedFileNames[space.id] = fileName
+        _workspaces.value = _workspaces.value + space
+        return space
     }
 
     /**
      * Save current workspace to disk
      */
-    fun saveCurrentWorkspace(name: String? = null): LayoutWorkspace? {
+    fun saveCurrentWorkspace(name: String? = null): LayoutWorkspace? = saveCurrentWorkspace(name, onSaved = {})
+
+    internal fun saveCurrentWorkspace(
+        name: String?,
+        onSaved: (LayoutWorkspace) -> Unit,
+        onFailed: (String) -> Unit = {},
+    ): LayoutWorkspace? {
         val current = _currentWorkspace.value ?: return null
         val now = Clock.System.now().toEpochMilliseconds()
         val savedWorkspace =
@@ -367,7 +451,7 @@ class WorkspaceManager {
                 )
             } else {
                 current.copy(
-                    id = current.id.ifEmpty { LayoutWorkspace.generateId() },
+                    id = current.id.ifBlank { mintWorkspaceId() },
                     // A typed name goes through `uniqueWorkspaceName` too, which it used to
                     // bypass entirely - the one path that could still put two identical rows in
                     // the list. Its own name is never "taken" by itself, so re-saving a Space
@@ -406,6 +490,17 @@ class WorkspaceManager {
 
                 _workspaces.value = workspaces
                 _currentWorkspace.value = savedWorkspace
+                onSaved(savedWorkspace)
+            } else {
+                // `fileManager` already logged the write error; the caller must still hear the
+                // save FAILED, because the unsaved mark is derived from the list above - without
+                // a message the user gets a Space button that stays lit and no explanation.
+                logger.warn(
+                    LogCategory.WORKSPACE,
+                    "Space save did not land on disk; reporting the failure to the caller",
+                    mapOf("workspace" to savedWorkspace.name, "id" to savedWorkspace.id),
+                )
+                onFailed(savedWorkspace.name)
             }
         }
 
@@ -413,28 +508,33 @@ class WorkspaceManager {
     }
 
     /**
-     * Write [record] as the Last Session file, and refresh the list entry for it.
+     * Write [record] as the Last Session file on the calling thread, and return whether it landed.
+     * [noteLastSessionRecordWritten] then refreshes the list entry, on the manager's dispatcher,
+     * unless the caller was cancelled meanwhile: the window is going away then, and the file is
+     * already on disk.
      *
-     * The layout watcher's only write. Deliberately does NOT touch [currentWorkspace]: while the
-     * user is working in a named Space that is the Space they are in, and stamping it "Last
-     * Session" would rename it under them. The caller sets it, from
+     * The layout watcher's record write, blocking so it can sit beside the set's inside
+     * `LastSessionCoordinator.writeInSession`, under the lock the shutdown write takes (see
+     * `writeInSessionRecovery`). Deliberately does NOT
+     * touch [currentWorkspace]: while the user is working in a named Space that is the Space they
+     * are in, and stamping it "Last Session" would rename it under them. The caller sets it, from
      * `LayoutWatcherWrite.current`, which is the live layout under the identity it already has.
+     */
+    fun writeLastSessionRecordBlocking(record: LayoutWorkspace): Boolean {
+        if (fileManager.saveWorkspaceBlocking(record, fileNameFor(record)) != null) return true
+        logger.warn(LogCategory.WORKSPACE, "Last Session record write failed")
+        return false
+    }
+
+    /**
+     * Refresh the list entry for a [record] [writeLastSessionRecordBlocking] has just written.
      *
      * The list entry IS refreshed, because [savedCopyOf] reads that list to answer "what is on
      * disk" and the unsaved flag is derived from the answer - an entry left stale would say the
      * Last Session record needs saving when it had just been written.
      */
-    suspend fun saveLastSessionRecord(record: LayoutWorkspace): Boolean {
-        val fileName = fileNameFor(record)
-        val filePath =
-            withContext(Dispatchers.IO) {
-                fileManager.saveWorkspace(record, fileName)
-            }
-        if (filePath == null) {
-            logger.warn(LogCategory.WORKSPACE, "Last Session record write failed")
-            return false
-        }
-        loadedFileNames[record.id] = fileName
+    fun noteLastSessionRecordWritten(record: LayoutWorkspace) {
+        loadedFileNames[record.id] = fileNameFor(record)
         _workspaces.value =
             _workspaces.value.toMutableList().also { workspaces ->
                 // By ID. By NAME this wrote over whatever row happened to be called "Last
@@ -443,7 +543,6 @@ class WorkspaceManager {
                 val existingIndex = workspaces.indexOfFirst { it.id == record.id }
                 if (existingIndex >= 0) workspaces[existingIndex] = record else workspaces.add(record)
             }
-        return true
     }
 
     /**
@@ -472,7 +571,7 @@ class WorkspaceManager {
         _currentWorkspace.value = lastSession
         _workspaces.value =
             _workspaces.value.toMutableList().also { workspaces ->
-                // By ID, for the reason `saveLastSessionRecord` states.
+                // By ID, for the reason `noteLastSessionRecordWritten` states.
                 val existingIndex = workspaces.indexOfFirst { it.id == lastSession.id }
                 if (existingIndex >= 0) workspaces[existingIndex] = lastSession else workspaces.add(lastSession)
             }
@@ -486,7 +585,10 @@ class WorkspaceManager {
      * The shutdown path's other half, beside [saveLastSessionBlocking], and blocking for the same
      * reason: a coroutine queued on `Dispatchers.Main` while the app is closing may never run.
      * Both are called under `LastSessionCoordinator`'s single claim, so the two files are written
-     * together by one window and cannot disagree about which session they describe.
+     * together by one window and cannot disagree about which session they describe. During the
+     * session the same window keeps both current, with this and [writeLastSessionRecordBlocking]
+     * under `LastSessionCoordinator.writeInSession`, so a hard kill finds a set as fresh as the
+     * record rather than the one the previous clean shutdown left.
      *
      * The delete is not tidiness. Restore reads the set in preference to `Last_Session.json`, so a
      * set left behind by a three-Space session would reopen two Spaces after a session that had
@@ -512,7 +614,7 @@ class WorkspaceManager {
      * The multi-Space session record on disk, or null when there is none or it cannot be read.
      *
      * Null is the ordinary answer, not an error: an installed build upgrading into this has only
-     * `Last_Session.json`, and a single-Space session deliberately writes no set. A file that
+     * `Last_Session.json`. New builds write a set even for a single Space to retain its id. A file that
      * cannot be parsed is also null, so a truncated or hand-broken record falls back to the
      * single-Space restore rather than failing the launch.
      */
@@ -520,6 +622,12 @@ class WorkspaceManager {
         val json = fileManager.loadDocument(LAST_SESSION_SET_FILE) ?: return null
         return try {
             LastSessionSetSerializer.deserialize(json)
+        } catch (e: SerializationException) {
+            // Saved session documents can contain tab URLs, project paths and terminal commands.
+            // kotlinx includes the input document in its decoder message, so keep only location
+            // and exception-type diagnostics.
+            logger.warn(LogCategory.WORKSPACE, "Last Session set could not be read", decodeFailure(e))
+            null
         } catch (e: Exception) {
             logger.warn(LogCategory.WORKSPACE, "Last Session set could not be read", error = e)
             null
@@ -543,26 +651,62 @@ class WorkspaceManager {
      */
     fun importWorkspace(jsonString: String): LayoutWorkspace? =
         try {
-            val workspace = WorkspaceSerializer.deserialize(jsonString)
-
-            // Save the imported workspace to disk
-            scope.launch {
-                val fileName = fileNameFor(workspace)
-                withContext(Dispatchers.IO) {
-                    fileManager.saveWorkspace(workspace, fileName)
-                }
-                loadedFileNames[workspace.id] = fileName
-
-                // Update workspaces list (on Main thread), by ID. By NAME an import whose name
-                // matched anything already listed wrote the file and then declined to add the row,
-                // so the user pressed Open from File and saw nothing happen at all.
-                val workspaces = _workspaces.value.toMutableList()
-                val existingIndex = workspaces.indexOfFirst { it.id == workspace.id }
-                if (existingIndex >= 0) workspaces[existingIndex] = workspace else workspaces.add(workspace)
-                _workspaces.value = workspaces
+            // A hand-written or agent-authored file commonly carries no id. Blank used to save
+            // as the literal file ".json", which every id-less import then shared - the second
+            // destroyed the first. The minted id is written back with the Space below, so it
+            // stays stable across launches instead of being re-minted on every load.
+            val raw = WorkspaceSerializer.deserialize(jsonString)
+            val withSafeId = raw.withImportableId()
+            if (raw.id != withSafeId.id) {
+                logger.info(
+                    LogCategory.WORKSPACE,
+                    "Re-minted imported workspace id to avoid collisions or reserved record overwrite",
+                    mapOf("previousId" to raw.id, "newId" to withSafeId.id),
+                )
             }
+            val uniqueName = uniqueWorkspaceName(withSafeId.name, savedSpaceNames(_workspaces.value))
+            val workspace = if (uniqueName != withSafeId.name) withSafeId.copy(name = uniqueName) else withSafeId
 
-            workspace
+            // The reserved-store gate the MCP create path applies to a caller-chosen id (#926,
+            // #964), evaluated on the name the save will write (#1627). withImportableId re-mints
+            // an id whose own fileNameForId lands on a reserved record, but fileNameFor can
+            // instead answer a name the load scan recorded into loadedFileNames - a name the
+            // identity rule never consulted - so the check runs on the actual write target.
+            // Refusal mirrors the MCP answer: before anything is created or applied, so the
+            // import reports failure whole rather than registering a Space that never persisted.
+            val fileName = fileNameFor(workspace)
+            val reserved = reservedWorkspaceStoreFileName(fileName)
+            if (reserved != null) {
+                logger.warn(
+                    LogCategory.WORKSPACE,
+                    "Refusing to import a workspace onto the reserved store file '$reserved'",
+                    mapOf("workspaceId" to workspace.id, "fileName" to fileName),
+                )
+                null
+            } else {
+                // Save the imported workspace to disk
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        fileManager.saveWorkspace(workspace, fileName)
+                    }
+                    loadedFileNames[workspace.id] = fileName
+
+                    // Update workspaces list (on Main thread), by ID. By NAME an import whose name
+                    // matched anything already listed wrote the file and then declined to add the row,
+                    // so the user pressed Open from File and saw nothing happen at all.
+                    val workspaces = _workspaces.value.toMutableList()
+                    val existingIndex = workspaces.indexOfFirst { it.id == workspace.id }
+                    if (existingIndex >= 0) workspaces[existingIndex] = workspace else workspaces.add(workspace)
+                    _workspaces.value = workspaces
+                }
+
+                workspace
+            }
+        } catch (e: SerializationException) {
+            // Import JSON has the same private layout data as an on-disk Space. Do not route the
+            // caller-provided document back into logs through the decoder exception.
+            logger.warn(LogCategory.WORKSPACE, "Failed to import workspace from JSON", decodeFailure(e))
+            null
         } catch (e: Exception) {
             logger.warn(LogCategory.WORKSPACE, "Failed to import workspace from JSON", error = e)
             null
@@ -577,11 +721,17 @@ class WorkspaceManager {
      * directory the manager's own file manager does not see - but still want the Space visible
      * in the picker for this session. [importWorkspace] would double-write the file.
      */
-    fun registerWorkspace(workspace: LayoutWorkspace) {
+    fun registerWorkspace(workspace: LayoutWorkspace): LayoutWorkspace {
+        // Same door as import: an id registered blank would key this list under "" and later
+        // save as ".json". Mint before the workspace enters the list - and hand the registered
+        // Space back, since a minted id exists only inside this list until the caller persists
+        // it through its own file manager.
+        val registered = workspace.withStableId()
         val workspaces = _workspaces.value.toMutableList()
-        val existingIndex = workspaces.indexOfFirst { it.id == workspace.id }
-        if (existingIndex >= 0) workspaces[existingIndex] = workspace else workspaces.add(workspace)
+        val existingIndex = workspaces.indexOfFirst { it.id == registered.id }
+        if (existingIndex >= 0) workspaces[existingIndex] = registered else workspaces.add(registered)
         _workspaces.value = workspaces
+        return registered
     }
 
     /**

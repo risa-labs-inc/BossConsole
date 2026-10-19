@@ -19,6 +19,7 @@ import { loadPlugin } from "../services/plugin.ts"
 import { fetchReadme } from "../services/readme.ts"
 import { callForActor } from "../utils/org-rpc.ts"
 import { htmlResponse, redirectResponse } from "../utils/responses.ts"
+import { clientKey, rateLimit } from "../utils/rate-limit.ts"
 import { isValidSlug, readRequestFacts } from "../utils/request.ts"
 import { consumeHandoffToken } from "./handoff-exchange.ts"
 import { requireOrgAdmin } from "./guards.ts"
@@ -30,6 +31,10 @@ export const pluginPageRoutes = new OpenAPIHono()
 
 /** Values the visibility control may set. Mirrors the column CHECK and the RPC. */
 const VISIBILITY_VALUES = ["public", "org", "unlisted"]
+
+/** 30 renders a minute per client. Far beyond a human reader, fatal to a catalogue walk. */
+const PAGE_LIMIT = 30
+const PAGE_WINDOW_SECONDS = 60
 
 pluginPageRoutes.get("/o/:slug/plugins/:pluginId", async (ctx) => {
   // Same shape as the admin page: a handoff token may arrive here directly, because the desktop
@@ -47,6 +52,40 @@ pluginPageRoutes.get("/o/:slug/plugins/:pluginId", async (ctx) => {
     `/o/${encodeURIComponent(slug)}/plugins/${encodeURIComponent(pluginId)}`,
   )
   if (exchanged) return exchanged
+
+  // THE RENDER IS RATE LIMITED, like every sibling in this function: join pays for its preview
+  // RPC, the handoff exchange for its token consumption, the admin write for its authority probe,
+  // DNS for its resolve - each limiter set against the cost that route spends. This page spends
+  // the most of any of them per request: a get_plugin_with_stats_for_viewer RPC plus, on a cache
+  // miss, an authenticated call to api.github.com for the README (services/readme.ts), out of the
+  // shared GitHub budget every other GitHub-touching route conserves. And because it is readable
+  // with NO session (the widening documented below), a walk over the catalogue - or one hot
+  // plugin id - could spend all of that with zero friction: no cookie to forge, no token to
+  // guess. The brake sits after the handoff exchange, which keeps its own tighter limit and its
+  // own documented order, and BEFORE loadPlugin/fetchReadme - the two costs it exists to protect.
+  //
+  // A rate-limited caller gets the SAME "Not available" page every invisible plugin already
+  // gets, for the same reason join renders one page for every unusable invite: a distinct 429
+  // would tell a script it was going fast enough to matter, and would separate "too many" from
+  // "not yours to see" - which is a signal on its own.
+  const key = clientKey(ctx.req.raw.headers)
+  const limit = rateLimit(
+    `pluginpage:${key}`,
+    PAGE_LIMIT,
+    PAGE_WINDOW_SECONDS,
+  )
+  if (!limit.allowed) {
+    // A throttle decided on the "unknown" key means the gateway set no
+    // client-IP header and the whole world shares one bucket - a
+    // misconfiguration, not an attack. The 404 stays silent to the caller,
+    // but the operator gets one grep-able line.
+    if (key === "unknown") {
+      console.debug(
+        "plugin-page throttled on the shared unknown key: no client-IP header reached the function",
+      )
+    }
+    return notAvailable()
+  }
 
   // NO SESSION IS REQUIRED TO READ THIS PAGE, and that is a deliberate widening of the rule the
   // rest of these pages follow.

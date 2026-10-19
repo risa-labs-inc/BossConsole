@@ -133,88 +133,98 @@ object IpcAddressResolver {
         }
 
     /**
-     * Configure a NettyServerBuilder for the given address.
+     * Configure a NettyServerBuilder for the given address with [limits] applied.
      */
-    fun configureServerBuilder(address: String): NettyServerBuilder {
+    fun configureServerBuilder(
+        address: String,
+        limits: IpcTransportLimits = IpcTransportLimits(),
+    ): NettyServerBuilder {
         val parsed = parseAddress(address)
-        return when (parsed) {
-            is DomainSocketAddress -> {
-                // Clean up stale socket file
-                File(parsed.path()).delete()
+        val builder =
+            when (parsed) {
+                is DomainSocketAddress -> {
+                    // Clean up stale socket file
+                    File(parsed.path()).delete()
 
-                when {
-                    isMacOS -> {
-                        NettyServerBuilder
-                            .forAddress(parsed)
-                            .channelType(KQueueServerDomainSocketChannel::class.java)
-                            .bossEventLoopGroup(KQueueEventLoopGroup(1))
-                            .workerEventLoopGroup(KQueueEventLoopGroup())
-                    }
+                    when {
+                        isMacOS -> {
+                            NettyServerBuilder
+                                .forAddress(parsed)
+                                .channelType(KQueueServerDomainSocketChannel::class.java)
+                                .bossEventLoopGroup(KQueueEventLoopGroup(1))
+                                .workerEventLoopGroup(KQueueEventLoopGroup())
+                        }
 
-                    isLinux -> {
-                        NettyServerBuilder
-                            .forAddress(parsed)
-                            .channelType(EpollServerDomainSocketChannel::class.java)
-                            .bossEventLoopGroup(EpollEventLoopGroup(1))
-                            .workerEventLoopGroup(EpollEventLoopGroup())
-                    }
+                        isLinux -> {
+                            NettyServerBuilder
+                                .forAddress(parsed)
+                                .channelType(EpollServerDomainSocketChannel::class.java)
+                                .bossEventLoopGroup(EpollEventLoopGroup(1))
+                                .workerEventLoopGroup(EpollEventLoopGroup())
+                        }
 
-                    else -> {
-                        throw UnsupportedOperationException(
-                            "Unix domain sockets not supported on this platform",
-                        )
+                        else -> {
+                            throw UnsupportedOperationException(
+                                "Unix domain sockets not supported on this platform",
+                            )
+                        }
                     }
                 }
-            }
 
-            is InetSocketAddress -> {
-                NettyServerBuilder.forAddress(parsed)
-            }
+                is InetSocketAddress -> {
+                    NettyServerBuilder.forAddress(parsed)
+                }
 
-            else -> {
-                throw IllegalArgumentException("Unknown address type: $parsed")
+                else -> {
+                    throw IllegalArgumentException("Unknown address type: $parsed")
+                }
             }
-        }
+        return limits.applyToServer(builder)
     }
 
     /**
-     * Configure a NettyChannelBuilder for the given address.
+     * Configure a NettyChannelBuilder for the given address with [limits] applied.
      */
-    fun configureChannelBuilder(address: String): NettyChannelBuilder {
+    fun configureChannelBuilder(
+        address: String,
+        limits: IpcTransportLimits = IpcTransportLimits(),
+    ): NettyChannelBuilder {
         val parsed = parseAddress(address)
-        return when (parsed) {
-            is DomainSocketAddress -> {
-                when {
-                    isMacOS -> {
-                        NettyChannelBuilder
-                            .forAddress(parsed)
-                            .channelType(KQueueDomainSocketChannel::class.java)
-                            .eventLoopGroup(KQueueEventLoopGroup())
-                    }
+        val builder =
+            when (parsed) {
+                is DomainSocketAddress -> {
+                    when {
+                        isMacOS -> {
+                            NettyChannelBuilder
+                                .forAddress(parsed)
+                                .channelType(KQueueDomainSocketChannel::class.java)
+                                .eventLoopGroup(KQueueEventLoopGroup())
+                        }
 
-                    isLinux -> {
-                        NettyChannelBuilder
-                            .forAddress(parsed)
-                            .channelType(EpollDomainSocketChannel::class.java)
-                            .eventLoopGroup(EpollEventLoopGroup())
-                    }
+                        isLinux -> {
+                            NettyChannelBuilder
+                                .forAddress(parsed)
+                                .channelType(EpollDomainSocketChannel::class.java)
+                                .eventLoopGroup(EpollEventLoopGroup())
+                        }
 
-                    else -> {
-                        throw UnsupportedOperationException(
-                            "Unix domain sockets not supported on this platform",
-                        )
+                        else -> {
+                            throw UnsupportedOperationException(
+                                "Unix domain sockets not supported on this platform",
+                            )
+                        }
                     }
                 }
-            }
 
-            is InetSocketAddress -> {
-                NettyChannelBuilder.forAddress(parsed)
-            }
+                is InetSocketAddress -> {
+                    NettyChannelBuilder.forAddress(parsed)
+                }
 
-            else -> {
-                throw IllegalArgumentException("Unknown address type: $parsed")
+                else -> {
+                    throw IllegalArgumentException("Unknown address type: $parsed")
+                }
             }
-        }
+        return limits.applyToChannel(builder)
     }
 
     /**

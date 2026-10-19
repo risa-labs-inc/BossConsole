@@ -1,5 +1,6 @@
 package ai.rever.boss.components.overlays
 
+import ai.rever.boss.components.model.TabDragReleaseGuard
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.ui.BossTheme
@@ -38,6 +39,7 @@ private val GHOST_HEIGHT = 32.dp
  */
 @Composable
 fun TabDraggableComponent.TabDraggingOverlay() {
+    TabDragReleaseGuard(this)
     val dragging = draggingTab ?: return
     val startPosition = dragStartPosition ?: return
     val delta = dragDelta

@@ -95,6 +95,11 @@ message MasteryProgress {
     NodeFailed node_failed = 6;
     MasteryCompleted completed = 7;
     MasteryFailed failed = 8;
+    // A guarded edge fired (its condition failed or its source produced no output) and the
+    // target node was therefore never invoked. Surfaced to the execution stream so an operator
+    // watching a run can tell a silent skip from a missing NodeStarted, which the old
+    // master-only log line could not do. See #1060 / BossConsole#1094 follow-up.
+    NodeSkipped node_skipped = 9;
   }
 }
 
@@ -122,6 +127,14 @@ message NodeFailed {
   string error_message = 2;
   int32 retry_attempt = 3;
   bool will_retry = 4;
+}
+
+// A guarded edge fired and the target node was therefore never invoked. Reason is the
+// human-readable explanation an operator would want to see in a stream UI: a false condition,
+// a malformed condition that failed closed, or a missing source output. See #1060.
+message NodeSkipped {
+  string node_id = 1;
+  string reason = 2;
 }
 
 message MasteryCompleted {

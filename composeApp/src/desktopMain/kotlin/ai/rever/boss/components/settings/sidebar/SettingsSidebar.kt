@@ -38,6 +38,11 @@ enum class SettingsSection(
     val description: String,
     val icon: ImageVector,
 ) {
+    GETTING_STARTED(
+        displayName = "Getting Started",
+        description = "Reopen the plugin setup wizard",
+        icon = Icons.Outlined.PlayArrow,
+    ),
     FLUCK(
         displayName = "Browser",
         description = "Configure browser behavior, user agent, and link handling",
@@ -67,6 +72,11 @@ enum class SettingsSection(
         displayName = "Terminal",
         description = "Shell configuration, colors, and startup behavior",
         icon = Icons.Outlined.Terminal,
+    ),
+    SHARING(
+        displayName = "Sharing",
+        description = "Share a BossConsole window and connect to your other devices",
+        icon = Icons.Outlined.ScreenShare,
     ),
     RUNNER(
         displayName = "Runner",

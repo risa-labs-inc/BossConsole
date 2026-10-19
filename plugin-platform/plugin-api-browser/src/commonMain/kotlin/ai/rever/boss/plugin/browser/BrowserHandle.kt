@@ -244,6 +244,47 @@ interface BrowserHandle {
     val hasPendingBrowserCall: Boolean get() = false
 
     /**
+     * Suspend until [hasPendingBrowserCall] reads false, or until [timeoutMs] elapses. Returns
+     * whether it observed the handle idle.
+     *
+     * The waiting form of [hasPendingBrowserCall], for teardown code that would otherwise poll it
+     * by hand. It inherits every caveat of the snapshot it polls, and two of them matter more here
+     * than they do for a single read:
+     *
+     * - **Synchronous accessors are not counted.** Calls like `getCurrentUrl` and `getTitle` run on
+     *   the calling thread, outside the workers this counts, so a true result means no
+     *   worker-dispatched call is outstanding, not that the native layer is idle. For a teardown
+     *   gate, which is what this is for, that is the difference worth knowing.
+     * - **Work can be admitted the instant after the read**, so true is not a lock and false is not
+     *   proof that anything is still running. Use it to defer a teardown or to record why one went
+     *   ahead regardless.
+     *
+     * Observed at a poll granularity the caller cannot see, so a very short [timeoutMs] buys
+     * proportionally less certainty than a long one. The bound is the caller's dispatcher too: a
+     * congested one delays the poll, so [timeoutMs] is a floor on how long this can take, never a
+     * ceiling.
+     *
+     * Not a substitute for [dispose], which remains the correct call: the host stops admission and
+     * drains its own workers before native close, independently of this. Nothing here can interrupt
+     * a call already inside the browser, which has no interruption point.
+     *
+     * Runs on the caller's dispatcher, which must not be one of the browser workers this counts:
+     * each resumed poll is itself submitted to that worker and counted while it takes the reading,
+     * so it can never observe zero and the wait is guaranteed to spend all of [timeoutMs] and
+     * answer false.
+     *
+     * The default answers from [hasPendingBrowserCall] without waiting, so an implementation that
+     * overrides only the snapshot still reports its own pending work rather than a flat true.
+     *
+     * @param timeoutMs how long to wait. `0` means take the snapshot and answer without waiting;
+     *   `Long.MAX_VALUE` is kotlinx's "no timeout" and waits indefinitely. Deliberately not
+     *   defaulted: the right deadline is the call site's policy, and a default published to plugins
+     *   could not later be changed without silently changing behaviour for every caller that
+     *   omitted it.
+     */
+    suspend fun awaitBrowserCallsQuiescent(timeoutMs: Long): Boolean = !hasPendingBrowserCall
+
+    /**
      * Get the current URL.
      *
      * @return The current URL, or empty string if invalid

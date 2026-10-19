@@ -35,6 +35,20 @@ object IpcVersion {
      * Current IPC contract version of this host build.
      *
      * History:
+     * - 1.5.0 - additive SecretService organisation ownership, management permission,
+     *   share-target and organisation-share attribution fields. Older runtimes ignore
+     *   these fields; refreshed runtimes must use the 1.5.0 upstream boss-ipc artifact
+     *   and the matching release's plugin-api-ipc artifact to consume the access envelopes.
+     * - 1.4.0 - additive `TerminalService.CloseInput` RPC delivers stdin EOF to a session
+     *   without terminating it, so a caller can let a stdin-consuming one-shot command (sort,
+     *   grep, cat with no args, ...) exit on its own. A runtime that keeps its `minIpcVersion` at
+     *   or below 1.3.0 talking to an older host receives UNIMPLEMENTED for `CloseInput`, which
+     *   callers must treat as "not supported" rather than a session fault; a runtime declaring
+     *   `minIpcVersion: 1.4.0` is rejected at spawn time by a 1.3.0 or older host.
+     * - 1.3.0 - MasteryService surfaces guarded edges that fired (the target node
+     *   was never invoked) through additive MasteryProgress oneof field 9
+     *   NodeSkipped. Old runtimes receive a Progress with an unset oneof - the
+     *   default unknown case, which the executor maps to a no-op.
      * - 1.2.0 - remote UI diffs distinguish removed properties from explicit
      *   empty-string values through additive NodeUpdated field 4.
      * - 1.1.0 - authenticated transport and credential-required JVM APIs.
@@ -50,7 +64,7 @@ object IpcVersion {
      *   issue #743 for the rollback rationale (terminal-tab pivoted to
      *   in-process in PR #742).
      */
-    const val CURRENT: String = "1.2.0"
+    const val CURRENT: String = "1.5.0"
 
     /**
      * Parse a semver string into (major, minor, patch). Trailing

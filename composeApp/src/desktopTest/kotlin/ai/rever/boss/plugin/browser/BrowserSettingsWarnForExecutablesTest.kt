@@ -1,5 +1,6 @@
 package ai.rever.boss.plugin.browser
 
+import ai.rever.boss.mcp.secrets.captureHostLogs
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -8,6 +9,8 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -140,5 +143,31 @@ class BrowserSettingsWarnForExecutablesTest {
         BrowserSettingsManager.settingsFile.writeText("{ not json")
         BrowserSettingsManager.reloadForTest()
         assertFalse(BrowserSettings.warnForExecutables, "a failed load must keep the in-memory value")
+    }
+
+    @Test
+    fun `a corrupt settings file is logged without its private values`() {
+        val secret = "private-browser-profile-${System.nanoTime()}"
+        BrowserSettingsManager.settingsFile.writeText("{\"currentProfile\":\"$secret")
+
+        val (_, logged) = captureHostLogs { BrowserSettingsManager.reloadForTest() }
+
+        val failure = logged.single { it.message == "Failed to load browser settings" }
+        assertNull(failure.error, "the decoder exception includes browser settings and must not be attached")
+        assertEquals("JsonDecodingException", failure.data?.get("decodeFailure"))
+        for (entry in logged) {
+            assertFalse(secret in "${entry.message} ${entry.data} ${entry.error}", "leaked in: $entry")
+        }
+    }
+
+    @Test
+    fun `an ordinary browser settings IO failure retains its throwable`() {
+        BrowserSettingsManager.settingsFile = dir
+
+        val (_, logged) = captureHostLogs { BrowserSettingsManager.reloadForTest() }
+
+        val failure = logged.single { it.message == "Failed to load browser settings" }
+        assertNotNull(failure.error, "non-decoder failures must keep their actionable throwable")
+        assertNull(failure.data?.get("decodeFailure"))
     }
 }

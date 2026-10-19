@@ -34,8 +34,38 @@ private val PROJECT_PLACEHOLDERS =
 fun LayoutWorkspace.requiresProject(): Boolean = layout.collectTabs().any { it.usesProjectPlaceholder() }
 
 private fun TabConfig.usesProjectPlaceholder(): Boolean =
-    listOfNotNull(url, filePath, initialCommand, workingDirectory)
-        .any { field -> PROJECT_PLACEHOLDERS.any { it in field } }
+    listOfNotNull(url, filePath, initialCommand, workingDirectory).any { it.hasProjectPlaceholder() }
+
+private fun String.hasProjectPlaceholder(): Boolean = PROJECT_PLACEHOLDERS.any { it in this }
+
+/**
+ * Whether this layout needs a project for its placeholders but still stands without one.
+ *
+ * True when the ONLY thing a project would decide is which directory a plain shell starts in:
+ * every tab that carries a placeholder is a terminal whose working directory is `{projectPath}`
+ * and whose initial command, if any, is nothing but `cd {projectPath}`. With no project that is
+ * the `~/BossProjects` fallback, which is a reasonable place for a shell to open - unlike the
+ * hazard [PROJECT_PLACEHOLDERS] records, an AGENT started in a directory nobody chose.
+ *
+ * Shape rather than a list of ids, because the property is about what the layout runs: a built-in
+ * edited to start `claude` in its terminal stops qualifying by itself, where a hard-coded id would
+ * keep waving it through. Today exactly Terminal + Browser and Dual Terminal qualify.
+ */
+fun LayoutWorkspace.projectIsOptional(): Boolean {
+    // A block body only because the expression form sits between ktlint's and detekt's line rules.
+    return requiresProject() && layout.collectTabs().all { it.onlyPlacesAShell() }
+}
+
+private fun TabConfig.onlyPlacesAShell(): Boolean =
+    !usesProjectPlaceholder() ||
+        (
+            listOfNotNull(url, filePath).none { it.hasProjectPlaceholder() } &&
+                (workingDirectory == null || workingDirectory == PROJECT_DIRECTORY) &&
+                (initialCommand?.trim() ?: SHELL_IN_PROJECT) == SHELL_IN_PROJECT
+        )
+
+private const val PROJECT_DIRECTORY = "{projectPath}"
+private const val SHELL_IN_PROJECT = "cd $PROJECT_DIRECTORY"
 
 private fun SplitConfig.collectTabs(): List<TabConfig> =
     when (this) {

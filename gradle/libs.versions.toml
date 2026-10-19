@@ -6,14 +6,20 @@ android-minSdk = "24"
 android-targetSdk = "34"
 androidx-activityCompose = "1.10.1"
 androidx-lifecycle = "2.11.0"
-compose-multiplatform = "1.12.0"
+# Compose also determines the host Skia/Skiko runtime shared parent first via
+# PluginClassLoader.defaultSharedPackages, regardless of a plugin's bundled copy.
+# A bump is a cross-repo change: re-check consumers across boss_plugins.
+# BinaryCompatibilityValidator checks members only under ai.rever.boss.plugin.*;
+# Skia/Skiko signature drift can surface as a runtime NoSuchMethodError instead
+# of an incompatible-plugin rejection at load time.
+compose-multiplatform = "1.12.1"
 compose-icons = "1.1.1"
 decompose = "3.5.0"
 detekt = "1.23.8"
 essenty = "2.6.0"
 junit-jupiter = "6.1.3"
 clikt = "5.1.0"
-kotlin = "2.4.10"
+kotlin = "2.4.20"
 kotlinx-coroutines = "1.11.0"
 ktlint-gradle = "14.2.0"
 kotlinx-datetime = "0.8.0-0.6.x-compat"
@@ -45,26 +51,26 @@ kotlinx-serialization = "1.11.0"
 # with mixed ktor artifacts on one classpath. Check what the supabase Gradle
 # module metadata requires before moving either line.
 ktor = "3.5.2"
-logback = "1.6.3"
+logback = "1.6.5"
 precompose = "1.6.2"
-slf4j = "2.0.18"
+slf4j = "2.0.20"
 re2j = "1.8"
 supabase = "3.8.0"
 zxing = "3.5.4"
-jxbrowser = "9.5.0"
+jxbrowser = "9.5.3"
 jxbrowser-gradle-plugin = "2.1.0"
 maven-publish = "0.37.0"
 jna = "5.19.1"
-bouncycastle = "1.85"
+bouncycastle = "1.86"
 # Reads the SQLite databases browsers keep their bookmarks and logins in
 # (Chromium "Login Data", Firefox places.sqlite / key4.db). Desktop-only.
 sqlite-jdbc = "3.53.4.0"
 # gRPC + Protobuf for IPC
 grpc = "1.84.0"
 grpc-kotlin = "1.5.0"
-protobuf = "4.36.1"
+protobuf = "4.36.2"
 protobuf-gradle-plugin = "0.10.0"
-graalvm-native-plugin = "1.1.12"
+graalvm-native-plugin = "1.1.14"
 # IntelliJ PSI for code navigation
 intellij-platform = "243.21565.199"
 # The plugin API contract (risa-labs-inc/boss-plugin-api releases). This pin
@@ -174,7 +180,12 @@ intellij-platform = "243.21565.199"
 # bump-pushes before building, so api main's version IS the version already released and the next
 # merge cuts version + 1 - re-read it when #44 actually merges, because anything landing first
 # moves this and the topofmind pin again.
-boss-plugin-api = "1.0.93"
+# 1.0.94 adds the shared BrowserTitleBarBridge. Release the API before merging this pin.
+# 1.0.97 restores terminal-link destination requests. Release the API before merging this pin.
+# 1.0.99 adds AI prompt-cache extras, finish reason and cache/reasoning usage (AiRequest unchanged).
+# Organisation-secret access envelopes were published in 1.0.91; the host transports
+# their server management decisions and attribution through in-process and KERNEL paths.
+boss-plugin-api = "1.0.99"
 
 [libraries]
 bouncycastle-pkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bouncycastle" }
@@ -249,9 +260,9 @@ grpc-util = { module = "io.grpc:grpc-util", version.ref = "grpc" }
 protobuf-kotlin = { module = "com.google.protobuf:protobuf-kotlin", version.ref = "protobuf" }
 protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobuf" }
 # Netty transport for Unix domain sockets
-netty-transport-native-epoll = { module = "io.netty:netty-transport-native-epoll", version = "4.2.17.Final" }
-netty-transport-native-kqueue = { module = "io.netty:netty-transport-native-kqueue", version = "4.2.17.Final" }
-netty-transport-native-unix-common = { module = "io.netty:netty-transport-native-unix-common", version = "4.2.17.Final" }
+netty-transport-native-epoll = { module = "io.netty:netty-transport-native-epoll", version = "4.2.18.Final" }
+netty-transport-native-kqueue = { module = "io.netty:netty-transport-native-kqueue", version = "4.2.18.Final" }
+netty-transport-native-unix-common = { module = "io.netty:netty-transport-native-unix-common", version = "4.2.18.Final" }
 
 # K1 PSI dependencies for code navigation
 intellij-platform-core = { module = "com.jetbrains.intellij.platform:core", version.ref = "intellij-platform" }

@@ -31,9 +31,11 @@ import ai.rever.boss.search.SearchRegistryImpl
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
+import kotlinx.coroutines.runBlocking
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * A plugin's app-wide registrations must survive another window closing.
@@ -141,8 +143,10 @@ class PluginRegistrationsAcrossWindowsTest {
                 runCatching { kind.unregister(second, idFor(kind)) }
                 runCatching { kind.unregister(first, idFor(kind)) }
             }
-            runCatching { second.dispose() }
-            runCatching { first.dispose() }
+            // dispose() returns a Job now - teardown is off-thread, so join it before the
+            // next test's window can meet registrations this one was still releasing.
+            runCatching { runBlocking { second.dispose().join() } }
+            runCatching { runBlocking { first.dispose().join() } }
         }
     }
 
@@ -174,6 +178,66 @@ class PluginRegistrationsAcrossWindowsTest {
                     expect("first", kind)
                 }
             }
+        }
+
+    @Test
+    fun `restoring an MCP provider replays its original snapshot without calling tools again`() =
+        withTwoWindows { first, second ->
+            val kind = kinds.first { it.name == "MCP tool provider" }
+            val id = idFor(kind)
+            var calls = 0
+            val stateful =
+                object : McpToolProvider {
+                    override val providerId = id
+
+                    override fun tools(): List<McpToolDefinition> {
+                        calls++
+                        check(calls == 1) { "tools() was re-entered while another window closed" }
+                        return mcpProvider(id, "first").tools()
+                    }
+                }
+
+            first.registerMcpToolProvider(stateful)
+            second.registerMcpToolProvider(mcpProvider(id, "second"))
+            second.unregisterMcpToolProvider(id)
+
+            assertEquals(1, calls)
+            assertEquals("first", kind.current(id))
+        }
+
+    @Test
+    fun `restoring a shortcut provider replays its original snapshot without calling shortcuts again`() =
+        withTwoWindows { first, second ->
+            val kind = kinds.first { it.name == "shortcut action provider" }
+            val id = idFor(kind)
+            var calls = 0
+            var actions = 0
+            val stateful =
+                object : ShortcutActionProvider {
+                    override val providerId = id
+
+                    override fun shortcuts(): List<PluginShortcutSpec> {
+                        calls++
+                        check(calls == 1) { "shortcuts() was re-entered while another window closed" }
+                        return shortcutProvider(id, "first").shortcuts()
+                    }
+
+                    override fun onAction(
+                        actionId: String,
+                        windowId: String?,
+                    ) {
+                        actions++
+                    }
+                }
+
+            first.registerShortcutActionProvider(stateful)
+            second.registerShortcutActionProvider(shortcutProvider(id, "second"))
+            second.unregisterShortcutActionProvider(id)
+
+            assertEquals(1, calls)
+            assertEquals("first", kind.current(id))
+            assertTrue(PluginShortcutRegistryImpl.dispatch("plugin.$id.act", windowId = null))
+            assertEquals(1, actions, "the prepared provider must retain its original action delegate")
         }
 
     @Test
@@ -240,14 +304,16 @@ class PluginRegistrationsAcrossWindowsTest {
                 kind.register(second, idFor(kind), "second")
             }
 
-            second.dispose()
+            // Joined, not just launched: the release runs on dispose's background scope, and
+            // the "late" registration below is only refused once it has run.
+            runBlocking { second.dispose().join() }
             // A startup registration finishing after disposal cannot resurrect this window.
             for (kind in kinds) kind.register(second, idFor(kind), "late-second")
 
             assertEveryKind(kinds) { kind -> expect("first", kind) }
         } finally {
             for (kind in kinds) runCatching { kind.unregister(first, idFor(kind)) }
-            runCatching { first.dispose() }
+            runCatching { runBlocking { first.dispose().join() } }
         }
     }
 

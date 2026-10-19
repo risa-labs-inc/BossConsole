@@ -7,10 +7,12 @@ import ai.rever.boss.components.dialogs.GlobalSearchDialog
 import ai.rever.boss.components.dialogs.HtmlFileOpenDialog
 import ai.rever.boss.components.dialogs.LogoutConfirmationDialog
 import ai.rever.boss.components.dialogs.McpApprovalDialog
+import ai.rever.boss.components.dialogs.McpYoloConfirmation
 import ai.rever.boss.components.dialogs.NewProjectWizardDialog
 import ai.rever.boss.components.dialogs.NewTabDialog
 import ai.rever.boss.components.dialogs.ProjectOpenModeDialog
 import ai.rever.boss.components.dialogs.ProjectSelectionDialog
+import ai.rever.boss.components.dialogs.RenameDialog
 import ai.rever.boss.components.dialogs.ShortcutHelpDialog
 import ai.rever.boss.components.dialogs.TabType
 import ai.rever.boss.components.dialogs.TerminalLinkOpenDialog
@@ -35,6 +37,7 @@ import ai.rever.boss.components.plugin.PluginUpdateAlreadyInProgressException
 import ai.rever.boss.components.plugin.PluginUpdateBridge
 import ai.rever.boss.components.plugin.openTopOfMindQuickSwitcher
 import ai.rever.boss.components.plugin.providers.GenericDialogHostContent
+import ai.rever.boss.components.plugin.registries.DeepLinkActionRegistryImpl
 import ai.rever.boss.components.plugin.tab_types.fluck.FluckTabInfo
 import ai.rever.boss.components.registery.PanelComponentStoreRegistry
 import ai.rever.boss.components.registery.TabTypeId
@@ -42,14 +45,17 @@ import ai.rever.boss.components.windows.SettingsWindow
 import ai.rever.boss.components.wizard.plugin.PluginWizardIntegration
 import ai.rever.boss.components.wizard.plugin.PluginWizardWindow
 import ai.rever.boss.components.wizard.plugin.rememberPluginInstallWizardState
+import ai.rever.boss.components.workspaces.ProjectSelectionWorkspace
 import ai.rever.boss.components.workspaces.SelectWorkspaceDialog
+import ai.rever.boss.components.workspaces.WorkspaceSettingsManager
 import ai.rever.boss.components.workspaces.applyWorkspace
+import ai.rever.boss.components.workspaces.resolveOnProjectSelection
 import ai.rever.boss.components.workspaces.spaceToOpen
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.html.HtmlFileOpenMode
 import ai.rever.boss.html.HtmlFileSettingsManager
-import ai.rever.boss.icons.FileIcons
+import ai.rever.boss.keymap.KeymapRecoveryDialog
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.model.KeymapActions
 import ai.rever.boss.mcp.McpToolRegistryImpl
@@ -60,7 +66,6 @@ import ai.rever.boss.plugin.api.PluginLoaderDelegate
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.sandbox.notification.ToastMessage
 import ai.rever.boss.plugin.sandbox.notification.ToastType
-import ai.rever.boss.plugin.tab.codeeditor.EditorTabInfo
 import ai.rever.boss.plugin.tab.jupyter.JupyterTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabInfo
 import ai.rever.boss.plugin.tab.terminal.TerminalTabType
@@ -85,6 +90,7 @@ import ai.rever.boss.utils.logging.LogCategory
 import ai.rever.boss.window.MenuActionsHandler
 import ai.rever.boss.window.Project
 import ai.rever.boss.window.WindowOperations
+import ai.rever.boss.window.WindowProjectState
 import ai.rever.boss.window.selectProjectInWindow
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
@@ -116,8 +122,30 @@ internal fun BossAppDialogs(state: BossAppState) {
     val selectedProject by windowProjectState.selectedProject.collectAsState()
     val spotlightFileIndexer = rememberSpotlightFileIndexer(state.spotlightFileIndexes, selectedProject.path)
 
-    // Keymap settings (used by ShortcutHelpDialog)
+    // ShortcutHelpDialog uses the current keymap below.
     val keymapSettings by KeymapSettingsManager.currentSettings.collectAsState()
+    KeymapRecoveryDialog()
+
+    if (state.showCreateSpaceDialog) {
+        RenameDialog(
+            title = "Create New Space",
+            currentName = "",
+            label = "Space name",
+            confirmLabel = "Create Space",
+            onDismiss = { state.showCreateSpaceDialog = false },
+            onRename = { name ->
+                state.showCreateSpaceDialog = false
+                coroutineScope.launch {
+                    val space = workspaceManager.createSpace(name)
+                    if (space != null) {
+                        MenuActionsHandler.triggerApplyWorkspace(windowId, space)
+                    } else {
+                        StatusMessageManager.showMessage("Could not create Space")
+                    }
+                }
+            },
+        )
+    }
 
     // Plugin update confirmation prompt (from "Check for Updates" or the header badge).
     state.pluginUpdatePrompt?.let { prompt ->
@@ -296,20 +324,33 @@ internal fun BossAppDialogs(state: BossAppState) {
         // to do nothing at all - which is exactly what the pane menu's split did until this
         // existed.
         val place: (TabInfo) -> Unit = { tab ->
+            // Capture the placement before a missing handler can suspend and dismissal clears it.
             val split = splitViewState.consumePendingSplit()
-            if (split == null) {
-                val target =
-                    splitViewState.getActiveTabsComponent()
-                        ?: splitViewState.getLastInteractedTabComponent()
-                        ?: state.tabsComponent
-                target.addTab(tab)
-            } else {
-                splitViewState.splitPanel(
-                    split.panelId,
-                    split.direction.orientation,
-                    tabToMove = tab,
-                    placeBefore = split.direction.placeBefore,
-                )
+            splitViewState.requireTabTypeThen(tab.typeId, "Opening ${tab.title}") {
+                // Resolved only now: installing a missing handler can take minutes, and a pane
+                // captured before that may have closed. Landing somewhere visible beats dropping
+                // the tab silently.
+                if (split != null && splitViewState.getPanel(split.panelId) != null) {
+                    splitViewState.splitPanel(
+                        split.panelId,
+                        split.direction.orientation,
+                        tabToMove = tab,
+                        placeBefore = split.direction.placeBefore,
+                    )
+                } else {
+                    if (split != null) {
+                        logger.info(
+                            LogCategory.UI,
+                            "Requested split pane closed before the tab opened - using the active pane",
+                            mapOf("panelId" to split.panelId),
+                        )
+                    }
+                    val target =
+                        splitViewState.getActiveTabsComponent()
+                            ?: splitViewState.getLastInteractedTabComponent()
+                            ?: state.tabsComponent
+                    target.addTab(tab)
+                }
             }
         }
 
@@ -351,20 +392,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                     }
 
                     TabType.FILE -> {
-                        val fileName = path.extractFileName()
-                        val fileIconInfo = FileIcons.forFile(fileName)
-                        val tab =
-                            EditorTabInfo(
-                                id = "editor-${Random.nextLong()}",
-                                typeId = TabTypeId("editor"),
-                                title = fileName,
-                                icon = fileIconInfo.icon,
-                                tabIcon =
-                                    ai.rever.boss.plugin.api.TabIcon
-                                        .Vector(fileIconInfo.icon, fileIconInfo.color),
-                                filePath = path,
-                            )
-                        place(tab)
+                        place(newTabFileInfo(path))
                     }
 
                     TabType.TERMINAL -> {
@@ -401,35 +429,57 @@ internal fun BossAppDialogs(state: BossAppState) {
         )
     }
 
-    // "Which workspace do you want?" - raised by the project-selection effect when the
-    // default workspace setting is `ask`, the default on a fresh install.
-    state.pendingWorkspacePrompt?.let { projectName ->
-        val workspaces by workspaceManager.workspaces.collectAsState()
+    // "Which Space?" - raised by "New Space" in the project-open dialog, and by the
+    // project-selection effect when a plugin selects a project and the setting is `ask`.
+    state.pendingWorkspacePrompt?.let { prompt ->
+        val workspaces by workspaceManager.visibleWorkspaces.collectAsState()
         SelectWorkspaceDialog(
-            projectName = projectName,
+            projectName = prompt.project.name,
+            projectIsOpen = !prompt.placeOnPick,
             // The same list the top bar's workspace button and the app menu show, saved
             // workspaces included. Reading PredefinedWorkspaces here instead would offer a
             // different set than the rest of the app does.
-            workspaces = workspaces,
+            //
+            // Only the Spaces this project can open in: applying a saved Space also selects the
+            // project it was saved with, so one of another project's would swap this one out.
+            workspaces = spacesForProject(workspaces, prompt.project.path),
             onDismiss = {
                 state.pendingWorkspacePrompt = null
                 state.focusRequester.requestFocus()
             },
             onSelect = { workspace ->
                 state.pendingWorkspacePrompt = null
+                // New Space places the project only now, so dismissing the list opened nothing.
+                if (prompt.placeOnPick) placeProjectHere(state, windowProjectState, prompt.project)
                 coroutineScope.launch {
-                    // Preserve, load, apply: the same three steps the top bar's workspace
-                    // switch takes, so a workspace opened from here can be switched away
-                    // from and back with its tabs intact.
+                    // Preserve, apply, load: the same steps the top bar's workspace switch
+                    // takes, in the order that leaves nothing destroyed when the apply is
+                    // refused - the leaving tree is restored out of the snapshot just taken.
                     val currentWorkspace = workspaceManager.currentWorkspace.value
-                    if (currentWorkspace != null && currentWorkspace.id.isNotEmpty()) {
-                        splitViewState.preserveCurrentState(currentWorkspace.id, currentWorkspace.name)
+                    val leavingId = currentWorkspace?.id?.takeIf { it.isNotEmpty() }
+                    if (leavingId != null) {
+                        splitViewState.preserveCurrentState(leavingId, currentWorkspace?.name.orEmpty())
                     }
                     // A template picked here is materialised into a Space first - see
                     // `spaceToOpen`, which every pick in the app goes through.
-                    val opened = spaceToOpen(workspace, windowProjectState.selectedProject.value.path)
-                    workspaceManager.loadWorkspace(opened)
-                    applyWorkspace(opened, splitViewState, windowProjectState)
+                    val opened = spaceToOpen(workspace, prompt.project.path)
+                    if (applyWorkspace(opened, splitViewState, windowProjectState)) {
+                        workspaceManager.loadWorkspace(opened)
+                    } else {
+                        if (leavingId != null) {
+                            splitViewState.restorePreservedState(leavingId)
+                            splitViewState.discardPreservedState(leavingId)
+                        }
+                        // `spaceToOpen` enters a materialised template itself, so a refusal can
+                        // leave the manager claiming a Space that was never applied - point it
+                        // back at what is on screen.
+                        if (
+                            currentWorkspace != null &&
+                            workspaceManager.currentWorkspace.value?.id != currentWorkspace.id
+                        ) {
+                            workspaceManager.loadWorkspace(currentWorkspace)
+                        }
+                    }
                 }
                 state.focusRequester.requestFocus()
             },
@@ -542,7 +592,11 @@ internal fun BossAppDialogs(state: BossAppState) {
 
                             "editor" -> {
                                 bookmark.tabConfig.filePath?.let { filePath ->
-                                    FileEventBus.openFile(filePath, sourceWindowId = windowId, projectPath = selectedProject.path)
+                                    FileEventBus.openFile(
+                                        filePath,
+                                        sourceWindowId = windowId,
+                                        projectPath = selectedProject.path,
+                                    )
                                 }
                             }
 
@@ -550,7 +604,11 @@ internal fun BossAppDialogs(state: BossAppState) {
                             // it in the notebook tab when the plugin is present, else the editor.
                             "jupyter" -> {
                                 bookmark.tabConfig.filePath?.takeIf { it.isNotBlank() }?.let { filePath ->
-                                    FileEventBus.openFile(filePath, sourceWindowId = windowId, projectPath = selectedProject.path)
+                                    FileEventBus.openFile(
+                                        filePath,
+                                        sourceWindowId = windowId,
+                                        projectPath = selectedProject.path,
+                                    )
                                 }
                             }
 
@@ -594,6 +652,10 @@ internal fun BossAppDialogs(state: BossAppState) {
 
                     KeymapActions.TAB_CLOSE -> {
                         MenuActionsHandler.triggerCloseTab(windowId)
+                    }
+
+                    KeymapActions.BROWSER_PRINT -> {
+                        MenuActionsHandler.triggerPrintBrowser(windowId)
                     }
 
                     KeymapActions.BROWSER_RELOAD -> {
@@ -847,6 +909,48 @@ internal fun BossAppDialogs(state: BossAppState) {
         )
     }
 
+    // The same question for a Space whose terminal tabs carry commands.
+    SpaceLoadPrompt(state)
+
+    // A URL that reached BOSS from outside the operator's own `boss`
+    // invocation (`boss://url`, a link forwarded over the single-instance
+    // channel). Same shape as the terminal prompt above: the request carries
+    // no evidence of who made it, so the operator sees the exact URL before a
+    // tab is opened for it.
+    state.urlOpenApprovals.current?.let { pending ->
+        UrlOpenApprovalDialog(
+            request = pending,
+            pendingCount = state.urlOpenApprovals.size,
+            onDismiss = { state.urlOpenApprovals.consume(pending) },
+            onConfirm = confirm@{
+                // Consume before opening; the dialog also calls onDismiss after onConfirm.
+                // A stale callback must never open or dismiss the next request.
+                if (!state.urlOpenApprovals.consume(pending)) return@confirm
+                logger.info(
+                    LogCategory.BROWSER,
+                    "Operator confirmed an externally requested URL",
+                    mapOf("windowId" to windowId),
+                )
+                splitViewState.openUrlInActivePanel(pending.url, pending.title)
+            },
+        )
+    }
+    // A plugin action that reached BOSS from outside the operator's own `boss`
+    // invocation. Nothing has been dispatched yet: this prompt is the only path
+    // from such a link to the plugin's registered handler.
+    PluginActionApprovalPrompt(state.pluginActionApprovals) { pending ->
+        logger.info(
+            LogCategory.SYSTEM,
+            "Operator confirmed an externally requested plugin action",
+            mapOf("windowId" to windowId, "handlerId" to pending.handlerId, "action" to pending.action),
+        )
+        val handled = DeepLinkActionRegistryImpl.dispatch(pending.handlerId, pending.action, pending.params)
+        if (!handled) StatusMessageManager.showMessage("Plugin action was not handled")
+    }
+
+    // YOLO mode's confirmation, raised from the bottom bar or the Tools menu (McpYoloPrompt).
+    McpYoloConfirmation(windowId)
+
     // Interactive approval dialog for governed MCP tools invoked by an AI agent
     state.pendingMcpApproval?.let { approvalRequest ->
         val pendingList by McpToolRegistryImpl.approvalBus.pendingList.collectAsState()
@@ -863,6 +967,9 @@ internal fun BossAppDialogs(state: BossAppState) {
             },
             onDeny = { reason, persistPolicy ->
                 McpToolRegistryImpl.approvalBus.deny(approvalRequest.id, reason, persistPolicy)
+            },
+            onDenyAllPending = {
+                McpToolRegistryImpl.approvalBus.denyAllPending()
             },
         )
     }
@@ -1081,18 +1188,9 @@ internal fun BossAppDialogs(state: BossAppState) {
         rememberDirectoryPicker { path ->
             path?.let {
                 val projectName = it.extractFileName().ifEmpty { "Unknown" }
-                selectProjectInWindow(
-                    windowProjectState,
-                    Project(
-                        name = projectName,
-                        path = it,
-                    ),
-                )
-                // Show CodeBase panel when project is selected
-                state.draggablePanelComponent.setPanelVisible(
-                    left.top,
-                    true,
-                )
+                // Asked where it goes, like every other way of opening a project.
+                val picked = Project(name = projectName, path = it)
+                requestProjectOpen(state, windowProjectState, picked)
                 // Close the dialog after selection
                 state.showProjectDialog = false
             }
@@ -1118,7 +1216,7 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.focusRequester.requestFocus()
             },
             onProjectCreated = { project ->
-                selectProjectInWindow(windowProjectState, project)
+                requestProjectOpen(state, windowProjectState, project)
                 state.showNewProjectDialog = false
                 state.focusRequester.requestFocus()
             },
@@ -1140,20 +1238,13 @@ internal fun BossAppDialogs(state: BossAppState) {
                         path = projectPath,
                     )
                 state.showCloneProjectDialog = false
-                // Check if a project is already open
-                if (selectedProject.path.isNotEmpty()) {
-                    // Show dialog to choose between current window or new window
-                    state.projectToOpen = project
-                } else {
-                    // No project open, directly open in current window
-                    selectProjectInWindow(windowProjectState, project)
-                    state.focusRequester.requestFocus()
-                }
+                requestProjectOpen(state, windowProjectState, project)
             },
         )
     }
 
-    // Project open mode dialog (for cloned projects and other project opening flows)
+    // "Where should this project open?" - the ONE place every host way of opening a project asks
+    // it. See ProjectOpenRequests, which carries the requests raised outside this composable.
     state.projectToOpen?.let { project ->
         ProjectOpenModeDialog(
             project = project,
@@ -1161,8 +1252,14 @@ internal fun BossAppDialogs(state: BossAppState) {
                 state.projectToOpen = null
                 state.focusRequester.requestFocus()
             },
-            onOpenInCurrentWindow = { selectedProj ->
-                selectProjectInWindow(windowProjectState, selectedProj)
+            onOpenInThisSpace = { selectedProj ->
+                placeProjectHere(state, windowProjectState, selectedProj)
+                state.projectToOpen = null
+                state.focusRequester.requestFocus()
+            },
+            onOpenInNewSpace = { selectedProj ->
+                state.pendingWorkspacePrompt =
+                    SpacePrompt(selectedProj, placeOnPick = true)
                 state.projectToOpen = null
                 state.focusRequester.requestFocus()
             },
@@ -1266,6 +1363,45 @@ internal fun BossAppDialogs(state: BossAppState) {
 }
 
 @Composable
+private fun SpaceLoadPrompt(state: BossAppState) {
+    val logger = state.logger
+    state.pendingSpaceLoad?.let { pending ->
+        SpaceLoadApprovalDialog(
+            request = pending,
+            onDismiss = {
+                if (state.pendingSpaceLoad === pending) state.pendingSpaceLoad = null
+            },
+            onConfirm = confirm@{
+                // Clear before applying; the dialog also calls onDismiss after onConfirm, and a
+                // stale callback must never apply or dismiss a later request.
+                if (state.pendingSpaceLoad !== pending) return@confirm
+                state.pendingSpaceLoad = null
+                logger.info(
+                    LogCategory.WORKSPACE,
+                    "Operator confirmed an externally requested Space load",
+                    mapOf("windowId" to state.windowId, "commands" to pending.commands.size),
+                )
+                state.coroutineScope.launch {
+                    try {
+                        workspaceManager.loadWorkspace(pending.workspace)
+                        applyWorkspace(pending.workspace, state.splitViewState, state.windowProjectState)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        logger.warn(
+                            LogCategory.WORKSPACE,
+                            "Confirmed Space load failed",
+                            mapOf("path" to pending.workspacePath),
+                            error = e,
+                        )
+                    }
+                }
+            },
+        )
+    }
+}
+
+@Composable
 private fun HtmlFilePrompt(state: BossAppState) {
     val coroutineScope = state.coroutineScope
     val splitViewState = state.splitViewState
@@ -1306,5 +1442,45 @@ private fun HtmlFilePrompt(state: BossAppState) {
                 },
             )
         }
+    }
+}
+
+/**
+ * A person asked to open [project] in this window: ask where, or - when the default-Space setting
+ * says not to ask - place it straight away and let the project-selection effect apply what the
+ * setting names (None keeps the layout, a layout id applies that layout).
+ *
+ * Ask is the default, and it is the three-way dialog. The other two exist so someone who set a
+ * layout keeps the one-step open they configured, rather than being asked and then having to find
+ * that layout again under New Space.
+ */
+internal fun requestProjectOpen(
+    state: BossAppState,
+    windowProjectState: WindowProjectState,
+    project: Project,
+) {
+    if (WorkspaceSettingsManager.currentSettings.value.resolveOnProjectSelection() is ProjectSelectionWorkspace.Ask) {
+        state.projectToOpen = project
+    } else {
+        selectProjectInWindow(windowProjectState, project)
+    }
+}
+
+/**
+ * Give this window [project], after a person answered "where" with this window.
+ *
+ * [BossAppState.answeredProjectPath] is set BEFORE the selection so the project-selection effect,
+ * which observes it a frame later, knows the question was already answered. Not set when the
+ * project is already the selected one: the path does not change, the effect never runs, and a
+ * recorded path would then wrongly swallow a later selection of it.
+ */
+private fun placeProjectHere(
+    state: BossAppState,
+    windowProjectState: WindowProjectState,
+    project: Project,
+) {
+    if (windowProjectState.selectedProject.value.path != project.path) {
+        state.answeredProjectPath = project.path
+        selectProjectInWindow(windowProjectState, project)
     }
 }

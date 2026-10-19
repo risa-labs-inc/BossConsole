@@ -46,6 +46,57 @@ class LastSessionCoordinatorTest {
 
     private fun coordinatorWith(recorder: RecordingSave) = LastSessionCoordinator(recorder::save)
 
+    @Test
+    fun `a refused restore protects both recovery files on shutdown and dispose`() {
+        val recorder = RecordingSave()
+        var setWrites = 0
+        val coordinator =
+            LastSessionCoordinator(recorder::save, saveSet = {
+                setWrites++
+                true
+            })
+        coordinator.register("primary", true, canSave = { false }) { layoutNamed("empty") }
+
+        assertFalse(coordinator.saveOnProcessExit())
+        assertFalse(coordinator.onWindowDisposed("primary"))
+        assertTrue(recorder.saved.isEmpty())
+        assertEquals(0, setWrites)
+    }
+
+    @Test
+    fun `secondary cannot overwrite a refused primary recovery after primary closes`() {
+        val recorder = RecordingSave()
+        var setWrites = 0
+        val coordinator =
+            LastSessionCoordinator(recorder::save, saveSet = {
+                setWrites++
+                true
+            })
+        coordinator.register("primary", true, canSave = { false }) { layoutNamed("refused") }
+        coordinator.register("secondary", false) { layoutNamed("secondary") }
+
+        assertFalse(coordinator.onWindowDisposed("primary"))
+        assertFalse(coordinator.onWindowDisposed("secondary"))
+        coordinator.register("later", false) { layoutNamed("later") }
+        assertFalse(coordinator.saveOnProcessExit())
+        assertFalse(coordinator.onWindowDisposed("later"))
+        assertTrue(recorder.saved.isEmpty())
+        assertEquals(0, setWrites)
+    }
+
+    @Test
+    fun `shutdown cannot choose a secondary while a refused primary is live`() {
+        val recorder = RecordingSave()
+        val coordinator = coordinatorWith(recorder)
+        coordinator.register("primary", true, canSave = { false }) { layoutNamed("refused") }
+        coordinator.register("secondary", false) { layoutNamed("secondary") }
+
+        assertFalse(coordinator.saveOnProcessExit())
+        assertFalse(coordinator.onWindowDisposed("primary"))
+        assertFalse(coordinator.saveOnProcessExit())
+        assertTrue(recorder.saved.isEmpty())
+    }
+
     private fun LastSessionCoordinator.registerWindow(
         windowId: String,
         isFirstWindow: Boolean = false,
@@ -259,10 +310,10 @@ class LastSessionCoordinatorTest {
     }
 
     @Test
-    fun `a window running one Space asks for the set to be deleted`() {
+    fun `a window with no restorable set asks for the stale set to be deleted`() {
         // A stale set would WIN on restore, so "no set" has to mean "remove the one there is"
         // rather than "leave it alone". The null comes from `sessionSetOf`, which refuses to build
-        // a set for fewer than two Spaces.
+        // a set with no active Space.
         val sets = CopyOnWriteArrayList<String>()
         val coordinator =
             LastSessionCoordinator(

@@ -6,6 +6,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -219,6 +220,75 @@ class WindowRegistrationsTest {
         register(window2, "late-new", id = "new")
         assertEquals(mapOf("tools" to "one"), registry.served)
         registrations.release(window1)
+        assertEquals(emptyMap(), registry.served)
+    }
+
+    @Test
+    fun `preparation runs once per admitted registration and never during restore`() {
+        var preparations = 0
+        val target =
+            WindowRegistrations.Target(
+                name = "prepared",
+                publish = registry.target.publish,
+                withdraw = registry.target.withdraw,
+                prepare = { value: Pair<String, String> ->
+                    preparations++
+                    value.first to value.second.uppercase()
+                },
+            )
+
+        registrations.register(target, "tools", window1, "tools" to "one")
+        registrations.register(target, "tools", window2, "tools" to "two")
+        assertEquals(2, preparations)
+
+        registrations.unregister(target, "tools", window2)
+
+        assertEquals(2, preparations, "restoring the survivor must reuse its prepared value")
+        assertEquals("ONE", registry.served["tools"])
+    }
+
+    @Test
+    fun `failed replacement preparation preserves the live registration and its ownership`() {
+        var preparations = 0
+        val target =
+            WindowRegistrations.Target(
+                name = "fallible",
+                publish = registry.target.publish,
+                withdraw = registry.target.withdraw,
+                prepare = { value: Pair<String, String> ->
+                    check(++preparations == 1) { "replacement snapshot failed" }
+                    value
+                },
+            )
+        registrations.register(target, "tools", window1, "tools" to "one")
+
+        assertFailsWith<IllegalStateException> {
+            registrations.register(target, "tools", window1, "tools" to "two")
+        }
+
+        assertEquals("one", registry.served["tools"])
+        assertEquals(Outcome.WITHDRAWN, registrations.unregister(target, "tools", window1))
+        assertEquals(emptyMap(), registry.served)
+    }
+
+    @Test
+    fun `a released window is rejected before preparation`() {
+        var preparations = 0
+        val target =
+            WindowRegistrations.Target(
+                name = "prepared",
+                publish = registry.target.publish,
+                withdraw = registry.target.withdraw,
+                prepare = { value: Pair<String, String> ->
+                    preparations++
+                    value
+                },
+            )
+        registrations.release(window1)
+
+        registrations.register(target, "tools", window1, "tools" to "late")
+
+        assertEquals(0, preparations)
         assertEquals(emptyMap(), registry.served)
     }
 

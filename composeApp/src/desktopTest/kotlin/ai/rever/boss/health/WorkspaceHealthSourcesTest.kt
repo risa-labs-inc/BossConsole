@@ -3,6 +3,7 @@ package ai.rever.boss.health
 import ai.rever.boss.components.plugin.PluginHealthRow
 import ai.rever.boss.components.plugin.PluginHealthSnapshot
 import ai.rever.boss.components.plugin.PluginHealthStatus
+import ai.rever.boss.utils.logging.BossLogger
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -72,6 +73,31 @@ class WorkspaceHealthSourcesTest {
         assertTrue(report.unchecked.isEmpty(), "the window that answered was read, so plugins is not unchecked")
         assertEquals(setOf(HealthArea.PLUGINS), report.partial, "partial coverage must be declared, not hidden")
     }
+
+    @Test
+    fun `a window source that keeps failing is logged once until it recovers`() {
+        // The status bar reads this every few seconds in every window, so a warning per read would
+        // repeat for as long as the window stays broken.
+        val windowId = "window-flaky-${System.nanoTime()}"
+        var broken = true
+        WorkspaceHealthSources.registerPlugins(windowId) {
+            if (broken) error("manager disposed") else snapshotOf("notes")
+        }
+
+        repeat(3) { WorkspaceHealthSources.pluginSnapshots() }
+        assertEquals(1, warningsFor(windowId), "a source failing on every read must be logged once, not per read")
+
+        broken = false
+        WorkspaceHealthSources.pluginSnapshots()
+        broken = true
+        WorkspaceHealthSources.pluginSnapshots()
+        assertEquals(2, warningsFor(windowId), "failing again after a recovery must be logged again")
+    }
+
+    private fun warningsFor(windowId: String): Int =
+        BossLogger.getRecentLogs(limit = 1000).count {
+            it.data?.get("windowId") == windowId && it.message.startsWith("Plugin health source could not be read")
+        }
 
     private fun pluginIds(): Set<String> =
         WorkspaceHealthSources

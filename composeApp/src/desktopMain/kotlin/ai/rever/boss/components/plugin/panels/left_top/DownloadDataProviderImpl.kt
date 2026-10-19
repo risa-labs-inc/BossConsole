@@ -16,7 +16,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.coroutines.CoroutineContext
 
 private val logger = BossLogger.forComponent("DownloadDataProviderImpl")
@@ -91,42 +92,27 @@ class DownloadDataProviderImpl internal constructor(
             // that just started.
             val download = downloadManager.getDownload(id)
             if (download != null && download.status == DownloadStatus.COMPLETED) {
-                // Delete the finished file if it is still there
-                val file = File(download.destinationPath)
-                if (file.exists() && !file.delete()) {
-                    logger.warn(LogCategory.FILE, "Failed to delete file", mapOf("path" to download.destinationPath))
-                }
+                // A missing file is already removed. Other filesystem failures
+                // must retain the entry so the user can retry or reveal it.
+                Files.deleteIfExists(Path.of(download.destinationPath))
             } else if (download != null && !download.isTerminal) {
                 // Cancel in the engine BEFORE dropping the tracking entry. A
                 // download that is still QUEUED, DOWNLOADING or PAUSED is owned
                 // by Chromium, which keeps writing bytes to the partial file;
                 // removing only the tracking entry leaves that write untracked,
                 // unstoppable and never cleaned up.
-                if (!engine.cancel(id)) {
-                    // Usually just a race: the download reached a terminal state
-                    // between the lookup and the cancel, so the engine had
-                    // already released it. Re-read before deciding it is odd.
-                    val settled = downloadManager.getDownload(id)?.isTerminal ?: true
-                    if (settled) {
-                        logger.debug(
-                            LogCategory.BROWSER,
-                            "Download settled before the cancel reached the engine",
-                            mapOf("id" to id),
-                        )
-                    } else {
-                        logger.warn(
-                            LogCategory.BROWSER,
-                            "Engine did not accept cancel while removing an unfinished download",
-                            mapOf("id" to id, "status" to download.status.name),
-                        )
-                    }
+                val cancelled = engine.cancel(id)
+                val settled = downloadManager.getDownload(id)
+                check(cancelled || settled == null || settled.isTerminal) {
+                    "The download is still active. Could not cancel it; retry removal."
                 }
-                // Also clean up here rather than relying only on the engine's
-                // cancel event: on a rejected cancel no event arrives at all,
-                // and a partial file deleted while Chromium still holds it
-                // either unlinks immediately or is removed by the cancel event
-                // that follows.
-                FileSystemUtils.cleanupPartialFile(download.destinationPath)
+                if (settled?.status == DownloadStatus.COMPLETED) {
+                    // Completion can win the race with cancellation. Apply the
+                    // same deletion contract as an already-completed download.
+                    Files.deleteIfExists(Path.of(settled.destinationPath))
+                } else {
+                    FileSystemUtils.cleanupPartialFile(download.destinationPath)
+                }
             }
             // Unknown ids and already FAILED/CANCELLED downloads need no engine
             // command: the engine released them and its listener cleaned up.

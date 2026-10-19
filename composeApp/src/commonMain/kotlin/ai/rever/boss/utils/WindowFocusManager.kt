@@ -43,12 +43,14 @@ expect object WindowFocusManager {
     fun isWindowOpen(windowId: String): Boolean
 
     /**
-     * StateFlow that emits the ID of the currently focused window.
-     * Emits null if no window is focused.
+     * Last-focused BOSS window, retained when another application gains focus.
      *
      * Used by FocusRestorationManager for event-driven focus restoration.
      */
     val focusedWindowFlow: StateFlow<String?>
+
+    /** Live OS focus, including null when focus leaves every BOSS window. */
+    val activeWindowFlow: StateFlow<String?>
 
     /**
      * Best-effort window id for actions that need "the" active window but may run before a

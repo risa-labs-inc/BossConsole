@@ -99,8 +99,8 @@ class ProcessMonitorSupervisionTest {
     fun `a dead service is reported as a failure`() {
         val failures = failuresAfterDeath(ProcessType.SERVICE)
 
-        // Reported repeatedly, not once: monitorProcess breaks out on death but leaves the
-        // registry entry behind, so the global monitor re-attaches on its next tick and reports
+        // Reported repeatedly, not once: monitorProcess breaks out on death and its monitor
+        // deregisters itself, so the global monitor re-attaches on its next tick and reports
         // again. In the real kernel the failure handler respawns or unregisters, which ends it.
         // This test pins that a service death is seen at all, not how many times.
         assertTrue(failures.isNotEmpty(), "a service death must reach the kernel's failure path")

@@ -87,16 +87,17 @@ export function resetRateLimits(): void {
 /**
  * Best-effort client identity for rate-limit keys.
  *
- * X-Forwarded-For is caller-controlled in general, but behind the Supabase
- * gateway the LEFTMOST entry is the one the gateway observed. It is still
- * spoofable by anyone who can reach the origin directly, which is another
- * reason this is a brake and not a control.
+ * Prefer connecting headers supplied by the gateway over a caller-supplied
+ * X-Forwarded-For prefix. All forwarded headers require a trusted ingress;
+ * this identity is a best-effort brake, not an authentication control.
  */
 export function clientKey(headers: Headers): string {
-  const forwarded = headers.get("x-forwarded-for")
-  if (forwarded) {
-    const first = forwarded.split(",")[0].trim()
-    if (first) return first
+  // Prefer gateway-provided identity to an XFF chain's potentially caller-supplied prefix.
+  // This remains a best-effort bucket key, not an authentication boundary.
+  for (const name of ["cf-connecting-ip", "x-real-ip"]) {
+    const value = headers.get(name)?.trim()
+    if (value) return value
   }
-  return headers.get("cf-connecting-ip") ?? headers.get("x-real-ip") ?? "unknown"
+  const first = headers.get("x-forwarded-for")?.split(",")[0].trim()
+  return first || "unknown"
 }

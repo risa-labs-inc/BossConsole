@@ -212,7 +212,7 @@ class DevPluginRollbackTest {
     @Test
     fun `first link failure uninstalls partially installed plugin across managers to restore clean initial state`() =
         runBlocking {
-            val pluginId = "first-link-tool"
+            val pluginId = "com.example.first.link"
             val stagingRoot = DevPluginArtifacts.stagingRoot()
             createDevTestJar(stagingRoot, pluginId, "v1000", "1.0.0")
 
@@ -346,17 +346,22 @@ class DevPluginRollbackTest {
             val initialManager2Info = manager2.getPluginInfo(pluginId)
             assertNotNull(initialManager2Info)
 
+            // The manager holds unload-aware components by WeakReference, so the two listeners
+            // must be reachable from this frame for the whole reload: registered inline and
+            // otherwise unreferenced, a GC between registration and the reload collected them,
+            // the reload then saw no refusal and succeeded, and this test failed on the Windows
+            // runner (where the GC happened to land there) while passing everywhere else. They are
+            // used again after the reload so the JIT cannot treat them as dead before it.
             var manager1Unloaded = false
-            manager1.registerUnloadAware(
+            val manager1Aware =
                 object : PluginUnloadAware {
                     override fun checkCanUnload(pluginId: String): CanUnloadResult = CanUnloadResult.Ok
 
                     override fun prepareForUnload(pluginId: String) {
                         manager1Unloaded = true
                     }
-                },
-            )
-            manager2.registerUnloadAware(
+                }
+            val manager2Aware =
                 object : PluginUnloadAware {
                     override fun checkCanUnload(pluginId: String): CanUnloadResult =
                         if (!manager1Unloaded) {
@@ -368,12 +373,19 @@ class DevPluginRollbackTest {
                     override fun prepareForUnload(pluginId: String) {
                         // No preparation needed; manager doesn't hold unloadable resources
                     }
-                },
-            )
+                }
+            manager1.registerUnloadAware(manager1Aware)
+            manager2.registerUnloadAware(manager2Aware)
 
             createDevTestJar(stagingRoot, pluginId, "v2000", "2.0.0")
+            // Deterministic stand-in for the GC that made this flake: with the listeners held
+            // inline, this collection detached them and the reload succeeded.
+            System.gc()
 
             val result = DevPluginReloader.reload(pluginId, stagingRoot)
+            manager1.unregisterUnloadAware(manager1Aware)
+            manager2.unregisterUnloadAware(manager2Aware)
+            assertTrue(manager1Unloaded, "Manager 1 must have been asked to prepare for unload")
             assertTrue(result.isFailure, "Reload must fail when manager 2 refuses unload")
 
             // Manager 1 had unloaded, so rollback cleanly restores its prior v1.jar
@@ -422,6 +434,9 @@ class DevPluginRollbackTest {
                     dynamicPluginManager = manager,
                     persistedPlugins = listOf(storeEntry),
                     devRoot = stagingRoot,
+                    // The test's store build lives under tempDir, so declare it
+                    // as this test's managed plugins root.
+                    pluginsDir = tempDir.toFile(),
                 )
 
             val pluginResult = results[pluginId]
@@ -516,14 +531,14 @@ class DevPluginRollbackTest {
     fun `findAllActiveDevJars with deepValidate filters out invalid dev jars`() {
         val devRoot = tempDir.resolve("staging-test").toFile().apply { mkdirs() }
 
-        // Corrupt dev jar under plugin-corrupt
-        val corruptDir = File(devRoot, "plugin-corrupt/v1000").apply { mkdirs() }
-        File(corruptDir, "plugin-corrupt.jar").writeBytes(byteArrayOf(1, 2, 3, 4, 5))
+        // Corrupt dev jar under com.example.corrupt
+        val corruptDir = File(devRoot, "com.example.corrupt/v1000").apply { mkdirs() }
+        File(corruptDir, "com.example.corrupt.jar").writeBytes(byteArrayOf(1, 2, 3, 4, 5))
 
-        // Valid dev jar under plugin-valid
-        val validDir = File(devRoot, "plugin-valid/v2000").apply { mkdirs() }
-        val manifestBytes = """{"id": "plugin-valid", "version": "1.0.0"}""".toByteArray()
-        val validJar = File(validDir, "plugin-valid.jar")
+        // Valid dev jar under com.example.valid
+        val validDir = File(devRoot, "com.example.valid/v2000").apply { mkdirs() }
+        val manifestBytes = """{"id": "com.example.valid", "version": "1.0.0"}""".toByteArray()
+        val validJar = File(validDir, "com.example.valid.jar")
         createJar(validJar, mapOf("META-INF/boss-plugin/plugin.json" to manifestBytes))
 
         val allDiscovered = DevPluginArtifacts.findAllActiveDevJars(devRoot, deepValidate = true)
@@ -595,6 +610,9 @@ class DevPluginRollbackTest {
                     dynamicPluginManager = manager,
                     persistedPlugins = listOf(storeEntry),
                     devRoot = stagingRoot,
+                    // The test's store build lives under tempDir, so declare it
+                    // as this test's managed plugins root.
+                    pluginsDir = tempDir.toFile(),
                 )
 
             val pluginResult = results[pluginId]

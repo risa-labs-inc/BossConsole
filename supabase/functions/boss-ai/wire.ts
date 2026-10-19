@@ -1,5 +1,24 @@
 import { HttpError } from "./auth.ts"
 
+const MAX_TOOL_CALLS_PER_MESSAGE = 128
+const MAX_TOOL_DESCRIPTION_LENGTH = 4_096
+const MAX_TOOL_SCHEMA_LENGTH = 65_536
+
+function boundedToolSchema(value: unknown): void {
+  const pending: { value: unknown; depth: number }[] = [{ value: object(value), depth: 0 }]
+  let visited = 0
+  while (pending.length) {
+    const next = pending.pop()!
+    if (++visited > 8_192 || next.depth > 32) throw invalid()
+    if (next.value && typeof next.value === "object") {
+      const children = Object.values(next.value)
+      if (children.length + pending.length + visited > 8_192) throw invalid()
+      for (const child of children) pending.push({ value: child, depth: next.depth + 1 })
+    }
+  }
+  if (JSON.stringify(value).length > MAX_TOOL_SCHEMA_LENGTH) throw invalid()
+}
+
 export type Obj = Record<string, unknown>
 export interface Model {
   id: string
@@ -7,6 +26,8 @@ export interface Model {
   capabilities: string[]
   context_length: number
   max_output_tokens: number
+  /** Operator-set upstream routing (OpenRouter `provider`); never caller-supplied. */
+  provider_routing?: unknown
 }
 export interface Connection {
   base_url: string
@@ -37,6 +58,17 @@ function functionCall(value: unknown): Obj {
     call.type !== "function" || typeof call.id !== "string" ||
     typeof f.name !== "string" || typeof f.arguments !== "string"
   ) throw invalid()
+  // BossConsole#1251: tool-call `arguments` must be an object or the empty
+  // string that some upstreams return for a no-argument call. Other strings
+  // are malformed requests that the upstream
+  // would reject, but only after the reservation has been charged for
+  // the full context length. Fail closed here so the bad call never
+  // reaches the dispatch path.
+  try {
+    if (f.arguments !== "") object(JSON.parse(f.arguments))
+  } catch {
+    throw invalid()
+  }
   return call
 }
 
@@ -107,7 +139,54 @@ export function upstreamKey(
   return key
 }
 
-export function requestBody(input: Obj, model: Model, type: Connection["api_type"]): Obj {
+function isOpenRouter(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl)
+    return url.protocol === "https:" && url.hostname === "openrouter.ai"
+  } catch {
+    return false
+  }
+}
+
+const ROUTING_LISTS = ["order", "only", "ignore"]
+const ROUTING_FLAGS = ["allow_fallbacks", "require_parameters"]
+const ROUTING_SORTS = ["price", "throughput", "latency"]
+
+// Operator-set OpenRouter `provider` object, rebuilt from an allow-list. A malformed row,
+// or routing on a non-OpenRouter connection, fails closed before reaching the upstream.
+// Mirrors public.boss_ai_provider_routing_valid().
+export function providerRouting(value: unknown, baseUrl: string): Obj | undefined {
+  if (value === null || value === undefined) return undefined
+  const misconfigured = () =>
+    new HttpError(503, "configuration", "BOSS AI is temporarily unavailable.")
+  if (typeof value !== "object" || Array.isArray(value)) throw misconfigured()
+  const out: Obj = {}
+  for (const [key, entry] of Object.entries(value as Obj)) {
+    if (ROUTING_LISTS.includes(key)) {
+      if (
+        !Array.isArray(entry) || entry.length < 1 || entry.length > 32 ||
+        entry.some((slug) => typeof slug !== "string" || !/^[a-z0-9][a-z0-9._/-]{0,63}$/.test(slug))
+      ) throw misconfigured()
+      out[key] = [...entry]
+    } else if (ROUTING_FLAGS.includes(key)) {
+      if (typeof entry !== "boolean") throw misconfigured()
+      out[key] = entry
+    } else if (key === "sort") {
+      if (typeof entry !== "string" || !ROUTING_SORTS.includes(entry)) throw misconfigured()
+      out[key] = entry
+    } else throw misconfigured()
+  }
+  if (!Object.keys(out).length) return undefined
+  if (!isOpenRouter(baseUrl)) throw misconfigured()
+  return out
+}
+
+export function requestBody(
+  input: Obj,
+  model: Model,
+  type: Connection["api_type"],
+  baseUrl: Connection["base_url"],
+): Obj {
   const allowed = new Set([
     "model",
     "messages",
@@ -183,6 +262,16 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
       m.tool_calls !== undefined &&
       (!Array.isArray(m.tool_calls) || !model.capabilities.includes("tools"))
     ) throw invalid()
+    // BossConsole#1251: cap tool_calls per message. A single message
+    // with thousands of tool_calls multiplies the JSON.parse cost
+    // in `functionCall` (now mandatory) and produces a request the
+    // upstream would reject at the wire size anyway. This is a BOSS policy
+    // bound that stops the obvious amplifier; it is not an upstream limit.
+    // Keep it high enough to replay the broker's own parallel-call responses.
+    if (
+      Array.isArray(m.tool_calls) &&
+      m.tool_calls.length > MAX_TOOL_CALLS_PER_MESSAGE
+    ) throw invalid()
     if (Array.isArray(m.tool_calls)) m.tool_calls.forEach(functionCall)
     if (
       m.role === "tool" && (m.content === null ||
@@ -198,6 +287,8 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
     throw invalid()
   }
   const common: Obj = { model: model.upstream_model, stream: input.stream === true, store: false }
+  const provider = providerRouting(model.provider_routing, baseUrl)
+  if (provider) common.provider = provider
   for (const key of ["temperature", "top_p"]) {
     if (input[key] !== undefined) {
       if (typeof input[key] !== "number" || !Number.isFinite(input[key])) throw invalid()
@@ -215,9 +306,16 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
       const f = object(t.function)
       onlyKeys(t, ["type", "function"])
       onlyKeys(f, ["name", "description", "parameters", "strict"])
-      if (f.description !== undefined && typeof f.description !== "string") throw invalid()
+      // Host policy bounds each description/schema as well as the 128-tool list.
+      // The overall 4 MiB request-body cap remains the aggregate bound.
+      if (f.description !== undefined) {
+        if (
+          typeof f.description !== "string" ||
+          f.description.length > MAX_TOOL_DESCRIPTION_LENGTH
+        ) throw invalid()
+      }
       if (f.strict !== undefined && typeof f.strict !== "boolean") throw invalid()
-      if (f.parameters !== undefined) object(f.parameters)
+      if (f.parameters !== undefined) boundedToolSchema(f.parameters)
       if (
         t.type !== "function" || typeof f.name !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(f.name)
       ) throw invalid()
@@ -256,7 +354,7 @@ export function requestBody(input: Obj, model: Model, type: Connection["api_type
         (schema.description !== undefined && typeof schema.description !== "string") ||
         (schema.strict !== undefined && typeof schema.strict !== "boolean")
       ) throw invalid()
-      object(schema.schema)
+      boundedToolSchema(schema.schema)
     }
     if (type === "openai_chat") common.response_format = format
     else {common.text = {

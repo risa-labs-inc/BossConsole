@@ -2,6 +2,7 @@ package ai.rever.boss.services.passkey.desktop
 
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.installBrowserChromeOrClose
+import ai.rever.boss.plugin.logging.LogSanitizer
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import com.teamdev.jxbrowser.browser.Browser
@@ -141,7 +142,11 @@ class CrossDeviceBrowserManager {
                     return@withContext Result.failure(Exception("JxBrowser not available for embedded display"))
                 }
 
-                logger.debug(LogCategory.BROWSER, "Ready to display WebAuthn in embedded browser", mapOf("sessionId" to sessionId))
+                logger.debug(
+                    LogCategory.BROWSER,
+                    "Ready to display WebAuthn in embedded browser",
+                    mapOf("sessionId" to LogSanitizer.maskSessionId(sessionId)),
+                )
                 Result.success(url)
             } catch (e: Exception) {
                 logger.error(LogCategory.BROWSER, "Failed to prepare Fluck browser", error = e)

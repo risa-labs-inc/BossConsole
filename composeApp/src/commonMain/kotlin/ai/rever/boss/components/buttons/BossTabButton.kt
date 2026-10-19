@@ -1,20 +1,23 @@
 package ai.rever.boss.components.buttons
 
+import ai.rever.boss.components.common.rememberFaviconContrastFilter
 import ai.rever.boss.components.model.TabDraggableComponent
 import ai.rever.boss.components.model.TabDropResult
+import ai.rever.boss.components.model.detectTabDragGestures
 import ai.rever.boss.components.overlays.ContextMenu
 import ai.rever.boss.components.overlays.ContextMenuItem
 import ai.rever.boss.components.overlays.OverlayConfig
 import ai.rever.boss.plugin.api.TabIcon
 import ai.rever.boss.plugin.api.TabInfo
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.theme.sidebarGlassEnabled
+import ai.rever.boss.theme.sidebarSelectionFill
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -242,6 +245,19 @@ fun BossTabButton(
     val currentMenuItems by rememberUpdatedState(contextMenuItems)
     val currentOnClose by rememberUpdatedState(onClose)
 
+    // The same treatment for what the DRAG handler below needs, and for the same reason. These
+    // three used to be the keys of its `pointerInput`, which made a drag survive only for as long
+    // as none of them changed - and a tab's own identity changes while it is being dragged. A
+    // TabInfo is a data class carrying the title, so a terminal writing a new title or a page
+    // finishing its load hands the list a brand-new instance; `tabIndex` moves whenever anything
+    // else in the panel opens or closes. Any of those restarted the gesture mid-drag, and a
+    // restart cancels the coroutine WITHOUT calling onDragEnd or onDragCancel - so the ghost was
+    // left on screen following the cursor with no gesture left alive to put it down.
+    val currentTabInfo by rememberUpdatedState(tabInfo)
+    val currentTabIndex by rememberUpdatedState(tabIndex)
+    val currentOnDragStart by rememberUpdatedState(onDragStart)
+    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
+
     // Reported on change rather than written from the setter, so a tab disposed with its menu
     // still open (closing the tab from the menu does exactly that) clears the flag it set.
     // Strictly paired: one `true` when the menu opens, one `false` when that same effect is
@@ -292,17 +308,6 @@ fun BossTabButton(
     // Check if drag is enabled
     val isDragEnabled = tabDragComponent != null && tabInfo != null && panelId != null && tabIndex >= 0
 
-    // Cleanup drag state if this component is disposed while dragging
-    // This prevents "stuck" drag overlays when gesture is interrupted
-    DisposableEffect(tabDragComponent, tabInfo?.id) {
-        onDispose {
-            // Only cancel if THIS tab is the one being dragged
-            if (tabDragComponent?.draggingTab?.tabInfo?.id == tabInfo?.id) {
-                tabDragComponent?.cancelDrag()
-            }
-        }
-    }
-
     // The tab's own surface, in order: selected in the pane being worked in, selected in a
     // background pane, merely under the pointer, none of those.
     //
@@ -318,8 +323,12 @@ fun BossTabButton(
     // the tab bar and could be drawn on another surface elsewhere, and a tint composited over
     // whatever is behind it is right in both places, in either theme. signalWash is the fixed
     // amber-on-ink equivalent and would be a hair off wherever ink is not what is underneath.
+    val glassRow = vertical && sidebarGlassEnabled
     val tabSurface =
         when {
+            glassRow && isSelected && isFocused -> sidebarSelectionFill()
+            glassRow && isSelected -> colors.textPrimary.copy(alpha = 0.12f)
+            glassRow && isHovered -> colors.textPrimary.copy(alpha = 0.08f)
             isSelected && isFocused -> colors.signal.copy(alpha = SELECTED_FILL_ALPHA)
             isSelected -> colors.lineStrong.copy(alpha = INACTIVE_FILL_ALPHA)
             isHovered -> colors.raised.copy(alpha = HOVER_FILL_ALPHA)
@@ -344,7 +353,7 @@ fun BossTabButton(
                 }
                 // Under the content and under the marker, which is drawn last so it stays a hard
                 // edge against the fill rather than being tinted by it.
-                .background(color = tabSurface, shape = RoundedCornerShape(radii.input))
+                .background(color = tabSurface, shape = RoundedCornerShape(if (glassRow) 9.dp else radii.input))
                 .hoverable(interactionSource)
                 .onGloballyPositioned { coordinates ->
                     val pos = coordinates.positionInParent()
@@ -392,31 +401,21 @@ fun BossTabButton(
                     }
                 }.then(
                     if (isDragEnabled) {
-                        Modifier.pointerInput(tabInfo, panelId, tabIndex) {
-                            detectDragGestures(
-                                onDragStart = { offset ->
-                                    // Calculate absolute position for drag start
-                                    val absolutePosition = windowPosition + offset
+                        Modifier.pointerInput(tabInfo.id, panelId, tabDragComponent) {
+                            detectTabDragGestures(
+                                component = tabDragComponent,
+                                sourceIndex = { currentTabIndex },
+                                onStart = { offset ->
+                                    val info = currentTabInfo ?: return@detectTabDragGestures
                                     tabDragComponent.startDragging(
-                                        tabInfo = tabInfo,
+                                        tabInfo = info,
                                         panelId = panelId,
-                                        index = tabIndex,
-                                        startPosition = absolutePosition,
+                                        index = currentTabIndex,
+                                        startPosition = windowPosition + offset,
                                     )
-                                    onDragStart()
+                                    currentOnDragStart()
                                 },
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    tabDragComponent.updateDrag(dragAmount)
-                                },
-                                onDragEnd = {
-                                    // Always clean up drag state first to prevent stuck ghost
-                                    val result = tabDragComponent.endDrag()
-                                    onDragEnd(result)
-                                },
-                                onDragCancel = {
-                                    tabDragComponent.cancelDrag()
-                                },
+                                onEnd = { currentOnDragEnd(it) },
                             )
                         }
                     } else {
@@ -448,6 +447,7 @@ fun BossTabButton(
                                 painter = painter,
                                 contentDescription = fileName,
                                 modifier = Modifier.size(14.dp),
+                                colorFilter = rememberFaviconContrastFilter(painter, Color.Transparent, colors.panel),
                             )
                         }
 

@@ -153,6 +153,11 @@ function newPage() {
       get action() {
         return node._attrs.action;
       },
+      get isConnected() {
+        let walk = node;
+        while (walk && walk !== document._root) walk = walk.parentElement;
+        return walk === document._root;
+      },
       getAttribute(n) {
         return Object.prototype.hasOwnProperty.call(node._attrs, n) ? node._attrs[n] : null;
       },
@@ -209,6 +214,12 @@ function newPage() {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
 
+  const fire = (type, target) => {
+    for (const l of listeners) {
+      if (l.type === type) l.fn({ target });
+    }
+  };
+
   return {
     sandbox,
     window,
@@ -218,12 +229,12 @@ function newPage() {
     timers,
     el,
     append,
-    run: (js) => vm.runInContext(js, sandbox),
-    fire: (type, target) => {
-      for (const l of listeners) {
-        if (l.type === type) l.fn({ target });
-      }
+    focus: (node) => {
+      document.activeElement = node;
+      fire('focusin', node);
     },
+    fire,
+    run: (js) => vm.runInContext(js, sandbox),
     runTimers: () => {
       const queued = timers.splice(0, timers.length);
       const errors = [];
@@ -257,7 +268,7 @@ console.log('\nfocus tracking');
   p.run(inject);
 
   const input = p.el('input', { type: 'text', name: 'mrn' });
-  p.fire('focusin', input);
+  p.focus(input);
   check('focusin on an input is tracked', p.window.__BOSS_FOCUSED_FIELD === input);
 
   const div = p.el('div');
@@ -273,12 +284,11 @@ console.log('\nnormal focus transitions');
   const textarea = p.el('textarea');
   p.document.activeElement = input;
   check('accessor falls back to the active input before focusin', p.window.__BOSS_GET_FOCUSED_FIELD().type === 'text');
-  p.fire('focusin', input);
+  p.focus(input);
   p.fire('focusout', input);
   eq('blur schedules the context-menu grace period', p.timers.map((t) => t.ms), [500]);
   check('blur retains the field until the timer runs', p.window.__BOSS_FOCUSED_FIELD === input);
-  p.document.activeElement = textarea;
-  p.fire('focusin', textarea);
+  p.focus(textarea);
   eq('focus-transfer timer completes without errors', p.runTimers(), []);
   check('the old blur timer preserves the newly focused textarea', p.window.__BOSS_FOCUSED_FIELD === textarea);
   eq('focused textarea reports its DOM type', p.window.__BOSS_GET_FOCUSED_FIELD().type, 'textarea');
@@ -289,12 +299,12 @@ console.log('\nnormal focus transitions');
   eq('accessor returns null when no field is focused', p.window.__BOSS_GET_FOCUSED_FIELD(), null);
 }
 
-console.log('\nDEFECT: the script has no re-injection guard');
+console.log('\nre-injection into one document installs one set of listeners');
 // The host re-runs injectPageHelpers on every main-frame NavigationFinished, and for a
-// single-page app that is a route change WITHIN one document - so the same document accrues
-// another pair of capture-phase listeners per route, permanently. The sibling collector
-// guards exactly this case with its own started-flag; this script has no equivalent.
-// Follow-up: guard the script the way BrowserInteractionScript guards its own.
+// single-page app that is a route change WITHIN one document - so without a guard the same
+// document accrues another pair of capture-phase listeners per route, permanently. The
+// sibling collector guards exactly this case with its own started-flag, and this script
+// now carries the equivalent.
 {
   const p = newPage();
   p.run(inject);
@@ -302,29 +312,82 @@ console.log('\nDEFECT: the script has no re-injection guard');
   p.run(inject);
   const afterSecond = p.listeners.length;
   eq('listeners after one injection', afterFirst, 2);
-  eq('listeners after a second injection into the same document', afterSecond, 4);
+  eq('listeners after a second injection into the same document', afterSecond, 2);
   check(
-    'the sibling collector does guard this, so the omission is not house style',
+    'the sibling collector guards this the same way, so the shape is house style',
     collectorHasReinjectionGuard(),
   );
 
+  // The guard's early return does not disarm the document: focus recorded after a
+  // same-document re-injection is still tracked, and nothing was retained for it to clear.
   const input = p.el('input', { type: 'text', name: 'mrn' });
-  p.logs.length = 0;
-  p.fire('focusin', input);
-  eq('one focus now logs once per injection', p.logs.length, 2);
+  check('the re-injection left nothing retained to clear', p.window.__BOSS_FOCUSED_FIELD === null);
+  p.focus(input);
+  check('focus after a same-document re-injection is still tracked', p.window.__BOSS_FOCUSED_FIELD === input);
 }
 
-console.log('\nDEFECT: every focus is narrated into the page console');
-// This deliberately logs a field's name or id on every focus for the life of the document.
-// The collector's exception-suppression contract is a different concern from deliberate logging.
-// Follow-up: drop the per-focus log.
+console.log('\na failed injection leaves the document retryable (flag claimed last)');
+// The sibling writes the same rule down: the started-flag is claimed LAST, once the listeners
+// and accessor exist. Claimed at the top, a throw anywhere in between would leave it standing
+// with no listeners and no accessor, and no later navigation could repair the document.
+// The fake page makes document.addEventListener throw to stand in for any mid-script fault;
+// the script has no try/catch, so the throw surfaces and the flag must be unset, so a retry
+// re-runs the whole body.
+{
+  const p = newPage();
+  let threw = false;
+  const origAdd = p.document.addEventListener;
+  p.document.addEventListener = function (type, fn, capture) {
+    if (type === 'focusout') throw new Error('boom');
+    return origAdd.call(p.document, type, fn, capture);
+  };
+  try {
+    p.run(inject);
+  } catch (e) {
+    threw = true;
+  }
+  check('a mid-script fault surfaces rather than being swallowed', threw);
+  eq('the flag is not claimed when the listeners fail', p.window.__bossFieldDetectionStarted, undefined);
+  eq('and the failed attempt installed nothing past the first listener', p.listeners.length, 1);
+}
+
+console.log('\nre-injection releases a retained field the route change detached');
+// A same-document route change can tear the old DOM down without firing focusout - focus
+// moves to the body silently, so the 500ms clear never runs. The unguarded code reset
+// __BOSS_FOCUSED_FIELD on every injection; without that release the accessor would serve
+// the detached field's value for the life of the document, and the tagName-only check
+// cannot tell a dead node from a live one without isConnected.
 {
   const p = newPage();
   p.run(inject);
+  const form = p.append(p.document._root, p.el('form'));
+  const pwd = p.append(form, p.el('input', { type: 'password', name: 'pwd', value: 'shh' }));
+  p.focus(pwd);
+  check('the live field is retained while it is focused', p.window.__BOSS_FOCUSED_FIELD === pwd);
+  check('and the live field reads as connected', pwd.isConnected === true);
+
+  // The route change: the old form leaves the document, and the re-injection lands.
+  form.parentElement.children.length = 0;
+  form.parentElement = null;
+  p.document.activeElement = p.document._root;
+  p.run(inject);
+
+  eq('the detached field reads as not connected', pwd.isConnected, false);
+  eq('the detached field is released on the re-injection', p.window.__BOSS_FOCUSED_FIELD, null);
+  eq('and the accessor no longer serves its value', p.window.__BOSS_GET_FOCUSED_FIELD(), null);
+}
+
+console.log('\nthe page console is not narrated with field identity');
+// Logging a field's name or id on every focus put the user's form identity into a surface
+// the page itself can read back, for the life of the document, and multiplied it by every
+// re-injection. Injection is silent too: one line per navigation said nothing a caller needed.
+{
+  const p = newPage();
   p.logs.length = 0;
+  p.run(inject);
+  eq('injecting the script logs nothing', p.logs.length, 0);
   p.fire('focusin', p.el('input', { type: 'password', name: 'pwd' }));
-  eq('a single focus logs', p.logs.length, 1);
-  eq('and carries the field type and name', p.logs[0], ['[BOSS] Field focused:', 'password', 'pwd']);
+  eq('and focusing a password field logs nothing', p.logs.length, 0);
 }
 
 console.log('\nwhat the page-reachable accessor returns');
@@ -367,9 +430,9 @@ console.log('\nwhat the page-reachable accessor returns');
 
 console.log('\nnull-safety of the focusout handler');
 // document.activeElement is nullable per spec (a detached document, or teardown between the
-// blur and the 500ms timer). The handler dereferences .tagName on it unguarded, so the
-// deferred clear throws and __BOSS_FOCUSED_FIELD keeps pointing at the blurred field.
-// Follow-up: guard the dereference.
+// blur and the 500ms timer). Dereferencing .tagName on it unguarded threw out of the deferred
+// clear, which left __BOSS_FOCUSED_FIELD pointing at the blurred field - the one case the
+// clear exists for. A null activeElement means focus went nowhere, so the field is cleared.
 {
   const p = newPage();
   p.run(inject);
@@ -378,11 +441,11 @@ console.log('\nnull-safety of the focusout handler');
   p.fire('focusout', input);
   p.document.activeElement = null;
 
-  // A second blur queues another independent timer task. Both must run even if the first throws.
+  // A second blur queues another independent timer task. Both must run without throwing.
   p.fire('focusout', input);
   const errors = p.runTimers();
-  eq('each null-activeElement timer reports its own failure', errors.length, 2);
-  check('so the blurred field is still referenced afterwards', p.window.__BOSS_FOCUSED_FIELD === input);
+  eq('no null-activeElement timer fails', errors.length, 0);
+  check('and the blurred field is released', p.window.__BOSS_FOCUSED_FIELD === null);
 }
 
 console.log('\nthe enumeration script returns rows');
@@ -410,7 +473,7 @@ console.log('\ncross-language key coupling');
   const p = newPage();
   p.run(inject);
   const input = p.el('input', { type: 'text' });
-  p.fire('focusin', input);
+  p.focus(input);
   const emitted = Object.keys(p.window.__BOSS_GET_FOCUSED_FIELD()).sort();
   eq('the Kotlin extracts exactly the keys the script emits', kotlinParsedKeys(), emitted);
 }

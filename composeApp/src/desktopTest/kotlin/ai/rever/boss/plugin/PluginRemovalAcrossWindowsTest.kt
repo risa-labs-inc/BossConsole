@@ -46,15 +46,15 @@ class PluginRemovalAcrossWindowsTest {
                 addPluginState(first, pluginId)
                 addPluginState(second, pluginId)
 
-                assertTrue(first.isInstalled(pluginId))
-                assertTrue(second.isInstalled(pluginId))
+                assertTrue(first.hasEntry(pluginId))
+                assertTrue(second.hasEntry(pluginId))
 
                 val result = PluginRemoval.remove(pluginId, "", first)
 
                 assertTrue(result.isSuccess, "Removal failed: ${result.exceptionOrNull()}")
-                assertFalse(first.isInstalled(pluginId))
+                assertFalse(first.hasEntry(pluginId))
                 assertFalse(
-                    second.isInstalled(pluginId),
+                    second.hasEntry(pluginId),
                     "Removing a plugin in one window must unload it from the other window",
                 )
             } finally {
@@ -82,8 +82,8 @@ class PluginRemovalAcrossWindowsTest {
                 val result = PluginRemoval.remove(pluginId, jar.absolutePath, first)
 
                 assertTrue(result.isFailure)
-                assertTrue(first.isInstalled(pluginId), "The first window must remain unchanged")
-                assertTrue(second.isInstalled(pluginId), "The protected window must remain unchanged")
+                assertTrue(first.hasEntry(pluginId), "The first window must remain unchanged")
+                assertTrue(second.hasEntry(pluginId), "The protected window must remain unchanged")
                 assertTrue(jar.exists(), "A refused removal must not delete the JAR")
             } finally {
                 first.disposeWindow()
@@ -120,7 +120,7 @@ class PluginRemovalAcrossWindowsTest {
                 val result = PluginRemoval.remove(pluginId, jar.absolutePath, first)
 
                 assertTrue(result.isFailure, "Removal must report the second window's failure")
-                assertTrue(second.isInstalled(pluginId), "The failed window still owns the plugin")
+                assertTrue(second.hasEntry(pluginId), "The failed window still owns the plugin")
                 assertTrue(jar.exists(), "The JAR must remain while any window owns the plugin")
             } finally {
                 first.disposeWindow()
@@ -144,14 +144,14 @@ class PluginRemovalAcrossWindowsTest {
             try {
                 assertTrue(first.installPlugin(jar.absolutePath).isSuccess)
                 assertTrue(second.installPlugin(jar.absolutePath).isSuccess)
-                assertTrue(first.isInstalled(pluginId))
-                assertTrue(second.isInstalled(pluginId))
+                assertTrue(first.hasEntry(pluginId))
+                assertTrue(second.hasEntry(pluginId))
 
                 val result = PluginRemoval.remove(pluginId, jar.absolutePath, first)
 
                 assertTrue(result.isSuccess, "Removal failed: ${result.exceptionOrNull()}")
-                assertFalse(first.isInstalled(pluginId))
-                assertFalse(second.isInstalled(pluginId))
+                assertFalse(first.hasEntry(pluginId))
+                assertFalse(second.hasEntry(pluginId))
                 assertFalse(jar.exists(), "The JAR should be deleted after both unloads")
             } finally {
                 first.disposeWindow()
@@ -182,8 +182,8 @@ class PluginRemovalAcrossWindowsTest {
                 val result = PluginRemoval.remove(pluginId, firstJar.absolutePath, first)
 
                 assertTrue(result.isSuccess, "Removal failed: ${result.exceptionOrNull()}")
-                assertFalse(first.isInstalled(pluginId))
-                assertFalse(second.isInstalled(pluginId))
+                assertFalse(first.hasEntry(pluginId))
+                assertFalse(second.hasEntry(pluginId))
                 assertFalse(firstJar.exists(), "The initiating window's JAR must be deleted")
                 assertFalse(secondJar.exists(), "The other window's JAR must also be deleted")
             } finally {
@@ -221,8 +221,8 @@ class PluginRemovalAcrossWindowsTest {
                 val result = PluginRemoval.remove(pluginId, jar.absolutePath, first)
 
                 assertTrue(result.isFailure, "The second window's veto must stop removal")
-                assertTrue(first.isInstalled(pluginId), "Check all windows before unloading the first")
-                assertTrue(second.isInstalled(pluginId))
+                assertTrue(first.hasEntry(pluginId), "Check all windows before unloading the first")
+                assertTrue(second.hasEntry(pluginId))
                 assertTrue(jar.exists())
             } finally {
                 first.disposeWindow()
@@ -265,8 +265,8 @@ class PluginRemovalAcrossWindowsTest {
                 val result = withTimeout(5_000) { PluginRemoval.remove(pluginId, jar.absolutePath, first) }
 
                 assertTrue(result.isFailure)
-                assertTrue(first.isInstalled(pluginId))
-                assertTrue(second.isInstalled(pluginId))
+                assertTrue(first.hasEntry(pluginId))
+                assertTrue(second.hasEntry(pluginId))
                 assertTrue(jar.exists())
             } finally {
                 first.disposeWindow()
@@ -304,8 +304,8 @@ class PluginRemovalAcrossWindowsTest {
                 val result = PluginRemoval.remove(pluginId, jar.absolutePath, first)
 
                 assertTrue(result.isFailure, "The first window's failure must be reported")
-                assertTrue(first.isInstalled(pluginId), "The failed window still owns the plugin")
-                assertFalse(second.isInstalled(pluginId), "Removal must still attempt the second window")
+                assertTrue(first.hasEntry(pluginId), "The failed window still owns the plugin")
+                assertFalse(second.hasEntry(pluginId), "Removal must still attempt the second window")
                 assertTrue(jar.exists(), "The JAR must remain while the first window owns the plugin")
             } finally {
                 first.disposeWindow()
@@ -347,8 +347,8 @@ class PluginRemovalAcrossWindowsTest {
 
                 assertTrue(removedDuringFirstUnload, "The second window must unload during the first")
                 assertTrue(result.isSuccess, "An already-unloaded target must not fail removal")
-                assertFalse(first.isInstalled(pluginId))
-                assertFalse(second.isInstalled(pluginId))
+                assertFalse(first.hasEntry(pluginId))
+                assertFalse(second.hasEntry(pluginId))
                 assertFalse(jar.exists(), "Cleanup should run once no window owns the plugin")
             } finally {
                 first.disposeWindow()
@@ -408,8 +408,8 @@ class PluginRemovalAcrossWindowsTest {
                 assertEquals(pluginId, promptedFor)
                 assertEquals(listOf(dependentId), promptedDependents)
                 assertTrue(result.isSuccess, "Confirmed removal failed: ${result.exceptionOrNull()}")
-                assertFalse(first.isInstalled(pluginId))
-                assertFalse(second.isInstalled(pluginId))
+                assertFalse(first.hasEntry(pluginId))
+                assertFalse(second.hasEntry(pluginId))
                 assertFalse(jar.exists(), "The JAR should be removed after both windows unload")
             } finally {
                 responder.cancelAndJoin()

@@ -37,6 +37,7 @@ class HostIconResolutionTest {
     fun cleanUp() {
         dir.deleteRecursively()
         FaviconMissMemory.forget()
+        FaviconRetryMemory.clear()
     }
 
     private fun entryFor(host: String) = File(dir, "${HqFaviconDiskCache.keyFor(host)}.png")
@@ -61,6 +62,32 @@ class HostIconResolutionTest {
 
             assertNotNull(icon)
             assertFalse(fetched, "a fresh entry still cost a request")
+        }
+
+    @Test
+    fun `a small quality entry older than a day can refresh even before the ordinary TTL`(): Unit =
+        runTest {
+            writeEntry(ageMs = 2 * DAY)
+            val sharper = iconStub()
+            var fetched = false
+            val icon =
+                HighQualityFaviconService.hostIcon(URL, NOW, dir, refreshSmallIcon = true) { _, _ ->
+                    fetched = true
+                    FaviconFetch.Icon(sharper)
+                }
+            assertTrue(fetched)
+            assertSame(sharper, icon)
+        }
+
+    @Test
+    fun `a recently cached small quality entry still skips the network`(): Unit =
+        runTest {
+            writeEntry(ageMs = DAY / 2)
+            assertNotNull(
+                HighQualityFaviconService.hostIcon(URL, NOW, dir, refreshSmallIcon = true) { _, _ ->
+                    error("recent small entry fetched again")
+                },
+            )
         }
 
     /** Offline should cost sharpness, not the icon - and must not be irreversible. */
@@ -209,8 +236,8 @@ class HostIconResolutionTest {
                 FaviconFetch.NoAnswer
             }
 
-            assertNull(HighQualityFaviconService.hostIcon(null, NOW, dir, fetch))
-            assertNull(HighQualityFaviconService.hostIcon("file:///Users/someone/notes.md", NOW, dir, fetch))
+            assertNull(HighQualityFaviconService.hostIcon(null, NOW, dir, fetch = fetch))
+            assertNull(HighQualityFaviconService.hostIcon("file:///Users/someone/notes.md", NOW, dir, fetch = fetch))
             assertFalse(fetched)
         }
 
@@ -220,9 +247,9 @@ class HostIconResolutionTest {
         }.use { it.readBytes() }
 
     private companion object {
-        const val HOST = "example.test"
+        const val HOST = "example.com"
         val KEY: String = HqFaviconDiskCache.keyFor(HOST)
-        const val URL = "https://example.test/page"
+        const val URL = "https://example.com/page"
         const val NOW = 1_700_000_000_000L
         const val DAY = 24L * 60 * 60 * 1000
     }

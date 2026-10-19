@@ -209,6 +209,7 @@ private fun updatesEntries() =
     section(SettingsSection.UPDATES) {
         group("Version Information", "build", "current version")
         group("Update Settings")
+        setting("Automatic Plugin Updates", "Update Settings", "plugin updates", "auto install")
         setting("Automatic Update Checks", "Update Settings", "auto update")
         setting("Include Pre-release Versions", "Update Settings", "beta", "alpha", "rc")
     }
@@ -386,6 +387,8 @@ private fun workspaceEntries() =
     section(SettingsSection.WORKSPACE) {
         group("Default Space", "workspace", "workspaces")
         group("When Switching Spaces", "workspace", "workspaces")
+        group("Session Restore", "workspace", "workspaces", "last session", "startup", "restore")
+        setting("Enable Last Session Space", "Session Restore", "startup", "restore", "recovery")
         group("About Spaces", "workspace", "workspaces")
         sectionLevel("workspace", "workspaces", "layout", "template")
     }
@@ -422,6 +425,11 @@ private fun focusModeEntries() =
 private fun themeEntries() =
     section(SettingsSection.THEME) {
         group("App Theme")
+        group("Glass")
+        setting("Glass coverage", "Glass", "liquid", "sidebar", "window", "transparency")
+        setting("Glass style", "Glass", "liquid", "regular", "clear", "blur")
+        setting("Glass tint", "Glass", "liquid", "transparency")
+        setting("Background opacity", "Glass", "liquid", "transparency")
     }
 
 private fun windowAppearanceEntries() =
@@ -436,6 +444,8 @@ private fun windowAppearanceEntries() =
         setting("Expand on Hover", "Tab Bar", "vertical tabs", "rail", "collapse", "drawer")
         setting("Pane Tab Strip", "Tab Bar", "vertical tabs", "split", "favicon", "pane", "tabs")
         setting("Only in Split Windows", "Tab Bar", "vertical tabs", "split", "favicon", "pane", "strip")
+        group("Browser Zoom")
+        setting("Show Browser Zoom Badge", "Browser Zoom", "percentage", "reset", "browser", "top bar")
         group("Bars")
         setting("Show Top Bar", "Bars", "chrome", "window")
         setting("Show Bottom Bar", "Bars", "chrome", "window", "status")
@@ -556,14 +566,33 @@ private fun keymapEntries() =
         )
     }
 
+private fun gettingStartedEntries() =
+    section(SettingsSection.GETTING_STARTED) {
+        group("Getting Started", "onboarding", "setup wizard", "welcome", "plugin wizard")
+        setting("Plugin Setup Wizard", "Getting Started")
+    }
+
+private fun sharingEntries() =
+    section(SettingsSection.SHARING) {
+        group("BossConsole Sharing", "screen", "window", "remote", "mirror")
+        setting("Share automatically after sign-in", "BossConsole Sharing", "automatic", "startup", "login")
+        setting("Use media relay", "BossConsole Sharing")
+        group("Account Access", "approval", "same account")
+        setting("Allow my devices without approval", "Account Access")
+        setting("Allow my devices to take control", "Account Access")
+        group("Remote Connections", "connect", "view", "browser")
+    }
+
 /** Every built-in entry, in the order the sections appear in the nav rail. */
 internal val builtInEntries: List<SettingsSearchEntry> by lazy {
-    browserEntries() +
+    gettingStartedEntries() +
+        browserEntries() +
         browserEngineEntries() +
         defaultAppsEntries() +
         runnerEntries() +
         workspaceEntries() +
         securityEntries() +
+        sharingEntries() +
         keymapEntries() +
         focusModeEntries() +
         themeEntries() +

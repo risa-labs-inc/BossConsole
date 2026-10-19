@@ -83,6 +83,7 @@ sealed class TabDropTarget {
     data class SplitPanel(
         val panelId: String,
         val orientation: SplitOrientation,
+        val placeBefore: Boolean = false,
     ) : TabDropTarget()
 
     /**
@@ -148,6 +149,7 @@ sealed class TabDropResult {
         val sourceIndex: Int,
         val targetPanelId: String,
         val orientation: SplitOrientation,
+        val placeBefore: Boolean = false,
     ) : TabDropResult()
 
     /**
@@ -555,11 +557,19 @@ class TabDraggableComponent {
         for ((panelId, zones) in panelDropZones) {
             val target =
                 when {
-                    zones.leftZone.contains(position) || zones.rightZone.contains(position) -> {
+                    zones.leftZone.contains(position) -> {
+                        TabDropTarget.SplitPanel(panelId, SplitOrientation.VERTICAL, placeBefore = true)
+                    }
+
+                    zones.rightZone.contains(position) -> {
                         TabDropTarget.SplitPanel(panelId, SplitOrientation.VERTICAL)
                     }
 
-                    zones.topZone.contains(position) || zones.bottomZone.contains(position) -> {
+                    zones.topZone.contains(position) -> {
+                        TabDropTarget.SplitPanel(panelId, SplitOrientation.HORIZONTAL, placeBefore = true)
+                    }
+
+                    zones.bottomZone.contains(position) -> {
                         TabDropTarget.SplitPanel(panelId, SplitOrientation.HORIZONTAL)
                     }
 
@@ -624,7 +634,13 @@ class TabDraggableComponent {
      * The state is cleared before the result is worked out, so an exception on the way out cannot
      * leave the component believing a drag is still in flight.
      */
-    fun endDrag(): TabDropResult? {
+    fun endDrag(sourceIndex: Int? = null): TabDropResult? {
+        // The source can be reindexed while the gesture survives. Refresh before computing the
+        // insertion adjustment, and resolve the target from the latest registered bounds.
+        if (sourceIndex != null && draggingTab != null) {
+            draggingTab = draggingTab?.copy(sourceIndex = sourceIndex)
+            updateDropTarget()
+        }
         val dragging = draggingTab
         val target = dropTarget
 
@@ -691,6 +707,7 @@ class TabDraggableComponent {
                     sourceIndex = dragging.sourceIndex,
                     targetPanelId = target.panelId,
                     orientation = target.orientation,
+                    placeBefore = target.placeBefore,
                 )
             }
 

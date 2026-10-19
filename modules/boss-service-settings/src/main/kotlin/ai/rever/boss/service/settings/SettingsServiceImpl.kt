@@ -6,11 +6,18 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.PosixFilePermission
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -20,8 +27,14 @@ import java.util.concurrent.ConcurrentHashMap
  * In-memory map is the runtime source of truth; disk is loaded once at
  * startup and written synchronously on every mutation.
  */
-class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBase() {
+class SettingsServiceImpl(
+    storageFile: File = defaultStorageFile(),
+) : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBase() {
     private val logger = LoggerFactory.getLogger(SettingsServiceImpl::class.java)
+
+    companion object {
+        private fun defaultStorageFile(): File = File(System.getProperty("user.home"), ".boss/settings.json")
+    }
 
     @Serializable
     private data class PersistedSetting(
@@ -37,9 +50,10 @@ class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBa
             prettyPrint = true
         }
     private val settingsFile =
-        File(System.getProperty("user.home"), ".boss/settings.json")
-            .also { it.parentFile.mkdirs() }
+        storageFile.absoluteFile
+            .also { it.parentFile?.mkdirs() }
 
+    internal val mutations = Mutex()
     private val settings = ConcurrentHashMap<String, SettingValue>()
     private val changes = MutableSharedFlow<SettingValue>(extraBufferCapacity = 64)
 
@@ -56,7 +70,7 @@ class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBa
     // ---- Disk persistence helpers ----
 
     private fun loadFromDisk() {
-        if (!settingsFile.exists()) return
+        if (!settingsFile.exists() || !settingsFile.isFile) return
         try {
             val list = json.decodeFromString<List<PersistedSetting>>(settingsFile.readText())
             list.forEach { ps ->
@@ -76,6 +90,7 @@ class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBa
         }
     }
 
+    @Suppress("TooGenericExceptionCaught")
     private fun saveToDisk() {
         try {
             val list =
@@ -87,11 +102,56 @@ class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBa
                         updatedAt = sv.updatedAt,
                     )
                 }
-            settingsFile.writeText(json.encodeToString(list))
+            val parent = settingsFile.parentFile ?: return
+            if (!parent.exists()) {
+                parent.mkdirs()
+            }
+            val encoded = json.encodeToString(list)
+            val tmp = Files.createTempFile(parent.toPath(), "${settingsFile.name}.", ".tmp").toFile()
+            try {
+                applyPosixOwnerPermissions(tmp.toPath())
+                tmp.writeText(encoded)
+                atomicMoveFile(tmp.toPath(), settingsFile.toPath())
+            } finally {
+                tmp.delete()
+            }
         } catch (e: Exception) {
             logger.warn("Failed to persist settings: {}", e.message)
         }
     }
+
+    @Suppress("TooGenericExceptionCaught")
+    private fun applyPosixOwnerPermissions(path: Path) {
+        if (!hasPosix(path)) return
+        // Fail closed when a filesystem advertises POSIX support but refuses the restriction;
+        // publishing the temporary file would violate the owner-only persistence contract.
+        Files.setPosixFilePermissions(
+            path,
+            setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE),
+        )
+    }
+
+    private fun atomicMoveFile(
+        source: Path,
+        target: Path,
+    ) {
+        try {
+            Files.move(
+                source,
+                target,
+                StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE,
+            )
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(
+                source,
+                target,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        }
+    }
+
+    private fun hasPosix(path: Path): Boolean = path.fileSystem.supportedFileAttributeViews().contains("posix")
 
     // ---- gRPC method implementations ----
 
@@ -118,8 +178,10 @@ class SettingsServiceImpl : SettingsServiceGrpcKt.SettingsServiceCoroutineImplBa
                     .setNamespace(request.namespace)
                     .setUpdatedAt(System.currentTimeMillis())
                     .build()
-            settings[storageKey(request.namespace, request.key)] = value
-            saveToDisk()
+            mutations.withLock {
+                settings[storageKey(request.namespace, request.key)] = value
+                saveToDisk()
+            }
             changes.tryEmit(value)
             value
         }

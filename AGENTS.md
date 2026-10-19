@@ -25,6 +25,79 @@ BOSS (Business Operating System Service) is a desktop application built with Kot
 
 **IMPORTANT**: Do NOT run `./gradlew run` in a blocking/foreground way just to test - the user runs and tests the app themselves. **Exception:** launching the app **in a dedicated bottom split pane is allowed** (backgrounded so it doesn't wedge the pane).
 
+### Testing automatic app updates
+
+On macOS, closing the last main window keeps BOSS running in the Dock. A Dock click
+or File > New Window opens a window again; explicit Quit ends the application.
+
+Automatic Updates in Settings downloads new releases and prepares installation after
+manual quit. On macOS it also installs when no main windows remain, including when
+the download finishes after the last window closes. That idle update relaunches
+with `--no-window`, keeping BOSS in the Dock until a Dock click or New Window request.
+Explicit Quit installs the staged update and leaves BOSS closed. Release distributions default this on;
+Gradle development runs default it off. Explicit preferences are saved. Update
+banners and prompts stay hidden in automatic mode; progress and errors remain in
+Settings. The next start of a newer version shows a one-time success toast.
+
+Build a separate older distribution for installation testing:
+
+```bash
+./gradlew :composeApp:createDistributable -PtestAutoUpdate=true
+```
+
+This uses v1.0.0, enables automatic updates by default, stores updater preferences in
+`composeApp/build/auto-update-test-settings`, and writes the distribution under
+`composeApp/build/compose-auto-update-test/binaries/main/app/`. On macOS, manually
+launch `BOSS.app` from that directory. Quit manually to let the helper install, then
+open it again after installation finishes. Closing all main windows instead tests
+the idle install and windowless relaunch. The incoming release must support
+`--no-window` to remain windowless after installation. Native Quit requests remain
+pending through Compose cleanup and then complete, so BOSS does not cancel macOS logout,
+restart, or shutdown. Do not use `run` for installation testing:
+the updater refuses automatic installation from a Gradle development process.
+
+### Automatic plugin updates
+
+Settings > Updates has an independent Automatic Plugin Updates switch. It defaults
+on in packaged release builds and off in Gradle development runs. Preferences persist.
+Every eligible plugin is included by default. The per-plugin list stores explicit opt-outs,
+so newly installed plugins update automatically too. Opt-outs are rechecked before activation.
+The worker starts after workspace restoration, uses compatible store candidates, and
+waits for all plugin tabs and mounted panels to close. It rechecks views after download;
+a reopened view defers installation again. Downloads use `.part` files until admitted.
+Failed promoted artifacts are quarantined; a `.rejected-update` marker fences startup
+selection if a live loader prevents removal. Host and Toolbox updates/installVersion
+share SHA-256 plugin-ID file locks under `.plugin-update-locks`; never delete lock files.
+Both participants claim a process gate before opening a lease descriptor. Their
+String-only system properties use keys `boss.plugins.updateLease.protocol3.` followed
+by SHA-256 of the UTF-8 canonical lock-file path, with UUID String ownership tokens.
+Capture the Properties object and computed key once per acquisition. Properties.putIfAbsent
+admits exactly one owner; every existing value is busy, including foreign values. Never
+replace an occupied value. Remove only the exact owning String token after confirmed
+successful channel closure. No host/plugin objects or access contexts enter global state;
+Properties.store/list remain string-compatible. Keep this protocol identical to Toolbox's
+PluginUpdateProcessRegistry and PluginUpdateLease. Closing a second same-process descriptor
+can release the holder's POSIX OS lock, so busy contenders must never open it. isOpen=false
+alone is not proof after a failed native close; any uncertain close retains its token across
+repeated closes and requires restarting BOSS. Registry mutation, clearing properties, or
+System.setProperties by arbitrary in-process code is outside this cooperative protocol;
+plugins already share JVM/file access. Both host and Toolbox releases must use protocol 3
+for the shared guarantee. Persistent disk lock names remain SHA-256 of the plugin ID.
+Ordinary idle plugins reload without restarting BOSS; native plugins, disabled plugins,
+plugins with loaded dependents, and multiwindow updates are staged for the next manual
+start. Disabled plugins remain disabled. Protected API/runtime ids use their existing
+host-managed lifecycle. Activation failures attempt to restore the previous JAR; status
+and errors appear in Settings. Supabase Realtime is the primary trigger, with a six-hour
+fallback and a local 30-second check for views closing. Three failed attempts pause
+that release for this process; a new release gets a fresh budget. Busy views and another
+installer's lock do not consume attempts.
+
+Toolbox honors the optional `boss.plugins.autoUpdate.enabled` JVM property to suppress
+manual update toasts in automatic mode. The `boss.plugins.autoUpdate.optOuts` property
+keeps manual prompts available for explicitly excluded plugins. Its companion change needs to ship too; older
+Toolbox builds may still show a manual prompt. Turning the mode off stops pending work
+before activation; already-staged updates apply at the next manual start.
+
 ### `composeApp` test home isolation
 
 Every `composeApp` `Test` task points `user.home` at its own fresh
@@ -34,6 +107,32 @@ real home can evict entries from a developer's project picker and a reused test 
 runs race a stale `recent-projects.json` load. This guarantee is deliberately module-local;
 moving a test that reads `BossDirectories.rootDir` to another module requires equivalent isolation
 there.
+
+### A `@Test` that returns a value never runs
+
+`fun x() = runBlocking { ...; assertIs<T>(y) }` returns whatever its last expression does, and JUnit
+Jupiter does not execute a `@Test` method that returns a value: it reports a WARNING-level discovery
+issue, which Gradle does not print, and counts the method nowhere. Nine `composeApp` tests sat
+unexecuted that way, four of them the MCP approval gate's fail-closed guarantees, and one no longer
+described the code by the time it first ran (#1667). Declare an expression-bodied test `(): Unit =`,
+or write `runBlocking<Unit>`, as `plugin-loader`'s tests already do.
+
+Every module's Gradle `Test` task now sets `junit.platform.discovery.issue.severity.critical=WARNING`
+(root `build.gradle.kts`), `buildSrc` sets it in its own build file because it is a separate build
+the root never reaches, and `composeApp` repeats it in
+`src/desktopTest/resources/junit-platform.properties` so an IDE run meets it too. A discovery issue
+aborts discovery for the whole engine: every test in the module disappears and a single
+`initializationError` names the method. If a toolchain bump introduces an unrelated warning, relax
+the property to `ERROR` in that module's own `build.gradle.kts`, which wins over the root; do not
+delete it.
+
+**The property is only read by JUnit Platform 1.13 and later.** On an older platform it is silently
+ignored, the guard does nothing, and a passing test run looks exactly the same as a working guard.
+That is why `buildSrc` imports the root version catalog and pins `platform(junit-bom)` to
+`libs.versions.junit.jupiter` (#1709): its only other test dependency, `kotlin("test")`, resolves
+JUnit through Gradle's embedded Kotlin (Platform 1.10), and the guard there was inert until the pin.
+The BOM is not a redundant dependency; removing it restores the inert guard. To check a module, run
+a throwaway `@Test fun probe() = 42` and confirm the run fails with "must not return a value".
 
 ### Running commands in a visible terminal pane
 
@@ -232,6 +331,17 @@ manager directly rather than `loadPlugin`, and for the same reason as before: an
 question must never produce a second dialog. What changed is that the first question now covers
 the whole closure, where it used to cover one plugin and stay silent about the rest.
 
+A plugin pack consents through `pack_plan` rather than this dialog, and the same rule holds:
+`pack_plan` resolves each install's closure with the same `planFor` and returns the extra ids as
+`alsoInstalls`, with `closureComplete: false` plus `unresolved`, `cyclic` or `truncated` when the
+walk could not see all of it. `pack_apply` installs the order its own fresh plan resolved and is
+handed that order rather than re-walking the store, so the installs cannot exceed the closure
+that apply's own plan resolved - a walk repeated at install time could follow store rows that
+changed in between. That bounds the install to the plan, not to what the operator saw: the
+`pack_apply` approval dialog shows the raw pack arguments, so a direct `pack_apply` with no
+earlier `pack_plan` has no closure in its consent. Showing the closure in that dialog is a
+recorded follow-up.
+
 Three properties of the plan are worth knowing before touching it. The plugin the user was asked
 about is always in the plan and always last, even if it turns out to be present, because the
 Install guard already answers that and an empty plan has no sensible reading. A store that cannot
@@ -255,9 +365,17 @@ Deliberately out of scope, so nobody assumes more than exists:
 - **A failed plan is not rolled back.** A dependency installed on its own is harmless and may
   already be wanted by something else; deleting it to tidy up a failure would be the one outcome
   worse than the failure.
-- **`PluginDependency.version` is ignored.** Presence is by id, matching `checkCanUnload`. A
-  plugin needing 2.x is satisfied by 1.x, and a prompt could not usefully fix a wrong-version
-  install anyway.
+- **The dependency prompt checks presence; activation checks versions.** `DynamicPluginManager`
+  checks required dependency ranges before loading an enabled plugin and on every registration
+  route (enable, restart and access grant included). It also refuses an incoming dependency that
+  would violate a running consumer's range. Optional and disabled consumers do not veto updates.
+  `VersionRequirement` supports exact versions, `*`, and whitespace-separated comparison bounds;
+  unsupported ranges and unknown installed versions cannot satisfy a required constraint. Missing
+  plugins retain the advisory install flow. Incompatible installed versions fail with the required
+  range and installed version; automatic dependency upgrading is not part of that dialog.
+  Startup loads required dependencies before consumers regardless of persisted insertion order.
+  Version refusals retain a visible manager error and reload recovery; reload validates the disk
+  candidate before unloading the working plugin.
 - **`NOT_USER_INSTALLABLE` ids are never offered**: the microkernel runtime (which
   `loadPlugin` refuses outright and `DefaultPlugin` skips on scan, so it looks missing to every
   manifest naming it) and the api plugin (whose install is an unload-all / swap / reload-all hot
@@ -610,11 +728,123 @@ the JxBrowser license and Supabase settings baked in by the
 `generateEmbeddedConfig` Gradle task, which reads env vars (CI secrets) or
 local.properties at build time and emits a git-ignored classpath resource.
 
+### `BOSS_SESSION_IMPORT`: handing a session to a headless BOSS
+
+A headless BOSS (one container per Optimist user, a Hunt agent seat) has nobody to sign in at
+its window. The host signs the user in elsewhere and drops that sign-in's refresh token in a
+file; BOSS adopts it as its own session (`refreshSession` then `importSession`). Code:
+`SessionFileImporter` and `DesktopSessionFileImport` in `desktopMain/.../services/auth`.
+
+- **The variable** names an absolute path. Unset, blank or relative means the hook is off and
+  nothing changes. It is read with `System.getenv` only, deliberately **not** through
+  `ConfigLoader`, so `local.properties`, system properties and `env_vars` cannot turn it on. Keep
+  it that way: whoever controls this path controls which account BOSS is signed in as.
+- **When it acts**: only while there is no live session, i.e. `NotAuthenticated`, or
+  `RefreshFailure` with an expired session (a container restarted after its session lapsed). It
+  polls every 500 ms, slowing to every 2 s after a minute with no file, and stops on sign-in.
+- **Format**: exactly `{"refresh_token":"<non-blank string>"}`, UTF-8, at most 16 KiB. Any other
+  key (even a harmless one such as `expires_at`) makes the file malformed.
+- **Checks**: a regular file, not a symlink (read with `NOFOLLOW_LINKS`); owned by the
+  process's numeric UID (`unix:uid`, compared with `/proc/self`; on macOS, where there is no
+  `/proc`, by owner name); mode exactly `0600`; the parent directory owned by the same UID and not
+  group or world writable. Only the immediate parent is checked, so pick a directory whose whole
+  path is private.
+- **Stability**: the file is read only when its inode, size and mtime are unchanged across two
+  consecutive polls and its mtime is at least one poll interval old, so a write still in progress
+  is never read. A writer stalled mid-write for longer than that can still lose the token, which
+  is why the contract below renames into place.
+- **Single use**: a file that passes is deleted before any network call, and a token that cannot
+  be deleted is never presented. It is consumed even if the import then fails (invalid JSON, auth
+  error); the host must write a new one to retry. Nothing read from the file is ever logged.
+- **A refused file is left in place** and the reason logged once (`Session import file refused
+  and left in place`, with e.g. `mode is not 0600` or `is owned by uid 65534, not the process uid
+  1000`). Fixing the file (or replacing it) is picked up on a later poll. A refusal that repeats
+  slows the poll like an absent file.
+- **Session recovery**: `CoreAuthService` does not clear a session that replaced the one it was
+  recovering (`SessionRecoveryPolicy.replacedSince`), so a handoff that lands while recovery's
+  refresh of the old token is in flight survives that refresh's rejection. The guard is one-directional:
+  a rejection that lands before the handoff's `importSession` still clears the old session, and
+  the import then lands on top of it.
+
+**Writer contract.** Create the file owner-only and rename it into place, in the same directory:
+
+```sh
+umask 077
+printf '{"refresh_token":"%s"}' "$rt" > "$BOSS_SESSION_IMPORT.tmp"
+mv -f "$BOSS_SESSION_IMPORT.tmp" "$BOSS_SESSION_IMPORT"   # rename(2), atomic
+```
+
+The importer only looks at the exact path, so the `.tmp` sibling is never picked up. A writer
+that cannot rename still works if it creates the file `0600` from the start and finishes within
+one poll; `printf > f && chmod 600 f` is refused until the `chmod` lands, then imported.
+
+**Where to put it**: a private tmpfs, so the token never reaches persistent disk or an image
+layer. `$XDG_RUNTIME_DIR` (`/run/user/$UID`, 0700) on a systemd host; in a container, a dedicated
+mount such as `--tmpfs /run/boss:mode=0700,uid=<uid>` with
+`BOSS_SESSION_IMPORT=/run/boss/session.json`. `/tmp` itself (1777) is refused. A bind mount under
+rootless Docker or a user namespace can show the file as `nobody`/65534; that is refused with the
+UID mismatch in the log.
+
 ### Supabase Deployment
 ```bash
 supabase functions deploy <function-name> --project-ref pcnwqamqdnsadranufjv --no-verify-jwt
 supabase link --project-ref pcnwqamqdnsadranufjv  # First time
 ```
+
+### fluck.risaboss.com (`fluck-web`)
+
+A sign-in page for the owner's Fluck web chats. The Fluck plugin heartbeats
+`fluck_web_upsert_instance` (as the user, every 30 s) into `public.fluck_web_instances`; the
+`fluck-web` function signs the user in (Google, Apple, magic link with `create_user: false`),
+lists `fluck_web_list_instances()`, and on Open mints a 60 s single-use ticket with
+`fluck_web_mint_ticket` and embeds `<endpoint_url>/#/t/<ticket>` in a full-viewport iframe
+(`#fluckframe`, as `live-sessions` embeds its viewer), so the address bar stays on
+fluck.risaboss.com. The Fluck redeems the ticket with `fluck_web_consume_ticket` as its own
+signed-in user, so a ticket minted by another account can never be redeemed; it keeps its session
+token in the frame's sessionStorage (no third-party cookie) and allows framing only by
+`https://fluck.risaboss.com`. Opening from the list pushes `?instance=<id>` (never the ticket):
+browser Back closes the frame, and a reload reopens that Fluck with a fresh ticket; switch and
+sign-out drop `?instance`. A load that may auto-open (`?instance`, or exactly one Fluck online,
+which opens at once with no countdown) starts in `body.launching`: a copy of the web chat's own boot screen (the name, centred, its
+`--bg`/`--text-3`, system font), so handing over to the frame changes no pixel; no portal chrome
+until the frame is up or the page has to ask. The frame posts `{type:"fluck-signed-out"}` (close, reload the
+list), `{type:"fluck-switch"}` (close, show the list) and `{type:"fluck-title", title}` (sets
+`document.title`, capped, text only); the page accepts them only from the frame's window and the
+endpoint's origin and ignores anything else. Backwards compatibility: a framing-capable Fluck first
+posts `{type:"fluck-hello"}` (before redeeming the ticket); with no hello within 8 s the page
+assumes an older Fluck that refuses framing, closes the frame and navigates top-level to the same
+URL (replacing its entry with `?list=1` first), so the portal can ship before every Fluck frames. CSP adds `frame-src https:`; the portal itself keeps
+`frame-ancestors 'none'`. No message content is stored. Security follows
+`live-sessions` (nonce CSP, no CORS, `__Secure-` cookies, cross-site refusal, token rotation), plus
+an exact-Origin and CSRF-nonce check on `POST /api/open`. Endpoints must be bare https origins (a
+table CHECK and a second check in the function). A Cloudflare Worker
+(`infra/cloudflare/fluck-web-alias`) proxies the vanity host onto the function.
+
+Deploy is manual. Nothing below runs in CI:
+
+```bash
+supabase link --project-ref pcnwqamqdnsadranufjv           # once
+supabase db push                                           # 20261006120000_fluck_web_instances.sql
+ALIAS_SECRET=$(openssl rand -hex 32)                        # shared by the function and the Worker
+supabase secrets set --project-ref pcnwqamqdnsadranufjv \
+  FLUCK_WEB_PUBLIC_BASE_URL=https://fluck.risaboss.com FLUCK_WEB_PUBLIC_BASE_PATH=/ \
+  FLUCK_WEB_AUTH_PUBLIC_URL=https://api.risaboss.com FLUCK_WEB_ALIAS_SECRET=$ALIAS_SECRET
+supabase functions deploy fluck-web --project-ref pcnwqamqdnsadranufjv --no-verify-jwt
+supabase functions deploy redirect --project-ref pcnwqamqdnsadranufjv --no-verify-jwt   # Fluck web arm
+cd infra/cloudflare/fluck-web-alias && npx wrangler login
+echo "$ALIAS_SECRET" | npx wrangler secret put FLUCK_WEB_ALIAS_SECRET && npx wrangler deploy
+curl -sf https://fluck.risaboss.com/ -o /dev/null -w '%{http_code}\n'   # 200; 503 alias_unverified = secrets differ
+```
+
+The function trusts the Worker (serves the page, keys rate limits on the visitor's IP) only when
+`X-Fluck-Web-Alias-Secret` matches `FLUCK_WEB_ALIAS_SECRET` (32+ chars). Direct hits on
+`api.risaboss.com/functions/v1/fluck-web/` are always redirected to the vanity host.
+
+Dashboard, by hand: Auth -> URL Configuration -> Redirect URLs, add `https://fluck.risaboss.com/auth`;
+Auth -> Email Templates -> Magic Link, paste `supabase/templates/email/magic-link.html` (it gained a
+`$fluck` branch). Without the redirect URL GoTrue silently falls back to `boss://auth/verify`.
+Tests: `supabase/tests/fluck_web_instances_test.sql` (pgTAP, `supabase test db`) and
+`cd supabase/functions/fluck-web && deno test --allow-all`.
 
 ### Decoding Supabase payloads
 
@@ -716,6 +946,18 @@ came from `docs/release-notes/`.
 
 ## Logging
 
+### Resource cleanup
+
+Use `ai.rever.boss.utils.CleanupRunner` for independent synchronous teardown actions
+when one plugin callback or native release failure could skip remaining cleanup.
+Claim resource ownership before callbacks, preserve release order and the owning
+thread, and keep native browser drains before releasing their profiles. The helper
+logs each failed action and continues; it does not schedule cleanup or make an owner
+idempotent. Its `destroyLifecycle` method advances after a failed pause/stop only
+when Essenty changed state, and never redelivers a destroyed lifecycle. Keep startup,
+normal actions, and cancellation from suspended operations outside this guard.
+Simple dialogs with only Compose state need no extra cleanup wrapper.
+
 Use structured logging via `BossLogger` (SLF4J backend):
 
 ```kotlin
@@ -729,8 +971,28 @@ logger.error(LogCategory.NETWORK, "Request failed", error = exception)
 
 **Security**: Always use `LogSanitizer` for sensitive data:
 - `maskEmail()`, `maskToken()`, `maskCredentialId()`, `maskUserId()`, `maskUriParams()`
+- A local file that fails to decode: log `decodeFailure(e)` as the data, never the decoder's
+  message by any route (`error = e`, `e.message`, `e.toString()`). kotlinx puts the file's content in
+  the exception message, and `decodeFailure` keeps only the exception type, the offset and the JSON
+  path, with map keys masked. Catch `SerializationException` before `Exception` or
+  `IllegalArgumentException`, which it extends. Supabase payloads use `sanitizeSupabaseFailure`
+  (see below). This is the rule for new and converted call sites; older decode sites that still log
+  the exception are tracked in #1711.
 
 **Config**: Set `BOSS_LOG_LEVEL` env var or `boss.log.level` system property (TRACE/DEBUG/INFO/WARN/ERROR)
+
+**Log file**: off unless asked for. `BOSS_LOG_FILE=/path/to/boss.log` (or `boss.log.file`) turns on a
+size-rotated file (10 MB, five backups) that receives entries at `BOSS_LOG_FILE_LEVEL` (or
+`boss.log.file.level`) and above, default ERROR. `BOSS_LOG_FILE=off` or a level of `OFF` disables it even if a
+default is ever switched on. The file threshold is applied after the console level, so it can only narrow: with the
+console at INFO and the file at DEBUG, the file gets INFO. Blank is unset at every step, an
+unrecognised level falls through to the next source rather than to INFO. File and console receive the same
+entries; callers must use `LogSanitizer` before logging sensitive data, since `BossLogger` does not sanitize them.
+`BossLogger.configureFromEnvironment()` in
+`main.kt` is the only host entry point; `configure()` has no host caller. Flipping
+`FILE_LOGGING_ON_BY_DEFAULT` in `BossLogger` makes it default-on at `~/.boss/logs/boss.log` for every
+install; that switch is deliberately one constant, because whether to default on was raised on #394 and
+is a policy call.
 
 ## Browser native disposal
 
@@ -764,6 +1026,47 @@ profile cleanup can be abandoned at exit. Ephemeral leftovers are reclaimed on
 the next managed-profile creation. This is not a guaranteed shutdown flush. This
 is not an engine-abort mechanism and does not coordinate external raw-JxBrowser
 callers or engine-level forced closure.
+
+## JxBrowser's native libraries swap the process's malloc zones when they load
+
+On macOS the FIRST of JxBrowser's JNI libraries to load (normally `libtoolkit`) makes PartitionAlloc
+the default malloc zone in a static initializer, briefly unregistering the system zone; a `free()` on
+another thread in that gap is an uncatchable SIGTRAP at `libtoolkit+0x4c9f4`. Later libraries
+(`libipc`, `libawt_toolkit`) see PartitionAlloc already registered and do not swap again (measured
+with an interposer). Two layers close the window:
+
+- **The native agent** (`native/toolkit-preload-agent`, built by `prepareToolkitPreloadAgent`, shipped
+  as `$APPDIR/resources/toolkit-preload/libbosstoolkitpreload.dylib` and named by `-agentpath` in the
+  launcher). It loads the toolkit from `Agent_OnLoad`, when the only threads are the launcher's two
+  idle ones, so nothing can free during the swap. It decides nothing: it loads what
+  `ToolkitPreloadManifest` recorded on the previous launch, and only while every file that decision
+  read is unchanged. 9.5.37 still crashed because the JVM's own C2 compiler thread freed mid-swap,
+  which no Java-side ordering can prevent.
+- **`ChromiumToolkitPreload`**, the in-JVM preload on the main thread before AppKit. It still runs
+  every launch (a no-op after the agent), covers the launches the agent skips, and writes the
+  manifest for the next one. Its KDoc is the canonical account; keep detail there.
+
+Rules for anyone touching it:
+
+- **Preload only from the directory `FluckEngine.resolveEngineDir` boots.** A second copy from
+  another path does not swap again, but it registers duplicate Objective-C classes (including
+  `NSWindowSwizzler`), so the agent skips on ANY doubt rather than guess.
+- **Anything the engine decision starts reading must be guarded in the manifest**
+  (`ToolkitPreloadManifest.inputsFor`), or the agent can load an engine this launch would not pick.
+- **A packaged launcher must never name an agent it does not carry**: a missing `-agentpath` library
+  stops the JVM from starting. `verifyToolkitPreloadAgent` fails the build for that, and
+  `Agent_OnLoad` always returns `JNI_OK`.
+- **JxBrowser must stay in the host class loader.** A plugin that bundled JxBrowser would get
+  `already loaded in another classloader` for a library the host preloaded.
+- **Known gaps:** the first launch after an install, engine change or app update has no valid
+  manifest and keeps only the in-JVM preload; a first-run download-then-boot gets no preload, so
+  packaged macOS relaunches after the download (`ChromiumBootstrap.onEngineDownloadComplete`)
+  instead of booting with AppKit running (9.5.39 crashed there on a fresh install), carrying
+  queued `boss://` links and files across in `RelaunchHandoff` (replayed as `EXTERNAL`); a
+  native allocation failure is still a `brk #0` (only moving JxBrowser out of process fixes that).
+  Off switch for both layers: `BOSS_TOOLKIT_PRELOAD=false`.
+- **Re-measure after a JxBrowser bump.** Check the zone swap still sits in a static initializer and
+  still happens only once per process before trusting any of the above.
 
 ## Browser telemetry, and how to turn it off
 
@@ -807,8 +1110,12 @@ restart. There is no Settings row and no per-site exclusion.
   bridge. Project paths routinely contain usernames, so this widens *when* a filesystem
   path reaches every installed plugin, not *what* - the same install-time-gating stance
   as the bus above applies. In particular, `boss://` links can originate outside BOSS and
-  every non-terminal deep link currently bypasses `DeepLinkOrigin` confirmation, so an
+  a deep link that would start a terminal command, and a plugin action link, consult
+  `DeepLinkOrigin`; project/file deep links still do not, so an
   externally opened project link can trigger this broadcast without operator confirmation.
+  Plugin action links are the exception: external and in-process-plugin requests are held for
+  confirmation before their registered handler runs, including when they arrive before any
+  window exists, in which case they wait for the first one.
   It is recorded here because this paragraph is the canonical list of what a third-party
   plugin can observe.
 - **`PluginContext.projectSearchProvider` is the first UNGATED WRITE surface.**
@@ -819,6 +1126,9 @@ restart. There is no Settings row and no per-site exclusion.
   ungated). Confinement is to the open project only - `resolveFile` refuses
   paths outside it, canonical and symlink-checked. A plugin that needs project
   search should be vetted the same way one that subscribes to the bus is.
+
+- **`WorkspaceContextMcpProvider` exposes open file paths and browser URLs to MCP agents under explicit permission and policy gates.**
+  Where `IntrospectionMcpToolProvider` intentionally emits magnitudes only (counts of tabs/terminals, deliberately refusing to disclose file paths or browser URLs), `get_workspace_context` and `get_active_editor_file` exist specifically to let operator-attached AI coding agents inspect active workspace context, locate open files, and reference current browser URLs. `get_workspace_context` inventories tabs across all Spaces (current and preserved workspaces across all open windows). To prevent ungated exposure of background workspace paths and cross-window URLs to untrusted callers, both tools require the `workspace.context` permission (which admin status bypasses under the standard RBAC rules) and are enrolled in `McpMutatingToolCatalog.KNOWN_MUTATING_TOOLS` as sensitive reads, routing invocations through the approval-requiring ASK default so operator approval remains mandatory.
 
 ## Two-finger swipe navigation (macOS)
 
@@ -919,7 +1229,9 @@ is now gated - packaging relies on those.
 `implementation(projects.pluginPlatform.pluginWorkspaceTypes)`, so its POM pins the sibling at the
 current project version. `publish-maven-central.yml` takes a free-form `packages` input, and
 dispatching bookmark-types alone would ship a POM requiring a `plugin-workspace-types` version that
-does not exist on Central. `all` is safe - workspace-types publishes first. BossConsole#81 tracks the
+does not exist on Central. Bookmark id generation also calls `UniqueIdsKt` at runtime, so an older
+workspace-types jar cannot substitute for the sibling version. `all` is safe - workspace-types
+publishes first. BossConsole#81 tracks the
 durable guard: diffing public members against the api jar `plugin-api-core` already downloads,
 covering all eight duplicated packages rather than this one field.
 
@@ -947,7 +1259,11 @@ covering all eight duplicated packages rather than this one field.
 
 ## Deep Links
 
-App registers `boss://` protocol for authentication callbacks from external browsers.
+App registers `boss://` protocol for authentication callbacks from external browsers. That
+includes `boss://auth/callback`, the Google / Apple sign-in return, which is acted on only
+while a sign-in this process started is waiting (`OAuthSignInService`). Linux registers the
+scheme at startup through `LinuxProtocolHandler`, as Windows does through
+`WindowsProtocolHandler`.
 
 Because the scheme is registered with the OS, a `boss://` link is not evidence
 that the operator asked for anything - any program that can ask the OS to open a
@@ -961,11 +1277,51 @@ URL produces the same input. Entry points therefore tag each link with a
   Also the default for an unstated origin, so a new caller that forgets to say
   gets the cautious handling.
 
-Only `boss://terminal?command=` consults it today: an `OPERATOR_CLI` command runs
-as before, anything else is shown to the operator for confirmation first (the
-`boss` shell shim converts to a `boss://` URL and opens it via the OS, so its
-`terminal -c` still works, with one confirmation). Other hosts - including
-`boss://plugin?id=…&action=…` - are unchanged.
+Three hosts consult it. The first two share a reason - each can type a command
+into a shell - and the third reaches a plugin's own code instead:
+
+- `boss://terminal?command=`: an `OPERATOR_CLI` command runs as before, anything
+  else is shown to the operator for confirmation first (the `boss` shell shim
+  converts to a `boss://` URL and opens it via the OS, so its `terminal -c` still
+  works, with one confirmation).
+- `boss://workspace?path=`: a Space's terminal tabs run their `initialCommand`
+  when it is applied, so an `EXTERNAL` load of a Space that carries any is held
+  (`spaceLoadDisposition`) and `SpaceLoadApprovalDialog` lists every command
+  before anything loads. A Space with no terminal commands, and the operator's
+  own `boss workspace`, load as before. The origin rides on
+  `CLICommand.LoadWorkspace` through the cold-start readiness queue to
+  `WorkspaceLoadEvent.requiresConfirmation`, because only the window parses the
+  file and so only it knows whether there is anything to confirm.
+- `boss://plugin?id=…&action=…`: the link dispatches into a plugin's registered
+  `DeepLinkActionHandler`, which is a program the operator did not ask to run, so an
+  `EXTERNAL` request is held (`pluginActionDisposition`) and
+  `PluginActionApprovalDialog` shows the handler, the action and the parameter KEYS -
+  never a parameter value, which is attacker-chosen text. Malformed prompt tokens are
+  refused outright.
+
+No other host consults it.
+
+A terminal request with no usable window is refused. A **plugin action** with no usable
+window is instead *retained* by `PluginActionEventBus` until some window claims it, because
+that is the ordinary cold-start path rather than an edge case: `CliBootstrap.dispatchPostLock`
+runs an argv link before `application {}` builds the first window, so refusing there meant a
+link clicked while BOSS was not running was never put to the operator at all. A retained
+request has not run and still cannot run without a confirmation, so this widens nothing. The
+registry is bounded (`MAX_PENDING`); a request arriving when it is full is refused, not
+dropped silently. Every open window is offered every retained request and
+`shouldClaimPluginAction` decides whose it is - the window it resolved to, or any window once
+that one has closed - so exactly one window shows it. A window claims one request at a time,
+only while nothing is on screen (`PluginActionApprovalQueue.canClaim`), as the dependency bus
+does, so every other request stays retained for the next window. Closing a window after its
+prompt appears can still abandon that one claimed request. Because the window's own queue
+holds only the prompt on screen, the prompt's "(n pending)" counts that one plus every request
+still retained on the bus (`pluginActionBacklog`), so a flood of links is visible. The wiring
+lives in `PluginActionApprovalPrompt`, not inline in `BossAppDialogs`, so a test drives the real
+count. A retained request carries no age and does not expire: the registry is bounded and a
+request reaches its handler only through the prompt, so a prompt shown long after the link was
+clicked still fails closed rather than acting on its own. That is a recorded decision, not an
+oversight - a TTL, or the arrival time in the prompt text, would make a late prompt easier for
+the operator to place.
 
 **Single-instance channel**: `SingleInstanceManager` publishes
 `~/.boss/run/single-instance` (owner-only) with the channel endpoint and a token
@@ -974,10 +1330,12 @@ Linux) or a loopback port (Windows). Every request must present the token,
 "another instance is running" means something answered on the channel rather than
 a pid existing, and a descriptor nobody answers on is reclaimed.
 
-A forwarded plugin action (`boss://plugin?id=...&action=...`) is acknowledged
-only when its handler reports true. Missing ids, missing handlers, declined
-and throwing handlers report failure. The channel waits up to five seconds;
-a timeout reports an unknown outcome and cancels dispatch if it is still queued.
+A forwarded operator-origin plugin action (`boss://plugin?id=...&action=...`) is
+acknowledged only when its handler reports true. An external action is acknowledged when
+it is queued for confirmation, before anything runs. Missing ids, refused actions, missing
+handlers, declined and throwing operator-origin handlers report failure. The channel waits
+up to five seconds for a direct dispatch; a timeout reports an unknown outcome and cancels it
+if it is still queued.
 An already-running synchronous handler cannot be interrupted. Startup therefore
 never retries plugin actions automatically, even after a lost response; auth and
 other open requests retain their existing retries. Panel-open links still only
@@ -1286,6 +1644,12 @@ it moves; selecting afterwards would need the post-move index, which is what the
 Today the two cannot actually coexist - `showSections` is `!several`, so a multi-pane bar draws no
 separator at all - but the ordering is what makes the rule true if they ever do.
 
+**A tab gesture owns its cleanup (#690).** Both `BossTabButton` and `TabFaviconChip` run
+inside `withDragSession`, whose `finally` clears an interrupted gesture even when pointer input
+is cancelled or restarted without an end/cancel callback. Ownership is the exact `DraggingTabInfo`
+instance, not the tab id: a tab can appear on multiple surfaces and can start a new drag before an
+old handler finishes. Never clear window-wide drag state from a tab-id-only disposal hook.
+
 **A collapsed pane springs open under a dragged tab**, after the same 550ms the Top of Mind panel
 gives its own headers (`SPRING_LOAD_DELAY_MS`, a second constant on purpose: nothing links the two
 repositories at compile time). A pane that is not being worked in shows one row plus a favicon
@@ -1381,7 +1745,7 @@ template picked from the fourth of those is the same gesture as one picked from 
 - **Templates are the SET of built-in ids, and it cannot be a prefix test.**
   `PredefinedWorkspaces.allIds` is derived from `allWorkspaces`, so a ninth built-in joins by
   existing; all eight ids are named constants so one can be referred to. `LayoutWorkspace.generateId()`
-  mints `workspace-<epoch millis>`, so a saved Space carries the same `workspace-` prefix as a
+  mints `workspace-<epoch millis>-<entropy>`, so a saved Space carries the same `workspace-` prefix as a
   built-in and `startsWith("workspace-")` would call every Space a template. The NAME is not the key
   either - a user can save a Space called "Claude Code".
 - **There is deliberately NO `isTemplate` field on `LayoutWorkspace`.** It is the plugin api type,
@@ -1486,7 +1850,7 @@ Three properties of the adoption worth keeping:
   id for the same file on every launch, so nothing could refer to that Space across a restart - the
   session set records ids, and so does every preserved-state key.
 - **It cannot be mistaken for either kind of id.** No built-in id ends in `-saved`, and
-  `generateId()` produces `workspace-<epoch millis>`, so an adopted id is recognisable as one. The
+  `generateId()` produces `workspace-<epoch millis>-<entropy>`, so an adopted id is recognisable as one. The
   plugin's template set is the eight literal ids, so an adopted Space files under Spaces.
 - **Nothing is rewritten on disk.** The migration is in memory, so a launch that reads a legacy file
   cannot half-write anything, and the file keeps the name the user sees in the folder.
@@ -1524,8 +1888,8 @@ into "Save Space..." bypassed `uniqueWorkspaceName` entirely.
 ### The path is the id
 
 `WorkspaceFileManagerCommon.fileNameForId` - copied from `WorkspaceServiceImpl.persistToDisk`, which
-has written `<id>.json` all along. An id is unique by construction, so the collision is impossible
-rather than improbable, and the name is free to be whatever the user wants.
+has written `<id>.json` all along. A generated id has entropy, so accidental collisions are very
+unlikely, and the name is free to be whatever the user wants.
 
 - **Nothing is rewritten or renamed on disk by an upgrade.** `loadAllWorkspaces` already read every
   file's id out of its contents, so it now records an `id -> fileName` map as it scans and
@@ -1669,6 +2033,21 @@ fails a named test.
 button beside it while there is something to save. It presses
 `MenuActionsHandler.triggerSaveWorkspace(windowId)`, which is the File menu's own Save Space, so
 there is one save path rather than two.
+
+- **Window-local identity, success-only rebind.** Both window entry points resolve the Space
+  identity from the invoking window's `SplitViewState.currentWorkspaceId`
+  (`spaceSnapshotForSave`), never from the process-global `WorkspaceManager.currentWorkspace`,
+  and rebind that id only from the manager's success callback after the bytes have landed. The
+  File-menu/bar path updates the current Space in place; presses received during an in-flight
+  write are coalesced into one follow-up save using the latest layout, provided the same window
+  state is still registered when the first write settles. The `WorkspaceButton` "Save Space..."
+  dialog is a second entry point with different semantics - a named save that mints a new Space
+  and then rebinds the same window. An overlapping named-save submission is ignored rather than
+  replayed, because replaying it could mint a second Space with a numbered name. In both paths,
+  success, failure, callback exceptions and window deregistration must release the in-flight
+  latch. The plugin's `WorkspaceDataProvider` save still resolves identity from the
+  process-global value (the provider carries no window id) and rebinds no window; that is
+  API-shaped, out of scope here, and must not be read as "Save Space is window-local" covering it.
 
 - **The Space button takes the Row's WEIGHT and the save button does not.** A `Row` measures its
   unweighted children first, so the save button's 24dp is taken out before the 130dp label gets
@@ -1879,14 +2258,19 @@ them all back.
 - **The old file goes on being written, unchanged, every session.** `saveLastSessionBlocking` is
   untouched, so after a new-format save the directory holds BOTH: `Last_Session.json` with the
   layout that was on screen, and `Last_Session_Set.json` with all of them. Three things follow, all
-  deliberate: a downgrade still restores the Space that was showing, the "Last Session" entry the
-  Space list has always had is still there, and restore reads the SET first and falls back to the
+  deliberate: a downgrade still restores the Space that was showing, the "Last Session" entry is
+  available when explicitly enabled, and restore reads the SET first and falls back to the
   single file when there is none.
-- **A set is written only for two or more Spaces, and DELETED otherwise.** One running Space is
-  exactly what the old file records, and a second file saying the same thing is a second thing that
-  can disagree. The delete is not tidiness: the set is read in preference to the single file, so a
-  set left over from a three-Space session would reopen two Spaces the user had closed.
-  `sessionSetOf` answers both, and `isRestorable` asks the same question on the way back in.
+- **A set is written for one or more Spaces.** Even one Space needs its own identity restored;
+  `Last_Session.json` stamps its copy with `last-session` and cannot preserve that identity.
+  Empty sessions or an invalid active id delete the set. `sessionSetOf` and `isRestorable`
+  share this rule. The layout watcher now refreshes the set alongside the legacy recovery file,
+  so a crash cannot prefer an older identity-preserving snapshot over newer edits.
+- **The Last Session picker entry is opt-in.** Settings → Spaces → Session Restore has
+  `enableLastSessionSpace`, default false (including existing files with no field). UI and plugin
+  pickers consume `visibleWorkspaces`; `workspaces` retains recovery records for internal use.
+  Named Spaces restore unchanged. Legacy snapshots with no original identity are kept as a
+  normal Recovered Space instead of losing their tabs. The original recovery file is retained.
 - **Still ONE writer, still app-level (Issue #19).** `LastSessionCoordinator` allows exactly one
   window to produce the session record per session - every window's dispose used to write its own
   layout into the one record, so closing a secondary window overwrote the primary's. That has not
@@ -2054,9 +2438,12 @@ workspace by selecting the tools you need." Tools install app-wide, not into a S
 
 ## Documentation
 
+- [Create and publish plugins](https://github.com/risa-labs-inc/BossConsole/wiki/Create-and-Publish-a-Plugin) - Toolbox/Tool Creator, coding agents, GitHub repositories and publish keys. Hosted BOSS grants `plugins.create` + `api_key.create` to `user`; refresh the session after a grant.
+
 - [Authenticated IPC rollout](docs/authenticated-ipc-rollout.md): paired runtime release, ownership, and credential lifetime.
 
 - [MCP for agent-less operators](docs/mcp-agentless-operators.md) - Toolbox kill-switches and attach path
+- [Secret references in MCP tool calls](docs/MCP_SECRET_REFERENCES.md) - the guarantee, its non-goals, the pipeline and the invariants
 
 - [Core Subsystems](docs/SUBSYSTEMS.md) - Auth, UI, keyboard shortcuts, threading, default applications, runner, BossTerm
 - [BossEditor](docs/BOSSEDITOR.md) - External editor dependency, LSP, PSI, editor features
@@ -2066,6 +2453,7 @@ workspace by selecting the tools you need." Tools install app-wide, not into a S
 - [RBAC Guide](docs/RBAC_GUIDE.md) - Role-based access control
 - [Role Creation](docs/ROLE_CREATION_GUIDE.md) - Creating and managing roles
 - [Windows Deep Link](docs/WINDOWS_DEEP_LINK_SETUP.md) - Windows protocol handler setup
+- [Google and Apple sign-in](docs/OAUTH_SIGN_IN_SETUP.md) - PKCE flow over `boss://auth/callback`, provider setup, Apple secret rotation
 - [Release Rebuild](docs/RELEASE_REBUILD_GUIDE.md) - Re-running release builds
 ### Governed MCP invocation (#371)
 
@@ -2082,10 +2470,17 @@ defence against a hostile one that lies. Unknown tool names default to ALLOW whi
 the provider declares (or defaults to) `readOnly = true`. Known mutations default to ASK with
 a 45-second timeout. Each queued prompt is delivered to exactly one window and
 window teardown denies its owned request. Session trust is process-wide and can
-be cleared using “Revoke MCP session trust” in the bottom bar; restore the bar if
-it is hidden. The approval dialog offers Always Allow and Always Deny, which save
-a tool-wide rule for all agents and arguments across restarts. Saved rules can be
-reviewed and reset from “Persisted MCP policies” in the bottom bar; a reset removes
+be reviewed and revoked per tool (or all at once) from “Session trust” in the bottom bar's MCP access menu; restore the bar if
+it is hidden. Session trust is keyed to the exact provider the operator approved (#815): a same-named
+tool from a different provider gets its own ASK instead of inheriting the grant - the tool-name squat.
+McpSessionTrust keeps the (providerId, toolName) identity the engine uses everywhere else: a name-only
+grant would hand an unvetted plugin the approval its sibling earned, and trusting less than the operator
+meant is the fail-closed direction. Revocation stays name-wide as the operator escape hatch:
+revokeSessionTrust(toolName, providerId = null) still clears every provider's trust for that name, and
+over-removing trust fails closed. The approval dialog's “Always, for this tool” scope (Always allow / Always deny) saves
+a tool-wide rule for all agents and arguments across restarts (except that a saved allow does not cover a shell
+call the risk evaluator rates CRITICAL - see the destructive-shell gate under the workspace/terminal tools below). Saved rules can be
+reviewed and reset from “Tool policies” in the bottom bar's MCP access menu; a reset removes
 the rule and clears that tool's session trust, so the tool uses the configured default
 policy (ASK for known mutations in the shipped defaults). Unrelated DENYs remain intact.
 A failed reset keeps the previous durable rule visible and clears the selected session
@@ -2094,9 +2489,9 @@ POLICY_PERSIST_FAILED and withhold the current execution. A queued approval cann
 replace a newer DENY or reset: each reset invalidates older authorizations before their
 final approval boundary, including queued once/session/persistent grants. Calls already
 authorized to execute are not cancelled. Reset remains host UI only, not an MCP tool.
-“Trust This Plugin” persists a provider-wide ALLOW covering every tool that provider
+“Trust plugin” (the “Always, for every tool from this plugin” scope) persists a provider-wide ALLOW covering every tool that provider
 contributes - weaker than an explicit tool-specific rule, reviewed and reset from
-“Trusted plugins” in the bottom bar rather than “Persisted MCP policies”. The same
+“Trusted plugins” in the MCP access menu rather than “Tool policies”. The same
 reset-invalidates-queued-grants guarantee applies to it: the write rechecks the
 prompting tool's and provider's revocation state, plus DENY, under the policy lock, so a reset landing
 while the dialog is open refuses the write and withholds that call instead of persisting
@@ -2105,10 +2500,54 @@ write that fails for a genuine disk error (not a stale-dialog refusal) still run
 already-approved call, falling back to session trust for that one tool only - a
 deliberate asymmetry, since the operator already approved the call in hand and a disk
 fault should not retroactively withhold it.
+The approval dialog asks for a scope once (just this call, this session, always for this tool,
+always for every tool from this plugin) and answers with one Deny / Allow pair whose labels name
+the effect; there is no session or provider-wide deny, so under those scopes Deny reads “Deny
+once”. The bottom bar shows all three consent surfaces (session trust, tool policies, trusted
+plugins) behind one “MCP access” item, badged in the alert colour while session trust is live.
+The "Always, for this tool" scope says in the dialog that it is keyed by tool name, so it also
+covers a replacement plugin shipping a tool of that name - the one place the operator is told.
 Provider trust also covers tools added by later versions and replacement plugins claiming
 that provider id. Already queued sibling prompts still ask. Explicit tool ASK rules
 still override provider ALLOW. The Trusted plugins UI lists ALLOW rules only; hand-edited
 provider DENY rules currently require policy-file editing to remove.
+
+Plugin provider ids changed from `provider` to `plugin::provider` in #958. A persisted raw
+provider DENY remains authoritative at runtime for every scoped provider with that suffix:
+assigning the old key to one plugin is ambiguous, while dropping it would fail open. Do not copy
+that raw DENY into scoped policy entries; derived copies outlive revocation of the rule the
+operator actually set. Revoking the raw rule must immediately lift its inherited effect. Legacy
+raw ALLOW does not cross the namespace, because that would restore the provider-id aliasing the
+namespace was added to prevent. Keep this compatibility rule asymmetric.
+
+**YOLO mode** makes any call whose policy resolves to ASK run without prompting, for every tool
+and provider, CRITICAL-risk ones and tools registered later included - secret-bearing calls
+excepted: YOLO answers for the tool, never for the vault. Any user can turn it on,
+behind one confirmation (`McpYoloConfirmation`, composed per window in `BossAppDialogs` and
+raised through `McpYoloPrompt`), from either of two places: **MCP access → YOLO mode...** in the
+bottom bar, or the **Tools → MCP YOLO Mode** checkbox in the application menu. The menu item is
+not a convenience: the bar can be hidden (`showBottomBar`, and Focus mode hides it by default),
+and a live global bypass must keep an indicator and an off switch that survive that. Its
+checkmark is the indicator and unchecking turns the mode off; in the bar it reads "MCP: YOLO"
+in the alert colour with "Turn off YOLO mode" first in the menu.
+
+- **It replaces only the prompt.** `policyFor` is untouched, so explicit tool or provider DENY,
+  an unreadable policy file, the kill switch and RBAC still refuse first, a secret-bearing call
+  keeps its prompt, and a revoke or DENY landing mid-flight still stops the call at
+  `confirmInvocation`. `McpYoloModeTest` drives the real registry to pin this.
+- **In memory only** (`McpPolicyEngine.yoloMode`), off at every launch. Prompts already queued
+  when it is turned on still ask.
+- **Audited in the ledger, both the calls and the switch.** Each call it lets through is
+  `YOLO_ALLOWED` with `policyApplied = ASK`. Turning it on or off writes a `YOLO_ENABLED` /
+  `YOLO_DISABLED` marker (tool `yolo_mode`, provider `host`) through `McpToolRegistryCore
+  .setYoloMode`, so a window in which calls could run unattended is in the hash-chained record
+  even if nothing was invoked. Markers do not count as calls (`countsAsCall = false`), and the
+  bar's last-call line skips them (`isGovernanceEvent`). Always switch through
+  `McpToolRegistryImpl.setYoloMode`, never `policyEngine.setYoloMode` directly, or the marker is
+  lost.
+- **A deployment can refuse it**: `BOSS_MCP_YOLO_DISABLED=true` (also `1` / `yes` / `on`) or
+  `-Dboss.mcp.yolo.disabled=true` hides both entry points and makes turning it on a logged no-op.
+  Read once at startup (`McpYoloGate`). Turning it off is never refused.
 
 Preserve a backup before manual recovery of a damaged policy;
 the fault flow withholds all tools until recovery. No automatic quarantine UI is
@@ -2128,6 +2567,70 @@ create_workspace, open_terminal, close_workspace and their aliases) are declared
 on `open_terminal` therefore runs later invocations unconfirmed, i.e. as strong as an
 unconfirmed external deep link; the command still passes the shape check and the shell
 risk evaluation (HIGH, CRITICAL for destructive patterns) on every call.
+
+A saved ALLOW - "Always, for this tool", a trusted plugin or session trust - does not cover a
+shell call the evaluator rates CRITICAL: that call is asked again every time (#1577), with the
+prompt marked escalated. On an escalated prompt "Always, for this tool" is deny-only ("Always
+deny this tool"): the allow button stays "Allow once" whatever scope is selected, and the registry
+applies any broader approval of an escalated call as once, logging the downgrade. A saved DENY is
+never overridden, so it is the durable answer there (#1624). Shell tools are rated on every
+string in their arguments. Arguments nested past MAX_MCP_ARGUMENT_DEPTH rate CRITICAL without being
+parsed (every parse on the invoke path checks the same depth guard first); arguments too wide to
+scan fully rate CRITICAL on the part that was not inspected. The call's ledger row carries
+`escalated: true` when this gate overrode a saved ALLOW, so a call that YOLO mode then answered
+(`YOLO_ALLOWED`) can be told apart from a routine call under the same ALLOW (#1655). It does not
+mark every destructive call: under the default ASK policy there is no ALLOW to override, and a
+destructive call YOLO answers there records `escalated: false`. `format` counts only as a
+command (the first word of a command, or with a drive such as `d:` anywhere after it, switches
+first or not), not as the text `format ` anywhere, which rated `--format json`, `clang-format` and
+prose typed through `send_input` CRITICAL.
+
+### Secret references at the governance boundary
+
+`{{secret:<id>}}` in a governed tool's arguments is resolved by the host inside
+`McpToolRegistryCore.invoke`, after the operator approves and before the handler runs. The full
+contract is [docs/MCP_SECRET_REFERENCES.md](docs/MCP_SECRET_REFERENCES.md); the decisions a
+later change is most likely to want to undo are recorded here so they are undone knowingly.
+
+- **Non-disclosure, not non-exfiltration.** The claim is that the value never enters the
+  LLM-facing path (arguments, result, approval dialog, ledger, host log). It is not that an
+  authorized tool cannot forward it. Plugins are in-process and already hold the vault through
+  `PluginContext.secretDataProvider`, so references add no plugin-side exposure. Do not let
+  docs or PR text drift toward the stronger claim.
+- **`invoke` is an enforcement boundary for governed traffic, not a security boundary for the
+  process.** BossTerm's built-ins and terminal-tab's `run_in_sidebar`/`cli` never reach it (#495);
+  a reference typed there is never resolved.
+- **A secret-bearing call always asks.** The secret policy sits above session trust, above a
+  tool or provider ALLOW and above YOLO mode in the precedence, and `secretBearingCalls` has
+  only ASK and DENY. There
+  is no ALLOW on purpose: a flagship governance primitive must not ship with its own bypass. An
+  operator who wants fewer prompts is asking for a per-(tool, secret) grant with its own review
+  and revocation surface, which is a separate design.
+- **The vault is read once, before the prompt.** The operator must see which secret (website,
+  username, field) the tool would receive, and that metadata comes from the same RPC as the
+  value. A second read after approval would be theatre. The value is delivered only after
+  `confirmApproval`'s revocation fence passes.
+- **All or nothing.** One malformed or unresolvable reference refuses the whole call before any
+  prompt. A handler must never receive placeholder text it might mistake for a value; that is
+  also why `secretReferencesEnabled = false` refuses rather than passes through.
+- **Substitution rewrites the JSON tree and rebuilds `McpToolArgs` through `parseMcpToolArgs`**,
+  so the scalar map and the raw JSON a handler may parse itself cannot disagree. Reference markers
+  in keys refuse the call; keys are never substituted.
+- **The scrubber is defense in depth and is switchable** (`resultScrubbingEnabled`). It replaces
+  exact, JSON-escaped and percent-encoded forms of values of 8+ characters; it cannot see a hash,
+  a base64 encoding or a case change, and the docs table says so. The invariant tests run with it
+  off to prove the rest of the pipeline holds without it. It runs before the result cap so a cut
+  cannot land inside a value.
+- **The ledger stores references.** `sanitizedArgs` is built from the ORIGINAL arguments, and
+  `secretRefs` lists `<id>.<field>`. `SECRET_FORBIDDEN` and `SECRET_UNRESOLVED` are "withheld"
+  in the activity log's exhaustive `when`, the same bucket as `QUEUE_FULL`.
+- **UUID ids only, three fields only.** The grammar is anchored and brace-free so it is linear;
+  TOTP is deliberately not a field (a six-digit code cannot be scrubbed, and nothing consumes one
+  through a tool today).
+- **The RBAC gate mirrors the plugin's.** A non-admin needs `secret.read`, the permission the
+  secret-manager plugin puts on `secret_get`; the AI-provider tag refusal mirrors that plugin's
+  `aiProviderRefusal`. Neither can be reached through a reference that could not be reached
+  through the plugin.
 
 ## Process log authority and lifetime
 
@@ -2155,7 +2658,13 @@ opening the rotated ledger file in a text editor. The dialog is a read-only view
 tool call is refused before that, so this is not a view over every MCP invocation attempt.
 Retention is described as finite and best-effort (the active ledger file plus up to 5 rotated
 backups, and a write failure there is logged rather than retried), not a guarantee older calls
-are still on disk. Unsuccessful calls are broken down by `McpUnsuccessfulCategory` - denied,
+are still on disk. The ledger writes on a daemon thread fed by a bounded queue: a row keeps
+`hash == null` until the write lands, so the dialog renders it "queued for write" while its id
+is in `pendingWriteIds`, "not persisted" once it is counted in `droppedWrites`, and nothing once
+the chained copy arrives - a dropped or failed write never enters the hash chain, which is what
+keeps `verify` contiguous instead of reporting a drop as a LINK_BROKEN tamper verdict. The
+shutdown sequence drains the queue (`flushing MCP operation ledger on exit`) before the logger
+stops. Unsuccessful calls are broken down by `McpUnsuccessfulCategory` - denied,
 cancelled, withheld (approval queue overflow or a host disk fault that stopped the call from running) or failed - through an exhaustive `when` over `McpApprovalDisposition` rather
 than a `setOf`-based membership check, so a disposition the enum grows later is a compile error
 here rather than silently counted as a tool fault.
@@ -2177,9 +2686,9 @@ The viewer uses the ledger instance's actual optional persistence path. Its tool
 heavyweight overlay route. Width and height follow the originating window, with a fixed-cap fallback
 while window metadata is not yet measured; Close stays outside the scrolling body.
 
-**The "Persisted MCP policies" bottom bar button also lets an operator set a rule
+**The "Tool policies" entry of the bottom bar's MCP access menu also lets an operator set a rule
 *proactively*, for a registered tool without a saved rule.** It is present even with zero saved
-rules (labeled "Set MCP tool policies" then). Allow requires a second confirming tap
+rules. Allow requires a second confirming tap
 and shows the tool's risk assessment first, the same way the approval dialog's own
 "Always Allow" does, since it is the same durable, tool-name-wide grant. The write goes
 through `McpPolicyEngine.setToolPolicyIfAbsent`, not the reactive approval path's
@@ -2210,8 +2719,10 @@ confirms the displayed counts and scope. These are explicit tool-name rules,
 not provider trust: future tools are not automatically granted access.
 `McpPolicyEngine.setSectionPolicies` writes the reviewed section atomically,
 checks every prior rule and tool/provider revocation stamp, refuses provider DENY
-and unreadable policy files, and invalidates queued grants/session trust after a
-successful save. Keep these checks when changing section UI; sequential calls to
+and unreadable policy files, and invalidates queued grants after a
+successful save, dropping session trust only for the (providerId, toolName)
+pairs the write changed (#815); other providers' same-named grants survive.
+Keep these checks when changing section UI; sequential calls to
 `setToolPolicy` would permit partial application and stale overwrites. Individual
 reset controls remain available below the sections.
 
@@ -2274,3 +2785,115 @@ inspects at most 4096 characters; full XML parsing still enforces its own limits
 Dev reload resolves staged JARs with manifest identity validation, matching startup.
 The scaffold wrapper source/hash is recorded in `resources/launcher/README.md`;
 update it with the pinned distribution checksum and scaffold validation together.
+
+### Dev #935 persistence and audit contracts
+
+- MCP ledger hashes detect retained-record edits and broken adjacency, not authenticity: no secret key is used, and complete rewrites or tail truncation are not detectable. Ledger files are owner-only. `boss mcp ledger verify|tail|search` reads local disk; it is not an ungated plugin MCP read surface.
+- `atomicWriteText` pins POSIX files to 0600. The separate `writeModeFile` writer for `env_vars` preserves existing permissions; that rule does not apply to all state writers.
+- Chromium's constructed GitHub backup URL uses the catalog checksum. Primary and backup must contain identical artifact bytes; checksum mismatch fails closed. No pinned catalog hash means no install, and the version picker offers only checksum-backed archives for the current platform. See `docs/dev-935-release-checklist.md` for deployment checks.
+- Browser print is a direct-native exception to the usual AWT ownership rule after macOS manual verification. Pending AWT cancellation is best-effort, not a cross-thread exactly-once guarantee; do not copy this pattern for destructive actions.
+
+## Native Commit dialog repository binding
+
+`CommitDialogRepository` captures the owning window's project when the native Commit dialog
+opens. All its stage, unstage, commit and amend-message reads pass that explicit path. A
+`windowId` only selects which status UI to refresh; it does not select the repository for
+Git commands. Never replace the path with the process-global Git project. A changed or missing
+window project refuses commands, preserving the draft until the dialog is closed. Keep the
+local in-flight guard so a pending command cannot be submitted twice or have its draft edited.
+`CommitDialogRepositoryTest` exercises the dialog adapter with two real disposable repositories
+and the global deliberately pointed at the other one.
+
+Commit dialog sign-off is Git-owned: pass the checkbox flag to `git commit --signoff`,
+never construct a trailer from the OS username. This uses the selected repository
+committer identity and Git trailer deduplication for ordinary commits and amend.
+Keep the original four-argument suspend `GitService.commit` overload and its defaults
+for already compiled callers; it delegates with sign-off disabled.
+
+## Recent-page loads respect dismissal
+
+RecentBrowserPagesManager registers a load ticket before launching startup IO. Clear and removal
+predicates update that ticket alongside the in-memory mutation; publication filters only loaded
+rows, preserving newer recorded visits. Keep the guard lock away from disk IO and pass the same
+ticket through browser-history bootstrap. Release tickets after loading; they are transient
+startup coordination, not permanent URL tombstones. Tests using the singleton must await its
+initial load, drain writes, and restore both page/dismissal flows before restoring settingsFile.
+
+### Run scan publication ownership
+
+Run configurations retain a process-wide detected list. Scans from different windows may
+overlap, but only the latest request owns its results, error, and busy state. A short
+`scanLock` protects ownership and publication, never filesystem traversal. `clearDetected`
+invalidates pending publication and clears scan status; it does not cancel detector work.
+Cancellation propagates without becoming a scan error. The internal scanner overload lets
+`RunConfigurationScanOwnershipTest` control completion order on the real manager without
+mutating a global detector or reading a user's project.
+
+
+## Native glass themes
+
+Liquid Glass Light/Dark are additional Blueprint palettes; existing platform defaults and
+Space-theme resolution stay unchanged. Glass coverage/style/tint live in app-theme-settings.json,
+independently of palette selection. Only the main macOS window installs a native backdrop;
+Windows/Linux retain opaque palettes. Browser surfaces and plugin-owned opaque backgrounds stay
+opaque. Do not change shared theme colors globally to alpha: dialog windows have no backdrop.
+
+`MacWindowGlass` follows BossTerm's NSGlassEffectView (macOS 26) / NSVisualEffectView approach.
+Use the existing AppKit main-queue dispatcher and exact Skiko NSWindow handle. Never replace
+AWT's contentView, use Auto Layout on it, or use a struct-return objc_msgSend mapping. Java stays
+undecorated/transparent on macOS so Skia retains alpha; AppKit restores the native frame and lights.
+The controller owns/releases only its backdrop, reattaches after frame changes, and respects Reduce
+Transparency. Close it with the window. `LocalWindowGlass` becomes installed only after success;
+failed/unsupported installation paints opaque without overwriting saved preferences. Native toolbar
+background and Compose chrome use the same tint. Menus and dialogs retain opaque theme tokens.
+
+`BOSS_TEST_NATIVE_GLASS=1 ./gradlew :composeApp:desktopTest --tests '*MacWindowGlassSmokeTest'`
+is an opt-in macOS smoke test using its own small unfocusable window. It verifies native install,
+light/clear updates, and detach; it does not establish visual correctness of an entire app layout.
+
+`MacSidebarToolbar` must keep a unique identifier for each controller lifetime. AppKit implicitly
+synchronizes item insertions/removals among toolbars with the same identifier, even when user
+customization is disabled. Each window's active tab supplies different items, so a shared identifier
+can ask another window's delegate for an unavailable item and abort the process in AppKit.
+`BOSS_TEST_NATIVE_TOOLBAR=1 ./gradlew :composeApp:desktopTest --tests '*MacSidebarToolbarSmokeTest'`
+checks independent item lists, updates, and closing one of two owned unfocusable windows.
+
+The vertical sidebar uses `SidebarGlass` washes only while the native backdrop is active.
+`IntegratedSidebarSurface` keeps the rounded outline; full-window glass tint belongs to the root.
+`WindowVerticalTabBar.surfacePainted` prevents duplicate fills for sidebar-only coverage. Favorites,
+selection fills and inset hairline separators follow BossTerm's sidebar treatment; do not change
+shared palette tokens, menu surfaces, or the non-glass layout to achieve this.
+
+Fullscreen glass has an owned `MacFullscreenBackdrop` behind the effect view. It reads the
+current display's wallpaper through NSWorkspace, caches the still image while windowed, and
+aspect-fills a CALayer in fullscreen; unreadable/dynamic-only wallpapers get a theme-colored
+fallback. Keep the controller alive across fullscreen transitions so the windowed image survives
+when a fullscreen Space has no desktop-image URL. Do not capture the user's screen, replace AWT's
+contentView, or leave the wallpaper view attached after exiting fullscreen or disabling glass.
+
+Native browser navigation follows `BrowserTabOwnership` for the active tab, with the composed
+browser registry as a fallback for other browser surfaces. Home removes BrowserHandle.Content
+from composition, so ActiveBrowserRegistry alone cannot drive its address field. Bind tab ownership
+when the plugin identifies its handle through setFullscreenHandler, and unbind by handle ID on
+transport failure/disposal so old cleanup cannot remove a replacement. This is host-only state;
+do not add plugin ABI requirements or keep an invisible browser view mounted behind Home.
+
+Host glass follows BossTerm's separate 50% tint / 50% background-opacity defaults.
+GlassAppSurfaces paints the combined main ink fill `1 - (1 - opacity) * (1 - tint)`
+through the title bar and content, excluding the rounded sidebar geometry. The sidebar paints
+its own tint once, including its header extension. This follows BossTerm's root drawBehind /
+sidebar cutout: never flatten the sidebar into the main fill or stack both fills beneath it.
+Scoped ink/panel tokens retain RGB but have zero alpha; MaterialTheme's background alpha
+remains the plugin capability signal. Opaque plugins and browser pages retain their own fills.
+
+Native NSWindow background stays clear in glass mode, including fullscreen. The Space selector keeps its Space name. A separate native NSTextField toolbar item immediately
+after it shows the focused terminal tab's live title and disappears on other tabs.
+GlassSurfaceRenderingTest renders the actual integrated sidebar and verifies that both surfaces
+continue through their headers without tint overlap, in both palettes.
+
+## Tab inventory before a Space is assigned
+
+The current split tree may contain live tabs while `currentWorkspaceId` is null. Both tab
+inventories must include that tree using a window-local `unsaved-window-<windowId>` identity,
+without assigning or persisting a workspace. Browser lookup matches the shared `TabInfo.id`;
+dynamic browser tabs are not instances of the host's built-in `FluckTabInfo`.

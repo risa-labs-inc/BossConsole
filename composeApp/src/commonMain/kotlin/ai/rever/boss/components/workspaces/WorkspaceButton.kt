@@ -1,10 +1,17 @@
 package ai.rever.boss.components.workspaces
 
+import ai.rever.boss.components.bars.horizontal.StatusMessageManager
 import ai.rever.boss.components.buttons.BossActionButton
 import ai.rever.boss.components.icons.SpaceIcon
 import ai.rever.boss.components.overlays.ContextMenuItem
+import ai.rever.boss.components.window_panel.SplitViewState
+import ai.rever.boss.components.window_panel.SplitViewStateRegistry
 import ai.rever.boss.plugin.ui.BossTheme
 import ai.rever.boss.plugin.workspace.SplitConfig.SinglePanel
+import ai.rever.boss.utils.logging.BossLogger
+import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.window.LocalWindowId
+import ai.rever.boss.window.MenuActionsHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Circle
@@ -27,6 +34,44 @@ import androidx.compose.runtime.setValue
  * Platform-specific function to open workspace directory
  */
 expect fun openWorkspaceDirectory(path: String)
+
+private val workspaceButtonLogger = BossLogger.forComponent("WorkspaceButton")
+
+internal enum class NamedSaveRebindOutcome {
+    REBOUND,
+    NEVER_REGISTERED,
+    DEREGISTERED,
+}
+
+/** The window owner captured when a named save is pressed, not when its button is composed. */
+internal class NamedSaveOwner private constructor(
+    private val windowId: String?,
+    private val state: SplitViewState?,
+) {
+    fun rebind(workspaceId: String): NamedSaveRebindOutcome =
+        when {
+            windowId == null || state == null -> {
+                NamedSaveRebindOutcome.NEVER_REGISTERED
+            }
+
+            SplitViewStateRegistry.getState(windowId) !== state -> {
+                NamedSaveRebindOutcome.DEREGISTERED
+            }
+
+            else -> {
+                state.rebindCurrentWorkspace(workspaceId)
+                NamedSaveRebindOutcome.REBOUND
+            }
+        }
+
+    companion object {
+        fun capture(windowId: String?): NamedSaveOwner =
+            NamedSaveOwner(
+                windowId = windowId,
+                state = windowId?.let(SplitViewStateRegistry::getState),
+            )
+    }
+}
 
 /**
  * Workspace button with dropdown menu.
@@ -88,8 +133,10 @@ fun WorkspaceButton(
      */
     unsavedWorkspaceIds: Set<String> = emptySet(),
 ) {
+    val windowId = LocalWindowId.current
     val currentWorkspace by workspaceManager.currentWorkspace.collectAsState()
-    val workspaces by workspaceManager.workspaces.collectAsState()
+    val workspaces by workspaceManager.visibleWorkspaces.collectAsState()
+    val spaceMenuSettings by WorkspaceSettingsManager.currentSettings.collectAsState()
 
     // A BOSS theme belongs to a Space, so this menu is where one is given: both are collected
     // rather than read, because the submenu's tick has to move the moment the theme does - the
@@ -107,6 +154,7 @@ fun WorkspaceButton(
     var showSaveDialog by remember { mutableStateOf(false) }
     var showOpenDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    val namedSaveLatch = remember(windowId) { SaveInFlightLatch() }
 
     // Build options submenu items
     val optionsSubMenu =
@@ -216,11 +264,13 @@ fun WorkspaceButton(
             )
         }
 
+    // Capture composable colors before building row helpers.
+    val menuColors = BossTheme.colors
     // Build context menu items
     val contextMenuItems =
         buildList {
             // Workspaces at the top
-            workspaces.forEach { workspace ->
+            fun spaceItem(workspace: LayoutWorkspace): ContextMenuItem {
                 // Two independent facts per row - where it is running, and whether it holds
                 // work that is not on disk. See [SpaceRowMarks] for why they are not one mark.
                 val marks =
@@ -231,42 +281,55 @@ fun WorkspaceButton(
                         unsavedWorkspaceIds = unsavedWorkspaceIds,
                     )
 
-                add(
-                    ContextMenuItem(
-                        text = workspace.name,
-                        icon = null,
-                        trailingIcon = marks.run.dotIcon(),
-                        trailingIconColor =
-                            when (marks.run) {
-                                SpaceRunState.Current -> BossTheme.colors.ok
-                                SpaceRunState.Running -> BossTheme.colors.textSecondary
-                                SpaceRunState.Idle -> null
-                            },
-                        // The unsaved mark, in the second trailing slot so it sits beside the
-                        // running dot rather than replacing it. Same glyph and same `signalText`
-                        // as the vertical bar's dot, because it is the same fact: a reader should
-                        // not have to learn a second vocabulary between the bar and this menu.
-                        secondaryTrailingIcon = Icons.Filled.Circle.takeIf { marks.unsaved },
-                        secondaryTrailingIconColor = BossTheme.colors.signalText,
-                        secondaryTrailingDescription = SPACE_UNSAVED_ROW_DESCRIPTION,
-                        // `onOpenWorkspace` is `WorkspaceSwitch.request`, which does the whole
-                        // job - it materialises a template, loads what that produced and applies
-                        // it. Loading the picked row HERE was redundant and did two kinds of harm.
-                        //
-                        // A BOSS theme belongs to a Space, so entering the row was entering a
-                        // Space: picking a TEMPLATE applied its theme, and the materialised copy
-                        // that actually opened a moment later applied its own. That flash is gone
-                        // with this line rather than made to land on the same colour, because the
-                        // intermediate entry was doing everything else twice as well.
-                        //
-                        // It also lied to the switch. `request` reads `currentWorkspace` as the
-                        // Space being LEFT, so pre-setting it to the one being entered made
-                        // `leaving.id == workspace.id` and skipped the keep-or-close question
-                        // outright.
-                        onClick = { onOpenWorkspace(workspace) },
-                    ),
+                return ContextMenuItem(
+                    text = workspace.name,
+                    icon = null,
+                    trailingIcon = marks.run.dotIcon(),
+                    trailingIconColor =
+                        when (marks.run) {
+                            SpaceRunState.Current -> menuColors.ok
+                            SpaceRunState.Running -> menuColors.textSecondary
+                            SpaceRunState.Idle -> null
+                        },
+                    // The unsaved mark, in the second trailing slot so it sits beside the
+                    // running dot rather than replacing it. Same glyph and same `signalText`
+                    // as the vertical bar's dot, because it is the same fact: a reader should
+                    // not have to learn a second vocabulary between the bar and this menu.
+                    secondaryTrailingIcon = Icons.Filled.Circle.takeIf { marks.unsaved },
+                    secondaryTrailingIconColor = menuColors.signalText,
+                    secondaryTrailingDescription = SPACE_UNSAVED_ROW_DESCRIPTION,
+                    // `onOpenWorkspace` is `WorkspaceSwitch.request`, which does the whole
+                    // job - it materialises a template, loads what that produced and applies
+                    // it. Loading the picked row HERE was redundant and did two kinds of harm.
+                    //
+                    // A BOSS theme belongs to a Space, so entering the row was entering a
+                    // Space: picking a TEMPLATE applied its theme, and the materialised copy
+                    // that actually opened a moment later applied its own. That flash is gone
+                    // with this line rather than made to land on the same colour, because the
+                    // intermediate entry was doing everything else twice as well.
+                    //
+                    // It also lied to the switch. `request` reads `currentWorkspace` as the
+                    // Space being LEFT, so pre-setting it to the one being entered made
+                    // `leaving.id == workspace.id` and skipped the keep-or-close question
+                    // outright.
+                    onClick = { onOpenWorkspace(workspace) },
                 )
             }
+
+            val groups = spaceMenuGroups(workspaces, spaceMenuSettings.recentSpaceIds)
+            add(
+                ContextMenuItem(
+                    text = "Create New Space…",
+                    onClick = { windowId?.let(MenuActionsHandler::triggerCreateSpace) },
+                ),
+            )
+            add(ContextMenuItem(isDivider = true))
+            addAll(groups.recent.map(::spaceItem))
+            if (groups.more.isNotEmpty()) {
+                add(ContextMenuItem(text = "More", subMenu = groups.more.map(::spaceItem)))
+            }
+            add(ContextMenuItem(isDivider = true))
+            add(ContextMenuItem(text = "Template Spaces", subMenu = groups.templates.map(::spaceItem)))
 
             add(ContextMenuItem(isDivider = true))
 
@@ -320,10 +383,62 @@ fun WorkspaceButton(
         SaveWorkspaceDialog(
             onDismiss = { showSaveDialog = false },
             onSave = { name ->
-                // Get current layout and save it with the provided name
-                getCurrentWorkspace?.invoke()?.let { currentLayout ->
-                    workspaceManager.updateCurrentWorkspace(currentLayout)
-                    workspaceManager.saveCurrentWorkspace(name)
+                // A named save creates a new Space. Ignore an overlapping submission instead
+                // of replaying it, because replaying the same name would create another Space.
+                if (namedSaveLatch.press()) {
+                    // Registration happens from a LaunchedEffect after first composition. Resolve
+                    // the owner now so a live window is not mistaken for one that deregistered.
+                    val saveOwner = NamedSaveOwner.capture(windowId)
+                    getCurrentWorkspace?.invoke()?.let { currentLayout ->
+                        workspaceManager.updateCurrentWorkspace(currentLayout)
+                        namedSaveLatch.begin()
+                        workspaceManager.saveCurrentWorkspace(
+                            name = name,
+                            onSaved = { savedWorkspace ->
+                                try {
+                                    when (saveOwner.rebind(savedWorkspace.id)) {
+                                        NamedSaveRebindOutcome.REBOUND -> {
+                                            StatusMessageManager.showMessage("Space Saved")
+                                        }
+
+                                        NamedSaveRebindOutcome.NEVER_REGISTERED -> {
+                                            workspaceButtonLogger.debug(
+                                                LogCategory.WORKSPACE,
+                                                "Named save began without a registered window;" +
+                                                    " the rebind is dropped",
+                                                mapOf("workspaceId" to savedWorkspace.id),
+                                            )
+                                        }
+
+                                        NamedSaveRebindOutcome.DEREGISTERED -> {
+                                            workspaceButtonLogger.debug(
+                                                LogCategory.WORKSPACE,
+                                                "Named save finished after its window deregistered;" +
+                                                    " the rebind is dropped",
+                                                mapOf("workspaceId" to savedWorkspace.id),
+                                            )
+                                        }
+                                    }
+                                } finally {
+                                    // Do not replay an overlapping named save: it would mint a duplicate.
+                                    namedSaveLatch.settle {}
+                                }
+                            },
+                            onFailed = { failedName ->
+                                try {
+                                    StatusMessageManager.showMessage("Could not save \"$failedName\"")
+                                } finally {
+                                    namedSaveLatch.settle {}
+                                }
+                            },
+                        )
+                    }
+                } else {
+                    workspaceButtonLogger.debug(
+                        LogCategory.WORKSPACE,
+                        "Ignored overlapping named save press",
+                        mapOf("name" to name),
+                    )
                 }
                 showSaveDialog = false
             },
@@ -336,7 +451,9 @@ fun WorkspaceButton(
             onDismiss = { showOpenDialog = false },
             onOpen = { jsonString ->
                 workspaceManager.importWorkspace(jsonString)?.let { workspace ->
-                    workspaceManager.loadWorkspace(workspace)
+                    // Let the apply/switch callback claim the Space only after it proves that
+                    // the imported layout can build at least one declared tab. Claiming it here
+                    // would leave the manager pointing at an unapplied Space on refusal.
                     onOpenWorkspace(workspace)
                 }
                 showOpenDialog = false

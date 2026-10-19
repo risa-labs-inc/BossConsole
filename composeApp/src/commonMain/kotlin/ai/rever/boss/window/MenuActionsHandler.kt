@@ -82,6 +82,13 @@ object MenuActionsHandler {
     private val _browserDevToolsEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val browserDevToolsEvents: SharedFlow<String> = _browserDevToolsEvents.asSharedFlow()
 
+    private val _printBrowserEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
+    val printBrowserEvents: SharedFlow<String> = _printBrowserEvents.asSharedFlow()
+
+    fun triggerPrintBrowser(windowId: String) {
+        _printBrowserEvents.tryEmit(windowId)
+    }
+
     private val _zoomInEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val zoomInEvents: SharedFlow<String> = _zoomInEvents.asSharedFlow()
 
@@ -136,6 +143,12 @@ object MenuActionsHandler {
 
     private val _saveWorkspaceEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val saveWorkspaceEvents: SharedFlow<String> = _saveWorkspaceEvents.asSharedFlow()
+    private val _createSpaceEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
+    val createSpaceEvents: SharedFlow<String> = _createSpaceEvents.asSharedFlow()
+
+    fun triggerCreateSpace(windowId: String) {
+        _createSpaceEvents.tryEmit(windowId)
+    }
 
     private val _openCodebaseEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val openCodebaseEvents: SharedFlow<String> = _openCodebaseEvents.asSharedFlow()
@@ -738,11 +751,17 @@ object MenuActionsHandler {
     private val _reloadAllPluginsEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val reloadAllPluginsEvents: SharedFlow<String> = _reloadAllPluginsEvents.asSharedFlow()
 
-    private val _reloadPluginEvents = MutableSharedFlow<Pair<String, ai.rever.boss.plugin.api.PanelId>>(extraBufferCapacity = 10)
-    val reloadPluginEvents: SharedFlow<Pair<String, ai.rever.boss.plugin.api.PanelId>> = _reloadPluginEvents.asSharedFlow()
+    private val _reloadPluginEvents =
+        MutableSharedFlow<Pair<String, ai.rever.boss.plugin.api.PanelId>>(extraBufferCapacity = 10)
+    val reloadPluginEvents: SharedFlow<Pair<String, ai.rever.boss.plugin.api.PanelId>> =
+        _reloadPluginEvents
+            .asSharedFlow()
 
-    private val _checkPluginUpdatesEvents = MutableSharedFlow<Pair<String, ai.rever.boss.plugin.api.PanelId>>(extraBufferCapacity = 10)
-    val checkPluginUpdatesEvents: SharedFlow<Pair<String, ai.rever.boss.plugin.api.PanelId>> = _checkPluginUpdatesEvents.asSharedFlow()
+    private val _checkPluginUpdatesEvents =
+        MutableSharedFlow<Pair<String, ai.rever.boss.plugin.api.PanelId>>(extraBufferCapacity = 10)
+    val checkPluginUpdatesEvents: SharedFlow<Pair<String, ai.rever.boss.plugin.api.PanelId>> =
+        _checkPluginUpdatesEvents
+            .asSharedFlow()
 
     private val _installStoreVersionEvents =
         MutableSharedFlow<Pair<String, ai.rever.boss.plugin.api.PanelId>>(extraBufferCapacity = 10)

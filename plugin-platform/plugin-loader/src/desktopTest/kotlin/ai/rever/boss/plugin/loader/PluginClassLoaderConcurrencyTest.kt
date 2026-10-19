@@ -69,13 +69,16 @@ class PluginClassLoaderConcurrencyTest {
     fun `waiting for a parent class does not block an unrelated plugin class`() {
         val enteredParent = CountDownLatch(1)
         val releaseParent = CountDownLatch(1)
+        // A shared (kotlin.*) name, so the request really does reach the
+        // parent — non-shared names are refused before any delegation.
+        val sharedName = "kotlin.Unit"
         val parent =
             object : ClassLoader(hostLoader) {
                 override fun loadClass(
                     name: String,
                     resolve: Boolean,
                 ): Class<*> {
-                    if (name == ParentOnlyConcurrentType::class.java.name) {
+                    if (name == sharedName) {
                         enteredParent.countDown()
                         check(releaseParent.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
                     }
@@ -85,12 +88,12 @@ class PluginClassLoaderConcurrencyTest {
         pluginLoader(parent).use { loader ->
             val executor = Executors.newFixedThreadPool(2)
             try {
-                val waiting = executor.submit(Callable { loader.loadClass(ParentOnlyConcurrentType::class.java.name) })
+                val waiting = executor.submit(Callable { loader.loadClass(sharedName) })
                 assertTrue(enteredParent.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
                 val independent = executor.submit(Callable { loader.loadClass(ConcurrentPluginType::class.java.name) })
                 assertSame(loader, independent.get(TIMEOUT_SECONDS, TimeUnit.SECONDS).classLoader)
                 releaseParent.countDown()
-                assertSame(ParentOnlyConcurrentType::class.java, waiting.get(TIMEOUT_SECONDS, TimeUnit.SECONDS))
+                assertSame(Unit::class.java, waiting.get(TIMEOUT_SECONDS, TimeUnit.SECONDS))
             } finally {
                 releaseParent.countDown()
                 executor.shutdownNow()

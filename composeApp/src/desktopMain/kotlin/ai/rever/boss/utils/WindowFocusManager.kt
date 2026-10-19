@@ -233,15 +233,15 @@ internal class MacOSFullscreenTracker(
  * snapshot that JxBrowser callback threads can safely read.
  */
 internal class AwtWindowFocusTracker {
-    @Volatile
-    private var focusedWindowId: String? = null
+    private val focusedWindowId = MutableStateFlow<String?>(null)
+    val activeWindowFlow: StateFlow<String?> = focusedWindowId.asStateFlow()
 
     fun snapshotRegistration(
         windowId: String,
         isFocused: Boolean,
     ) {
         if (isFocused) {
-            focusedWindowId = windowId
+            focusedWindowId.value = windowId
         }
     }
 
@@ -251,24 +251,24 @@ internal class AwtWindowFocusTracker {
     ): WindowAdapter =
         object : WindowAdapter() {
             override fun windowGainedFocus(e: WindowEvent?) {
-                focusedWindowId = windowId
+                focusedWindowId.value = windowId
                 onFocusGained()
             }
 
             override fun windowLostFocus(e: WindowEvent?) {
-                if (focusedWindowId == windowId) {
-                    focusedWindowId = null
+                if (focusedWindowId.value == windowId) {
+                    focusedWindowId.value = null
                 }
             }
         }
 
     fun onUnregistered(windowId: String) {
-        if (focusedWindowId == windowId) {
-            focusedWindowId = null
+        if (focusedWindowId.value == windowId) {
+            focusedWindowId.value = null
         }
     }
 
-    fun isFocused(windowId: String): Boolean = focusedWindowId == windowId
+    fun isFocused(windowId: String): Boolean = focusedWindowId.value == windowId
 }
 
 internal data class RegisteredWindowFullscreenState(
@@ -391,6 +391,8 @@ actual object WindowFocusManager {
     // StateFlow to observe focus changes (for elegant focus restoration)
     private val _focusedWindowFlow = MutableStateFlow<String?>(null)
     actual val focusedWindowFlow: StateFlow<String?> = _focusedWindowFlow.asStateFlow()
+
+    actual val activeWindowFlow: StateFlow<String?> get() = awtFocusTracker.activeWindowFlow
 
     /**
      * Registers an application window with focus tracking. Must run on the EDT.

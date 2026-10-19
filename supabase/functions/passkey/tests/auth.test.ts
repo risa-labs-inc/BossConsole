@@ -5,6 +5,7 @@
 import { assertEquals, assertExists } from "jsr:@std/assert"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { generateAuthChallenge, completeAuthentication, checkAuthStatus } from "../services/auth.ts"
+import { maskUserId } from "../utils/logging.ts"
 import { createMockSupabaseClient, mockPasskey, mockChallenge, mockAuthenticationCredential } from "./helpers/mocks.ts"
 import { buildAuthenticatorData, encodePayload, TEST_RP_ID } from "./helpers/webauthn.ts"
 
@@ -42,7 +43,7 @@ Deno.test("generateAuthChallenge - should generate challenge for existing user",
   }
 })
 
-Deno.test("generateAuthChallenge - should return error for non-existent user", async () => {
+Deno.test("generateAuthChallenge - should return an inert challenge for a non-existent user", async () => {
   const mockClient = createMockSupabaseClient()
 
   // Mock user not found via RPC function (returns empty array)
@@ -53,19 +54,22 @@ Deno.test("generateAuthChallenge - should return error for non-existent user", a
 
   const result = await generateAuthChallenge(mockClient as unknown as SupabaseClient, 'nonexistent@example.com')
 
-  assertEquals(result.success, false)
-  if (!result.success) {
-    assertEquals(result.error, 'User not found')
+  // Enumeration-safe (BossConsole#768): unknown email must be
+  // indistinguishable from a genuine challenge by status, shape, or
+  // content - an unstored inert challenge with an empty allow list.
+  assertEquals(result.success, true)
+  if (result.success) {
+    assertExists(result.challenge)
+    assertEquals(result.allowCredentials, [])
   }
 })
 
-Deno.test("generateAuthChallenge - should return error when user has no passkeys", async () => {
+Deno.test("generateAuthChallenge - should return an inert challenge when user has no passkeys", async () => {
   const mockClient = createMockSupabaseClient()
 
   // Mock user found via RPC function
   mockClient.mockResponse('rpc.find_user_by_email', {
-    data: [{ id: 'user-456', email: 'test@example.com' }],
-    error: null
+    data: [{ id: 'user-456', email: 'test@example.com' }], error: null
   }, 'call')
 
   // Mock no passkeys (select operation)
@@ -76,9 +80,12 @@ Deno.test("generateAuthChallenge - should return error when user has no passkeys
 
   const result = await generateAuthChallenge(mockClient as unknown as SupabaseClient, 'test@example.com')
 
-  assertEquals(result.success, false)
-  if (!result.success) {
-    assertEquals(result.error, 'No passkeys found for user')
+  // Enumeration-safe (BossConsole#768): known email without passkeys must
+  // be byte-for-byte indistinguishable from the unknown-email case.
+  assertEquals(result.success, true)
+  if (result.success) {
+    assertExists(result.challenge)
+    assertEquals(result.allowCredentials, [])
   }
 })
 
@@ -312,5 +319,57 @@ Deno.test("checkAuthStatus - should return expired for non-existent session", as
   assertEquals(result.status, 'expired')
   if (result.status === 'expired') {
     assertEquals(result.message, 'Session not found or expired')
+  }
+})
+
+Deno.test("generateAuthChallenge - logs carry no raw email or user id", async () => {
+  const mockClient = createMockSupabaseClient()
+
+  mockClient.mockResponse('rpc.find_user_by_email', {
+    data: [{ id: 'user-456', email: 'victim@example.com' }],
+    error: null
+  }, 'call')
+  mockClient.mockResponse('user_passkeys', {
+    data: [mockPasskey],
+    error: null
+  }, 'select')
+  mockClient.mockResponse('passkey_challenges', {
+    data: [{ id: 'challenge-789' }],
+    error: null
+  }, 'insert')
+
+  const logged: string[] = []
+  const originals = {
+    log: console.log,
+    error: console.error,
+    warn: console.warn,
+    info: console.info,
+    debug: console.debug
+  }
+  const capture = (...args: unknown[]) => {
+    logged.push(args.map(arg => arg instanceof Error ? `${arg.message}\n${arg.stack ?? ''}` : Deno.inspect(arg)).join(' '))
+  }
+  console.log = capture
+  console.error = capture
+  console.warn = capture
+  console.info = capture
+  console.debug = capture
+  try {
+    const result = await generateAuthChallenge(mockClient as unknown as SupabaseClient, 'victim@example.com', 'session-xyz')
+    assertEquals(result.success, true)
+  } finally {
+    console.log = originals.log
+    console.error = originals.error
+    console.warn = originals.warn
+    console.info = originals.info
+    console.debug = originals.debug
+  }
+
+  assertExists(logged.find(line => line.includes('v***@example.com')))
+  assertExists(logged.find(line => line.includes(maskUserId('user-456'))))
+  for (const line of logged) {
+    assertEquals(line.includes('victim@example.com'), false, `log leaked raw email: ${line}`)
+    assertEquals(line.includes('user-456'), false, `log leaked raw user id: ${line}`)
+    assertEquals(line.includes('session-xyz'), false, `log leaked raw session id: ${line}`)
   }
 })

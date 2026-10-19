@@ -1,10 +1,10 @@
-import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
-import type { PluginStoreContext } from "../types/context.ts"
+import { createRoute, z } from "@hono/zod-openapi"
 import { ErrorResponseSchema } from "../types/schemas.ts"
 import { getUserFromToken } from "../utils/auth.ts"
 import { deleteJar } from "../services/storage.ts"
+import { newRouter } from "../utils/router.ts"
 
-const admin = new OpenAPIHono<{ Variables: PluginStoreContext }>()
+const admin = newRouter()
 
 // ============================================================================
 // Schemas

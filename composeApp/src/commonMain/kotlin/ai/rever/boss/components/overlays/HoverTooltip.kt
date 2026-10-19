@@ -19,12 +19,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import kotlinx.coroutines.delay
 
@@ -61,14 +63,6 @@ fun HoverTooltipBox(
     val isHovered by interactionSource.collectIsHoveredAsState()
     var showTooltip by remember { mutableStateOf(false) }
 
-    // Non-observable holders, matching BossTabButton: writing these from onGloballyPositioned
-    // as snapshot state would remeasure during the layout phase. The cost is that an open
-    // tooltip does not follow an anchor that moves under it, which for a hover tooltip is
-    // nothing - the pointer moving is what moved it.
-    val anchorPosition = remember { floatArrayOf(0f, 0f) }
-    val anchorSize = remember { intArrayOf(0, 0) }
-    val tooltipSize = remember { intArrayOf(0, 0) }
-
     LaunchedEffect(isHovered, text) {
         if (!isHovered || text.isBlank()) {
             showTooltip = false
@@ -78,60 +72,43 @@ fun HoverTooltipBox(
         showTooltip = isHovered
     }
 
-    if (showTooltip) {
-        val heavyweightTooltip = OverlayConfig.heavyweightTooltip
-        if (OverlayConfig.useHeavyweightPopups && heavyweightTooltip != null) {
-            DisposableEffect(text) {
-                heavyweightTooltip(text)
-                onDispose { OverlayConfig.hideHeavyweightTooltip?.invoke() }
-            }
-        } else {
-            Popup(
-                alignment = Alignment.TopStart,
-                offset = tooltipOffset(placement, anchorPosition, anchorSize, tooltipSize),
-                properties = PopupProperties(focusable = false, dismissOnClickOutside = false),
-            ) {
-                TooltipCard(text = text, onMeasured = { w, h ->
-                    tooltipSize[0] = w
-                    tooltipSize[1] = h
-                })
+    Box(
+        modifier = modifier.hoverable(interactionSource),
+        contentAlignment = contentAlignment,
+    ) {
+        content()
+        if (showTooltip) {
+            val heavyweightTooltip = OverlayConfig.heavyweightTooltip
+            if (OverlayConfig.useHeavyweightPopups && heavyweightTooltip != null) {
+                DisposableEffect(text) {
+                    heavyweightTooltip(text)
+                    onDispose { OverlayConfig.hideHeavyweightTooltip?.invoke() }
+                }
+            } else {
+                // Composed INSIDE the anchor Box, so the popup's anchor bounds are this Box - and
+                // placed by a PopupPositionProvider, which Compose calls with the popup's MEASURED
+                // size. The previous version computed an offset in composition from sizes recorded
+                // by onGloballyPositioned: on the first frame the card's size was still 0, and the
+                // window-space anchor position was applied as an offset relative to the caller's
+                // layout, so the card could open on top of its own anchor. Covering the anchor
+                // ends the hover, which hides the card, which restores the hover - the tooltip
+                // blinked on and off for as long as the pointer rested there.
+                val provider = remember(placement) { TooltipPositionProvider(placement) }
+                Popup(
+                    popupPositionProvider = provider,
+                    properties = PopupProperties(focusable = false, dismissOnClickOutside = false),
+                ) {
+                    TooltipCard(text = text)
+                }
             }
         }
     }
-
-    Box(
-        modifier =
-            modifier
-                .hoverable(interactionSource)
-                .onGloballyPositioned { coordinates ->
-                    val pos = coordinates.positionInWindow()
-                    anchorPosition[0] = pos.x
-                    anchorPosition[1] = pos.y
-                    anchorSize[0] = coordinates.size.width
-                    anchorSize[1] = coordinates.size.height
-                },
-        contentAlignment = contentAlignment,
-        content = content,
-    )
 }
 
-/**
- * The tooltip card itself.
- *
- * [onMeasured] reports its size back so the offset can centre it against the anchor. It has to be
- * measured rather than estimated, because that is what decides where the card goes and the text
- * inside it is arbitrary.
- */
+/** The tooltip card itself. */
 @Composable
-private fun TooltipCard(
-    text: String,
-    onMeasured: (Int, Int) -> Unit,
-) {
+private fun TooltipCard(text: String) {
     Surface(
-        modifier =
-            Modifier.onGloballyPositioned { coordinates ->
-                onMeasured(coordinates.size.width, coordinates.size.height)
-            },
         color = BossTheme.colors.raised,
         shape = RoundedCornerShape(BossTheme.radius.input),
     ) {
@@ -156,24 +133,44 @@ enum class TooltipPlacement {
 /** Gap between the anchor and the tooltip card. */
 private const val TOOLTIP_GAP_PX = 6
 
-private fun tooltipOffset(
+private class TooltipPositionProvider(
+    private val placement: TooltipPlacement,
+) : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize,
+    ): IntOffset = tooltipPosition(placement, anchorBounds, windowSize, popupContentSize)
+}
+
+/**
+ * Where a tooltip card of [popup] size goes against [anchor], in window coordinates, kept inside
+ * [window]. The preferred side is used when the card fits there; otherwise it flips (TOP to below,
+ * END to the leading side), because overlapping the anchor is what made the tooltip blink (see
+ * the call site). When neither side fits, the final clamp keeps the card visible, and visible
+ * wins over not overlapping: a card larger than the space around its anchor can then cover it.
+ */
+internal fun tooltipPosition(
     placement: TooltipPlacement,
-    anchorPosition: FloatArray,
-    anchorSize: IntArray,
-    tooltipSize: IntArray,
-): IntOffset =
-    when (placement) {
+    anchor: IntRect,
+    window: IntSize,
+    popup: IntSize,
+): IntOffset {
+    fun clampX(x: Int) = x.coerceIn(0, (window.width - popup.width).coerceAtLeast(0))
+
+    fun clampY(y: Int) = y.coerceIn(0, (window.height - popup.height).coerceAtLeast(0))
+    return when (placement) {
         TooltipPlacement.TOP -> {
-            IntOffset(
-                x = anchorPosition[0].toInt() + (anchorSize[0] - tooltipSize[0]) / 2,
-                y = anchorPosition[1].toInt() - tooltipSize[1] - TOOLTIP_GAP_PX,
-            )
+            val above = anchor.top - popup.height - TOOLTIP_GAP_PX
+            val y = if (above >= 0) above else anchor.bottom + TOOLTIP_GAP_PX
+            IntOffset(clampX(anchor.left + (anchor.width - popup.width) / 2), clampY(y))
         }
 
         TooltipPlacement.END -> {
-            IntOffset(
-                x = anchorPosition[0].toInt() + anchorSize[0] + TOOLTIP_GAP_PX,
-                y = anchorPosition[1].toInt() + (anchorSize[1] - tooltipSize[1]) / 2,
-            )
+            val after = anchor.right + TOOLTIP_GAP_PX
+            val x = if (after + popup.width <= window.width) after else anchor.left - popup.width - TOOLTIP_GAP_PX
+            IntOffset(clampX(x), clampY(anchor.top + (anchor.height - popup.height) / 2))
         }
     }
+}

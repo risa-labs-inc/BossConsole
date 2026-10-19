@@ -1,5 +1,6 @@
 package ai.rever.boss.config
 
+import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.sha256Of
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
@@ -143,6 +144,35 @@ class ChromiumAutoDownloaderTest {
         assertTrue(inspect { error("the one-shot repair must not repeat") })
     }
 
+    @Test
+    fun `a quiet inspection writes nothing to the log`() {
+        // The status bar asks this every few seconds. An engine that still declares browser types
+        // after its one repair is kept, and startup warns about it - a status query must not.
+        target.mkdirs()
+        File(target, "executable.name").writeText("BOSS")
+        File(target, "version.txt").writeText("9.2.0")
+        val plist = File(target, "BOSS.app/Contents/Info.plist")
+        plist.parentFile.mkdirs()
+        plist.writeText("<plist><dict><key>CFBundleURLTypes</key><array/></dict></plist>")
+
+        fun inspect(quiet: Boolean) =
+            ChromiumAutoDownloader.chromiumInstalledAt(
+                dir = target.toPath(),
+                requiredVersion = "9.2.0",
+                isMac = true,
+                repairAttempted = { true },
+                recordRepair = if (quiet) ChromiumAutoDownloader.readOnlyInspection else ({}),
+            )
+
+        fun logged() = BossLogger.getRecentLogs(limit = 1000).count { it.component == "ChromiumAutoDownloader" }
+
+        val before = logged()
+        assertTrue(inspect(quiet = true))
+        assertEquals(before, logged(), "a quiet inspection must not log")
+        assertTrue(inspect(quiet = false))
+        assertEquals(before + 1, logged(), "startup's own inspection still warns, so the count above is real")
+    }
+
     // ---- installFromCandidates: source fallback + checksum verification ----
 
     private fun candidate(
@@ -162,9 +192,14 @@ class ChromiumAutoDownloaderTest {
         runBlocking {
             val attempted = mutableListOf<String>()
 
+            val zipSha = sha256Of(File(root, "sha-src-zip").apply { writeText("zip-bytes") })
             val result =
                 ChromiumAutoDownloader.installFromCandidates(
-                    candidates = listOf(candidate("supabase", "https://supabase/a.zip"), candidate("github", "https://github/a.zip")),
+                    candidates =
+                        listOf(
+                            candidate("supabase", "https://supabase/a.zip", sha = zipSha),
+                            candidate("github", "https://github/a.zip", sha = zipSha),
+                        ),
                     version = "9.2.0",
                     targetDir = target.toPath(),
                     staged = false,
@@ -193,7 +228,9 @@ class ChromiumAutoDownloaderTest {
                     candidates =
                         listOf(
                             candidate("supabase", "https://supabase/a.zip", sha = goodSha),
-                            candidate("github", "https://github/a.zip"), // no hash available
+                            // The integrity gate refuses hashless candidates,
+                            // so the backup now pins the bytes it serves too.
+                            candidate("github", "https://github/a.zip", sha = goodSha),
                         ),
                     version = "9.2.0",
                     targetDir = target.toPath(),
@@ -242,9 +279,10 @@ class ChromiumAutoDownloaderTest {
     @Test
     fun `staged install writes the commit marker last`() =
         runBlocking {
+            val zipSha = sha256Of(File(root, "sha-src-zip").apply { writeText("zip-bytes") })
             val result =
                 ChromiumAutoDownloader.installFromCandidates(
-                    candidates = listOf(candidate("github", "https://github/a.zip")),
+                    candidates = listOf(candidate("github", "https://github/a.zip", sha = zipSha)),
                     version = "9.2.0",
                     targetDir = pending.toPath(),
                     staged = true,
@@ -261,10 +299,15 @@ class ChromiumAutoDownloaderTest {
     fun `all candidates failing returns failure and reports the error`() =
         runBlocking {
             var reportedError: String? = null
+            val goodSha = sha256Of(File(root, "sha-src-error").apply { writeText("zip-bytes") })
 
             val result =
                 ChromiumAutoDownloader.installFromCandidates(
-                    candidates = listOf(candidate("supabase", "https://supabase/a.zip"), candidate("github", "https://github/a.zip")),
+                    candidates =
+                        listOf(
+                            candidate("supabase", "https://supabase/a.zip", sha = goodSha),
+                            candidate("github", "https://github/a.zip", sha = goodSha),
+                        ),
                     version = "9.2.0",
                     targetDir = target.toPath(),
                     staged = false,
@@ -277,4 +320,115 @@ class ChromiumAutoDownloaderTest {
             assertEquals("network down", reportedError)
             assertFalse(File(target, "version.txt").exists())
         }
+
+    // ---- atomic install: the previous engine survives a failed reinstall ----
+
+    @Test
+    fun `a failed extraction restores the previous engine instead of leaving none`() =
+        runBlocking {
+            makeExistingTarget("9.1.2")
+            val zipSha = sha256Of(File(root, "sha-src-partial").apply { writeText("partial-zip") })
+
+            val result =
+                ChromiumAutoDownloader.installFromCandidates(
+                    candidates = listOf(candidate("supabase", "https://supabase/a.zip", sha = zipSha)),
+                    version = "9.2.0",
+                    targetDir = target.toPath(),
+                    staged = false,
+                    onProgress = {},
+                    fetch = { _, dest -> dest.toFile().writeText("partial-zip") },
+                    extract = { _, _ -> throw IllegalStateException("disk full mid-extract") },
+                )
+
+            assertTrue(result.isFailure)
+            // The old engine is intact at the original path - not deleted up front.
+            assertEquals("old-engine", File(target, "payload.bin").readText())
+            assertEquals("9.1.2", File(target, "version.txt").readText())
+            // No leftover swap siblings from the failed attempt.
+            assertFalse(backup.exists())
+            assertFalse(File(root, "boss-chromium.new").exists())
+        }
+
+    @Test
+    fun `a failed verification rolls the swap back to the previous engine`() =
+        runBlocking {
+            makeExistingTarget("9.1.2")
+            val zipSha = sha256Of(File(root, "sha-src-verify").apply { writeText("zip-bytes") })
+
+            val result =
+                ChromiumAutoDownloader.installFromCandidates(
+                    candidates = listOf(candidate("supabase", "https://supabase/a.zip", sha = zipSha)),
+                    version = "9.2.0",
+                    targetDir = target.toPath(),
+                    staged = false,
+                    onProgress = {},
+                    fetch = { _, dest -> dest.toFile().writeText("zip-bytes") },
+                    // "Extract" successfully but omit executable.name - the
+                    // corrupted-archive verification must trigger.
+                    extract = { _, dest -> dest.toFile().mkdirs() },
+                )
+
+            assertTrue(result.isFailure)
+            assertEquals("old-engine", File(target, "payload.bin").readText())
+            assertEquals("9.1.2", File(target, "version.txt").readText())
+            assertFalse(backup.exists())
+        }
+
+    @Test
+    fun `a successful reinstall promotes the new engine and removes the backup`() =
+        runBlocking {
+            makeExistingTarget("9.1.2")
+            val zipSha = sha256Of(File(root, "sha-src-reinstall").apply { writeText("zip-bytes") })
+
+            val result =
+                ChromiumAutoDownloader.installFromCandidates(
+                    candidates = listOf(candidate("supabase", "https://supabase/a.zip", sha = zipSha)),
+                    version = "9.2.0",
+                    targetDir = target.toPath(),
+                    staged = false,
+                    onProgress = {},
+                    fetch = { _, dest -> dest.toFile().writeText("zip-bytes") },
+                    extract = fakeExtract,
+                )
+
+            assertTrue(result.isSuccess)
+            assertEquals("9.2.0", File(target, "version.txt").readText())
+            // Old engine fully gone, no stray swap siblings.
+            assertEquals("BOSS", File(target, "executable.name").readText())
+            assertFalse(backup.exists())
+            assertFalse(File(root, "boss-chromium.new").exists())
+        }
+
+    // ---- startup recovery for an interrupted direct-path swap (#910 follow-up) ----
+
+    @Test
+    fun `promotePendingInstall restores the engine from an interrupted-swap backup when the target is missing`() {
+        // The crash window: the direct-path swap moved target aside to the
+        // .old backup, then the process died before promoting the .new dir.
+        makeExistingTarget("9.1.2")
+        target.renameTo(backup)
+        assertFalse(target.exists())
+
+        promote()
+
+        // The only surviving engine is back at its home path, contents intact.
+        assertEquals("old-engine", File(target, "payload.bin").readText())
+        assertEquals("9.1.2", File(target, "version.txt").readText())
+        assertFalse(backup.exists())
+    }
+
+    @Test
+    fun `promotePendingInstall reclaims a crashed extraction sibling before staging work`() {
+        makeExistingTarget("9.1.2")
+        val crashedExtract = File(root, "boss-chromium.new").apply { mkdirs() }
+        File(crashedExtract, "executable.name").writeText("STALE")
+        makeCompleteStaging("9.2.0")
+
+        promote()
+
+        // The stale .new sibling never leaks into the next launch; the
+        // staged install still promotes on top of the live target.
+        assertFalse(crashedExtract.exists())
+        assertEquals("9.2.0", File(target, "version.txt").readText())
+    }
 }

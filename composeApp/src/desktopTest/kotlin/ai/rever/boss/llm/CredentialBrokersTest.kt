@@ -68,12 +68,55 @@ class CredentialBrokersTest {
         // The override exists so a dev build can point at staging. It comes from the
         // environment, which is the host's, not from anything a plugin supplies.
         val broker = assertNotNull(CredentialBrokers.find(CredentialBrokers.RISA_GLM))
-        val fromEnv = System.getenv("RISA_LLM_TOKEN_URL")
 
-        if (fromEnv.isNullOrBlank()) {
-            assertEquals("https://llm.risa.inc/auth/token", broker.tokenUrl)
-        } else {
-            assertEquals(fromEnv, broker.tokenUrl)
+        assertEquals(
+            CredentialBrokers.resolveRisaTokenUrl(System.getenv("RISA_LLM_TOKEN_URL")),
+            broker.tokenUrl,
+        )
+    }
+
+    @Test
+    fun `an unset or blank override resolves to the built-in endpoint`() {
+        assertEquals(PRODUCTION_TOKEN_URL, CredentialBrokers.resolveRisaTokenUrl(null))
+        assertEquals(PRODUCTION_TOKEN_URL, CredentialBrokers.resolveRisaTokenUrl(""))
+        assertEquals(PRODUCTION_TOKEN_URL, CredentialBrokers.resolveRisaTokenUrl("   "))
+    }
+
+    @Test
+    fun `an https override under risa inc is accepted`() {
+        // Staging on a subdomain is the whole reason the env var exists.
+        val staging = "https://staging-llm.risa.inc/auth/token"
+        assertEquals(staging, CredentialBrokers.resolveRisaTokenUrl(staging))
+        assertEquals(
+            "https://llm.risa.inc:8443/auth/token",
+            CredentialBrokers.resolveRisaTokenUrl("https://llm.risa.inc:8443/auth/token"),
+        )
+    }
+
+    @Test
+    fun `an override that does not name a risa inc https host falls back`() {
+        // Whatever is returned gets Authorization: Bearer <live session token>, so every
+        // one of these must resolve to the built-in endpoint, not the attacker-chosen URL.
+        val rejected =
+            listOf(
+                "http://llm.risa.inc/auth/token", // right host, no TLS
+                "https://evil.example/auth/token",
+                "https://llm.risa.inc.evil.example/auth/token", // suffix lookalike
+                "http://127.0.0.1:9/x",
+                "https://user@evil.example/", // userinfo must not smuggle a host
+                "not a url",
+                "llm.risa.inc/auth/token", // no scheme
+            )
+        rejected.forEach { override ->
+            assertEquals(
+                PRODUCTION_TOKEN_URL,
+                CredentialBrokers.resolveRisaTokenUrl(override),
+                "override was honored: $override",
+            )
         }
+    }
+
+    private companion object {
+        const val PRODUCTION_TOKEN_URL = "https://llm.risa.inc/auth/token"
     }
 }

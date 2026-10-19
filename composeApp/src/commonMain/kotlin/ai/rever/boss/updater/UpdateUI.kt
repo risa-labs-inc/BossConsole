@@ -3,6 +3,7 @@ package ai.rever.boss.updater
 import ai.rever.boss.components.dialogs.DownloadCenterDialog
 import ai.rever.boss.layout.TRAFFIC_LIGHT_HEIGHT
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.utils.SystemUtils
 import ai.rever.boss.utils.Version
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -406,6 +407,7 @@ fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinat
     val updateState by updateCoordinator.updateState.collectAsState()
     val lastCheckTime by updateCoordinator.lastCheckTime.collectAsState()
     val currentVersion = updateCoordinator.currentVersion()
+    val automaticUpdates by UpdateSettings.automaticUpdates.collectAsState()
     val coroutineScope = rememberCoroutineScope()
 
     // Version selection state
@@ -480,6 +482,81 @@ fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinat
                     color = BossTheme.colors.textPrimary,
                 )
                 Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Automatic Updates", fontSize = 14.sp, color = BossTheme.colors.textPrimary)
+                        Text(
+                            if (SystemUtils.isMacOS) {
+                                "Download in the background and install after Quit or closing all windows. " +
+                                    "Closing windows relaunches in the Dock; Quit leaves BOSS closed."
+                            } else {
+                                "Download in the background and install after you quit. Open BOSS again manually."
+                            },
+                            fontSize = 12.sp,
+                            color = BossTheme.colors.textSecondary,
+                        )
+                    }
+                    Switch(
+                        checked = automaticUpdates,
+                        onCheckedChange = { enabled ->
+                            UpdateSettings.autoUpdateEnabled = enabled
+                            coroutineScope.launch {
+                                UpdateSettingsManager.saveSettings()
+                                updateCoordinator.setPeriodicChecksEnabled(UpdateSettings.autoCheckEnabled || enabled)
+                            }
+                        },
+                        colors =
+                            SwitchDefaults.colors(
+                                checkedThumbColor = BossTheme.colors.signal,
+                                checkedTrackColor = BossTheme.colors.signal.copy(alpha = 0.5f),
+                            ),
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+
+                val automaticPluginUpdates by UpdateSettings.automaticPluginUpdates.collectAsState()
+                val pluginUpdateStatus by ai.rever.boss.components.plugin.PluginUpdateBridge
+                    .automaticUpdateStatus
+                    .collectAsState()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Automatic Plugin Updates", fontSize = 14.sp, color = BossTheme.colors.textPrimary)
+                        Text(
+                            "Install compatible updates after plugin views close. " +
+                                "Updates that need a restart wait for your next manual start.",
+                            fontSize = 12.sp,
+                            color = BossTheme.colors.textSecondary,
+                        )
+                    }
+                    Switch(
+                        checked = automaticPluginUpdates,
+                        onCheckedChange = { enabled ->
+                            UpdateSettings.autoPluginUpdatesEnabled = enabled
+                            UpdatePreferenceWriter.instance.requestSave()
+                        },
+                        colors =
+                            SwitchDefaults.colors(
+                                checkedThumbColor = BossTheme.colors.signal,
+                                checkedTrackColor = BossTheme.colors.signal.copy(alpha = 0.5f),
+                            ),
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (automaticPluginUpdates) {
+                    Text(pluginUpdateStatus, fontSize = 12.sp, color = BossTheme.colors.textSecondary)
+                    PluginAutomaticUpdatePreferences()
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
 
                 // Automatic Update Check Toggle
                 var autoCheckEnabled by remember { mutableStateOf(UpdateSettings.autoCheckEnabled) }
@@ -726,6 +803,19 @@ fun UpdateSettingsSection(updateCoordinator: UpdateCoordinator = UpdateCoordinat
                                 fontSize = 14.sp,
                             )
                         }
+                    }
+
+                    is UpdateState.InstallOnNextRestart -> {
+                        Text(
+                            if (SystemUtils.isMacOS && automaticUpdates) {
+                                "Update ready. It will install after Quit or closing all windows. " +
+                                    "Closing windows relaunches in the Dock."
+                            } else {
+                                "Update ready. It will install after you quit BOSS. Open BOSS again manually."
+                            },
+                            color = BossTheme.colors.ok,
+                            fontSize = 14.sp,
+                        )
                     }
 
                     is UpdateState.RestartRequired -> {

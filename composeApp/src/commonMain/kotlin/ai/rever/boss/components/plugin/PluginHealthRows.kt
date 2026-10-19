@@ -84,7 +84,7 @@ private fun infoRow(
         }
 
         info.errorMessage != null || info.state == PluginState.ERROR -> {
-            attentionRow(info, "The plugin reported a manager error.").copy(
+            attentionRow(info, info.dependencyVersionError ?: "The plugin reported a manager error.").copy(
                 action = reloadActionFor(input.pluginId, info),
             )
         }
@@ -173,7 +173,7 @@ private fun reloadActionFor(
     info: DynamicPluginInfo,
 ): PluginHealthAction? =
     if (
-        info.state == PluginState.LOADED &&
+        (info.state == PluginState.LOADED || info.dependencyVersionError != null) &&
         !HotReloadPolicy.requiresRestartInsteadOfHotReload(pluginId)
     ) {
         PluginHealthAction.RELOAD

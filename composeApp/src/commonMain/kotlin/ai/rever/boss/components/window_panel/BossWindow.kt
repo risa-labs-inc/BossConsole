@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.Flow
 import kotlin.math.roundToInt
 
 @Composable
@@ -52,8 +53,13 @@ fun BossDraggableComponent.BossWindow(
     verticalBarTopInset: Dp = 0.dp,
     /** Reports whether the hover-revealed bar is on screen. See [SplitViewPanel]. */
     onDrawerVisibleChange: (Boolean) -> Unit = {},
+    onSidebarRevealProgressChange: (Float) -> Unit = {},
     /** See `SplitViewPanel.onBarRailedChange`. */
     onBarRailedChange: (Boolean) -> Unit = {},
+    /** A header toggle replaces the collapsed rail when supplied. Scoped to this window. */
+    sidebarToggleRequests: Flow<Unit>? = null,
+    onSidebarLeadingChange: (Float) -> Unit = {},
+    sidebarExtendsIntoTitleBar: Boolean = true,
     /**
      * Clearance at the top of an open LEFT plugin panel, for the macOS traffic lights.
      *
@@ -186,7 +192,11 @@ fun BossDraggableComponent.BossWindow(
                         verticalBarRailActions = verticalBarRailActions,
                         verticalBarTopInset = verticalBarTopInset,
                         onDrawerVisibleChange = onDrawerVisibleChange,
+                        onSidebarRevealProgressChange = onSidebarRevealProgressChange,
                         onBarRailedChange = onBarRailedChange,
+                        sidebarToggleRequests = sidebarToggleRequests,
+                        onSidebarLeadingChange = onSidebarLeadingChange,
+                        sidebarExtendsIntoTitleBar = sidebarExtendsIntoTitleBar,
                     )
                     DragTargetHighlight()
                 }

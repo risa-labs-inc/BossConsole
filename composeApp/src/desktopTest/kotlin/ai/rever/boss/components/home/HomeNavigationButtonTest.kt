@@ -4,7 +4,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import org.junit.Rule
 import org.junit.Test
@@ -15,7 +14,7 @@ class HomeNavigationButtonTest {
     val rule = createComposeRule()
 
     @Test
-    fun `expanded Home activates and exposes selected state`() {
+    fun `Home favorite activates and exposes selected state`() {
         val selected = mutableStateOf(false)
         var clicks = 0
         rule.setContent {
@@ -24,10 +23,10 @@ class HomeNavigationButtonTest {
                 selected.value = true
             }
         }
-        rule.onNodeWithText("Home").performClick()
+        rule.onNodeWithContentDescription("Home").performClick()
         rule.waitForIdle()
         assertEquals(1, clicks)
-        rule.onNodeWithText("Home").assertIsSelected()
+        rule.onNodeWithContentDescription("Home").assertIsSelected()
     }
 
     @Test

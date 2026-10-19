@@ -8,10 +8,14 @@ import kotlin.test.assertTrue
 
 class IpcVersionTest {
     @Test
-    fun `authenticated runtime minimum refuses pre-authentication hosts`() {
-        assertEquals("1.2.0", IpcVersion.CURRENT)
-        assertTrue(IpcVersion.isCompatible("1.2.0", "1.1.0") is IpcVersion.CompatResult.Incompatible)
-        assertEquals(IpcVersion.CompatResult.Compatible, IpcVersion.isCompatible("1.1.0", "1.2.0"))
+    fun `current IPC version is 1_5_0`() {
+        assertEquals("1.5.0", IpcVersion.CURRENT)
+    }
+
+    @Test
+    fun `newer runtime minimum refuses older host versions`() {
+        assertTrue(IpcVersion.isCompatible("1.5.0", "1.4.0") is IpcVersion.CompatResult.Incompatible)
+        assertEquals(IpcVersion.CompatResult.Compatible, IpcVersion.isCompatible("1.4.0", "1.5.0"))
     }
 
     @Test

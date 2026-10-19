@@ -1,13 +1,18 @@
 package ai.rever.boss.performance
 
 import ai.rever.boss.plugin.pathutils.BossDirectories
+import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
+import ai.rever.boss.utils.logging.decodeFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -31,6 +36,11 @@ actual object PerformanceSettingsManager {
     private val _currentSettings = MutableStateFlow(PerformanceSettings())
     actual val currentSettings: StateFlow<PerformanceSettings> = _currentSettings.asStateFlow()
 
+    // Serializes writes so overlapping saves persist in order, freshest last. The mutex alone
+    // only orders them; atomicWriteText (temp file then atomic rename) is what makes each write
+    // crash-safe, so a reader never sees a torn file and a crash mid-write cannot truncate it.
+    private val saveMutex = Mutex()
+
     init {
         settingsFile.parentFile?.mkdirs()
         loadSettingsSync()
@@ -46,24 +56,38 @@ actual object PerformanceSettingsManager {
             } else {
                 _currentSettings.value = PerformanceSettings()
             }
+        } catch (e: SerializationException) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Failed to load performance settings - using defaults",
+                decodeFailure(e),
+            )
+            _currentSettings.value = PerformanceSettings()
         } catch (e: Exception) {
             logger.warn(LogCategory.SYSTEM, "Failed to load performance settings - using defaults", error = e)
             _currentSettings.value = PerformanceSettings()
         }
     }
 
+    internal fun reloadForTest() {
+        loadSettingsSync()
+    }
+
     actual suspend fun saveSettings() =
         withContext(Dispatchers.IO) {
-            try {
-                val content = json.encodeToString(PerformanceSettings.serializer(), _currentSettings.value)
-                settingsFile.writeText(content)
-            } catch (e: Exception) {
-                // Settings save failed - not critical, will use in-memory settings
-                logger.warn(
-                    LogCategory.SYSTEM,
-                    "Failed to persist performance settings - keeping in-memory only",
-                    error = e,
-                )
+            saveMutex.withLock {
+                try {
+                    // Encode inside the lock so the last writer persists the freshest state.
+                    val content = json.encodeToString(PerformanceSettings.serializer(), _currentSettings.value)
+                    settingsFile.atomicWriteText(content)
+                } catch (e: Exception) {
+                    // Settings save failed - not critical, will use in-memory settings
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Failed to persist performance settings - keeping in-memory only",
+                        error = e,
+                    )
+                }
             }
         }
 

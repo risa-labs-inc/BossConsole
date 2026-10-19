@@ -5,8 +5,10 @@ import ai.rever.boss.ipc.proto.*
 import ai.rever.boss.ipc.proto.KernelServiceGrpcKt
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.io.IOException
 
 /**
  * Entry point for the Orchestrator process.
@@ -62,7 +64,16 @@ fun main() {
         val connection = bootstrap.connect(manifest)
         val kernelStub = connection.kernelStub
 
-        val snapshotManager = SnapshotManager(dataDir)
+        val snapshotManager =
+            try {
+                SnapshotManager(dataDir)
+            } catch (e: IOException) {
+                failSnapshotStorage(logger, dataDir, e)
+            } catch (e: UnsupportedOperationException) {
+                failSnapshotStorage(logger, dataDir, e)
+            } catch (e: SecurityException) {
+                failSnapshotStorage(logger, dataDir, e)
+            }
         val analyzer = CrashAnalyzer()
 
         // AI repair sends the crashing process's source to a third-party model. That is a
@@ -150,6 +161,20 @@ fun main() {
 
         connection.awaitTermination()
     }
+}
+
+private fun failSnapshotStorage(
+    logger: Logger,
+    dataDir: File,
+    error: Exception,
+): Nothing {
+    logger.error(
+        "Orchestrator cannot secure snapshot storage at {}: {}",
+        File(dataDir, "snapshots").absolutePath,
+        error.message ?: error::class.simpleName,
+        error,
+    )
+    throw error
 }
 
 /**

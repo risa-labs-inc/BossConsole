@@ -12,6 +12,7 @@ import ai.rever.boss.ipc.proto.services.WriteFileRequest
 import ai.rever.boss.plugin.api.FileNodeData
 import ai.rever.boss.plugin.api.FileSystemDataProvider
 import ai.rever.boss.plugin.api.NodeLoadingStateData
+import ai.rever.boss.plugin.pathutils.DownloadsDirectory
 import com.google.protobuf.ByteString
 import io.grpc.ManagedChannel
 import kotlinx.coroutines.CancellationException
@@ -158,7 +159,10 @@ class FileSystemDataProviderProxy(
     ): Result<String> =
         withContext(Dispatchers.Default) {
             try {
-                val fullPath = "$parentPath/$fileName"
+                // Built exactly as the in-process provider builds it, because the plugin compares
+                // this string with host-built paths: a hand-joined "/" mixed separators on Windows
+                // and doubled one after a parent passed with a trailing separator.
+                val fullPath = File(parentPath, fileName).absolutePath
                 fsStub.createFile(
                     CreateFileRequest
                         .newBuilder()
@@ -179,7 +183,7 @@ class FileSystemDataProviderProxy(
     ): Result<String> =
         withContext(Dispatchers.Default) {
             try {
-                val fullPath = "$parentPath/$folderName"
+                val fullPath = File(parentPath, folderName).absolutePath
                 fsStub.createFile(
                     CreateFileRequest
                         .newBuilder()
@@ -216,8 +220,12 @@ class FileSystemDataProviderProxy(
     ): Result<String> =
         withContext(Dispatchers.Default) {
             try {
-                val parent = File(path).parent ?: ""
-                val newPath = if (parent.isNotBlank()) "$parent/$newName" else newName
+                // Same rule as the in-process provider: no parent directory is a failure, not a
+                // bare name, which the kernel would resolve against its own working directory.
+                val parentDir =
+                    File(path).parentFile
+                        ?: return@withContext Result.failure(IllegalStateException("Cannot determine parent directory"))
+                val newPath = File(parentDir, newName).absolutePath
                 fsStub.renameFile(
                     RenameFileRequest
                         .newBuilder()
@@ -330,7 +338,10 @@ class FileSystemDataProviderProxy(
 
     // ---- Pure system queries (answered locally) ----
 
-    override fun getDownloadsDirectory(): String = System.getProperty("user.home") + "/Downloads"
+    // Answered locally, so it has to agree with the host rather than approximate it: the plain
+    // concatenation this replaced named a directory that did not exist whenever ~/Downloads did
+    // not, and on Windows it mixed separators, so it compared unequal to every host-built path.
+    override fun getDownloadsDirectory(): String = DownloadsDirectory.current()
 
     override fun getHomeDirectory(): String = System.getProperty("user.home")
 

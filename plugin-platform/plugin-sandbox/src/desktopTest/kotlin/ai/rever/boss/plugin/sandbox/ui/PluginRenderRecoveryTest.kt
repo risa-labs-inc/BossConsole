@@ -140,6 +140,97 @@ class PluginRenderRecoveryTest {
     }
 
     @Test
+    fun `an in-flight fault keeps the quarantined culprit held`() {
+        PluginRenderRecovery.registerMounted("plugin.a")
+        PluginRenderRecovery.registerMounted("plugin.b")
+        PluginRenderRecovery.onUnattributedRenderException(error, now = 1_000)
+        PluginRenderRecovery.onUnattributedRenderException(error, now = 2_000) // suspects b
+
+        val outcome = PluginRenderRecovery.onUnattributedRenderException(error, now = 2_016)
+
+        assertIs<PluginRenderRecovery.Outcome.Settling>(outcome)
+        assertEquals(setOf("plugin.b"), outcome.plugins, "queued work must not acquit the actual culprit")
+        assertTrue(PluginCrashRegistry.hasCrashed("plugin.b"), "the culprit must remain on its fallback")
+        assertTrue(!PluginCrashRegistry.hasCrashed("plugin.a"), "an innocent plugin must not be cycled in")
+    }
+
+    @Test
+    fun `settling survives boundary unmounting but releases the suspect after grace`() {
+        val unmount = PluginRenderRecovery.registerMounted("plugin.a")
+        PluginRenderRecovery.onUnattributedRenderException(error, now = 1_000)
+        PluginRenderRecovery.onUnattributedRenderException(error, now = 2_000)
+        unmount() // the fallback landed, but old layout work is still queued
+
+        val outcome = PluginRenderRecovery.onUnattributedRenderException(error, now = 2_016)
+
+        assertEquals(
+            setOf("plugin.a"),
+            assertIs<PluginRenderRecovery.Outcome.Settling>(outcome).plugins,
+            "disposed mount bookkeeping must not turn an in-flight plugin fault into a host fault",
+        )
+        assertTrue(PluginCrashRegistry.hasCrashed("plugin.a"), "the quarantined culprit must remain held")
+
+        // Still inside the rebuild grace of the quarantine: this could be a straggler
+        // from the suspect's own draining subtree, so it must not un-quarantine it.
+        assertIs<PluginRenderRecovery.Outcome.NotPluginRelated>(
+            PluginRenderRecovery.onUnattributedRenderException(error, now = 2_251),
+        )
+        assertTrue(
+            PluginCrashRegistry.hasCrashed("plugin.a"),
+            "a fault inside the rebuild grace must not release the suspect it could belong to",
+        )
+
+        // Past the grace, the next fault is its own incident: the held suspect was
+        // innocent and must be released, or it would stay paused forever. Anchor
+        // the grace period on the quarantine at 2_000, which re-stamps lastRebuildAt.
+        assertIs<PluginRenderRecovery.Outcome.NotPluginRelated>(
+            PluginRenderRecovery.onUnattributedRenderException(
+                error,
+                now = 2_000 + PluginRenderRecovery.REBUILD_GRACE_MILLIS + 1,
+            ),
+        )
+        assertFalse(
+            PluginCrashRegistry.hasCrashed("plugin.a"),
+            "an unmounted suspect must not remain paused after its rebuild grace expires",
+        )
+    }
+
+    @Test
+    fun `settling faults do not slide the quarantine deadline`() {
+        PluginRenderRecovery.registerMounted("plugin.a")
+        PluginRenderRecovery.registerMounted("plugin.b")
+        PluginRenderRecovery.onUnattributedRenderException(error, now = 1_000)
+        PluginRenderRecovery.onUnattributedRenderException(error, now = 2_000) // suspects b
+
+        listOf(2_016L, 2_100L, 2_249L, 2_250L).forEach { now ->
+            val settling = PluginRenderRecovery.onUnattributedRenderException(error, now)
+            assertEquals(setOf("plugin.b"), assertIs<PluginRenderRecovery.Outcome.Settling>(settling).plugins)
+        }
+        val afterDeadline = PluginRenderRecovery.onUnattributedRenderException(error, now = 2_251)
+
+        assertEquals(
+            setOf("plugin.a"),
+            assertIs<PluginRenderRecovery.Outcome.Quarantined>(afterDeadline).plugins,
+            "the fixed deadline must eventually let narrowing advance",
+        )
+        assertTrue(!PluginCrashRegistry.hasCrashed("plugin.b"), "the expired suspect must be released")
+    }
+
+    @Test
+    fun `a single innocent suspect becomes unexplained only after settling`() {
+        PluginRenderRecovery.registerMounted("plugin.a")
+        PluginRenderRecovery.onUnattributedRenderException(error, now = 1_000)
+        PluginRenderRecovery.onUnattributedRenderException(error, now = 2_000)
+
+        val settling = PluginRenderRecovery.onUnattributedRenderException(error, now = 2_250)
+        val expired = PluginRenderRecovery.onUnattributedRenderException(error, now = 2_251)
+
+        assertIs<PluginRenderRecovery.Outcome.Settling>(settling)
+        assertIs<PluginRenderRecovery.Outcome.Unexplained>(expired)
+        assertTrue(!PluginCrashRegistry.hasCrashed("plugin.a"), "an innocent plugin must be restored")
+    }
+
+    @Test
     fun `when every mounted plugin has been ruled out it stops churning`() {
         PluginRenderRecovery.registerMounted("plugin.a")
         PluginRenderRecovery.onUnattributedRenderException(error, now = 1_000)

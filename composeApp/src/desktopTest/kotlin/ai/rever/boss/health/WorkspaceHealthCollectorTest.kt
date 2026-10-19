@@ -3,12 +3,36 @@ package ai.rever.boss.health
 import ai.rever.boss.components.plugin.PluginHealthRow
 import ai.rever.boss.components.plugin.PluginHealthSnapshot
 import ai.rever.boss.components.plugin.PluginHealthStatus
+import ai.rever.boss.utils.logging.BossLogger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class WorkspaceHealthCollectorTest {
+    @Test
+    fun `a source that keeps failing is logged once, not on every read`() {
+        HealthSourceWarnings.clear()
+        val collector =
+            WorkspaceHealthCollector(
+                pluginSnapshots = { PluginSnapshotRead(listOf(ONE_WINDOW)) },
+                browserHealth = { error("engine probe failed ${System.nanoTime()}") },
+                mcpFaults = { McpFaults(killSwitch = null, policy = null) },
+            )
+        val before = browserWarnings()
+
+        repeat(3) { assertEquals(setOf(HealthArea.BROWSER), collector.collect().unchecked) }
+
+        assertEquals(1, browserWarnings() - before, "the status bar re-reads every few seconds; one warning is enough")
+        HealthSourceWarnings.clear()
+    }
+
+    private fun browserWarnings(): Int =
+        BossLogger.getRecentLogs(limit = 1000).count {
+            it.data?.get("area") == HealthArea.BROWSER.wireName &&
+                it.message == "Workspace health source could not be read"
+        }
+
     @Test
     fun `a source that throws is reported as unchecked while the others are still read`() {
         val report =

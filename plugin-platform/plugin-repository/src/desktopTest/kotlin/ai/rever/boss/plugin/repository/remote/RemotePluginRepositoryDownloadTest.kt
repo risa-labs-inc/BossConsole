@@ -7,6 +7,7 @@ import ai.rever.boss.plugin.repository.DownloadException
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.security.KeyPair
@@ -156,6 +157,70 @@ class RemotePluginRepositoryDownloadTest {
             assertNotNull(cache.getCachedJar(pluginId, "1.0.0", jarSha256))
             // Sidecar written beside the installed JAR for load-time verification.
             assertEquals(sig, PluginSignatureSidecar.read(path))
+        }
+
+    @Test
+    fun `rejected fresh download preserves the installed jar and sidecar`() =
+        runBlocking<Unit> {
+            val installed = File(target("installed.jar")).apply { writeText("working plugin") }
+            val installedSignature = "signature for working plugin"
+            PluginSignatureSidecar.persist(installed.absolutePath, installedSignature)
+
+            val result =
+                repositoryReturning(downloadInfo("2.0.0", signAnchor("1.0.0")))
+                    .downloadPlugin(pluginId, "2.0.0", installed.absolutePath)
+
+            assertIs<DownloadException>(result.exceptionOrNull())
+            assertEquals("working plugin", installed.readText())
+            assertEquals(installedSignature, PluginSignatureSidecar.read(installed.absolutePath))
+            assertFalse(tempDir.listFiles().orEmpty().any { it.name.endsWith(".part") })
+        }
+
+    @Test
+    fun `failed cache copy and fallback leave the installed jar intact`() =
+        runBlocking<Unit> {
+            val seed = File(tempDir, "cached-source.jar").apply { writeBytes(jarBytes) }
+            cache.cacheJar(pluginId, "1.0.0", seed)
+            val installed = File(target("cache-copy-target.jar")).apply { writeText("working plugin") }
+            val repository =
+                RemotePluginRepository(
+                    downloadCache = cache,
+                    storeVerifier = verifier,
+                    downloadInfoProvider = { _, _ ->
+                        downloadInfo("1.0.0", signAnchor("1.0.0")).copy(
+                            downloadUrl = "http://127.0.0.1:1/unreachable",
+                        )
+                    },
+                    copyCachedJar = { _, destination ->
+                        destination.writeText("partial replacement")
+                        throw IOException("simulated cache copy failure")
+                    },
+                )
+
+            val result = repository.downloadPlugin(pluginId, "1.0.0", installed.absolutePath)
+
+            assertTrue(result.isFailure)
+            assertEquals("working plugin", installed.readText())
+            assertFalse(tempDir.listFiles().orEmpty().any { it.name.endsWith(".part") })
+        }
+
+    @Test
+    fun `verified download replaces a target symlink instead of following it`() =
+        runBlocking<Unit> {
+            val outside = File(tempDir, "outside-sentinel.jar").apply { writeText("do not overwrite") }
+            val target = File(tempDir, "linked-target.jar")
+            val symlinkCreated = runCatching { Files.createSymbolicLink(target.toPath(), outside.toPath()) }.isSuccess
+            if (!symlinkCreated) return@runBlocking
+
+            val signature = signAnchor("1.0.0")
+            val path =
+                repositoryReturning(downloadInfo("1.0.0", signature))
+                    .downloadPlugin(pluginId, "1.0.0", target.absolutePath)
+                    .getOrThrow()
+
+            assertFalse(Files.isSymbolicLink(target.toPath()))
+            assertTrue(File(path).readBytes().contentEquals(jarBytes))
+            assertEquals("do not overwrite", outside.readText())
         }
 
     @Test

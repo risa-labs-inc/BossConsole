@@ -70,6 +70,7 @@ internal fun handleTabDropResult(
                 splitViewState.splitPanel(
                     panelId = result.targetPanelId,
                     orientation = result.orientation,
+                    placeBefore = result.placeBefore,
                     tabToMove = recreateTab,
                     detachedTab = detached,
                 )

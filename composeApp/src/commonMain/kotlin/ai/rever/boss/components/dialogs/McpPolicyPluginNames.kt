@@ -18,7 +18,11 @@ internal fun policySectionName(
     providerId: String,
     names: Map<String, String>,
 ): String =
-    names[providerId]?.takeIf { it.isNotBlank() }
+    // Plugin-registered providers carry a "<pluginId>::<providerId>" scoped id; the map is
+    // keyed by pluginId, so strip the namespace first or every plugin section falls into the
+    // mangling branch (#926).
+    names[providerId.substringBefore("::")]?.takeIf { it.isNotBlank() }
+        ?: names[providerId]?.takeIf { it.isNotBlank() }
         ?: providerId
             .substringAfterLast('.')
             .replace('-', ' ')
