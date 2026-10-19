@@ -79,7 +79,7 @@ select is(
 );
 select set_eq(
     $$ select orl.kind from public.organisation_roles orl
-       join public.organisations o on o.id = orl.org_id where o.slug='pgtacme' $$,
+       join public.organisations o on o.id = orl.org_id where o.slug='pgtacme' and orl.preset is null $$,
     $$ values ('admin'),('user') $$,
     'organisation_roles maps exactly one admin-kind and one user-kind role'
 );

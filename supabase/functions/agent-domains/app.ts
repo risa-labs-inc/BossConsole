@@ -7,15 +7,21 @@ export const TXT_VALUE_PREFIX = "bossconsole-verify=";
 
 export interface Domain {
   id: string;
+  agent_id: string;
   hostname: string;
   verify_token: string;
 }
+
+/** The status write was refused because the actor lacks agents.domains (revoked mid-request). */
+export class PermissionDenied extends Error {}
 
 export interface Db {
   /** The caller's user id from their JWT, or null when the token is not valid. */
   user(jwt: string): Promise<string | null>;
   /** The domain as the caller sees it under RLS (null = not theirs or missing). */
   domain(jwt: string, id: string): Promise<Domain | null>;
+  /** Whether the caller holds agents.domains on the agent's org (their own JWT). */
+  canManage(jwt: string, agentId: string): Promise<boolean>;
   /** Service-role write of the check result; returns the new status. */
   record(id: string, txtOk: boolean, cnameOk: boolean, actor: string): Promise<string>;
 }
@@ -46,12 +52,26 @@ export function restDb(): Db {
       const r = await fetch(
         `${url}/rest/v1/agent_domains?id=eq.${
           encodeURIComponent(id)
-        }&select=id,hostname,verify_token`,
+        }&select=id,agent_id,hostname,verify_token`,
         { headers: { apikey: anon, Authorization: `Bearer ${jwt}` }, signal: timeout() },
       );
       if (!r.ok) throw new Error(`domain lookup ${r.status}`);
       const rows = await r.json() as Domain[];
       return rows[0] ?? null;
+    },
+    async canManage(jwt, agentId) {
+      const r = await fetch(`${url}/rest/v1/rpc/has_agent_permission`, {
+        method: "POST",
+        headers: {
+          apikey: anon,
+          Authorization: `Bearer ${jwt}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ p_agent_id: agentId, p_permission: "agents.domains" }),
+        signal: timeout(),
+      });
+      if (!r.ok) throw new Error(`permission check ${r.status}`);
+      return (await r.json()) === true;
     },
     async record(id, txtOk, cnameOk, actor) {
       const r = await fetch(`${url}/rest/v1/rpc/agent_domain_record_check`, {
@@ -69,6 +89,10 @@ export function restDb(): Db {
         }),
         signal: timeout(),
       });
+      if (r.status === 403) {
+        await r.body?.cancel();
+        throw new PermissionDenied("record");
+      }
       if (!r.ok) throw new Error(`record ${r.status}`);
       return await r.json() as string;
     },
@@ -91,8 +115,9 @@ function json(status: number, body: unknown): Response {
 const norm = (name: string) => name.trim().toLowerCase().replace(/\.$/, "");
 
 /**
- * POST /verify {domain_id}: an org admin (their own JWT) asks for a DNS check of one of their
- * agent's domains. TXT `_bossconsole-verify.<host>` = `bossconsole-verify=<token>` proves ownership
+ * POST /verify {domain_id}: a holder of agents.domains in the agent's org (their own JWT) asks for a
+ * DNS check of one of its domains. Anyone who cannot see the row gets 404; a viewer without
+ * agents.domains gets 403. TXT `_bossconsole-verify.<host>` = `bossconsole-verify=<token>` proves ownership
  * (verified); a CNAME `<host>` -> `edge.<AGENTS_BASE_DOMAIN>` as well makes it active.
  */
 export function createApp(
@@ -131,6 +156,9 @@ export function createApp(
       actor = await db.user(jwt);
       if (!actor) return json(401, { error: "Unauthorized" });
       domain = await db.domain(jwt, domainId);
+      if (domain && !(await db.canManage(jwt, domain.agent_id))) {
+        return json(403, { error: "Permission denied" });
+      }
     } catch {
       return json(503, { error: "Unavailable" });
     }
@@ -164,7 +192,8 @@ export function createApp(
         checks: { txt: txtOk, cname: cnameOk },
         expected,
       });
-    } catch {
+    } catch (e) {
+      if (e instanceof PermissionDenied) return json(403, { error: "Permission denied" });
       return json(503, { error: "Unavailable" });
     }
   };

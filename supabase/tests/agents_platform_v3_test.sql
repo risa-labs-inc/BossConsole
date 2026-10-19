@@ -336,7 +336,7 @@ select set_config('request.jwt.claims', '{"role":"anon"}', true);
 select is((select count(*)::int from public.agent_for_host('chat.acme-corp.com')), 0, 'a failed domain stops routing');
 reset role;
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
-select is(public.agent_domain_record_check((select id from dom), true, true, null), 'active', 're-verify reactivates');
+select is(public.agent_domain_record_check((select id from dom), true, true, 'b3000000-0000-4000-8000-00000000000a'), 'active', 're-verify reactivates');
 
 -- ---- activity: record_agent_seen ----
 insert into public.agent_installs (user_id, agent_id, instance_id, port, data_dir, state, detail, running_version) values
@@ -436,7 +436,7 @@ select is((select row(actor_email, detail->>'version')::text from public.org_aud
     '(owner-a@v3.test,1.2.0)', 'publish records the actor and version');
 select is((select actor_email from public.org_audit_log((select id from ids where k = 'orga'), 200) where action = 'agent.suspend' order by id desc limit 1), 'platform@v3.test', 'suspend records the platform admin');
 select is((select count(*)::int from public.org_audit_log((select id from ids where k = 'orga'), 200)
-           where action = 'domain.status' and actor = 'b3000000-0000-4000-8000-00000000000a'), 3,
+           where action = 'domain.status' and actor = 'b3000000-0000-4000-8000-00000000000a'), 4,
     'service-role status writes carry the edge function''s actor');
 select is((select count(*)::int from public.org_audit_log((select id from ids where k = 'orga'), 3)), 3, 'limit honoured');
 select ok((select bool_and(at < (select min(at) from public.org_audit_log((select id from ids where k = 'orga'), 3)))
