@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS public.agent_installs (
     data_dir    text NOT NULL CHECK (data_dir !~ '(^/|(^|/)\.\.(/|$))'),
     state       text NOT NULL CHECK (state IN ('pending', 'running', 'failed', 'removed')),
     detail      text,
+    running_version text,
+    created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (user_id, agent_id),
     UNIQUE (instance_id, port)
@@ -373,7 +375,7 @@ CREATE POLICY "agents provisioner select" ON public.agents
     FOR SELECT TO authenticated USING ((SELECT public.is_agents_provisioner()));
 GRANT INSERT (user_id, agent_id, instance_id, port, data_dir, state, detail)
     ON public.agent_installs TO authenticated;
-GRANT UPDATE (user_id, agent_id, instance_id, port, data_dir, state, detail)
+GRANT UPDATE (user_id, agent_id, instance_id, port, data_dir, state, detail, running_version)
     ON public.agent_installs TO authenticated;
 DROP POLICY IF EXISTS "agent_installs provisioner select" ON public.agent_installs;
 CREATE POLICY "agent_installs provisioner select" ON public.agent_installs
@@ -436,3 +438,118 @@ GRANT  EXECUTE ON FUNCTION "public"."user_can_install_plugin"("uuid", "uuid") TO
 
 COMMENT ON FUNCTION "public"."user_can_install_plugin"("uuid", "uuid") IS
 'Whether a user may download a plugin. Wider than user_can_view_plugin by two cases: an unlisted published plugin is installable by any member of its organisation, and a published plugin that is the adapter of a live agent is installable by anyone holding a non-removed install of that agent. Called by the plugin-store download route with the service-role client.';
+
+-- ----------------------------------------------------------------------------
+-- Console helpers: model picker and platform-admin overview. Admin checks are inside each function.
+-- ----------------------------------------------------------------------------
+
+-- Enabled, published chat models of the BOSS AI catalog. Only catalog ids and labels: never the
+-- connection, upstream model or secret names. Empty for anyone who administers no organisation.
+CREATE OR REPLACE FUNCTION public.list_agent_models()
+RETURNS TABLE (provider_id text, model_id text, display_name text, description text)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+#variable_conflict use_column
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RETURN;
+    END IF;
+    IF NOT (public.is_user_admin(auth.uid())
+            OR EXISTS (SELECT 1 FROM public.organisations o WHERE public.is_org_admin(o.id))) THEN
+        RETURN;
+    END IF;
+    RETURN QUERY
+        SELECT 'managed:boss-ai'::text, m.id, m.display_name,
+               pg_catalog.array_to_string(m.capabilities, ', ') || ' - ' ||
+                   (m.context_length / 1000)::text || 'k context'
+        FROM public.boss_ai_models m
+        JOIN public.boss_ai_connections c ON c.id = m.connection_id
+        WHERE m.enabled AND m.published AND c.enabled AND m.kind = 'chat'
+        ORDER BY m.is_default DESC, m.display_name, m.id;
+END;
+$$;
+
+-- signups_* count every install created in the window, including ones later removed (a signup is an
+-- event); installs_* and last_activity exclude/include as named in the columns.
+CREATE OR REPLACE FUNCTION public.platform_agents_overview()
+RETURNS TABLE (id uuid, slug text, name text, org_id uuid, org_name text, status public.agent_status,
+               live_version text, plugin_id text, created_at timestamptz,
+               installs_total int, installs_running int, installs_failed int, installs_pending int,
+               signups_7d int, signups_30d int, last_activity_at timestamptz)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+#variable_conflict use_column
+BEGIN
+    IF auth.uid() IS NULL OR NOT (SELECT public.is_user_admin((SELECT auth.uid()))) THEN
+        RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
+    END IF;
+    RETURN QUERY
+        SELECT a.id, a.slug, a.name, a.org_id, o.name, a.status, a.live_version, a.plugin_id, a.created_at,
+               (count(i.user_id) FILTER (WHERE i.state <> 'removed'))::int,
+               (count(i.user_id) FILTER (WHERE i.state = 'running'))::int,
+               (count(i.user_id) FILTER (WHERE i.state = 'failed'))::int,
+               (count(i.user_id) FILTER (WHERE i.state = 'pending'))::int,
+               (count(i.user_id) FILTER (WHERE i.created_at >= now() - interval '7 days'))::int,
+               (count(i.user_id) FILTER (WHERE i.created_at >= now() - interval '30 days'))::int,
+               max(i.updated_at)
+        FROM public.agents a
+        JOIN public.organisations o ON o.id = a.org_id
+        LEFT JOIN public.agent_installs i ON i.agent_id = a.id
+        GROUP BY a.id, o.name
+        ORDER BY a.created_at DESC;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.platform_agent_detail(p_agent_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    result jsonb;
+BEGIN
+    IF auth.uid() IS NULL OR NOT (SELECT public.is_user_admin((SELECT auth.uid()))) THEN
+        RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
+    END IF;
+    SELECT jsonb_build_object(
+        'agent', jsonb_build_object(
+            'id', a.id, 'slug', a.slug, 'name', a.name, 'org_id', a.org_id, 'org_name', o.name,
+            'status', a.status, 'live_version', a.live_version, 'plugin_id', a.plugin_id,
+            'brand', a.brand, 'model', a.model, 'signup_policy', a.signup_policy,
+            'allowed_tools_count', pg_catalog.cardinality(a.allowed_tools),
+            'allowed_connectors_count', pg_catalog.cardinality(a.allowed_connectors),
+            'created_at', a.created_at, 'created_by_email', u.email),
+        'signups_by_day', (
+            SELECT jsonb_agg(jsonb_build_object('day', d.day::text, 'count', COALESCE(c.n, 0)) ORDER BY d.day)
+            FROM (SELECT g::date AS day FROM pg_catalog.generate_series(
+                      (now() AT TIME ZONE 'UTC')::date - 29, (now() AT TIME ZONE 'UTC')::date, interval '1 day') g) d
+            LEFT JOIN (SELECT (i.created_at AT TIME ZONE 'UTC')::date AS day, count(*)::int AS n
+                       FROM public.agent_installs i WHERE i.agent_id = a.id GROUP BY 1) c ON c.day = d.day),
+        'version_adoption', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('version', v.version, 'count', v.n) ORDER BY v.n DESC, v.version)
+            FROM (SELECT i.running_version AS version, count(*)::int AS n FROM public.agent_installs i
+                  WHERE i.agent_id = a.id AND i.state <> 'removed' AND i.running_version IS NOT NULL
+                  GROUP BY 1) v), '[]'::jsonb),
+        'states', jsonb_build_object(
+            'running', (SELECT count(*) FROM public.agent_installs i WHERE i.agent_id = a.id AND i.state = 'running'),
+            'failed', (SELECT count(*) FROM public.agent_installs i WHERE i.agent_id = a.id AND i.state = 'failed'),
+            'pending', (SELECT count(*) FROM public.agent_installs i WHERE i.agent_id = a.id AND i.state = 'pending'),
+            'removed', (SELECT count(*) FROM public.agent_installs i WHERE i.agent_id = a.id AND i.state = 'removed')),
+        'installs', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('email', w.email, 'state', w.state, 'running_version', w.running_version,
+                                                'detail', w.detail, 'created_at', w.created_at, 'updated_at', w.updated_at)
+                             ORDER BY w.created_at DESC)
+            FROM (SELECT iu.email, i.state, i.running_version, i.detail, i.created_at, i.updated_at
+                  FROM public.agent_installs i JOIN auth.users iu ON iu.id = i.user_id
+                  WHERE i.agent_id = a.id ORDER BY i.created_at DESC LIMIT 500) w), '[]'::jsonb))
+    INTO result
+    FROM public.agents a
+    JOIN public.organisations o ON o.id = a.org_id
+    LEFT JOIN auth.users u ON u.id = a.created_by
+    WHERE a.id = p_agent_id;
+    IF result IS NULL THEN
+        RAISE EXCEPTION 'agent_not_found' USING ERRCODE = 'P0001';
+    END IF;
+    RETURN result;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.list_agent_models(), public.platform_agents_overview(),
+    public.platform_agent_detail(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.list_agent_models(), public.platform_agents_overview(),
+    public.platform_agent_detail(uuid) TO authenticated, service_role;

@@ -1,7 +1,7 @@
 -- pgTAP tests for the agents platform (20261016130000).
 -- Run with: supabase test db
 begin;
-select plan(92);
+select plan(121);
 
 insert into auth.users (id, email, email_confirmed_at) values
     ('a9000000-0000-4000-8000-00000000000a', 'owner-a@agents.test', now()),
@@ -254,6 +254,85 @@ update public.plugins set published = true where plugin_id = 'ai.rever.boss.plug
 select ok(not has_function_privilege('authenticated', 'public.user_can_install_plugin(uuid,uuid)', 'EXECUTE')
       and not has_function_privilege('anon', 'public.user_can_install_plugin(uuid,uuid)', 'EXECUTE')
       and has_function_privilege('service_role', 'public.user_can_install_plugin(uuid,uuid)', 'EXECUTE'), 'the gate stays service-role only');
+
+-- ---- console helpers: models + platform overview ----
+reset role;
+select set_config('request.jwt.claims', '{"role":"service_role"}', true);
+insert into public.boss_ai_connections (id, base_url, api_key_secret, api_type) values
+    ('agtc', 'https://example.com/v1', 'BOSS_AI_AGT', 'openai_chat'),
+    ('agtc-off', 'https://example.com/v1', 'BOSS_AI_AGT_OFF', 'openai_chat');
+update public.boss_ai_connections set enabled = false where id = 'agtc-off';
+insert into public.boss_ai_models (id, display_name, connection_id, upstream_model, capabilities, context_length, max_output_tokens, published, enabled, kind) values
+    ('agt-on', 'AGT On', 'agtc', 'vendor/a', array['text', 'tools'], 8192, 1024, true, true, 'chat'),
+    ('agt-disabled', 'AGT Disabled', 'agtc', 'vendor/b', array['text'], 8192, 1024, true, false, 'chat'),
+    ('agt-unpub', 'AGT Unpublished', 'agtc', 'vendor/c', array['text'], 8192, 1024, false, true, 'chat'),
+    ('agt-conn-off', 'AGT Conn Off', 'agtc-off', 'vendor/d', array['text'], 8192, 1024, true, true, 'chat'),
+    ('agt-speech', 'AGT Speech', 'agtc', 'vendor/e', array['text'], 8192, 1024, true, true, 'speech');
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
+select is((select array_agg(model_id order by model_id) from public.list_agent_models() where model_id like 'agt-%'), array['agt-on'], 'an org admin sees only enabled, published chat models on enabled connections');
+select is((select provider_id from public.list_agent_models() where model_id = 'agt-on'), 'managed:boss-ai', 'provider id is managed:boss-ai');
+select is((select count(*)::int from public.list_agent_models() where description is null or description = ''), 0, 'models carry a description');
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000c', true);
+select is((select count(*)::int from public.list_agent_models()), 0, 'a user who administers no org gets no models');
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000d', true);
+select ok((select count(*) from public.list_agent_models() where model_id = 'agt-on') = 1, 'a platform admin sees the models');
+reset role;
+set local role anon;
+select throws_ok($q$ select * from public.list_agent_models() $q$, '42501', null, 'anon cannot call list_agent_models');
+reset role;
+
+-- fixtures: one agent with a known mix of installs
+select set_config('request.jwt.claims', '{"role":"service_role"}', true);
+insert into public.agents (slug, org_id, name, plugin_id, created_by)
+values ('metrics', (select id from org where k = 'a'), 'Metrics', 'ai.rever.boss.plugin.dynamic.agent.metrics', 'a9000000-0000-4000-8000-00000000000a');
+create temp table mg (id uuid);
+grant all on mg to authenticated;
+insert into mg select id from public.agents where slug = 'metrics';
+insert into public.agent_installs (user_id, agent_id, instance_id, port, data_dir, state, running_version, created_at) values
+    ('a9000000-0000-4000-8000-00000000000a', (select id from mg), 'm-a', 8901, 'agents/metrics', 'running', '1.0.0', now() - interval '2 days'),
+    ('a9000000-0000-4000-8000-00000000000b', (select id from mg), 'm-b', 8902, 'agents/metrics', 'running', '1.0.0', now() - interval '10 days'),
+    ('a9000000-0000-4000-8000-00000000000c', (select id from mg), 'm-c', 8903, 'agents/metrics', 'running', '1.1.0', now()),
+    ('a9000000-0000-4000-8000-00000000000e', (select id from mg), 'm-e', 8904, 'agents/metrics', 'failed', null, now() - interval '40 days'),
+    ('a9000000-0000-4000-8000-00000000000d', (select id from mg), 'm-d', 8905, 'agents/metrics', 'pending', null, now()),
+    ('a9000000-0000-4000-8000-00000000000f', (select id from mg), 'm-f', 8906, 'agents/metrics', 'removed', '1.0.0', now() - interval '3 days');
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
+select throws_ok($q$ select * from public.platform_agents_overview() $q$, '42501', null, 'an org admin cannot read the platform overview');
+select throws_ok($q$ select public.platform_agent_detail((select id from mg)) $q$, '42501', null, 'an org admin cannot read platform agent detail');
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000c', true);
+select throws_ok($q$ select * from public.platform_agents_overview() $q$, '42501', null, 'a plain user cannot read the platform overview');
+select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000d', true);
+select is((select count(*)::int from public.platform_agents_overview()), (select count(*)::int from public.agents), 'the overview covers every agent, whatever its status');
+select is((select row(installs_total, installs_running, installs_failed, installs_pending, signups_7d, signups_30d)::text
+           from public.platform_agents_overview() where slug = 'metrics'), '(5,3,1,1,4,5)', 'overview counts: removed excluded from installs, signups by created_at');
+select ok((select last_activity_at is not null and org_name = 'Agents A' and plugin_id = 'ai.rever.boss.plugin.dynamic.agent.metrics'
+           from public.platform_agents_overview() where slug = 'metrics'), 'overview carries org name, plugin id and last activity');
+select is((select installs_total from public.platform_agents_overview() where slug = 'globexagent'), 0, 'an agent with no installs shows zeros');
+
+create temp table det (j jsonb);
+grant all on det to authenticated;
+insert into det select public.platform_agent_detail((select id from mg));
+select is((select j #>> '{agent,slug}' from det), 'metrics', 'detail names the agent');
+select is((select j #>> '{agent,org_name}' from det), 'Agents A', 'detail names the org');
+select is((select j #>> '{agent,created_by_email}' from det), 'owner-a@agents.test', 'detail carries the creator email');
+select is((select j #> '{agent,allowed_tools_count}' from det), 'null'::jsonb, 'null allowed_tools means all (count null)');
+select is((select jsonb_array_length(j -> 'signups_by_day') from det), 30, 'signups_by_day covers 30 days');
+select is((select sum((e ->> 'count')::int) from det, jsonb_array_elements(j -> 'signups_by_day') e), 5::bigint, 'signups_by_day totals the 30-day signups');
+select is((select (e ->> 'count')::int from det, jsonb_array_elements(j -> 'signups_by_day') e where e ->> 'day' = ((now() at time zone 'utc')::date - 1)::text), 0, 'quiet days are zero-filled');
+select is((select (e ->> 'count')::int from det, jsonb_array_elements(j -> 'signups_by_day') e where e ->> 'day' = ((now() at time zone 'utc')::date)::text), 2, 'today counts both signups');
+select is((select j -> 'version_adoption' from det), '[{"version": "1.0.0", "count": 2}, {"version": "1.1.0", "count": 1}]'::jsonb, 'version adoption groups running versions of live installs');
+select is((select j -> 'states' from det), '{"running": 3, "failed": 1, "pending": 1, "removed": 1}'::jsonb, 'state counts include removed');
+select is((select jsonb_array_length(j -> 'installs') from det), 6, 'installs lists every row');
+select ok((select (j #>> '{installs,0,email}') in ('platform@agents.test', 'plain@agents.test') from det), 'installs are newest first');
+select is((select j #>> '{installs,5,email}' from det), 'stranger@agents.test', 'the oldest install is last');
+select throws_ok($q$ select public.platform_agent_detail(gen_random_uuid()) $q$, 'P0001', 'agent_not_found', 'unknown agent id');
+reset role;
+select ok(not has_function_privilege('anon', 'public.platform_agents_overview()', 'EXECUTE')
+      and not has_function_privilege('anon', 'public.platform_agent_detail(uuid)', 'EXECUTE'), 'platform functions are not anon-callable');
+select ok((select column_default is not null from information_schema.columns where table_name = 'agent_installs' and column_name = 'created_at')
+      and has_column_privilege('authenticated', 'public.agent_installs', 'running_version', 'UPDATE'), 'created_at defaults and running_version is updatable by the bot grant');
 
 -- nothing in the agents surface leans on the service role
 select is((select count(*)::int from pg_proc p where p.pronamespace = 'public'::regnamespace
