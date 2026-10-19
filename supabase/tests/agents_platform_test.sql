@@ -153,8 +153,8 @@ select throws_ok($q$ insert into public.agent_installs (user_id, agent_id, insta
 -- ---- brand bucket ----
 set local role authenticated;
 select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
-select lives_ok($q$ insert into storage.objects (bucket_id, name) values ('agent-brand', (select id::text from ag) || '/logo.png') $q$, 'admin uploads under own agent folder');
-select throws_ok($q$ insert into storage.objects (bucket_id, name) values ('agent-brand', 'a9000000-0000-4000-8000-0000000000ee/logo.png') $q$, '42501', null, 'upload under another agent folder refused');
+select lives_ok($q$ insert into storage.objects (bucket_id, name) values ('agent-brand', (select id::text from org where k = 'a') || '/' || (select id::text from ag) || '/logo.png') $q$, 'admin uploads under own org/agent folder');
+select throws_ok($q$ insert into storage.objects (bucket_id, name) values ('agent-brand', (select id::text from org where k = 'a') || '/a9000000-0000-4000-8000-0000000000ee/logo.png') $q$, '42501', null, 'upload under another agent folder refused');
 reset role;
 select ok((select public and file_size_limit = 2097152 from storage.buckets where id = 'agent-brand'), 'agent-brand is public with a 2 MiB limit');
 

@@ -456,6 +456,13 @@ verify_jwt = false
 import_map = "./functions/user-settings/deno.json"
 entrypoint = "./functions/user-settings/index.ts"
 
+[functions.agent-domains]
+# true: only the console calls it, with the org admin's own JWT in Authorization. The function
+# re-reads the domain under that JWT (RLS = org admins only) before the service-role status write.
+verify_jwt = true
+import_map = "./functions/agent-domains/deno.json"
+entrypoint = "./functions/agent-domains/index.ts"
+
 [functions.boss-ai]
 enabled = true
 # The handler validates BOSS sessions at /auth/token and its own audience-scoped
