@@ -2,7 +2,7 @@
 -- domains, activity, org console RPCs and the audit log.
 -- Run with: supabase test db
 begin;
-select plan(179);
+select plan(182);
 
 insert into auth.users (id, email, email_confirmed_at) values
     ('b3000000-0000-4000-8000-00000000000a', 'owner-a@v3.test', now()),
@@ -149,6 +149,9 @@ select is(pg_temp.v(jsonb_set(pg_temp.full_brand(), '{signin,mode}', '"iframe"')
 select is(pg_temp.v(jsonb_set(pg_temp.full_brand(), '{signin,layout}', '"grid"')), 'signin_layout_invalid', 'unknown layout rejected');
 select is(pg_temp.v(jsonb_set(pg_temp.full_brand(), '{signin,headline}', to_jsonb(repeat('h', 81)))), 'signin_headline_invalid', 'headline over 80 rejected');
 select is(pg_temp.v(jsonb_set(pg_temp.full_brand(), '{signin,subtext}', to_jsonb(repeat('s', 241)))), 'signin_subtext_invalid', 'subtext over 240 rejected');
+select is(pg_temp.v(jsonb_set(pg_temp.full_brand(), '{signin,notice}', to_jsonb(repeat('n', 300)))), null, 'a 300-character notice accepted');
+select is(pg_temp.v(jsonb_set(pg_temp.full_brand(), '{signin,notice}', to_jsonb(repeat('n', 301)))), 'signin_notice_invalid', 'notice over 300 rejected');
+select is(pg_temp.v(jsonb_set(pg_temp.full_brand(), '{signin,notice}', '42'::jsonb)), 'signin_notice_invalid', 'a non-string notice rejected');
 select is(pg_temp.v(jsonb_set(pg_temp.full_brand(), '{signin,show_powered_by}', '"yes"')), 'signin_show_powered_by_invalid', 'show_powered_by must be boolean');
 select is(pg_temp.v(jsonb_set(pg_temp.full_brand(), '{signin,background}', '{"type":"image"}')), 'signin_background_image_invalid', 'image background needs a bucket image_url');
 select is(pg_temp.v(jsonb_set(pg_temp.full_brand(), '{signin,background}', '{"type":"image","image_url":"https://evil.test/bg.png"}')),

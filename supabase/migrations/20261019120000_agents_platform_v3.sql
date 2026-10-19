@@ -147,7 +147,7 @@ BEGIN
             s := v;
             IF pg_catalog.jsonb_typeof(s) <> 'object'
                OR EXISTS (SELECT 1 FROM pg_catalog.jsonb_object_keys(s) x
-                          WHERE x NOT IN ('mode', 'layout', 'headline', 'subtext', 'background',
+                          WHERE x NOT IN ('mode', 'layout', 'headline', 'subtext', 'notice', 'background',
                                           'show_powered_by', 'footer_links', 'custom_css', 'custom_html')) THEN
                 RETURN 'signin_invalid';
             END IF;
@@ -166,6 +166,11 @@ BEGIN
             IF s ? 'subtext' AND (pg_catalog.jsonb_typeof(s->'subtext') <> 'string'
                                   OR pg_catalog.char_length(s->>'subtext') > 240) THEN
                 RETURN 'signin_subtext_invalid';
+            END IF;
+            -- Plain text under the form (a compliance line, say); the page renders it as text, never markup.
+            IF s ? 'notice' AND (pg_catalog.jsonb_typeof(s->'notice') <> 'string'
+                                 OR pg_catalog.char_length(s->>'notice') > 300) THEN
+                RETURN 'signin_notice_invalid';
             END IF;
             IF s ? 'show_powered_by' AND pg_catalog.jsonb_typeof(s->'show_powered_by') <> 'boolean' THEN
                 RETURN 'signin_show_powered_by_invalid';
