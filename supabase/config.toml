@@ -456,6 +456,16 @@ verify_jwt = false
 import_map = "./functions/user-settings/deno.json"
 entrypoint = "./functions/user-settings/index.ts"
 
+[functions.org-invite-mail]
+# true: only the agents console calls it, with the org admin's own JWT. The function re-checks
+# org admin rights, the invite and its token through org_invite_mail_prepare (service role) before
+# sending. Env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_ADMIN_EMAIL, SMTP_SENDER_NAME (the
+# same values as the project's Auth SMTP settings), SMTP_ALLOW_PLAINTEXT (local Mailpit only) and
+# CONSOLE_URL (the agents console origin the join link points at).
+verify_jwt = true
+import_map = "./functions/org-invite-mail/deno.json"
+entrypoint = "./functions/org-invite-mail/index.ts"
+
 [functions.agent-domains]
 # true: only the console calls it, with the org admin's own JWT in Authorization. The function
 # re-reads the domain under that JWT (RLS = org admins only) before the service-role status write.

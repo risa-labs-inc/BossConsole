@@ -44,7 +44,12 @@ with intentionally_anon as (
     'public.get_plugin_with_stats(text)', 'public.get_plugin_versions(text)',
     'public.get_popular_tags(integer)',
     'public.can_view_plugin_row(text,uuid,uuid,boolean)',
-    'public.authorize(text)', 'public.is_user_admin(uuid)'
+    'public.authorize(text)', 'public.is_user_admin(uuid)',
+    -- Agents platform (20261019150000): the chat server resolves an agent from the
+    -- request Host and answers Caddy's on-demand TLS ask before anyone signs in,
+    -- with the anon key. Both reveal only host -> live agent slug, which
+    -- agent_public and DNS already publish; neither touches an identity.
+    'public.agent_for_host(text)', 'public.domain_tls_allowed(text)'
   ]) signature
 ),
 anon_callable as (

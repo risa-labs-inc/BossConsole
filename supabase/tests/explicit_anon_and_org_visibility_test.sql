@@ -24,7 +24,8 @@ from unnest(array[
     'public.get_plugin_with_stats(text)', 'public.get_plugin_versions(text)',
     'public.get_popular_tags(integer)',
     'public.can_view_plugin_row(text,uuid,uuid,boolean)',
-    'public.authorize(text)', 'public.is_user_admin(uuid)']) f;
+    'public.authorize(text)', 'public.is_user_admin(uuid)',
+    'public.agent_for_host(text)', 'public.domain_tls_allowed(text)']) f;
 select ok(coalesce(has_function_privilege('service_role', to_regprocedure(f), 'EXECUTE'), false), 'edge mutator compatibility: ' || f)
 from unnest(array['public.upsert_plugin_rating(uuid,uuid,integer,text)',
                   'public.record_plugin_download(uuid,uuid,uuid,text)']) f;

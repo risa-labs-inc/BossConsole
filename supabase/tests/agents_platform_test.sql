@@ -29,7 +29,9 @@ select ok((select bool_and(prosecdef and 'search_path=""' = any(proconfig)) from
     'public.agent_can_join(text,text)'::regprocedure)), 'RPCs are security definer with an empty search_path');
 select ok(not has_function_privilege('anon', 'public.publish_agent(uuid,text)', 'EXECUTE')
       and not has_function_privilege('anon', 'public.review_agent(uuid,boolean)', 'EXECUTE')
-      and has_function_privilege('anon', 'public.agent_can_join(text,text)', 'EXECUTE'), 'only agent_can_join is anon-callable');
+      and not has_function_privilege('anon', 'public.agent_can_join(text,text)', 'EXECUTE')
+      and has_function_privilege('authenticated', 'public.agent_can_join(text,text)', 'EXECUTE'),
+    'none is anon-callable (agent_can_join is asked with the person''s session since 20261019150000)');
 select is((select count(*)::int from storage.buckets where id in ('agent-bundles', 'agent-builds')), 0, 'no bundle or build buckets exist');
 select ok(to_regclass('public.agent_persona_versions') is null and to_regprocedure('public.next_persona_version(uuid)') is null, 'persona versions are gone');
 select is((select value from public.platform_flags where key = 'agent_creation_open'), 'false'::jsonb, 'agent_creation_open seeded false');
@@ -116,25 +118,28 @@ select lives_ok($q$ select public.suspend_agent((select id from ag)) $q$, 'platf
 reset role;
 set local role anon;
 select is((select count(*)::int from public.agent_public), 0, 'agent_public hides suspended agents');
+reset role;
+select set_config('request.jwt.claim.sub', '', true);
+select set_config('request.jwt.claims', '{"role":"service_role"}', true);
+set local role service_role;
 select is(public.agent_can_join('acme', 'x@y.test'), false, 'suspended agent cannot be joined');
 
--- ---- agent_can_join ----
+-- ---- agent_can_join (as the service role: any email; people ask only about their own) ----
 reset role;
-select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 update public.agents set status = 'live' where slug = 'acme';
-set local role anon;
+set local role service_role;
 select is(public.agent_can_join('acme', 'anyone@y.test'), true, 'open: anyone');
 select is(public.agent_can_join('acme', 'not-an-email'), false, 'bad email rejected');
 select is(public.agent_can_join('nosuch', 'anyone@y.test'), false, 'unknown slug rejected');
 reset role;
 update public.agents set signup_policy = '{"mode":"domain","domains":["Corp.test"]}' where slug = 'acme';
-set local role anon;
+set local role service_role;
 select is(public.agent_can_join('acme', 'Bob@CORP.test'), true, 'domain: matching domain (case-insensitive)');
 select is(public.agent_can_join('acme', 'bob@other.test'), false, 'domain: other domain rejected');
 reset role;
 update public.agents set signup_policy = '{"mode":"invite"}' where slug = 'acme';
 insert into public.agent_invites (agent_id, email) values ((select id from ag), 'Invited@y.test');
-set local role anon;
+set local role service_role;
 select is(public.agent_can_join('acme', 'invited@Y.test'), true, 'invite: invited email (case-insensitive)');
 select is(public.agent_can_join('acme', 'other@y.test'), false, 'invite: uninvited email rejected');
 

@@ -307,6 +307,23 @@ jobs:
       # unless AGENT_DOMAINS_IT_URL is set.
       - run: deno test --allow-env --allow-net
 
+  org-invite-mail:
+    name: Org invite mail — check and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/org-invite-mail
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: find . -name "*.ts" -print0 | xargs -0 -r deno check
+      - run: deno lint
+      - run: deno fmt --check
+      # --allow-net: the fake SMTP server on 127.0.0.1.
+      - run: deno test --allow-env --allow-net
+
   app-sharing:
     name: 'Application sharing: authorization and signaling'
     runs-on: ubuntu-latest

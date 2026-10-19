@@ -95,8 +95,9 @@ select is((select count(*)::int from public.role_hierarchy where parent_role_id 
 select is((select count(*)::int from public.role_hierarchy where child_role_id = pg_temp.id('a_user')
            and parent_role_id in (pg_temp.id('a_agent_manager'), pg_temp.id('a_agent_editor'), pg_temp.id('a_agent_analyst'))),
     3, 'and above the member role');
-select is((select count(*)::int from public.agent_audit_log where org_id = pg_temp.id('orga') and action like 'role.%'),
-    0, 'seeding writes no role audit entries');
+select is((select array_agg(action || ':' || coalesce(actor::text, 'system')) from public.agent_audit_log
+           where org_id = pg_temp.id('orga') and action like 'role.%'),
+    array['role.seed:system'], 'seeding writes one system role.seed entry and no per-role entries');
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 select is((select (public.get_organisation_detail(pg_temp.id('orga'), pg_temp.u('a1')))->'data'->>'custom_role_count'), '0',
     'built-in roles do not count as custom roles (max_custom_roles quota)');
@@ -433,7 +434,8 @@ select is((select actor_email || '|' || (detail->>'email') from public.org_audit
 select is((select count(*)::int from public.org_audit_log(pg_temp.id('orga'), 200)
            where action = 'member.role_assign' and detail->>'role' = 'rbaca_user'), 0, 'roles carrying no agents permission are not logged');
 select pg_temp.as_user('b1');
-select is((select count(*)::int from public.org_audit_log(pg_temp.id('orgb'), 200) where action like 'role.%' or action like 'team.%'), 0,
+select is((select count(*)::int from public.org_audit_log(pg_temp.id('orgb'), 200)
+           where (action like 'role.%' and action <> 'role.seed') or action like 'team.%'), 0,
     'B''s log has none of A''s team changes');
 
 select * from finish();
