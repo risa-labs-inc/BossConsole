@@ -49,7 +49,10 @@ with intentionally_anon as (
     -- request Host and answers Caddy's on-demand TLS ask before anyone signs in,
     -- with the anon key. Both reveal only host -> live agent slug, which
     -- agent_public and DNS already publish; neither touches an identity.
-    'public.agent_for_host(text)', 'public.domain_tls_allowed(text)'
+    'public.agent_for_host(text)', 'public.domain_tls_allowed(text)',
+    -- Web console (20261021130000): chat reads the web_pod_self_serve platform
+    -- flag with the anon key before sign-in. It returns one boolean; no identity.
+    'public.web_pod_self_serve()'
   ]) signature
 ),
 anon_callable as (
