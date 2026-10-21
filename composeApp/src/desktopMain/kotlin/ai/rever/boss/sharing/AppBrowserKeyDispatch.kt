@@ -51,6 +51,22 @@ internal object AppBrowserKeyDispatch {
         dispatch(browser, window, pressed, current) { browser.dispatch(event) }
     }
 
+    /**
+     * A key that reaches an OFF_SCREEN [browser] through AWT and Compose rather than direct dispatch:
+     * [send] redispatches it into the window, Compose's focus decides where it lands, and the permit
+     * covers only a matching press that reaches [browser] while [send] runs (the Compose view forwards
+     * synchronously). Remote viewers that drive the window through AWT, like Watch Boss, need this.
+     */
+    fun routed(
+        browser: Browser,
+        window: Window,
+        event: KeyPressed,
+        current: () -> Boolean,
+        send: () -> Unit,
+    ) {
+        dispatch(browser, window, event, current, send)
+    }
+
     private fun dispatch(
         browser: Browser,
         window: Window,
