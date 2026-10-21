@@ -6,34 +6,7 @@
 -- chat vouches for, reads approved ones and reports the outcome; platform admins list, count and decide.
 -- Every step is audited in platform_audit_log (actor and target only, no content).
 
--- The platform audit log, as 20261021120000_pod_tiers defines it (identical; whichever migration runs first makes it).
-CREATE TABLE IF NOT EXISTS public.platform_audit_log (
-    id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    actor       uuid,
-    action      text NOT NULL,
-    target_user uuid,
-    detail      jsonb NOT NULL DEFAULT '{}'::jsonb,
-    at          timestamptz NOT NULL DEFAULT clock_timestamp()
-);
-CREATE INDEX IF NOT EXISTS idx_platform_audit_log_at ON public.platform_audit_log (at DESC, id DESC);
-ALTER TABLE public.platform_audit_log ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.platform_audit_log FROM PUBLIC, anon, authenticated, service_role;
-GRANT SELECT ON public.platform_audit_log TO authenticated, service_role;
-DROP POLICY IF EXISTS "platform_audit_log admin select" ON public.platform_audit_log;
-CREATE POLICY "platform_audit_log admin select" ON public.platform_audit_log
-    FOR SELECT TO authenticated USING ((SELECT public.is_user_admin((SELECT auth.uid()))));
-CREATE OR REPLACE FUNCTION public.platform_append_only() RETURNS trigger
-    LANGUAGE plpgsql SET search_path = '' AS $$
-BEGIN
-    RAISE EXCEPTION '% is append-only', TG_TABLE_NAME USING ERRCODE = '42501';
-END;
-$$;
-DROP TRIGGER IF EXISTS platform_audit_log_no_change ON public.platform_audit_log;
-CREATE TRIGGER platform_audit_log_no_change BEFORE UPDATE OR DELETE ON public.platform_audit_log
-    FOR EACH ROW EXECUTE FUNCTION public.platform_append_only();
-DROP TRIGGER IF EXISTS platform_audit_log_no_truncate ON public.platform_audit_log;
-CREATE TRIGGER platform_audit_log_no_truncate BEFORE TRUNCATE ON public.platform_audit_log
-    FOR EACH STATEMENT EXECUTE FUNCTION public.platform_append_only();
+-- platform_audit_log and platform_append_only() come from 20261021120000_pod_tiers (one definition; it runs first).
 
 CREATE TABLE IF NOT EXISTS public.web_pod_requests (
     id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
