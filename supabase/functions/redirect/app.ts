@@ -165,7 +165,11 @@ export function isOptimistRedirect(redirectTo: string | undefined): boolean {
 // `$agent` predicate. A slug is accepted only if public.agent_public lists it (live agents only).
 const AGENT_SLUG_RE = /^[a-z][a-z0-9-]{1,30}[a-z0-9]$/
 
-/** Label of an agent-host redirect_to under `baseDomain`, or null. Exact origin and path only. */
+/**
+ * Label of a redirect_to that is a sign-in callback on a host under `baseDomain` (`https://<label>.<base>[:port]/auth/callback`,
+ * a query allowed: a custom domain's sign-in lands on its agent host with `?handoff=<host>`), or null. GoTrue checks the
+ * full value against its allow-list when it verifies; this only decides that the browser, never an app, finishes it.
+ */
 export function agentHostLabel(redirectTo: string | undefined, baseDomain: string | undefined): string | null {
   const base = baseDomain?.trim().toLowerCase().replace(/^\.+|\.+$/g, "")
   if (!redirectTo || !base) return null
@@ -175,7 +179,7 @@ export function agentHostLabel(redirectTo: string | undefined, baseDomain: strin
   } catch {
     return null
   }
-  if (u.protocol !== "https:" || u.port || u.username || u.password || u.search || u.hash) return null
+  if (u.protocol !== "https:" || u.username || u.password || u.hash) return null
   if (u.pathname !== "/auth/callback") return null
   const suffix = `.${base}`
   if (!u.hostname.endsWith(suffix)) return null
@@ -203,12 +207,39 @@ async function lookupLiveAgentName(slug: string): Promise<string | null> {
 // Swappable so tests need no network.
 export const agentLookup = { liveAgentName: lookupLiveAgentName }
 
+/** BOSS in the browser (web.<base>): a person's own BOSS desktop. Its sign-in finishes in the browser, never in the app. */
+const BOSS_WEB: Brand = {
+  scheme: "https",
+  tokenParam: "token",
+  name: "BOSS",
+  tagline: "Your BOSS desktop, in the browser",
+  appLabel: "BOSS in your browser",
+  footerLine: "BOSS - Business Operating System as Service",
+  copyright: "© 2026 BOSS. All rights reserved.",
+}
+
+/** A sign-in on a host under the base domain whose agent this cannot name (not live, or not looked up): still the browser. */
+const BASE_HOST: Brand = {
+  scheme: "https",
+  tokenParam: "token",
+  name: "Secure sign-in",
+  tagline: "Signing you in",
+  appLabel: "your sign-in",
+  footerLine: "",
+  copyright: "",
+}
+
+/**
+ * The brand for a sign-in on a host under AGENTS_BASE_DOMAIN: console.<base> and web.<base> are BOSS's own, any other label an
+ * agent (its live name). Every one of them finishes in the browser: an https callback is never handed to a desktop app.
+ */
 async function agentBrand(redirectTo: string | undefined): Promise<Brand | null> {
   const label = agentHostLabel(redirectTo, Deno.env.get("AGENTS_BASE_DOMAIN"))
   if (!label) return null
   if (label === "console") return { ...BRANDS.boss, scheme: "https" }
+  if (label === "web") return BOSS_WEB
   const name = await agentLookup.liveAgentName(label)
-  if (!name) return null
+  if (!name) return BASE_HOST
   // The name is admin-controlled and is interpolated into HTML below: escape it once here.
   const safe = htmlAttr(name)
   return {
