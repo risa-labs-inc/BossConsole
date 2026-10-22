@@ -361,3 +361,43 @@ Deno.test("agent host: the glob is in config.toml and both templates carry the $
     assertStringIncludes(tpl, "{{ if $agent }}your agent{{")
   }
 })
+
+
+// (j) Interstitial wording: browser targets never mention the app and carry no emoji.
+
+const EMOJI = /\p{Extended_Pictographic}/u
+const APP_WORD = /\bapps?\b/i
+const CONSOLE_GOTRUE = "https://api.risaboss.com/auth/v1/verify?token=t1"
+
+function assertBrowserPage(html: string) {
+  assert(!APP_WORD.test(html.replace(/<style>[\s\S]*?<\/style>/, "")), "page must not mention the app")
+  assert(!EMOJI.test(html), "page must contain no emoji")
+  assert(!html.replace("<!DOCTYPE", "").includes("!"), "page copy must not use exclamation marks")
+}
+
+Deno.test("interstitial: web host and agent host targets have no app wording and no emoji", async () => {
+  await withAgents("bossconsole.ai", { acme: "Acme" }, async () => {
+    for (const rt of [
+      "https://web.bossconsole.ai/auth/callback",
+      "https://console.bossconsole.ai/auth/callback",
+      "https://acme.bossconsole.ai/auth/callback",
+      "https://ghost.bossconsole.ai/auth/callback", // not live: base-host brand
+      "https://cli.risaboss.com/auth",
+      "https://askoptimist.com/auth/callback",
+    ]) {
+      const html = await pageFor(agentLink(rt).replace(GOTRUE, encodeURIComponent(CONSOLE_GOTRUE)))
+      assertStringIncludes(html, "/auth/v1/verify?token=t1")
+      assertStringIncludes(html, "Signing you in")
+      assertBrowserPage(html)
+    }
+  })
+})
+
+Deno.test("interstitial: desktop app handoff keeps the app wording", async () => {
+  for (const path of ["/redirect?token=abc", "/redirect?token=abc&app=bossterm"]) {
+    const html = await pageFor(path)
+    assertStringIncludes(html, "If the app doesn't open automatically:")
+    assertStringIncludes(html, "Secure Authentication")
+    assertStringIncludes(html, "Opening ")
+  }
+})

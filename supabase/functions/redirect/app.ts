@@ -286,12 +286,25 @@ export function jsStringLiteral(s: string): string {
 }
 
 function generateRedirectPage(deepLink: string, brand: Brand): string {
+  // https targets finish in the browser: no "app" wording and no emoji there. Only a custom-scheme handoff is the desktop app.
+  const browser = brand.scheme === "https"
+  const title = browser ? "Signing you in" : `Opening ${brand.appLabel}`
+  const heading = title
+  const lead = browser ? "Redirecting you to finish signing in..." : `Redirecting you to ${brand.name}...`
+  const fallback = browser ? "If this page doesn't continue automatically:" : "If the app doesn't open automatically:"
+  const buttonLabel = browser ? "Continue" : `Open ${brand.appLabel}`
+  const noticeTitle = browser ? "Secure sign-in" : "🔒 Secure Authentication"
+  const noticeBody = browser
+    ? "You're being securely redirected. This link is valid for one-time use only."
+    : `You're being securely redirected to ${brand.name}. This link is valid for one-time use only.`
+  // The copyright sign is Extended_Pictographic and can render as an emoji.
+  const copyright = browser ? brand.copyright.replace(/^©/, "Copyright") : brand.copyright
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Opening ${brand.appLabel}</title>
+    <title>${title}</title>
     <style>
         body {
             margin: 0;
@@ -418,19 +431,19 @@ function generateRedirectPage(deepLink: string, brand: Brand): string {
             <p>${brand.tagline}</p>
         </div>
         <div class="content">
-            <h2>Opening ${brand.appLabel}</h2>
+            <h2>${heading}</h2>
             <div class="spinner"></div>
-            <p>Redirecting you to ${brand.name}...</p>
-            <p style="margin-bottom: 16px; color: #AAAAAA; font-size: 14px;">If the app doesn't open automatically:</p>
-            <a href="${htmlAttr(deepLink)}" class="button">Open ${brand.appLabel}</a>
+            <p>${lead}</p>
+            <p style="margin-bottom: 16px; color: #AAAAAA; font-size: 14px;">${fallback}</p>
+            <a href="${htmlAttr(deepLink)}" class="button">${buttonLabel}</a>
         </div>
         <div class="notice">
-            <p>🔒 Secure Authentication</p>
-            <p>You're being securely redirected to ${brand.name}. This link is valid for one-time use only.</p>
+            <p>${noticeTitle}</p>
+            <p>${noticeBody}</p>
         </div>
         <div class="footer">
             <p>${brand.footerLine}</p>
-            <p>${brand.copyright}</p>
+            <p>${copyright}</p>
         </div>
     </div>
     <script>
