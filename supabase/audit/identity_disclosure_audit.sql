@@ -52,7 +52,11 @@ with intentionally_anon as (
     'public.agent_for_host(text)', 'public.domain_tls_allowed(text)',
     -- Web console (20261021130000): chat reads the web_pod_self_serve platform
     -- flag with the anon key before sign-in. It returns one boolean; no identity.
-    'public.web_pod_self_serve()'
+    'public.web_pod_self_serve()',
+    -- Suspended agents (20261022120000): chat asks whether a host's agent is suspended
+    -- before sign-in, to answer 503 instead of the sign-in page. One boolean about a
+    -- public host; no identity.
+    'public.agent_unavailable(text)'
   ]) signature
 ),
 anon_callable as (

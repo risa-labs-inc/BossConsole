@@ -18,7 +18,8 @@ DECLARE
     invited boolean;
     at_domain boolean;
 BEGIN
-    IF NOT (public.is_agents_provisioner() OR COALESCE(auth.role(), '') = 'service_role') THEN
+    -- The provisioner bot, or a caller with no end-user identity at all (the operator, tests); never anon or a person.
+    IF NOT (public.is_agents_provisioner() OR (auth.uid() IS NULL AND current_user NOT IN ('anon', 'authenticated'))) THEN
         RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
     END IF;
     SELECT * INTO a FROM public.agents WHERE slug = p_slug AND status = 'live';

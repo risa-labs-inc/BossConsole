@@ -44,8 +44,9 @@ select ok(not has_table_privilege('authenticated', 'public.agents', 'DELETE')
 -- ---- org admin A creates and edits own agent ----
 set local role authenticated;
 select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
-select lives_ok($q$ insert into public.agents (slug, org_id, name, plugin_id, created_by)
-    values ('acme', (select id from org where k = 'a'), 'Acme', 'ai.rever.boss.plugin.dynamic.agent.acme', 'a9000000-0000-4000-8000-00000000000a') $q$, 'org admin creates an agent for their org');
+select lives_ok($q$ insert into public.agents (slug, org_id, name, plugin_id, created_by, signup_policy)
+    values ('acme', (select id from org where k = 'a'), 'Acme', 'ai.rever.boss.plugin.dynamic.agent.acme', 'a9000000-0000-4000-8000-00000000000a',
+            '{"mode":"open"}') $q$, 'org admin creates an agent for their org (open sign-up, chosen explicitly)');
 select throws_ok($q$ insert into public.agents (slug, org_id, name, plugin_id, created_by)
     values ('badplug', (select id from org where k = 'a'), 'B', 'com.example.evil', 'a9000000-0000-4000-8000-00000000000a') $q$, '23514', null, 'plugin_id must be in the agent namespace');
 select throws_ok($q$ insert into public.agents (slug, org_id, name, plugin_id, created_by)
