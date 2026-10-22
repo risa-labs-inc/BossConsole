@@ -52,8 +52,29 @@ BEGIN
                 CONTINUE;
             END IF;
             IF pg_catalog.jsonb_typeof(v) <> 'object'
-               OR EXISTS (SELECT 1 FROM pg_catalog.jsonb_object_keys(v) x WHERE x NOT IN ('url', 'shape', 'background')) THEN
+               OR EXISTS (SELECT 1 FROM pg_catalog.jsonb_object_keys(v) x
+                          WHERE x NOT IN ('url', 'shape', 'background', 'source', 'crop')) THEN
                 RETURN 'logo_invalid';
+            END IF;
+            -- The uploaded original (re-cropped later without uploading again), in the agent's own folder.
+            IF v ? 'source' AND v->'source' <> 'null'::jsonb
+               AND NOT (pg_catalog.jsonb_typeof(v->'source') = 'string'
+                        AND public.agent_brand_url_ok(v->>'source', p_org_id, p_agent_id)) THEN
+                RETURN 'logo_source_invalid';
+            END IF;
+            -- Where the original sits in the cropper's frame: numbers and one flag, nothing else.
+            IF v ? 'crop' AND v->'crop' <> 'null'::jsonb AND (
+                   pg_catalog.jsonb_typeof(v->'crop') <> 'object'
+                   OR EXISTS (SELECT 1 FROM pg_catalog.jsonb_object_keys(v->'crop') x
+                              WHERE x NOT IN ('x', 'y', 'scale', 'padding', 'trim', 'frame'))
+                   OR EXISTS (SELECT 1 FROM pg_catalog.jsonb_each(v->'crop') e
+                              WHERE (e.key = 'trim' AND pg_catalog.jsonb_typeof(e.value) <> 'boolean')
+                                 OR (e.key <> 'trim' AND (pg_catalog.jsonb_typeof(e.value) <> 'number'
+                                                          OR pg_catalog.abs((e.value #>> '{}')::numeric) > 100000)))
+                   OR COALESCE((v->'crop'->>'scale')::numeric, 1) <= 0
+                   OR COALESCE((v->'crop'->>'padding')::numeric, 0) NOT BETWEEN 0 AND 0.4
+                   OR COALESCE((v->'crop'->>'frame')::numeric, 280) <= 0) THEN
+                RETURN 'logo_crop_invalid';
             END IF;
             IF pg_catalog.jsonb_typeof(v->'url') IS DISTINCT FROM 'string'
                OR NOT public.agent_brand_url_ok(v->>'url', p_org_id, p_agent_id) THEN
@@ -204,6 +225,7 @@ BEGIN
                 'status', NEW.status, 'from_status', OLD.status));
     ELSIF NEW.status IS DISTINCT FROM OLD.status THEN
         act := CASE WHEN NEW.status = 'suspended' THEN 'agent.suspend'
+                    WHEN OLD.status = 'suspended' THEN 'agent.unsuspend'
                     WHEN OLD.status = 'pending_review' AND NEW.status = 'live' THEN 'agent.approve'
                     WHEN OLD.status = 'pending_review' AND NEW.status = 'draft' THEN 'agent.reject'
                     ELSE 'agent.status' END;
