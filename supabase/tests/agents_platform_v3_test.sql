@@ -378,10 +378,10 @@ select set_config('request.jwt.claim.sub', 'b3000000-0000-4000-8000-00000000000a
 insert into public.agent_invites (agent_id, email, invited_by) values ((select id from ids where k = 'acme'), 'guest@v3.test', 'b3000000-0000-4000-8000-00000000000a');
 delete from public.agent_invites where email = 'guest@v3.test';
 select set_config('request.jwt.claim.sub', 'b3000000-0000-4000-8000-00000000000a', true);
-update public.agents set name = 'Acme 2', signup_policy = '{"mode":"invite"}' where slug = 'vacme';
+update public.agents set name = 'Acme 2', signup_policy = '{"mode":"open"}' where slug = 'vacme';
 select public.publish_agent((select id from ids where k = 'acme'), '1.2.0');
 select set_config('request.jwt.claim.sub', 'b3000000-0000-4000-8000-00000000000d', true);
-select public.suspend_agent((select id from ids where k = 'acme'));
+select public.suspend_agent((select id from ids where k = 'acme'), 'Policy check');
 reset role;
 
 -- ---- org_overview ----
@@ -429,7 +429,7 @@ select ok((select array_agg(distinct action) from public.org_audit_log((select i
     'agent.create', 'agent.brand_change', 'agent.settings_change', 'agent.publish', 'agent.suspend',
     'domain.add', 'domain.remove', 'domain.status', 'invite.add', 'invite.remove', 'org.default_brand_change'], 'every audited action is logged');
 select is((select detail from public.org_audit_log((select id from ids where k = 'orga'), 200) where action = 'agent.settings_change' order by id desc limit 1),
-    '{"fields":["name","signup_policy"]}'::jsonb, 'settings change names the fields');
+    '{"fields":["name","signup_policy"],"agent_name":"Acme 2"}'::jsonb, 'settings change names the fields');
 select is((select detail->'keys' from public.org_audit_log((select id from ids where k = 'orga'), 200) where action = 'agent.brand_change' order by id limit 1),
     '["accent", "accent_dark", "apple_touch_url", "favicon_url", "logo", "name", "short_name", "signin"]'::jsonb, 'brand change names the keys, not the content');
 select is((select row(actor_email, detail->>'version')::text from public.org_audit_log((select id from ids where k = 'orga'), 200) where action = 'agent.publish'),

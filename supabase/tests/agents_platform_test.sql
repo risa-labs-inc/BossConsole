@@ -97,7 +97,7 @@ update public.agents set status = 'pending_review' where slug = 'acme';
 set local role authenticated;
 select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000a', true);
 select throws_ok($q$ select public.review_agent((select id from ag), true) $q$, '42501', null, 'org admin cannot review');
-select throws_ok($q$ select public.suspend_agent((select id from ag)) $q$, '42501', null, 'org admin cannot suspend');
+select throws_ok($q$ select public.suspend_agent((select id from ag), 'Abuse report') $q$, '42501', null, 'org admin cannot suspend');
 select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000d', true);
 select is(public.review_agent((select id from ag), true)::text, 'live', 'platform admin approves -> live');
 
@@ -114,7 +114,7 @@ select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 -- ---- suspend hides the agent ----
 set local role authenticated;
 select set_config('request.jwt.claim.sub', 'a9000000-0000-4000-8000-00000000000d', true);
-select lives_ok($q$ select public.suspend_agent((select id from ag)) $q$, 'platform admin suspends');
+select lives_ok($q$ select public.suspend_agent((select id from ag), 'Abuse report') $q$, 'platform admin suspends');
 reset role;
 set local role anon;
 select is((select count(*)::int from public.agent_public), 0, 'agent_public hides suspended agents');

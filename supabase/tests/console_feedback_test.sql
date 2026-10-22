@@ -29,13 +29,13 @@ select ok((select bool_and(prosecdef and 'search_path=""' = any(proconfig)) from
     'public.review_agent(uuid,boolean,text)'::regprocedure, 'public.suspend_agent(uuid,text)'::regprocedure,
     'public.unsuspend_agent(uuid)'::regprocedure, 'public.agent_unavailable(text)'::regprocedure,
     'public.platform_org_request_detail(uuid)'::regprocedure, 'public.organisation_domain_problem(text)'::regprocedure,
-    'public.platform_settings_history(integer)'::regprocedure)), 'new RPCs are security definer with an empty search_path');
+    'public.platform_settings_history(integer,timestamp with time zone)'::regprocedure)), 'new RPCs are security definer with an empty search_path');
 select ok(to_regprocedure('public.review_agent(uuid,boolean)') is null and to_regprocedure('public.suspend_agent(uuid)') is null,
     'the old signatures are gone (the new ones take the old calls through their defaults)');
 select ok(not has_function_privilege('anon', 'public.unsuspend_agent(uuid)', 'EXECUTE')
       and not has_function_privilege('anon', 'public.platform_org_request_detail(uuid)', 'EXECUTE')
       and not has_function_privilege('anon', 'public.organisation_domain_problem(text)', 'EXECUTE')
-      and not has_function_privilege('anon', 'public.platform_settings_history(integer)', 'EXECUTE')
+      and not has_function_privilege('anon', 'public.platform_settings_history(integer,timestamp with time zone)', 'EXECUTE')
       and has_function_privilege('anon', 'public.agent_unavailable(text)', 'EXECUTE'), 'only agent_unavailable is anon-callable');
 select ok(not has_column_privilege('authenticated', 'public.agents', 'pending_version', 'UPDATE')
       and not has_column_privilege('authenticated', 'public.agents', 'review_note', 'UPDATE')
@@ -104,7 +104,7 @@ select set_config('request.jwt.claim.sub', 'cf000000-0000-4000-8000-00000000000d
 select lives_ok($q$ select public.suspend_agent((select id from a), 'Abuse report') $q$, 'suspend with a reason');
 select is((select row(status, status_before_suspend, suspended_reason)::text from public.agents where slug = 'cfagent'),
     '(suspended,live,"Abuse report")', 'suspended, remembering it was live');
-select throws_ok($q$ select public.suspend_agent((select id from a)) $q$, 'P0001', 'agent_already_suspended', 'cannot suspend twice');
+select throws_ok($q$ select public.suspend_agent((select id from a), 'Again') $q$, 'P0001', 'agent_already_suspended', 'cannot suspend twice');
 reset role;
 set local role anon;
 select is(public.agent_unavailable('cfagent.' || (select d from base)), true,

@@ -157,7 +157,7 @@ select is(public.has_agent_permission(pg_temp.id('beta'), 'agents.edit'), false,
 select lives_ok($q$ update public.agents set name = 'Acme Edited', brand = '{"name":"Acme","accent":"#112233"}' where slug = 'racme' $q$,
     'editor saves name and brand');
 select is((select name from public.agents where slug = 'racme'), 'Acme Edited', 'the edit landed');
-select throws_ok($q$ update public.agents set signup_policy = '{"mode":"invite"}' where slug = 'racme' $q$, '42501', null,
+select throws_ok($q$ update public.agents set signup_policy = '{"mode":"open"}' where slug = 'racme' $q$, '42501', null,
     'editor cannot change the access policy');
 select throws_ok($q$ select public.publish_agent(pg_temp.id('acme'), '1.0.0') $q$, '42501', null, 'editor cannot publish_agent');
 select throws_ok($q$ insert into public.agent_domains (agent_id, hostname) values (pg_temp.id('acme'), 'chat.rbac-acme.com') $q$,
