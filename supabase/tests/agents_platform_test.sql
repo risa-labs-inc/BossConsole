@@ -24,11 +24,11 @@ insert into org select 'b', id from public.organisations where slug = 'agentsb';
 
 -- ---- shape ----
 select ok((select bool_and(prosecdef and 'search_path=""' = any(proconfig)) from pg_proc where oid in (
-    'public.publish_agent(uuid,text)'::regprocedure, 'public.review_agent(uuid,boolean)'::regprocedure,
-    'public.suspend_agent(uuid)'::regprocedure,
+    'public.publish_agent(uuid,text)'::regprocedure, 'public.review_agent(uuid,boolean,text)'::regprocedure,
+    'public.suspend_agent(uuid,text)'::regprocedure,
     'public.agent_can_join(text,text)'::regprocedure)), 'RPCs are security definer with an empty search_path');
 select ok(not has_function_privilege('anon', 'public.publish_agent(uuid,text)', 'EXECUTE')
-      and not has_function_privilege('anon', 'public.review_agent(uuid,boolean)', 'EXECUTE')
+      and not has_function_privilege('anon', 'public.review_agent(uuid,boolean,text)', 'EXECUTE')
       and not has_function_privilege('anon', 'public.agent_can_join(text,text)', 'EXECUTE')
       and has_function_privilege('authenticated', 'public.agent_can_join(text,text)', 'EXECUTE'),
     'none is anon-callable (agent_can_join is asked with the person''s session since 20261019150000)');
