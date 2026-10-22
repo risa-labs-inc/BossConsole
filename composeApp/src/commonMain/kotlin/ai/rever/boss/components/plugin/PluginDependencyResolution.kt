@@ -555,7 +555,12 @@ data class MissingDependencyPrompt(
  * The shared pending map otherwise carries prompts between tests, which is the same coupling two
  * windows would have.
  */
-open class PluginDependencyBus {
+open class PluginDependencyBus(
+    /** Optional dependencies this install never offers (see [ManagedDependencyPrompts]); read once, on first use. */
+    neverOfferOptional: () -> Set<String> = { ManagedDependencyPrompts.load() },
+) {
+    private val neverOffer by lazy(neverOfferOptional)
+
     /**
      * Missing plugins the user has already declined, for this process only.
      *
@@ -584,8 +589,9 @@ open class PluginDependencyBus {
         declined.add(declineKey(missing))
     }
 
-    /** Whether this exact question was already declined this session. */
-    fun wasDeclined(missing: MissingPluginDependency): Boolean = declineKey(missing) in declined
+    /** Whether this exact question was already declined this session, or the install never asks it. */
+    fun wasDeclined(missing: MissingPluginDependency): Boolean =
+        declineKey(missing) in declined || (missing.optional && missing.missingPluginId in neverOffer)
 
     private fun declineKey(missing: MissingPluginDependency) =
         if (missing.optional) {
@@ -785,3 +791,29 @@ fun shouldClaimMissingDependencyPrompt(
 
 /** The bus the host actually uses. */
 object PluginDependencyEventBus : PluginDependencyBus()
+
+/**
+ * A managed install's standing answer to optional-dependency offers: `~/.boss/plugin-dependency-prompts.json`,
+ * `{"neverOfferOptional": ["<plugin id>", ...]}`. Written by whoever manages the install (a hosted image seeds it), not
+ * by "Not now", which stays a per-session answer. Only optional dependencies; a required one is always asked, and an
+ * offer the user opens themselves (userInitiated) is still shown. Missing or unreadable: nothing is suppressed.
+ */
+object ManagedDependencyPrompts {
+    const val FILE_NAME = "plugin-dependency-prompts.json"
+
+    fun load(file: java.io.File = ai.rever.boss.plugin.pathutils.BossDirectories.resolve(FILE_NAME)): Set<String> =
+        runCatching {
+            if (!file.isFile || file.length() > 64 * 1024) return emptySet()
+            parse(file.readText())
+        }.getOrDefault(emptySet())
+
+    fun parse(text: String): Set<String> =
+        runCatching {
+            val ids = kotlinx.serialization.json.Json.parseToJsonElement(text)
+                .let { it as? kotlinx.serialization.json.JsonObject }
+                ?.get("neverOfferOptional") as? kotlinx.serialization.json.JsonArray ?: return emptySet()
+            ids.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p -> p.isString }?.content?.trim() }
+                .filter { it.isNotEmpty() }
+                .toSet()
+        }.getOrDefault(emptySet())
+}
