@@ -26,6 +26,7 @@ function harness(prepare: Db["prepare"] = () => Promise.resolve(facts), mailFail
       calls.push(a);
       return prepare(...a);
     },
+    prepareAgent: () => Promise.reject(new Error("not an agent invite")),
   };
   const mailer: Mailer = (m) => {
     if (mailFails) return Promise.reject(new Error("smtp 535 bad credentials for user@x"));
@@ -148,7 +149,11 @@ Deno.test("an unreachable database is 503; a failing mail server is 502 without 
 
 Deno.test("without SMTP or a console URL the function answers 503 after validating", async () => {
   const app = createApp({
-    db: { user: () => Promise.resolve(userId), prepare: () => Promise.resolve(facts) },
+    db: {
+      user: () => Promise.resolve(userId),
+      prepare: () => Promise.resolve(facts),
+      prepareAgent: () => Promise.reject(new Error("unused")),
+    },
     mailer: () => Promise.resolve(),
     consoleUrl: null,
   });

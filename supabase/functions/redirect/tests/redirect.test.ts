@@ -286,11 +286,32 @@ Deno.test("agent host: console.<base> is branded BOSS Console without a lookup",
   })
 })
 
-Deno.test("agent host: unknown or non-live slug falls through exactly like an unknown redirect", async () => {
+Deno.test("agent host: an unknown or non-live slug still finishes in the browser, under a neutral name", async () => {
   await withAgents("bossconsole.ai", { acme: "Acme" }, async () => {
-    const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent("https://ghost.bossconsole.ai/auth/callback"))
-    assertStringIncludes(html, "boss://auth/verify?token=abc")
-    assertStringIncludes(html, "<h1>BOSS Console</h1>")
+    const html = await pageFor(agentLink("https://ghost.bossconsole.ai/auth/callback"))
+    assert(!html.includes("boss://"), "an https callback is never handed to the desktop app")
+    assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=t1")
+    assertStringIncludes(html, "<h1>Secure sign-in</h1>")
+  })
+})
+
+Deno.test("web.<base>: BOSS in the browser signs in in the browser, never through the BOSS app (the deep link was the bug)", async () => {
+  await withAgents("bossconsole.ai", {}, async () => {
+    for (const rt of ["https://web.bossconsole.ai/auth/callback", "https://web.bossconsole.ai:8443/auth/callback"]) {
+      const html = await pageFor(agentLink(rt))
+      assert(!html.includes("boss://"), rt)
+      assertStringIncludes(html, "<h1>BOSS</h1>")
+      assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=t1&amp;type=magiclink&amp;redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
+    }
+  })
+})
+
+Deno.test("custom domain hand-off: the agent host's callback with ?handoff= finishes in the browser too", async () => {
+  await withAgents("bossconsole.ai", { acme: "Acme" }, async () => {
+    const rt = "https://acme.bossconsole.ai/auth/callback?handoff=chat.acme.example"
+    const html = await pageFor(agentLink(rt))
+    assert(!html.includes("boss://"))
+    assertStringIncludes(html, "<h1>Acme</h1>")
   })
 })
 
@@ -301,14 +322,15 @@ Deno.test("agent host: arm is off when AGENTS_BASE_DOMAIN is unset", async () =>
   })
 })
 
-Deno.test("agent host: only an exact https origin + /auth/callback with a single label is accepted", () => {
+Deno.test("agent host: only https + /auth/callback with a single label under the base is accepted", () => {
   const ok = (u: string) => agentHostLabel(u, "bossconsole.ai")
   assertEquals(ok("https://acme.bossconsole.ai/auth/callback"), "acme")
+  assertEquals(ok("https://acme.bossconsole.ai:8443/auth/callback"), "acme")
+  assertEquals(ok("https://acme.bossconsole.ai/auth/callback?handoff=chat.acme.example"), "acme")
   for (const bad of [
     "http://acme.bossconsole.ai/auth/callback",
     "https://acme.bossconsole.ai/auth/callback/x",
-    "https://acme.bossconsole.ai/auth/callback?x=1",
-    "https://acme.bossconsole.ai:8443/auth/callback",
+    "https://acme.bossconsole.ai/auth/callback#x",
     "https://a.b.bossconsole.ai/auth/callback",
     "https://bossconsole.ai/auth/callback",
     "https://acme.bossconsole.ai.evil.example/auth/callback",

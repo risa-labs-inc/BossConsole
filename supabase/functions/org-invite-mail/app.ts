@@ -1,4 +1,4 @@
-import { type InviteFacts, inviteMail } from "./mail.ts";
+import { type AgentInviteFacts, agentInviteMail, type InviteFacts, inviteMail } from "./mail.ts";
 import { isAddress, type MailMessage, sendMail, type SmtpConfig } from "./smtp.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -27,6 +27,11 @@ export interface Db {
     inviteId: string,
     token: string,
   ): Promise<InviteFacts & { org_slug: string | null }>;
+  /**
+   * agent_invite_mail_prepare as the service role: re-checks that `actor` holds agents.access on the agent's org, that the
+   * invite exists and the agent is live; applies the rate limits and records the send.
+   */
+  prepareAgent(actor: string, agentId: string, email: string): Promise<AgentInviteFacts>;
 }
 
 export type Mailer = (msg: MailMessage) => Promise<void>;
@@ -112,7 +117,49 @@ export function restDb(): Db {
       }
       return await r.json() as InviteFacts & { org_slug: string | null };
     },
+    async prepareAgent(actor, agentId, email) {
+      const r = await fetch(`${url}/rest/v1/rpc/agent_invite_mail_prepare`, {
+        method: "POST",
+        headers: {
+          apikey: service,
+          Authorization: `Bearer ${service}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ p_actor: actor, p_agent_id: agentId, p_email: email }),
+        signal: timeout(),
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({})) as { code?: string; message?: string };
+        if (e.code === "42501") throw new Refused(403, "permission_denied");
+        const m = (e.message ?? "").trim();
+        if (m === "invite_not_found") throw new Refused(404, m);
+        if (m === "agent_not_live") throw new Refused(409, m);
+        if (m === "rate_limited_org" || m === "rate_limited_recipient") throw new Refused(429, m);
+        throw new Error(`prepare ${r.status}`);
+      }
+      return await r.json() as AgentInviteFacts;
+    },
   };
+}
+
+const HOST =
+  /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+const SLUG = /^[a-z][a-z0-9-]{1,30}[a-z0-9]$/;
+
+/** The agents' base domain (AGENTS_BASE_DOMAIN): an agent's site is https://<slug>.<base>/. null when unset or malformed. */
+export function baseDomainFromEnv(raw = env("AGENTS_BASE_DOMAIN")): string | null {
+  const base = raw.trim().toLowerCase().replace(/^\.+|\.+$/g, "");
+  return HOST.test(base) ? base : null;
+}
+
+/** Where an agent invite sends people: the agent's active custom domain, else its own host under the base. */
+export function agentSiteUrl(
+  facts: Pick<AgentInviteFacts, "agent_slug" | "custom_host">,
+  base: string,
+): string | null {
+  const custom = (facts.custom_host ?? "").toLowerCase();
+  if (custom && HOST.test(custom)) return `https://${custom}/`;
+  return SLUG.test(facts.agent_slug) ? `https://${facts.agent_slug}.${base}/` : null;
 }
 
 const CORS = {
@@ -128,10 +175,15 @@ function json(status: number, body: unknown): Response {
   });
 }
 
-/** Log lines carry the invite id and the outcome; never the token, the address or SMTP details. */
+/** Log lines carry the invite (or agent) id and the outcome; never the token, the address or SMTP details. */
 function log(inviteId: string, outcome: string) {
   console.info(`org-invite-mail invite=${inviteId} ${outcome}`);
 }
+function logAgent(agentId: string, outcome: string) {
+  console.info(`org-invite-mail agent=${agentId} ${outcome}`);
+}
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * POST /org-invite-mail {org_id, invite_id, token}: an org administrator (their own JWT) asks for the invite
@@ -141,16 +193,77 @@ function log(inviteId: string, outcome: string) {
  * 502 the mail server refused | 503 not configured or the database is unreachable.
  */
 export function createApp(
-  options: { db?: Db; mailer?: Mailer; consoleUrl?: string | null; configured?: boolean } = {},
+  options: {
+    db?: Db;
+    mailer?: Mailer;
+    consoleUrl?: string | null;
+    baseDomain?: string | null;
+    configured?: boolean;
+  } = {},
 ) {
   const smtp = options.mailer ? null : smtpFromEnv();
   const mailer: Mailer | null = options.mailer ??
     (smtp ? (msg) => sendMail(smtp, msg) : null);
   const db = options.db ?? restDb();
   const consoleUrl = options.consoleUrl !== undefined ? options.consoleUrl : consoleUrlFromEnv();
+  const baseDomain = options.baseDomain !== undefined ? options.baseDomain : baseDomainFromEnv();
+
+  /**
+   * POST /org-invite-mail/agent {agent_id, email}: someone with agents.access on the agent's org (their own JWT) asks for an
+   * agent invite (already in agent_invites) to be emailed, with a link to the agent's site. Same answers as below, plus
+   * 409 agent_not_live.
+   */
+  const agentInvite = async (request: Request): Promise<Response> => {
+    const auth = request.headers.get("Authorization") ?? "";
+    const jwt = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    if (!jwt) return json(401, { error: "Unauthorized" });
+    let agentId: string, email: string;
+    try {
+      const text = await request.text();
+      if (text.length > MAX_BODY) throw new Error("body");
+      const b = JSON.parse(text);
+      if (
+        !b || typeof b.agent_id !== "string" || !UUID.test(b.agent_id) ||
+        typeof b.email !== "string" || b.email.length > 320 || !EMAIL.test(b.email.trim())
+      ) throw new Error("body");
+      agentId = b.agent_id.toLowerCase();
+      email = b.email.trim().toLowerCase();
+    } catch {
+      return json(400, { error: "Invalid request" });
+    }
+    if (!mailer || !baseDomain) return json(503, { error: "Not configured" });
+    let facts: AgentInviteFacts;
+    try {
+      const actor = await db.user(jwt);
+      if (!actor) return json(401, { error: "Unauthorized" });
+      facts = await db.prepareAgent(actor, agentId, email);
+    } catch (e) {
+      if (e instanceof Refused) {
+        logAgent(agentId, `refused ${e.code}`);
+        return json(e.status, { error: e.code });
+      }
+      return json(503, { error: "Unavailable" });
+    }
+    const link = agentSiteUrl(facts, baseDomain);
+    if (!isAddress(facts.email) || !link) return json(409, { error: "invite_not_email" });
+    try {
+      await mailer({ to: facts.email, ...agentInviteMail(facts, link) });
+    } catch {
+      logAgent(agentId, "smtp failed");
+      return json(502, { error: "mail_failed" });
+    }
+    logAgent(agentId, "sent");
+    return json(200, { sent: true, email: facts.email });
+  };
+
   return async (request: Request): Promise<Response> => {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     const path = new URL(request.url).pathname.replace(/\/+$/, "");
+    if (path.endsWith("/org-invite-mail/agent")) {
+      return request.method === "POST"
+        ? agentInvite(request)
+        : json(405, { error: "Method not allowed" });
+    }
     if (!path.endsWith("/org-invite-mail")) return json(404, { error: "Not found" });
     if (request.method !== "POST") return json(405, { error: "Method not allowed" });
     const auth = request.headers.get("Authorization") ?? "";
