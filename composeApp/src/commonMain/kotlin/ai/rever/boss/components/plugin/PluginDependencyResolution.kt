@@ -801,7 +801,11 @@ object PluginDependencyEventBus : PluginDependencyBus()
 object ManagedDependencyPrompts {
     const val FILE_NAME = "plugin-dependency-prompts.json"
 
-    fun load(file: java.io.File = ai.rever.boss.plugin.pathutils.BossDirectories.resolve(FILE_NAME)): Set<String> =
+    fun load(
+        file: java.io.File =
+            ai.rever.boss.plugin.pathutils.BossDirectories
+                .resolve(FILE_NAME),
+    ): Set<String> =
         runCatching {
             if (!file.isFile || file.length() > 64 * 1024) return emptySet()
             parse(file.readText())
@@ -809,11 +813,15 @@ object ManagedDependencyPrompts {
 
     fun parse(text: String): Set<String> =
         runCatching {
-            val ids = kotlinx.serialization.json.Json.parseToJsonElement(text)
-                .let { it as? kotlinx.serialization.json.JsonObject }
-                ?.get("neverOfferOptional") as? kotlinx.serialization.json.JsonArray ?: return emptySet()
-            ids.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p -> p.isString }?.content?.trim() }
-                .filter { it.isNotEmpty() }
+            val ids =
+                kotlinx.serialization.json.Json
+                    .parseToJsonElement(text)
+                    .let { it as? kotlinx.serialization.json.JsonObject }
+                    ?.get("neverOfferOptional") as? kotlinx.serialization.json.JsonArray ?: return emptySet()
+            ids
+                .mapNotNull {
+                    (it as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p -> p.isString }?.content?.trim()
+                }.filter { it.isNotEmpty() }
                 .toSet()
         }.getOrDefault(emptySet())
 }
