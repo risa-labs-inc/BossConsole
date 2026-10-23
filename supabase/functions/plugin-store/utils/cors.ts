@@ -2,7 +2,8 @@
  * CORS origin allowlist for the plugin-store function.
  *
  * `boss://plugins` is the desktop client's deep-link origin and
- * `https://risaboss.com` the production site; both ship to every deployment.
+ * `https://risaboss.com` the production site. The exact app/console hosts serve
+ * the platform publisher; agent subdomains and arbitrary origins are not trusted.
  *
  * `http://localhost:3000` is whatever machine the caller happens to be on, not
  * an origin BOSS controls, yet it shipped to production in the allowlist
@@ -16,6 +17,8 @@
 const PRODUCTION_ORIGINS: readonly string[] = [
   'boss://plugins',
   'https://risaboss.com',
+  'https://app.bossconsole.ai',
+  'https://console.bossconsole.ai',
 ]
 
 /** Origins that only exist on a developer's machine. */

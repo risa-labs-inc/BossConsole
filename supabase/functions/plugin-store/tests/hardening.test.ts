@@ -19,6 +19,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import type { PluginStoreContext } from "../types/context.ts"
 import browse from "../routes/browse.ts"
 import download from "../routes/download.ts"
+import { cors } from "hono/cors"
 import { pluginStoreCorsOrigins } from "../utils/cors.ts"
 import { resetRateLimits } from "../utils/rate-limit.ts"
 
@@ -293,13 +294,15 @@ Deno.test("CORS allowlist admits localhost only in local dev or by explicit opt-
     // credentials: true it must not be allowed.
     Deno.env.set("SUPABASE_URL", "https://api.risaboss.com")
     Deno.env.delete("PLUGIN_STORE_ALLOW_LOCALHOST")
-    assertEquals(pluginStoreCorsOrigins(), ["boss://plugins", "https://risaboss.com"])
+    assertEquals(pluginStoreCorsOrigins(), ["boss://plugins", "https://risaboss.com", "https://app.bossconsole.ai", "https://console.bossconsole.ai"])
 
     // A local `supabase start` stack: the dev origin is admitted.
     Deno.env.set("SUPABASE_URL", "http://127.0.0.1:54321")
     assertEquals(pluginStoreCorsOrigins(), [
       "boss://plugins",
       "https://risaboss.com",
+      "https://app.bossconsole.ai",
+      "https://console.bossconsole.ai",
       "http://localhost:3000",
     ])
 
@@ -309,6 +312,8 @@ Deno.test("CORS allowlist admits localhost only in local dev or by explicit opt-
     assertEquals(pluginStoreCorsOrigins(), [
       "boss://plugins",
       "https://risaboss.com",
+      "https://app.bossconsole.ai",
+      "https://console.bossconsole.ai",
       "http://localhost:3000",
     ])
   } finally {
@@ -316,5 +321,33 @@ Deno.test("CORS allowlist admits localhost only in local dev or by explicit opt-
     else Deno.env.set("SUPABASE_URL", previousUrl)
     if (previousOptIn === undefined) Deno.env.delete("PLUGIN_STORE_ALLOW_LOCALHOST")
     else Deno.env.set("PLUGIN_STORE_ALLOW_LOCALHOST", previousOptIn)
+  }
+})
+
+Deno.test("console publisher preflight permits exact trusted hosts and rejects arbitrary/loopback origins", async () => {
+  const previousUrl = Deno.env.get("SUPABASE_URL")
+  const previousOptIn = Deno.env.get("PLUGIN_STORE_ALLOW_LOCALHOST")
+  try {
+    Deno.env.set("SUPABASE_URL", "https://api.risaboss.com")
+    Deno.env.delete("PLUGIN_STORE_ALLOW_LOCALHOST")
+    const app = new OpenAPIHono()
+    app.use("*", cors({ origin: pluginStoreCorsOrigins(), allowMethods: ["POST", "GET", "DELETE", "OPTIONS"],
+      allowHeaders: ["Content-Type", "Authorization", "apikey", "X-API-Key"], credentials: true }))
+    app.get("/download", c => c.json({ ok: true }))
+    for (const origin of ["https://app.bossconsole.ai", "https://console.bossconsole.ai"]) {
+      const response = await app.request("/download", { method: "OPTIONS", headers: {
+        Origin: origin, "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization,apikey",
+      } })
+      assertEquals(response.status, 204)
+      assertEquals(response.headers.get("Access-Control-Allow-Origin"), origin)
+      assertEquals(response.headers.get("Access-Control-Allow-Credentials"), "true")
+    }
+    for (const origin of ["https://evil.test", "https://agent.bossconsole.ai", "https://app.bossconsole.ai.evil.test", "http://app.bossconsole.ai", "http://localhost:3000", "null"]) {
+      const response = await app.request("/download", { method: "OPTIONS", headers: { Origin: origin, "Access-Control-Request-Method": "GET" } })
+      assertEquals(response.headers.get("Access-Control-Allow-Origin"), null, origin)
+    }
+  } finally {
+    if (previousUrl === undefined) Deno.env.delete("SUPABASE_URL"); else Deno.env.set("SUPABASE_URL", previousUrl)
+    if (previousOptIn === undefined) Deno.env.delete("PLUGIN_STORE_ALLOW_LOCALHOST"); else Deno.env.set("PLUGIN_STORE_ALLOW_LOCALHOST", previousOptIn)
   }
 })
