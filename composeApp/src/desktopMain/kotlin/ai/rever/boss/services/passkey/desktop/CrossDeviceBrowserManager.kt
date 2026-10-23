@@ -1,5 +1,6 @@
 package ai.rever.boss.services.passkey.desktop
 
+import ai.rever.boss.platform.SystemOpenCommand
 import ai.rever.boss.plugin.browser.FluckEngine
 import ai.rever.boss.plugin.browser.installBrowserChromeOrClose
 import ai.rever.boss.plugin.logging.LogSanitizer
@@ -160,14 +161,12 @@ class CrossDeviceBrowserManager {
     private fun openBrowserWithProcessBuilder(url: String): Result<Unit> =
         try {
             val os = System.getProperty("os.name").lowercase()
-            val processBuilder =
-                when {
-                    os.contains("mac") -> ProcessBuilder("open", url)
-                    os.contains("windows") -> ProcessBuilder("cmd", "/c", "start", "", url)
-                    os.contains("linux") -> ProcessBuilder("xdg-open", url)
-                    else -> throw Exception("Unsupported platform for opening browser: $os")
-                }
-            processBuilder.start()
+            // Not `cmd /c start`: cmd cuts a URL at the first `&`, so a sign-in link with a query string
+            // opened a broken page, and it reads `|` and `%` in the URL as commands and variables.
+            val command =
+                SystemOpenCommand.forUrl(os, url)
+                    ?: throw IllegalArgumentException("Not a plain http(s) URL, or no browser launcher on: $os")
+            ProcessBuilder(command).start()
             logger.debug(LogCategory.BROWSER, "Successfully opened browser using ProcessBuilder")
             Result.success(Unit)
         } catch (e: Exception) {
