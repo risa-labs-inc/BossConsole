@@ -1,7 +1,7 @@
 -- pgTAP tests for 20261013200000_fluck_web_push_native: APNs devices and the encryption-target keys.
 -- Run with: supabase test db
 BEGIN;
-SELECT plan(48);
+SELECT plan(53);
 INSERT INTO auth.users (id, email) VALUES
  ('f1c00000-0000-0000-0000-0000000000a1', 'fluck-native-one@example.test'),
  ('f1c00000-0000-0000-0000-0000000000a2', 'fluck-native-two@example.test');
@@ -108,9 +108,10 @@ SELECT is(current_setting('test.redeemed')::jsonb -> 'devices',
 SELECT ok(current_setting('test.redeemed')::jsonb ?& ARRAY['instance_id', 'agent_name', 'subscriptions'], 'redeem keeps its existing fields');
 
 SET LOCAL ROLE anon;
+SELECT is(public.fluck_web_push_prune(current_setting('test.ticket'), '{}'), 0, 'the deployed two-argument prune call remains valid');
 SELECT is(public.fluck_web_push_prune(current_setting('test.ticket'), '{}',
           ARRAY(SELECT '20000000-0000-4000-8000-000000000002'::uuid)), 0, 'prune cannot delete another owner''s device id');
-SELECT is(public.fluck_web_push_prune(current_setting('test.ticket'), '{}', (SELECT array_agg(id) FROM public.fluck_web_push_devices)), 0, 'anon cannot read the table to find ids (RLS)');
+SELECT throws_ok($q$ SELECT public.fluck_web_push_prune(current_setting('test.ticket'), '{}', (SELECT array_agg(id) FROM public.fluck_web_push_devices)) $q$, '42501', NULL, 'anon cannot read the table to find ids');
 RESET ROLE;
 SELECT is(public.fluck_web_push_prune(current_setting('test.ticket'), '{}',
           ARRAY(SELECT id FROM public.fluck_web_push_devices WHERE user_id = 'f1c00000-0000-0000-0000-0000000000a2')), 1, 'prune removes the owner''s dead device');
