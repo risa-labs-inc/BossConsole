@@ -1,6 +1,6 @@
 import { assert, assertEquals } from "@std/assert"
 import { createHandler } from "../app.ts"
-import { smallestRemaining } from "../audio.ts"
+import { smallestRemaining, wavSeconds } from "../audio.ts"
 import { mintToken, signingKey } from "../auth.ts"
 import { Obj } from "../wire.ts"
 
@@ -33,6 +33,7 @@ async function fixture(options: {
   audio?: ReadableStream<Uint8Array>
   poolUsage?: unknown
   failUsage?: boolean
+  reserveMaxOutput?: number
 } = {}) {
   const calls: { name: string; params: Obj }[] = []
   const requests: Request[] = []
@@ -90,7 +91,9 @@ async function fixture(options: {
               kind: options.kind ?? "chat",
               voice: options.voice ?? null,
               context_length: 4096,
-              max_output_tokens: options.kind && options.kind !== "chat" ? 120 : 512,
+              max_output_tokens: options.kind && options.kind !== "chat"
+                ? (name === "boss_ai_reserve" && options.reserveMaxOutput) || 120
+                : 512,
               provider_routing:
                 name === "boss_ai_reserve" && options.routingAfterPreflight !== undefined
                   ? options.routingAfterPreflight
@@ -629,14 +632,7 @@ Deno.test("eligibility RPC failures fail closed without minting or dispatching",
 
 const settled = (f: { calls: { name: string; params: Obj }[] }) =>
   f.calls.filter((call) => call.name === "boss_ai_settle").map((call) => call.params.p_tokens)
-const wav = (seconds: number) => {
-  const bytes = new Uint8Array(44 + 32_000 * seconds)
-  const view = new DataView(bytes.buffer)
-  bytes.set(new TextEncoder().encode("RIFF"), 0)
-  bytes.set(new TextEncoder().encode("WAVE"), 8)
-  view.setUint32(28, 32_000, true)
-  return btoa(String.fromCharCode(...bytes))
-}
+const wav = (seconds: number) => riff({ seconds })
 const stt = { model: "boss-test", input_audio: { data: wav(1), format: "wav" }, language: "en" }
 const tts = { model: "boss-test", input: "x".repeat(29) }
 
@@ -857,4 +853,367 @@ Deno.test("smallestRemaining reports the latest reset among periods tied at the 
     smallestRemaining({ ...usage, day: { ...usage.day, remaining: 10 } })?.resets_at,
     "2026-10-16T00:00:00+00:00",
   )
+})
+
+function riff(
+  options: {
+    format?: number
+    channels?: number
+    sampleRate?: number
+    byteRate?: number
+    bits?: number
+    extensible?: boolean
+    before?: number
+    declared?: number
+    seconds?: number
+  } = {},
+) {
+  const channels = options.channels ?? 1
+  const bits = options.bits ?? 16
+  const sampleRate = options.sampleRate ?? 16_000
+  const align = channels * bits / 8
+  const fmtSize = options.extensible ? 40 : 16
+  const audio = 32_000 * (options.seconds ?? 1)
+  const bytes = new Uint8Array(
+    12 + 8 + fmtSize + (options.before ? 8 + options.before + (options.before & 1) : 0) + 8 + audio,
+  )
+  const view = new DataView(bytes.buffer)
+  const tag = (at: number, text: string) => bytes.set(new TextEncoder().encode(text), at)
+  tag(0, "RIFF")
+  tag(8, "WAVE")
+  tag(12, "fmt ")
+  view.setUint32(16, fmtSize, true)
+  view.setUint16(20, options.extensible ? 0xFFFE : options.format ?? 1, true)
+  view.setUint16(22, channels, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, options.byteRate ?? sampleRate * align, true)
+  view.setUint16(32, align, true)
+  view.setUint16(34, bits, true)
+  if (options.extensible) {
+    view.setUint16(36, 22, true)
+    view.setUint16(44, 1, true) // PCM sub-format GUID prefix
+  }
+  let at = 20 + fmtSize
+  if (options.before) {
+    tag(at, "LIST")
+    view.setUint32(at + 4, options.before, true)
+    at += 8 + options.before + (options.before & 1)
+  }
+  tag(at, "data")
+  view.setUint32(at + 4, options.declared ?? audio, true)
+  let binary = ""
+  for (let i = 0; i < bytes.length; i += 8192) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 8192))
+  }
+  return btoa(binary)
+}
+
+Deno.test("wavSeconds parses chunks, requires consistent PCM, and handles broken declared sizes", () => {
+  assertEquals(wavSeconds(riff()), 1)
+  assertEquals(wavSeconds(riff({ seconds: 3 })), 3)
+  assertEquals(wavSeconds(riff({ before: 26 })), 1) // LIST chunk before data
+  assertEquals(wavSeconds(riff({ before: 25 })), 1) // odd chunk is padded
+  assertEquals(wavSeconds(riff({ extensible: true })), 1)
+  assertEquals(wavSeconds(riff({ declared: 0xFFFFFFFF })), 1) // real length, not the header's
+  assertEquals(wavSeconds(riff({ declared: 0 })), 1)
+  // Hostile or inconsistent headers fall back to keeping the reservation.
+  assertEquals(wavSeconds(riff({ byteRate: 4_000_000_000 })), null)
+  assertEquals(wavSeconds(riff({ byteRate: 0 })), null)
+  assertEquals(wavSeconds(riff({ byteRate: 32_001 })), null)
+  assertEquals(wavSeconds(riff({ sampleRate: 1_000, byteRate: 2_000 })), 16)
+  assertEquals(wavSeconds(riff({ sampleRate: 8_000, byteRate: 1_000, bits: 8 })), null)
+  assertEquals(wavSeconds(riff({ sampleRate: 1_000_000, bits: 32, channels: 2 })), null)
+  assertEquals(wavSeconds(riff({ format: 3 })), null) // float
+  assertEquals(wavSeconds(riff({ format: 0x55 })), null) // mp3-in-wav
+  assertEquals(wavSeconds(riff({ before: 100_000 })), 1) // metadata before data is not speech
+  assertEquals(wavSeconds(btoa("RIFF\0\0\0\0WAVE")), null)
+  const mp3 = new Uint8Array(4_096)
+  mp3.set(new TextEncoder().encode("ID3"), 0)
+  mp3.set([0xFF, 0xFB, 0x90, 0x00], 3)
+  assertEquals(wavSeconds(btoa(String.fromCharCode(...mp3))), null)
+})
+
+Deno.test("a hostile WAV header cannot shrink the bill", async () => {
+  const f = await fixture({ kind: "transcription", payload: { text: "a" } })
+  const response = await f.handler(
+    f.request(
+      { ...stt, input_audio: { data: riff({ byteRate: 4_000_000_000 }), format: "wav" } },
+      f.token,
+      "audio/transcriptions",
+    ),
+  )
+  assertEquals((await response.json()).usage, { seconds: null, billed_seconds: 120 })
+  assertEquals(settled(f), [null])
+})
+
+Deno.test("transcription bills real seconds beyond the reservation and ignores bad usage", async () => {
+  const over = await fixture({
+    kind: "transcription",
+    payload: { text: "a", usage: { seconds: 500.2 } },
+  })
+  const response = await over.handler(over.request(stt, over.token, "audio/transcriptions"))
+  assertEquals((await response.json()).usage, { seconds: 500.2, billed_seconds: 120 })
+  assertEquals(settled(over), [501])
+  assert(over.audits.includes("usage_exceeds_reservation"))
+  assert(!over.audits.includes("usage_exceeds_configured_context"))
+  for (const seconds of [-1, "3", null, {}, 1e999]) {
+    const f = await fixture({ kind: "transcription", payload: { text: "a", usage: { seconds } } })
+    const bad = await f.handler(f.request(stt, f.token, "audio/transcriptions"))
+    // Treated as missing: the one-second WAV estimate applies.
+    assertEquals((await bad.json()).usage, { seconds: 1, billed_seconds: 1 })
+    assertEquals(settled(f), [1])
+  }
+  const mp3 = await fixture({
+    kind: "transcription",
+    payload: { text: "a", usage: { seconds: -1 } },
+  })
+  const kept = await mp3.handler(
+    mp3.request(
+      { ...stt, input_audio: { data: "AAAA", format: "mp3" } },
+      mp3.token,
+      "audio/transcriptions",
+    ),
+  )
+  assertEquals((await kept.json()).usage, { seconds: null, billed_seconds: 120 })
+  assertEquals(settled(mp3), [null])
+})
+
+Deno.test("chat keeps its own exceeds-context audit event", async () => {
+  const f = await fixture({
+    payload: {
+      choices: [{ message: { role: "assistant", content: "x" }, finish_reason: "stop", index: 0 }],
+      usage: { prompt_tokens: 99_998, completion_tokens: 1 },
+    },
+  })
+  assertEquals((await f.handler(f.request(body))).status, 200)
+  assert(f.audits.includes("usage_exceeds_configured_context"))
+  assert(!f.audits.includes("usage_exceeds_reservation"))
+})
+
+Deno.test("speech input beyond max_output_tokens x 14 is rejected, before and after reserve", async () => {
+  const limit = 120 * 14
+  const ok = await fixture({ kind: "speech" })
+  const accepted = await ok.handler(
+    ok.request({ ...tts, input: "x".repeat(limit) }, ok.token, "audio/speech"),
+  )
+  assertEquals(accepted.headers.get("X-Billed-Seconds"), "120")
+  await accepted.arrayBuffer()
+  assertEquals(settled(ok), [120])
+  const early = await fixture({ kind: "speech" })
+  const tooLong = await early.handler(
+    early.request({ ...tts, input: "x".repeat(limit + 1) }, early.token, "audio/speech"),
+  )
+  assertEquals(tooLong.status, 400)
+  const error = (await tooLong.json()).error
+  assertEquals(error.code, "invalid_input")
+  assertEquals(error.message, "Speech input is too long for one request.")
+  assertEquals(early.calls.filter((call) => call.name === "boss_ai_reserve").length, 0)
+  // The model row shrank between lookup and reserve: refused after admission and refunded.
+  const late = await fixture({ kind: "speech", reserveMaxOutput: 10 })
+  const refused = await late.handler(
+    late.request({ ...tts, input: "x".repeat(141) }, late.token, "audio/speech"),
+  )
+  assertEquals(refused.status, 400)
+  assertEquals((await refused.json()).error.message, "Speech input is too long for one request.")
+  assertEquals(late.requests.length, 0)
+  assertEquals(settled(late), [0])
+})
+
+const spyCleanup = (request: Request) => {
+  const counts = { removed: 0 }
+  const remove = request.signal.removeEventListener.bind(request.signal)
+  request.signal.removeEventListener = ((...args: Parameters<typeof remove>) => {
+    counts.removed++
+    return remove(...args)
+  }) as typeof remove
+  return counts
+}
+
+Deno.test("speech cancels the upstream body and cleans up once when the response cannot be built", async () => {
+  let cancelled = 0
+  const audio = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(new Uint8Array([1]))
+    },
+    cancel() {
+      cancelled++
+    },
+  })
+  const f = await fixture({ kind: "speech", audio })
+  const request = f.request(tts, f.token, "audio/speech")
+  const counts = spyCleanup(request)
+  const NativeResponse = Response
+  globalThis.Response = class extends NativeResponse {
+    constructor(bodyInit?: BodyInit | null, init?: ResponseInit) {
+      if ((init?.headers as Record<string, string> | undefined)?.["X-Billed-Seconds"]) {
+        throw new TypeError("cannot build response")
+      }
+      super(bodyInit, init)
+    }
+  } as typeof Response
+  let response: Response
+  try {
+    response = await f.handler(request)
+  } finally {
+    globalThis.Response = NativeResponse
+  }
+  assertEquals(response.status, 503)
+  assertEquals(cancelled, 1)
+  assertEquals(counts.removed, 1)
+  // Settlement happened before the failure, so nothing is left to refund.
+  assertEquals(settled(f), [3])
+})
+
+Deno.test("speech still streams and cleans up once when settlement fails", async () => {
+  const f = await fixture({ kind: "speech", failAllSettlements: true })
+  const request = f.request(tts, f.token, "audio/speech")
+  const counts = spyCleanup(request)
+  const response = await f.handler(request)
+  assertEquals(response.status, 200)
+  assertEquals(counts.removed, 0) // the stream owns cleanup until it ends
+  await response.arrayBuffer()
+  assertEquals(counts.removed, 1)
+  assert(f.audits.includes("settlement_failed"))
+})
+
+Deno.test("speech omits quota headers when resets_at is not a date", async () => {
+  const bad = {
+    month: { limit: 1, used: 0, remaining: 1, resets_at: "tomorrow\r\nX-Evil: 1" },
+  }
+  const f = await fixture({ kind: "speech", poolUsage: bad })
+  const response = await f.handler(f.request(tts, f.token, "audio/speech"))
+  assertEquals(response.status, 200)
+  assertEquals(response.headers.get("X-Remaining-Seconds"), null)
+  assertEquals(response.headers.get("X-Resets-At"), null)
+  await response.arrayBuffer()
+})
+
+Deno.test("prototype keys are not routes and extra cannot override the error envelope", async () => {
+  const f = await fixture()
+  for (const path of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+    const response = await f.handler(f.request(body, f.token, path))
+    assertEquals(response.status, 404)
+    assertEquals((await response.json()).error.code, "not_found")
+  }
+  assertEquals(f.calls.length, 0)
+  const exceeded = await fixture({
+    deny: "allowance_exceeded",
+    reserveUsage: { code: "x", message: "y" },
+  })
+  const error = (await (await exceeded.handler(exceeded.request(body))).json()).error
+  assertEquals(error.code, "allowance_exceeded")
+  assertEquals(error.usage, { code: "x", message: "y" })
+})
+
+Deno.test("transcription accepts OpenAI's multipart upload and forwards it as input_audio", async () => {
+  const f = await fixture({ kind: "transcription" })
+  const bytes = Uint8Array.from(atob(stt.input_audio.data), (c) => c.charCodeAt(0))
+  const form = new FormData()
+  form.append("file", new File([bytes], "file.wav", { type: "audio/wav" }))
+  form.append("model", "boss-test")
+  form.append("language", "en")
+  form.append("response_format", "json")
+  const response = await f.handler(
+    new Request("https://boss-ai.example/functions/v1/boss-ai/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${f.token}` },
+      body: form,
+    }),
+  )
+  assertEquals(response.status, 200)
+  assertEquals(await f.requests[0].json(), {
+    model: "private-model",
+    input_audio: stt.input_audio,
+    language: "en",
+  })
+})
+
+Deno.test("speech accepts and ignores OpenAI's optional fields; only mp3 output", async () => {
+  const f = await fixture({ kind: "speech" })
+  const ok = await f.handler(
+    f.request(
+      { ...tts, response_format: "mp3", speed: 1, stream_format: "audio", instructions: "calm" },
+      f.token,
+      "audio/speech",
+    ),
+  )
+  assertEquals(ok.status, 200)
+  await ok.body?.cancel()
+  const sent = await f.requests[0].json()
+  assertEquals(sent.response_format, "mp3")
+  assertEquals("speed" in sent || "stream_format" in sent || "instructions" in sent, false)
+  const g = await fixture({ kind: "speech" })
+  assertEquals(
+    (await g.handler(g.request({ ...tts, response_format: "wav" }, g.token, "audio/speech")))
+      .status,
+    400,
+  )
+})
+
+Deno.test("multipart actual byte cap cancels chunked and dishonest uploads before parsing or admission", async () => {
+  for (const contentLength of [undefined, "1"]) {
+    const f = await fixture({ kind: "transcription" })
+    let pulls = 0
+    let cancelled = false
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls++
+        controller.enqueue(new Uint8Array(1024 * 1024))
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${f.token}`,
+      "Content-Type": "multipart/form-data; boundary=x",
+    }
+    if (contentLength) headers["Content-Length"] = contentLength
+    const response = await f.handler(
+      new Request("https://boss-ai.example/v1/audio/transcriptions", {
+        method: "POST",
+        headers,
+        body: stream,
+      }),
+    )
+    assertEquals(response.status, 413)
+    assert(cancelled)
+    assert(pulls <= 7)
+    assertEquals(f.calls.length, 0)
+  }
+})
+
+Deno.test("multipart MIME names cannot inherit object properties", async () => {
+  const f = await fixture({ kind: "transcription" })
+  const form = new FormData()
+  form.append("file", new File(["x"], "unknown", { type: "constructor" }))
+  form.append("model", "boss-test")
+  const response = await f.handler(
+    new Request("https://boss-ai.example/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${f.token}` },
+      body: form,
+    }),
+  )
+  assertEquals(response.status, 400)
+  assertEquals(f.calls.length, 0)
+})
+
+Deno.test("speech rejects unsupported speed and SSE before admission", async () => {
+  for (const option of [{ speed: 2 }, { stream_format: "sse" }]) {
+    const f = await fixture({ kind: "speech" })
+    assertEquals(
+      (await f.handler(f.request({ ...tts, ...option }, f.token, "audio/speech"))).status,
+      400,
+    )
+    assertEquals(f.calls.filter((c) => c.name === "boss_ai_reserve").length, 0)
+  }
+})
+
+Deno.test("WAV metadata after audio is not billed as speech", () => {
+  const audio = atob(riff())
+  const tail = new Uint8Array(8 + 32000)
+  tail.set(new TextEncoder().encode("LIST"))
+  new DataView(tail.buffer).setUint32(4, 32000, true)
+  assertEquals(wavSeconds(btoa(audio + String.fromCharCode(...tail))), 1)
 })

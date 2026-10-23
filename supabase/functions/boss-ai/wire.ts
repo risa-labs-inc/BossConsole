@@ -415,11 +415,12 @@ export function requestBody(
   return { ...common, input: items, max_output_tokens: max, truncation: "disabled" }
 }
 
-// Upstreams that cache only where the request marks it. OpenRouter forwards `cache_control` to
-// them; every other upstream caches automatically or not at all, and gets the request unchanged.
+// Upstreams that cache only where the request marks it: Anthropic. OpenRouter forwards `cache_control`;
+// every other upstream caches automatically or not at all and gets the request unchanged. Gemini is never
+// marked: it caches implicitly, and an explicit cache cost +1.4-3.2 s to the first token without paying back
+// on reuse (measured on flash-lite, short and 23k-char prompts).
 function takesCacheControl(upstreamModel: string, baseUrl: string): boolean {
-  const id = upstreamModel.toLowerCase()
-  return isOpenRouter(baseUrl) && (id.startsWith("anthropic/") || id.startsWith("google/gemini"))
+  return isOpenRouter(baseUrl) && upstreamModel.toLowerCase().startsWith("anthropic/")
 }
 
 const EPHEMERAL = { type: "ephemeral" }

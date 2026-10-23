@@ -631,12 +631,19 @@ Deno.test("anthropic and gemini upstreams on OpenRouter get prompt-cache breakpo
   assertEquals(messages[5].content, "done", "tool results are never marked")
   assertEquals(input.messages[0].content, "rules", "the caller's request is not edited in place")
 
+  // Gemini caches implicitly; explicit marks only slow it down, at any size.
   const gemini: Model = { ...model, upstream_model: "google/gemini-3.8-flash" }
-  assertEquals(
-    (requestBody(input, gemini, "openai_chat", OR).messages as Record<string, unknown>[])[0]
-      .content,
-    [{ type: "text", text: "rules", cache_control: mark }],
-  )
+  const big = {
+    ...input,
+    messages: [{ role: "system", content: "r".repeat(40_000) }, ...input.messages.slice(1)],
+  }
+  for (const body of [input, big]) {
+    assertEquals(
+      typeof (requestBody(body, gemini, "openai_chat", OR).messages as Record<string, unknown>[])[0]
+        .content,
+      "string",
+    )
+  }
 })
 
 Deno.test("other upstreams and non-OpenRouter connections get the request unchanged", () => {
