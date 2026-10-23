@@ -4,9 +4,11 @@
 
 # BOSS Console
 
-### Bring your agent. Choose its tools.
+### A tiny operating system for always-on agents.
 
-A desktop workspace where you and your AI agents work with a real browser, terminal, editor, and an extensible toolbox.
+Create your own always-on agent with a real browser, terminal, editor, and an extensible toolbox. Choose its tools, keep it running in BOSS, and follow its work from anywhere.
+
+Chat with your Fluck agents at **[fluck.ai](https://fluck.ai/)**. Open shared terminals and BOSS windows at **[cli.risaboss.com](https://cli.risaboss.com/)**.
 
 **[▶ Watch the 64-second film](https://bossconsole.ai/media/boss-launch.mp4)** · **[Download BOSS](#downloads)** · **[Explore the wiki](https://github.com/risa-labs-inc/BossConsole/wiki)** · **[Open live sessions](https://cli.risaboss.com/)**
 
@@ -19,6 +21,14 @@ A desktop workspace where you and your AI agents work with a real browser, termi
 </div>
 
 ---
+
+## Build your business on BOSS
+
+Create an always-on agent around the work your business does. BOSS brings the browser, terminal, editor, and plugins together so you can build an agent for your team and customers.
+
+**[Ask Optimist](https://askoptimist.com/)** is an always-on healthcare agent for doctors and patients, built on BOSS.
+
+Want **early access to an always-on agent for your business**? Connect with us at **[enterprise@risalabs.ai](mailto:enterprise@risalabs.ai?subject=Always-on%20agent%20early%20access)** and tell us what you want to build.
 
 ## One workspace for the whole task
 
@@ -37,6 +47,14 @@ BOSS runs on the JVM with Kotlin and Compose Multiplatform. Its browser, termina
 **[Explore Spaces and everyday use →](https://github.com/risa-labs-inc/BossConsole/wiki/Spaces-and-Everyday-Use)**
 
 ## Run any AI coding agent
+
+### Create your own always-on agent
+
+Use **Fluck Agent** in BOSS to create an agent for your projects and everyday work. Give it access to the browser, terminal, editor, and plugins it needs, then keep BOSS and the agent running on a machine that stays online.
+
+Return to your Fluck agents from another device at **[fluck.ai](https://fluck.ai/)**. To inspect or control shared terminal sessions and BOSS windows, sign in at **[cli.risaboss.com](https://cli.risaboss.com/)** with the same BOSS account. Available access depends on your sharing settings.
+
+### Bring the agent you already use
 
 **Claude Code · Codex · Gemini CLI · OpenCode**
 

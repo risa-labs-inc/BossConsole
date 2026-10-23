@@ -24,6 +24,7 @@ import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.FileTime
 import java.nio.file.attribute.PosixFileAttributes
 import java.nio.file.attribute.PosixFilePermission
@@ -196,6 +197,9 @@ internal class SessionFileImporter(
     @Suppress("ReturnCount")
     private fun readAndConsume(): Read =
         try {
+            // Windows rejects the POSIX view before checking whether the file exists.
+            // Detect absence with the portable view; existing files still need every POSIX check.
+            Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
             val attrs = Files.readAttributes(path, PosixFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
             problemWith(attrs)?.let { throw Refused(it) }
             val seen = Snapshot(attrs.fileKey(), attrs.size(), attrs.lastModifiedTime())

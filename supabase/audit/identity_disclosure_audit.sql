@@ -44,7 +44,10 @@ with intentionally_anon as (
     'public.get_plugin_with_stats(text)', 'public.get_plugin_versions(text)',
     'public.get_popular_tags(integer)',
     'public.can_view_plugin_row(text,uuid,uuid,boolean)',
-    'public.authorize(text)', 'public.is_user_admin(uuid)'
+    'public.authorize(text)', 'public.is_user_admin(uuid)',
+    -- The fluck-web function redeems a plugin-minted push ticket with the anon key (it holds no
+    -- service-role key); the single-use 256-bit ticket is the whole credential (20261013100000; prune widened in 20261013200000).
+    'public.fluck_web_push_redeem(text)', 'public.fluck_web_push_prune(text,uuid[],uuid[])'
   ]) signature
 ),
 anon_callable as (
