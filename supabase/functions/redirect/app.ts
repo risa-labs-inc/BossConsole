@@ -252,13 +252,13 @@ const BASE_HOST: Brand = {
 }
 
 /**
- * The brand for a sign-in on a host under AGENTS_BASE_DOMAIN: console.<base> and web.<base> are BOSS's own, any other label an
+ * The brand for a sign-in on a host under AGENTS_BASE_DOMAIN: app.<base>, console.<base> and web.<base> are BOSS's own, any other label an
  * agent (its live name). Every one of them finishes in the browser: an https callback is never handed to a desktop app.
  */
 async function agentBrand(redirectTo: string | undefined): Promise<Brand | null> {
   const label = agentHostLabel(redirectTo, Deno.env.get("AGENTS_BASE_DOMAIN"))
   if (!label) return null
-  if (label === "console") return { ...BRANDS.boss, scheme: "https" }
+  if (label === "app" || label === "console") return { ...BRANDS.boss, scheme: "https" }
   if (label === "web") return BOSS_WEB
   const name = await agentLookup.liveAgentName(label)
   if (!name) return BASE_HOST
