@@ -16,6 +16,7 @@ import { bearer, HttpError } from "../auth.ts"
 const model: Model = {
   id: "boss-test",
   upstream_model: "private-model",
+  kind: "chat",
   capabilities: ["text", "tools", "structured_output"],
   context_length: 4096,
   max_output_tokens: 512,
@@ -599,5 +600,88 @@ Deno.test("tool envelope accepted boundaries and schema work limits are explicit
     model,
     "openai_chat",
     OR,
+  )
+})
+
+Deno.test("anthropic and gemini upstreams on OpenRouter get prompt-cache breakpoints", () => {
+  const anthropic: Model = { ...model, upstream_model: "anthropic/claude-haiku-5.5" }
+  const input = {
+    messages: [
+      { role: "system", content: "rules" },
+      { role: "user", content: "first" },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: [{ type: "text", text: "second" }] },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{ id: "c1", type: "function", function: { name: "f", arguments: "{}" } }],
+      },
+      { role: "tool", tool_call_id: "c1", content: "done" },
+    ],
+    tools: [{ type: "function", function: { name: "f", parameters: { type: "object" } } }],
+  }
+  const messages = requestBody(input, anthropic, "openai_chat", OR).messages as Record<
+    string,
+    unknown
+  >[]
+  const mark = { type: "ephemeral" }
+  assertEquals(messages[0].content, [{ type: "text", text: "rules", cache_control: mark }])
+  assertEquals(messages[1].content, "first", "only the newest user message is marked")
+  assertEquals(messages[3].content, [{ type: "text", text: "second", cache_control: mark }])
+  assertEquals(messages[5].content, "done", "tool results are never marked")
+  assertEquals(input.messages[0].content, "rules", "the caller's request is not edited in place")
+
+  const gemini: Model = { ...model, upstream_model: "google/gemini-3.8-flash" }
+  assertEquals(
+    (requestBody(input, gemini, "openai_chat", OR).messages as Record<string, unknown>[])[0]
+      .content,
+    [{ type: "text", text: "rules", cache_control: mark }],
+  )
+})
+
+Deno.test("other upstreams and non-OpenRouter connections get the request unchanged", () => {
+  const input = {
+    messages: [{ role: "system", content: "rules" }, { role: "user", content: "hi" }],
+  }
+  const plain = (m: Model, base: string) =>
+    (requestBody(input, m, "openai_chat", base).messages as Record<string, unknown>[]).map((x) =>
+      x.content
+    )
+  assertEquals(plain({ ...model, upstream_model: "z-ai/glm-5.3-flash" }, OR), ["rules", "hi"])
+  assertEquals(
+    plain({ ...model, upstream_model: "anthropic/claude-haiku-5.5" }, "https://example.com/v1"),
+    ["rules", "hi"],
+  )
+})
+
+Deno.test("usage passes the cache and reasoning breakdowns through", () => {
+  assertEquals(
+    usage({
+      prompt_tokens: 10000,
+      completion_tokens: 40,
+      prompt_tokens_details: { cached_tokens: 9600, cache_write_tokens: 0 },
+      completion_tokens_details: { reasoning_tokens: 12 },
+    }),
+    {
+      prompt_tokens: 10000,
+      completion_tokens: 40,
+      total_tokens: 10040,
+      prompt_tokens_details: { cached_tokens: 9600, cache_write_tokens: 0 },
+      completion_tokens_details: { reasoning_tokens: 12 },
+    },
+  )
+  assertEquals(
+    usage({ input_tokens: 5, output_tokens: 2, input_tokens_details: { cached_tokens: 3 } }, true),
+    {
+      prompt_tokens: 5,
+      completion_tokens: 2,
+      total_tokens: 7,
+      prompt_tokens_details: { cached_tokens: 3 },
+    },
+  )
+  // A malformed breakdown is dropped, never passed on.
+  assertEquals(
+    usage({ prompt_tokens: 5, completion_tokens: 2, prompt_tokens_details: { cached_tokens: -1 } }),
+    { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
   )
 })
