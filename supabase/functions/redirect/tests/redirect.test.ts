@@ -334,11 +334,14 @@ Deno.test("agent host: a live agent's redirect_to bounces to GoTrue verify under
   })
 })
 
-Deno.test("agent host: console.<base> is branded BOSS Console without a lookup", async () => {
+Deno.test("agent host: app and legacy console are branded BOSS Console without a lookup", async () => {
   await withAgents("bossconsole.ai", {}, async () => {
-    const html = await pageFor(agentLink("https://console.bossconsole.ai/auth/callback"))
-    assertStringIncludes(html, "<h1>BOSS Console</h1>")
-    assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=t1")
+    for (const label of ["app", "console"]) {
+      const html = await pageFor(agentLink(`https://${label}.bossconsole.ai/auth/callback`))
+      assertStringIncludes(html, "<h1>BOSS Console</h1>")
+      assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=t1")
+      assert(!html.includes("boss://auth/verify"))
+    }
   })
 })
 
