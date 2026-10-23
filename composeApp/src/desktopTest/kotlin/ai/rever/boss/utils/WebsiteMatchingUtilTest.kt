@@ -3,11 +3,13 @@ package ai.rever.boss.utils
 import ai.rever.boss.services.supabase.models.SecretEntry
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * Pins [WebsiteMatchingUtil.calculateMatchScore] and [WebsiteMatchingUtil.getDisplayName]
- * against the over-broad matching BossConsole#460 reports.
+ * Pins [WebsiteMatchingUtil.calculateMatchScore], [WebsiteMatchingUtil.getDisplayName] and
+ * [WebsiteMatchingUtil.isLikelyLoginPage] against the over-broad matching BossConsole#460
+ * reports.
  *
  * The scorer now recognizes exactly two shapes - exact registrable-domain equality and a real
  * subdomain boundary - matching what a password manager keys on. Two earlier tiers are gone
@@ -183,5 +185,180 @@ class WebsiteMatchingUtilTest {
     @Test
     fun `hyphenated generic domains are still title-cased per word`() {
         assertEquals("Example Site", WebsiteMatchingUtil.getDisplayName("example-site.com"))
+    }
+
+    // ---- isLikelyLoginPage: real login paths ----
+
+    @Test
+    fun `isLikelyLoginPage recognises a bare login path`() {
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/login"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage recognises login as one of several path segments`() {
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/users/42/login"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage recognises signin and sign-up paths`() {
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/signin"))
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/sign-in"))
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/signup"))
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/sign-up"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage recognises register and authenticate paths`() {
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/register"))
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/authenticate"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage recognises sso and oauth paths`() {
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/sso/portal"))
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/oauth/authorize"))
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/oauth/callback"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage recognises auth-prefixed paths`() {
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/auth/callback"))
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/auth"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage recognises the accounts_login shape`() {
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/accounts/login"))
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/account/signin"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage recognises trailing-slash login paths`() {
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/login/"))
+    }
+
+    // ---- isLikelyLoginPage: query parameter indicators ----
+
+    @Test
+    fun `isLikelyLoginPage recognises a login action query parameter`() {
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/?action=login"))
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/?page=login"))
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/?mode=login"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage recognises login values other than literal login`() {
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/?action=signin"))
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/?action=auth"))
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/?action=register"))
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/?action=signup"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage recognises a login indicator alongside other query parameters`() {
+        assertTrue(
+            WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/?action=login&redirect=/dashboard"),
+        )
+    }
+
+    @Test
+    fun `isLikelyLoginPage matches login path with extra query parameters`() {
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/login?next=/dashboard"))
+    }
+
+    // ---- isLikelyLoginPage: false positives the naive substring version accepted ----
+
+    @Test
+    fun `isLikelyLoginPage ignores a keyword that lives only in the domain`() {
+        // "login" is in the scheme/authority, not the path - the path is "/about".
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://loginhelp.com/about"))
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://accounts.example.com/"))
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://auth.example.com/news"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage ignores hyphenated compound words in the path`() {
+        // The hyphen creates a Java word boundary, so a `\b...\b` regex would match - but the
+        // segment is "download-assistant", not "download".
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/download-assistant"))
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/login-help"))
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/register-form"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage ignores oauth as a prefix of a longer word`() {
+        // Blog posts about auth: "oauth-explained", "oauth-vs-saml". The segment is the whole
+        // compound, not the keyword.
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/oauth-explained"))
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/blog/oauth-vs-saml"))
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/oauth_callback"))
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/oauth2-explained"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage ignores keyword substring inside a query value`() {
+        // "?action=loginfoo" - value is the whole string, not "login".
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/?action=loginfoo"))
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/?page=signupflow"))
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/?mode=authorization"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage ignores indicator key names that are not in the recognised set`() {
+        // "redirect" is not in LOGIN_QUERY_KEYS, so its value cannot trigger a match on its own.
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/?redirect=/login"))
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/?next=/login"))
+    }
+
+    // ---- isLikelyLoginPage: empty / unparseable input ----
+
+    @Test
+    fun `isLikelyLoginPage rejects the empty string`() {
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage(""))
+    }
+
+    @Test
+    fun `isLikelyLoginPage rejects about blank`() {
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("about:blank"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage rejects whitespace-only input`() {
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("   "))
+    }
+
+    @Test
+    fun `isLikelyLoginPage rejects unparseable URLs`() {
+        // No scheme, no host - java.net.URL throws on these.
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("not a url"))
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("://broken"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage returns false for a homepage with no login indicator anywhere`() {
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com"))
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/"))
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/about"))
+        assertFalse(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/pricing"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage accepts URLs without an explicit scheme`() {
+        // extractPathAndQuery adds https:// when missing - java.net.URL requires a scheme to
+        // parse, and many real-world users type "example.com/login" into the address bar.
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("example.com/login"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage is case-insensitive on path keywords`() {
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/LOGIN"))
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/Login"))
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("HTTPS://EXAMPLE.COM/LOGIN"))
+    }
+
+    @Test
+    fun `isLikelyLoginPage is case-insensitive on query parameters`() {
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/?ACTION=LOGIN"))
+        assertTrue(WebsiteMatchingUtil.isLikelyLoginPage("https://example.com/?Action=Login"))
     }
 }

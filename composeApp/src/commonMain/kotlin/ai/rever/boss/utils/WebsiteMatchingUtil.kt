@@ -250,31 +250,85 @@ object WebsiteMatchingUtil {
     /**
      * Check if a URL is likely a login/authentication page.
      *
+     * Matches against URL path and query only — not the domain — and only when a path
+     * segment or query parameter value is exactly one of the recognised login indicators.
+     * This deliberately rejects the false positives that a naive substring search would
+     * accept from:
+     * - Domain names containing keywords (`loginhelp.com/about` — keyword is in the
+     *   scheme/authority, which this function does not look at)
+     * - Compound words in paths (`/download-assistant` — the segment is one token, not
+     *   the keyword `download`)
+     * - Blog posts or docs that mention auth concepts (`/oauth-explained`,
+     *   `/blog/oauth-vs-saml`) — the segment is `oauth-explained`, not `oauth`
+     *
      * Helps prioritize showing secret menu on login pages.
      *
      * @param url Current page URL
-     * @return true if URL suggests login page
+     * @return true if a path segment or query parameter value is exactly a login indicator
      */
     fun isLikelyLoginPage(url: String): Boolean {
-        val lowerUrl = url.lowercase()
-        val loginKeywords =
-            listOf(
-                "login",
-                "signin",
-                "sign-in",
-                "auth",
-                "authenticate",
-                "password",
-                "sso",
-                "oauth",
-                "accounts",
-                "signup",
-                "sign-up",
-                "register",
-            )
+        val pathAndQuery = extractPathAndQuery(url) ?: return false
 
-        return loginKeywords.any { lowerUrl.contains(it) }
+        val pathPart = pathAndQuery.substringBefore('?')
+        val hasPathMatch = pathPart.split('/').any { it.substringBefore('.') in LOGIN_PATH_KEYWORDS }
+
+        val queryPart = pathAndQuery.substringAfter('?', missingDelimiterValue = "")
+        val hasQueryMatch =
+            queryPart.isNotEmpty() &&
+                queryPart.split('&').any { param ->
+                    val eq = param.indexOf('=')
+                    eq > 0 &&
+                        param.substring(0, eq).lowercase() in LOGIN_QUERY_KEYS &&
+                        param.substring(eq + 1).lowercase() in LOGIN_QUERY_VALUES
+                }
+
+        return hasPathMatch || hasQueryMatch
     }
+
+    /**
+     * Extract path and query from a URL, excluding the scheme and authority.
+     *
+     * Returns null for unparseable input or URLs without a meaningful path.
+     */
+    private fun extractPathAndQuery(url: String): String? {
+        return try {
+            val cleanUrl = url.trim()
+            if (cleanUrl.isEmpty() || cleanUrl == "about:blank") return null
+
+            val urlWithProtocol =
+                if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
+                    "https://$cleanUrl"
+                } else {
+                    cleanUrl
+                }
+
+            val parsed = java.net.URL(urlWithProtocol)
+            val path = parsed.path.orEmpty()
+            val query = parsed.query?.let { "?$it" }.orEmpty()
+            (path + query).lowercase().ifEmpty { null }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private val LOGIN_PATH_KEYWORDS =
+        setOf(
+            "login",
+            "signin",
+            "sign-in",
+            "sign-up",
+            "signup",
+            "register",
+            "authenticate",
+            "sso",
+            "oauth",
+            "oauth2",
+            "password",
+            "auth",
+        )
+
+    private val LOGIN_QUERY_KEYS = setOf("action", "page", "mode", "view", "prompt")
+    private val LOGIN_QUERY_VALUES = setOf("login", "signin", "auth", "register", "signup")
 
     /**
      * Return hostname labels before the final two labels, if present.
