@@ -16,6 +16,12 @@ async function fixture(options: {
   usage?: unknown
   failRoom?: boolean
   reserve?: unknown
+  claimed?: boolean
+  roomExists?: boolean
+  failDispatch?: boolean
+  failToken?: boolean
+  failSettlement?: boolean
+  reservationSeconds?: number
 } = {}) {
   const calls: { name: string; args: unknown[] }[] = []
   const rpcs: { name: string; params: Obj }[] = []
@@ -24,6 +30,7 @@ async function fixture(options: {
     LIVEKIT_URL: "wss://demo.livekit.cloud",
     LIVEKIT_API_KEY: "lk-key",
     LIVEKIT_API_SECRET: "lk-secret",
+    BOSS_AI_AGENT_ORIGINS: "https://fluck.example",
     SUPABASE_URL: "https://api.example",
     ...options.env,
   }
@@ -34,24 +41,41 @@ async function fixture(options: {
     audit: () => {},
     async rpc(name, params) {
       rpcs.push({ name, params })
+      if (name === "boss_ai_claim_voice_start") return options.claimed ?? true
+      if (name === "boss_ai_lookup") {
+        return {
+          model: { kind: "transcription", max_output_tokens: options.reservationSeconds ?? 60 },
+        }
+      }
+      if (name === "boss_ai_settle" && options.failSettlement) throw new Error("db down")
       if (name === "boss_ai_usage") return "usage" in options ? options.usage : pool
       if (name === "boss_ai_reserve") {
-        return "reserve" in options ? options.reserve : { model: { kind: "transcription" } }
+        return "reserve" in options
+          ? options.reserve
+          : { model: { kind: "transcription", max_output_tokens: 120 } }
       }
       return null
     },
     livekit: (config) => {
       calls.push({ name: "config", args: [config] })
       return {
+        async roomExists() {
+          return options.roomExists ?? false
+        },
+        async deleteRoom(room) {
+          calls.push({ name: "deleteRoom", args: [room] })
+        },
         async createRoom(room) {
           calls.push({ name: "createRoom", args: [room] })
           if (options.failRoom) throw new Error("livekit down")
         },
         async createDispatch(room, agent, metadata) {
           calls.push({ name: "createDispatch", args: [room, agent, metadata] })
+          if (options.failDispatch) throw new Error("dispatch down")
         },
         async participantToken(grant) {
           calls.push({ name: "participantToken", args: [grant] })
+          if (options.failToken) throw new Error("signing failed")
           return "participant-jwt"
         },
       }
@@ -136,14 +160,14 @@ Deno.test("live call defaults max_seconds to 1 h; BOSS_AI_PUBLIC_URL overrides t
   const f = await fixture({
     env: {
       BOSS_AI_ALLOW_LOCAL_AGENT: "1",
-      BOSS_AI_PUBLIC_URL: "http://127.0.0.1:54321/functions/v1/boss-ai/",
+      BOSS_AI_PUBLIC_URL: "https://public.example/functions/v1/boss-ai/",
     },
   })
   const response = await f.live(good, f.inference, "http://kong:8000")
   assertEquals(response.status, 200)
   const metadata = JSON.parse(f.calls.find((c) => c.name === "createDispatch")!.args[2] as string)
   assertEquals(metadata.max_seconds, 3600)
-  assertEquals(metadata.inference.base_url, "http://127.0.0.1:54321/functions/v1/boss-ai/v1")
+  assertEquals(metadata.inference.base_url, "https://public.example/functions/v1/boss-ai/v1")
 })
 
 Deno.test("live call is unavailable without every LiveKit secret", async () => {
@@ -264,6 +288,8 @@ Deno.test("voice token lifetime is exp - iat, capped at 1 h 5 min; inference sta
   assertEquals(await status(await sign("inference", 400, 3600)), 401)
   assertEquals(await status(await sign("inference", 100, 3600)), 400)
   assertEquals(await status(await sign("other", 1, 3600)), 401)
+  assertEquals(await status(await sign("voice", -3600, 3900)), 401)
+  assertEquals(await status(await sign("inference", -3600, 300)), 401)
 })
 
 Deno.test("the real participant token grants a single room only", async () => {
@@ -308,11 +334,11 @@ Deno.test("voice usage reserves and settles the reported seconds on max-stt", as
   assertEquals(f.rpcs[1].params, { p_request_id: reserve.p_request_id, p_tokens: 13 })
 })
 
-Deno.test("voice usage caps one report at 60 seconds", async () => {
+Deno.test("voice usage rejects reports exceeding 60 seconds", async () => {
   const f = await fixture()
   const response = await f.post("voice/usage", f.voice, { seconds: 600 })
-  assertEquals((await response.json()).billed_seconds, 60)
-  assertEquals(f.rpcs.find((r) => r.name === "boss_ai_settle")!.params.p_tokens, 60)
+  assertEquals(response.status, 400)
+  assertEquals(f.rpcs.length, 0)
 })
 
 Deno.test("voice usage takes voice tokens only", async () => {
@@ -350,4 +376,146 @@ Deno.test("voice usage without a voice policy is 403", async () => {
     const f = await fixture({ reserve })
     assertEquals((await f.post("voice/usage", f.voice, { seconds: 5 })).status, 403)
   }
+})
+
+Deno.test("live callbacks allow exact operator origins and HTTPS quick tunnels only", async () => {
+  for (
+    const url of [
+      "https://127.0.0.1/x",
+      "https://169.254.169.254/x",
+      "https://internal/x",
+      "https://evil.example/x",
+      "https://a.trycloudflare.com.evil.test/x",
+      "https://a.b.trycloudflare.com/x",
+      "https://a.trycloudflare.com:444/x",
+      "https://user@a.trycloudflare.com/x",
+      "https://a.trycloudflare.com/x?q=1",
+    ]
+  ) {
+    const f = await fixture()
+    assertEquals((await f.live({ ...good, agent_url: url })).status, 400, url)
+    assertEquals(f.calls.length, 0)
+  }
+  for (
+    const url of [
+      "https://one-two-three.trycloudflare.com/api/voice/agent",
+      "https://agent.bossconsole.ai/voice/agent",
+    ]
+  ) {
+    const f = await fixture({ env: { BOSS_AI_AGENT_ORIGINS: "https://agent.bossconsole.ai" } })
+    assertEquals((await f.live({ ...good, agent_url: url })).status, 200, url)
+  }
+})
+
+Deno.test("call admission refuses an active room, denied durable claim and insufficient reservation", async () => {
+  for (
+    const options of [{ roomExists: true }, { claimed: false }, {
+      reservationSeconds: 120,
+      usage: { month: { ...month, remaining: 90 } },
+    }]
+  ) {
+    const f = await fixture(options)
+    assertEquals((await f.live(good)).status, 429)
+    assertEquals(
+      f.calls.filter((c) => c.name === "createRoom" || c.name === "createDispatch").length,
+      0,
+    )
+  }
+})
+
+Deno.test("partial room creation is cleaned up and token failure precedes creation", async () => {
+  for (const options of [{ failRoom: true }, { failDispatch: true }]) {
+    const f = await fixture(options)
+    assertEquals((await f.live(good)).status, 503)
+    assertEquals(f.calls.filter((c) => c.name === "deleteRoom").length, 1)
+  }
+  const f = await fixture({ failToken: true })
+  assertEquals((await f.live(good)).status, 503)
+  assertEquals(f.calls.filter((c) => c.name === "createRoom").length, 0)
+})
+
+Deno.test("invalid callback configuration and null duration fail before room creation", async () => {
+  for (
+    const env of [
+      { BOSS_AI_PUBLIC_URL: "not a URL" },
+      { BOSS_AI_PUBLIC_URL: "http://insecure.example" },
+      { LIVEKIT_URL: "https://user:secret@live.example" },
+      { LIVEKIT_URL: "bad" },
+    ]
+  ) {
+    const f = await fixture({ env })
+    assertEquals((await f.live(good)).status, 503)
+    assertEquals(f.calls.length, 0)
+  }
+  const f = await fixture()
+  assertEquals((await f.live({ ...good, max_seconds: null })).status, 400)
+})
+
+Deno.test("voice bearer cannot select audio models outside the call pool", async () => {
+  const f = await fixture()
+  for (const route of ["audio/speech", "audio/transcriptions"]) {
+    assertEquals((await f.post(route, f.voice, { model: "other-audio" })).status, 403)
+  }
+  assertEquals(f.rpcs.length, 0)
+})
+
+Deno.test("failed usage settlement reports retained reservation without claiming exact billing", async () => {
+  const f = await fixture({ failSettlement: true })
+  const response = await f.post("voice/usage", f.voice, { seconds: 12.4 })
+  assertEquals(response.status, 200)
+  const result = await response.json()
+  assertEquals(result.billed_seconds, null)
+  assertEquals(result.billing_status, "reservation_retained")
+  assertEquals(f.rpcs.filter((r) => r.name === "boss_ai_settle").length, 2)
+})
+
+Deno.test("real LiveKit SDK sends room and dispatch operations with grants and metadata", async () => {
+  const original = globalThis.fetch
+  const requests: { url: string; body: any; claims: any }[] = []
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init)
+    requests.push({
+      url: request.url,
+      body: await request.json(),
+      claims: decodeJwt(request.headers.get("Authorization")!.replace("Bearer ", "")),
+    })
+    return Response.json(request.url.endsWith("ListRooms") ? { rooms: [] } : {})
+  }
+  try {
+    const sdk = liveKitClients({
+      url: "wss://demo.livekit.cloud",
+      apiKey: "key",
+      apiSecret: "secret",
+    })
+    assertEquals(await sdk.roomExists("room"), false)
+    await sdk.createRoom({
+      name: "room",
+      emptyTimeout: 60,
+      departureTimeout: 120,
+      maxParticipants: 2,
+    })
+    await sdk.createDispatch("room", "max-voice-agent", "metadata")
+    await sdk.deleteRoom("room")
+    assertEquals(requests.map((r) => new URL(r.url).pathname.split("/").pop()), [
+      "ListRooms",
+      "CreateRoom",
+      "CreateDispatch",
+      "DeleteRoom",
+    ])
+    assertEquals(requests[2].body, {
+      agentName: "max-voice-agent",
+      room: "room",
+      metadata: "metadata",
+    })
+    assertEquals(requests[1].claims.video.roomCreate, true)
+    assert(requests.every((r) => r.url.startsWith("https://demo.livekit.cloud/")))
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+Deno.test("voice usage reports the capped ledger charge when its model reservation is smaller", async () => {
+  const f = await fixture({ reserve: { model: { kind: "transcription", max_output_tokens: 10 } } })
+  const response = await f.post("voice/usage", f.voice, { seconds: 12.4 })
+  assertEquals((await response.json()).billed_seconds, 10)
 })

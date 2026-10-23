@@ -908,7 +908,7 @@ function riff(
   return btoa(binary)
 }
 
-Deno.test("wavSeconds parses chunks, requires consistent PCM, and ignores declared sizes", () => {
+Deno.test("wavSeconds parses chunks, requires consistent PCM, and handles broken declared sizes", () => {
   assertEquals(wavSeconds(riff()), 1)
   assertEquals(wavSeconds(riff({ seconds: 3 })), 3)
   assertEquals(wavSeconds(riff({ before: 26 })), 1) // LIST chunk before data
@@ -925,7 +925,7 @@ Deno.test("wavSeconds parses chunks, requires consistent PCM, and ignores declar
   assertEquals(wavSeconds(riff({ sampleRate: 1_000_000, bits: 32, channels: 2 })), null)
   assertEquals(wavSeconds(riff({ format: 3 })), null) // float
   assertEquals(wavSeconds(riff({ format: 0x55 })), null) // mp3-in-wav
-  assertEquals(wavSeconds(riff({ before: 100_000 })), null) // data beyond the inspected prefix
+  assertEquals(wavSeconds(riff({ before: 100_000 })), 1) // metadata before data is not speech
   assertEquals(wavSeconds(btoa("RIFF\0\0\0\0WAVE")), null)
   const mp3 = new Uint8Array(4_096)
   mp3.set(new TextEncoder().encode("ID3"), 0)
@@ -952,7 +952,7 @@ Deno.test("transcription bills real seconds beyond the reservation and ignores b
     payload: { text: "a", usage: { seconds: 500.2 } },
   })
   const response = await over.handler(over.request(stt, over.token, "audio/transcriptions"))
-  assertEquals((await response.json()).usage, { seconds: 500.2, billed_seconds: 501 })
+  assertEquals((await response.json()).usage, { seconds: 500.2, billed_seconds: 120 })
   assertEquals(settled(over), [501])
   assert(over.audits.includes("usage_exceeds_reservation"))
   assert(!over.audits.includes("usage_exceeds_configured_context"))
@@ -1132,7 +1132,7 @@ Deno.test("speech accepts and ignores OpenAI's optional fields; only mp3 output"
   const f = await fixture({ kind: "speech" })
   const ok = await f.handler(
     f.request(
-      { ...tts, response_format: "mp3", speed: 1, stream_format: "sse", instructions: "calm" },
+      { ...tts, response_format: "mp3", speed: 1, stream_format: "audio", instructions: "calm" },
       f.token,
       "audio/speech",
     ),
@@ -1148,4 +1148,72 @@ Deno.test("speech accepts and ignores OpenAI's optional fields; only mp3 output"
       .status,
     400,
   )
+})
+
+Deno.test("multipart actual byte cap cancels chunked and dishonest uploads before parsing or admission", async () => {
+  for (const contentLength of [undefined, "1"]) {
+    const f = await fixture({ kind: "transcription" })
+    let pulls = 0
+    let cancelled = false
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls++
+        controller.enqueue(new Uint8Array(1024 * 1024))
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${f.token}`,
+      "Content-Type": "multipart/form-data; boundary=x",
+    }
+    if (contentLength) headers["Content-Length"] = contentLength
+    const response = await f.handler(
+      new Request("https://boss-ai.example/v1/audio/transcriptions", {
+        method: "POST",
+        headers,
+        body: stream,
+      }),
+    )
+    assertEquals(response.status, 413)
+    assert(cancelled)
+    assert(pulls <= 7)
+    assertEquals(f.calls.length, 0)
+  }
+})
+
+Deno.test("multipart MIME names cannot inherit object properties", async () => {
+  const f = await fixture({ kind: "transcription" })
+  const form = new FormData()
+  form.append("file", new File(["x"], "unknown", { type: "constructor" }))
+  form.append("model", "boss-test")
+  const response = await f.handler(
+    new Request("https://boss-ai.example/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${f.token}` },
+      body: form,
+    }),
+  )
+  assertEquals(response.status, 400)
+  assertEquals(f.calls.length, 0)
+})
+
+Deno.test("speech rejects unsupported speed and SSE before admission", async () => {
+  for (const option of [{ speed: 2 }, { stream_format: "sse" }]) {
+    const f = await fixture({ kind: "speech" })
+    assertEquals(
+      (await f.handler(f.request({ ...tts, ...option }, f.token, "audio/speech"))).status,
+      400,
+    )
+    assertEquals(f.calls.filter((c) => c.name === "boss_ai_reserve").length, 0)
+  }
+})
+
+Deno.test("WAV metadata after audio is not billed as speech", () => {
+  const audio = atob(riff())
+  const tail = new Uint8Array(8 + 32000)
+  tail.set(new TextEncoder().encode("LIST"))
+  new DataView(tail.buffer).setUint32(4, 32000, true)
+  assertEquals(wavSeconds(btoa(audio + String.fromCharCode(...tail))), 1)
 })

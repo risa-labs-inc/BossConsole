@@ -10,8 +10,10 @@ desktop is needed.
 1. Apply `20260912000000_boss_ai.sql`, `20260912001000_boss_ai_hardening.sql`,
    `20260912002000_boss_ai_validation.sql`, `20260912003000_boss_ai_allowance_preflight.sql`, and
    `20260912004000_boss_ai_exchange_tickets.sql` in order; `20261015000000_boss_ai_voice.sql` adds
-   audio models. Earlier files have already been applied to the preview branch; fixes are forward
-   migrations, not edits to applied history.
+   audio models. Apply `20261023090000_boss_ai_voice_admission.sql` before deploying the live-call
+   handler update; it adds a service-only admission table/RPC without changing existing accounting
+   functions or policies. Existing chat and STT/TTS clients keep working. Earlier files have already
+   been applied to the preview branch; fixes are forward migrations, not edits to applied history.
 2. Set `BOSS_AI_SIGNING_SECRET` to at least 32 random bytes (encoded as a string). Set upstream API
    keys as secrets named `BOSS_AI_<NAME>`. The signing-secret name is explicitly prohibited as an
    upstream key in both SQL and the handler. Never put these keys in a shared vault entry. Supabase
@@ -163,9 +165,10 @@ validated for base64 shape and forwarded undecoded as
 
 `input` is 1 to 2000 characters and at most `max_output_tokens` x 14 characters (400 `invalid_input`
 otherwise; checked before and after admission, since the model row may change between). The proxy
-sends `response_format: "mp3"` and the voice, taken from the request, else the model row's `voice`,
-else omitted. The upstream body is streamed through as `audio/mpeg` without buffering and is cut off
-past 16 MiB. Headers: `X-Request-ID`, `X-Billed-Seconds`, and `X-Remaining-Seconds` and
+accepts only `speed: 1` and `stream_format: "audio"` when supplied (unsupported variants return
+400). It sends `response_format: "mp3"` and the voice, taken from the request, else the model row's
+`voice`, else omitted. The upstream body is streamed through as `audio/mpeg` without buffering and
+is cut off past 16 MiB. Headers: `X-Request-ID`, `X-Billed-Seconds`, and `X-Remaining-Seconds` and
 `X-Resets-At` (both omitted unless `resets_at` is an ISO timestamp).
 
 After settling, both routes read the pool with `boss_ai_usage` and report the period with the
@@ -181,8 +184,8 @@ remaining-allowance check use the same amount. Settlement:
   value; if missing, estimated from the WAV (RIFF chunks parsed, PCM only, byte rate consistent with
   the format and within 2,000 to 1,536,000 bytes/s, duration from the bytes actually present);
   otherwise the reservation is kept (`usage_unknown_reservation_retained`). `billed_seconds` reports
-  the real seconds even above the reservation (`usage_exceeds_reservation`; the ledger itself still
-  caps the charge at the reservation).
+  the ledger charge, capped at the reservation. `usage.seconds` preserves the measured duration when
+  it exceeds that cap (`usage_exceeds_reservation`).
 - Speech: `max(1, ceil(chars / 14))`, settled once upstream returns 200, before the stream starts.
   Input is bounded so this never exceeds the reservation.
 - Upstream rejection that proves no work (400/401/402/403/404/405/406/413/415/422/429) settles 0;
@@ -231,26 +234,40 @@ into it. The caller sends an inference-scoped bearer:
 }
 ```
 
-- `agent_url`: https, at most 2048 characters, no credentials. `http://127.0.0.1` and
-  `http://localhost` are accepted only when `BOSS_AI_ALLOW_LOCAL_AGENT=1` (local testing).
+- `agent_url`: HTTPS, at most 2048 characters, no credentials, nonstandard port, query or fragment.
+  Desktop Cloudflare quick tunnels (`https://<single-label>.trycloudflare.com`) are supported;
+  Cloudflare owns their DNS/TLS and routes them to the sharing agent. Other callback origins must be
+  explicitly trusted via `BOSS_AI_AGENT_ORIGINS`, a comma-separated list of exact HTTPS origins (no
+  path). Before rollout, configure every hosted agent origin, including new `*.bossconsole.ai` hosts
+  individually; no wildcard or arbitrary custom DNS name is implicitly trusted. The companion
+  `voice-agent/agent.py` uses HTTPX without redirects; retain that restriction in worker updates.
+  `http://127.0.0.1` and `http://localhost` are accepted only when `BOSS_AI_ALLOW_LOCAL_AGENT=1`
+  (local testing).
 - `agent_token`: opaque per-call secret, 32 to 256 printable characters. It is only relayed to the
   worker in the dispatch metadata.
 - `max_seconds`: 60 to 3600, default 3600 (a call ends at one hour or when the caller hangs up).
   Other fields are rejected (400).
 
-The caller needs a policy for `max-stt` (the voice pool; 403 otherwise) with at least 60 seconds
-left in its smallest period, else 429 `allowance_exceeded` with the pool `usage`. Nothing is
-reserved here: talk time is metered by the worker's `max-tts` speech calls and its `/v1/voice/usage`
-reports (below).
+The caller needs a policy for `max-stt` (the voice pool; 403 otherwise) with at least
+`max(60, max-stt.max_output_tokens)` seconds left in its smallest period, else 429
+`allowance_exceeded` with the pool `usage`. Nothing is reserved here: talk time is metered by the
+worker's `max-tts` speech calls and its `/v1/voice/usage` reports (below).
 
-The proxy creates room `fluck-call-<uuid>` (`emptyTimeout` 60, `departureTimeout` 120,
+A service-only atomic database claim limits each user to one start attempt per 30 seconds across
+edge instances, including failed attempts. An existing room blocks additional calls. LiveKit RPCs
+have a five-second timeout with regional replay disabled. Failed create/dispatch attempts delete the
+room; the participant token is signed before either operation.
+
+The proxy creates room `fluck-call-<user UUID>` (`emptyTimeout` 60, `departureTimeout` 120,
 `maxParticipants` 2), dispatches agent `max-voice-agent` with JSON metadata
 `{agent_url, agent_token, inference: {base_url, token}, stt_model: "max-stt", tts_model: "max-tts",
 max_seconds, user}`,
 and mints a participant token (identity `user-<first 8 of user id>`, name "You",
 join/publish/subscribe/publish-data for that room only, TTL `max_seconds + 300`).
-`inference.base_url` is the request origin plus `/functions/v1/boss-ai/v1`, so local stacks work.
-Response:
+`inference.base_url` is `BOSS_AI_PUBLIC_URL` + `/v1`, otherwise `SUPABASE_URL` +
+`/functions/v1/boss-ai/v1`. Both public configuration values require HTTPS. The worker enforces
+`max_seconds` with its call timer; LiveKit room timeouts only handle empty rooms and departures. The
+SQL migration and handler can precede a worker update; the metadata contract is unchanged. Response:
 
 ```json
 {
@@ -282,17 +299,20 @@ VALUES ('max-voice','ai.use',2000000,6000000,20000000,6);
 
 The worker transcribes on LiveKit Cloud Inference, so the caller's speech never passes through
 `/v1/audio/transcriptions`. It reports it instead, about every 30 s and at the end of the call:
-`{"seconds": 12.4}` (a positive number; other fields are 400). The proxy rounds up, caps one report
-at 60 s, reserves on `max-stt` with `boss_ai_reserve` and settles that many seconds with
-`boss_ai_settle`, then answers `{billed_seconds, remaining_seconds, resets_at}`. No policy is 403;
-an exhausted pool is 429 `allowance_exceeded` with `usage`, and the worker then ends the call.
+`{"seconds": 12.4}` (a positive number no greater than 60; other fields and larger reports are 400).
+The proxy rounds up, reserves on `max-stt` with `boss_ai_reserve` and settles that many seconds with
+`boss_ai_settle`, then answers `{billed_seconds, remaining_seconds, resets_at}`. Settlement retries
+once; if both attempts fail, the response has `billed_seconds: null` and
+`billing_status: "reservation_retained"` because the full reservation remains charged. No policy is
+403; an exhausted pool is 429 `allowance_exceeded` with `usage`, and the worker then ends the call.
 
-**Token scopes.** `inference` tokens (300 s max age) are accepted everywhere. The call-scoped
-`voice` token placed in the dispatch metadata uses the same signer, has `sub` = user and
-`exp = now + max_seconds + 300` (max age `exp - iat`, capped at 3900 s), and is accepted only by
-`/v1/audio/transcriptions` and `/v1/audio/speech`; `/v1/voice/usage` takes `voice` only.
-`/v1/chat/completions`, `/v1/models`, `/v1/usage`, `/v1/provider` and `/v1/voice/live` take
-`inference` only (401 otherwise).
+**Token scopes.** `inference` tokens (300 s max age) are accepted by ordinary inference and
+live-call start routes, but not `/v1/voice/usage`. The call-scoped `voice` token placed in the
+dispatch metadata uses the same signer, has `sub` = user and `exp = now + max_seconds + 300` (max
+age `exp - iat`, capped at 3900 s), and is accepted only by `/v1/audio/transcriptions` for `max-stt`
+and `/v1/audio/speech` for `max-tts`; `/v1/voice/usage` takes `voice` only. Future-issued tokens are
+rejected. `/v1/chat/completions`, `/v1/models`, `/v1/usage`, `/v1/provider` and `/v1/voice/live`
+take `inference` only (401 otherwise).
 
 ## Restricting a model to an organisation
 

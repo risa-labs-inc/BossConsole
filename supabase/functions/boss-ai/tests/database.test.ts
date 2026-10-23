@@ -144,6 +144,7 @@ Deno.test("voice: pooled seconds, per-kind reservation, catalog kind and pool gu
         "20261008000000_boss_ai_model_provider_routing.sql",
         "20261008100000_boss_ai_reserve_ai_grants.sql",
         "20261015000000_boss_ai_voice.sql",
+        "20261023090000_boss_ai_voice_admission.sql",
       ]
     ) {
       await db.exec(
@@ -164,6 +165,23 @@ Deno.test("voice: pooled seconds, per-kind reservation, catalog kind and pool gu
     `)
     const scalar = async (sql: string, params: unknown[] = []) =>
       (await db.query<{ value: any }>(sql, params)).rows[0].value
+    const claim = () => scalar("SELECT public.boss_ai_claim_voice_start($1) AS value", [user])
+    assertEquals(await claim(), true)
+    assertEquals(await claim(), false)
+    await db.exec(
+      "UPDATE public.boss_ai_voice_starts SET started_at=clock_timestamp()-interval '31 seconds'",
+    )
+    assertEquals(await claim(), true)
+    await db.exec("SET ROLE authenticated")
+    await assertRejects(() => claim())
+    await assertRejects(() => db.query("SELECT * FROM public.boss_ai_voice_starts"))
+    await db.exec("RESET ROLE")
+    await db.exec("DELETE FROM public.test_user_permissions")
+    await db.exec(
+      "UPDATE public.boss_ai_voice_starts SET started_at=clock_timestamp()-interval '31 seconds'",
+    )
+    assertEquals(await claim(), false)
+    await db.exec(`INSERT INTO public.test_user_permissions VALUES('${user}','ai.use')`)
     const reserve = (model: string, id = crypto.randomUUID()) =>
       scalar("SELECT public.boss_ai_reserve($1,$2,$3) AS value", [user, model, id]).then((
         r,

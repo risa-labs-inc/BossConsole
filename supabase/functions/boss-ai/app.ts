@@ -1,11 +1,12 @@
 import {
   bearer,
   HttpError,
+  LIVE_MAX_SECONDS,
   mintToken,
   mintVoiceToken,
   Scope,
   signingKey,
-  verifyToken,
+  verifyClaims,
 } from "./auth.ts"
 import { LiveKit, liveKitClients, LiveKitConfig } from "./livekit.ts"
 import {
@@ -58,21 +59,47 @@ const LIVE_STT_MODEL = "max-stt"
 const LIVE_TTS_MODEL = "max-tts"
 const LIVE_MIN_SECONDS = 60
 /** A call ends at one hour or when the caller hangs up. */
-export const LIVE_MAX_SECONDS = 3600
+export { LIVE_MAX_SECONDS } from "./auth.ts"
 /** Most seconds one /v1/voice/usage report may charge; the worker reports about every 30 s. */
 const LIVE_USAGE_MAX_SECONDS = 60
 
-/** https only; loopback http only for local testing behind BOSS_AI_ALLOW_LOCAL_AGENT=1. */
-function validAgentUrl(value: unknown, allowLocal: boolean): value is string {
+/** Only operator-controlled callback origins or Cloudflare's HTTPS quick tunnels. */
+function validAgentUrl(value: unknown, deps: Dependencies): value is string {
   if (typeof value !== "string" || value.length > 2048) return false
   try {
     const url = new URL(value)
-    if (url.username || url.password || url.hash) return false
-    if (url.protocol === "https:") return true
-    return allowLocal && url.protocol === "http:" &&
+    if (url.username || url.password || url.hash || url.search) return false
+    if (
+      deps.secret("BOSS_AI_ALLOW_LOCAL_AGENT") === "1" && url.protocol === "http:" &&
       (url.hostname === "127.0.0.1" || url.hostname === "localhost")
+    ) return true
+    if (url.protocol !== "https:" || url.port) return false
+    // Quick tunnels are the existing desktop share transport; Cloudflare owns DNS and TLS.
+    if (/^[a-z0-9]+(?:-[a-z0-9]+)*\.trycloudflare\.com$/.test(url.hostname)) return true
+    const origins = (deps.secret("BOSS_AI_AGENT_ORIGINS") ?? "").split(",").map((v) => v.trim())
+    return origins.some((origin) => {
+      try {
+        const trusted = new URL(origin)
+        return trusted.protocol === "https:" && !trusted.port && !trusted.username &&
+          !trusted.password && !trusted.search && !trusted.hash && trusted.pathname === "/" &&
+          trusted.origin === url.origin
+      } catch {
+        return false
+      }
+    })
   } catch {
     return false
+  }
+}
+function configuredHttps(value: string, protocols = ["https:"]): string {
+  try {
+    const url = new URL(value)
+    if (
+      !protocols.includes(url.protocol) || url.username || url.password || url.search || url.hash
+    ) throw new Error()
+    return value.replace(/\/+$/, "")
+  } catch {
+    throw new HttpError(503, "voice_unavailable", "Voice calls are not configured.")
   }
 }
 const ROUTES: Record<string, Model["kind"]> = {
@@ -131,7 +158,7 @@ async function settleReservation(
   requestId: string,
   tokens: number | null,
   audit: (event: string) => void,
-): Promise<void> {
+): Promise<boolean> {
   // boss_ai_settle updates only WHERE NOT settled. Retrying the same request ID is safe
   // even if a timed-out first attempt commits late. Two bounded attempts cost at most
   // four seconds by default, on success, streaming cleanup, AND upstream failure paths.
@@ -147,7 +174,7 @@ async function settleReservation(
           )
         }),
       ])
-      return
+      return true
     } catch (error) {
       if (error instanceof SettlementTimeoutError) audit("settlement_timeout")
       if (attempt === 1) {
@@ -160,6 +187,7 @@ async function settleReservation(
       if (timer !== undefined) clearTimeout(timer)
     }
   }
+  return false
 }
 
 /**
@@ -168,10 +196,10 @@ async function settleReservation(
  */
 function publicBase(deps: Dependencies): string {
   const explicit = deps.secret("BOSS_AI_PUBLIC_URL")?.replace(/\/+$/, "")
-  if (explicit) return explicit
+  if (explicit) return configuredHttps(explicit)
   const supabase = deps.secret("SUPABASE_URL")?.replace(/\/+$/, "")
   if (!supabase) throw new HttpError(503, "voice_unavailable", "Voice calls are not configured.")
-  return `${supabase}/functions/v1/boss-ai`
+  return `${configuredHttps(supabase)}/functions/v1/boss-ai`
 }
 
 export function createHandler(deps: Dependencies): (request: Request) => Promise<Response> {
@@ -185,15 +213,15 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
     if (Object.keys(input).some((k) => !["agent_url", "agent_token", "max_seconds"].includes(k))) {
       throw new HttpError(400, "invalid_request", "The request body is not valid.")
     }
-    if (!validAgentUrl(input.agent_url, deps.secret("BOSS_AI_ALLOW_LOCAL_AGENT") === "1")) {
-      throw new HttpError(400, "invalid_agent_url", "agent_url must be an https URL.")
+    if (!validAgentUrl(input.agent_url, deps)) {
+      throw new HttpError(400, "invalid_agent_url", "agent_url must use an approved HTTPS origin.")
     }
     if (
       typeof input.agent_token !== "string" || !/^[\x21-\x7e]{32,256}$/.test(input.agent_token)
     ) {
       throw new HttpError(400, "invalid_agent_token", "agent_token must be 32 to 256 characters.")
     }
-    const maxSeconds = input.max_seconds ?? LIVE_MAX_SECONDS
+    const maxSeconds = input.max_seconds === undefined ? LIVE_MAX_SECONDS : input.max_seconds
     if (
       typeof maxSeconds !== "number" || !Number.isInteger(maxSeconds) || maxSeconds < 60 ||
       maxSeconds > LIVE_MAX_SECONDS
@@ -210,13 +238,24 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
     if (!url || !apiKey || !apiSecret) {
       throw new HttpError(503, "voice_unavailable", "Voice calls are temporarily unavailable.")
     }
+    configuredHttps(url, ["https:", "wss:"])
+    const inferenceBase = publicBase(deps)
     // The caller needs a policy for the voice pool, and at least a minute left in it.
     const usage = await deps.rpc("boss_ai_usage", { p_user_id: user, p_model_id: LIVE_STT_MODEL })
     if (usage === null || usage === undefined) {
       throw new HttpError(403, "forbidden", "Voice calls are not available for your account.")
     }
+    const model = await deps.rpc("boss_ai_lookup", {
+      p_user_id: user,
+      p_model_id: LIVE_STT_MODEL,
+    }) as { error?: string; model?: Model } | null
+    if (!model?.model || model.error || model.model.kind !== "transcription") {
+      throw new HttpError(503, "voice_unavailable", "Voice calls are not configured.")
+    }
     const quota = smallestRemaining(usage)
-    if (!quota || quota.remaining_seconds < LIVE_MIN_SECONDS) {
+    if (
+      !quota || quota.remaining_seconds < Math.max(LIVE_MIN_SECONDS, model.model.max_output_tokens)
+    ) {
       throw new HttpError(
         429,
         "allowance_exceeded",
@@ -224,14 +263,21 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         { usage },
       )
     }
+    // Durable throttle is shared across isolates, including failed/empty calls. Never release it early.
+    if (await deps.rpc("boss_ai_claim_voice_start", { p_user_id: user }) !== true) {
+      throw new HttpError(429, "busy", "Wait before starting another voice call.")
+    }
     const livekit = (deps.livekit ?? liveKitClients)({ url, apiKey, apiSecret })
-    const room = `fluck-call-${crypto.randomUUID()}`
+    const room = `fluck-call-${user}`
+    if (await livekit.roomExists(room)) {
+      throw new HttpError(429, "busy", "A voice call is already active.")
+    }
     const call = await mintVoiceToken(user, key, maxSeconds)
     const metadata = JSON.stringify({
       agent_url: input.agent_url,
       agent_token: input.agent_token,
       inference: {
-        base_url: `${publicBase(deps)}/v1`,
+        base_url: `${inferenceBase}/v1`,
         token: call.token,
       },
       stt_model: LIVE_STT_MODEL,
@@ -239,20 +285,26 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       max_seconds: maxSeconds,
       user,
     })
-    await livekit.createRoom({
-      name: room,
-      emptyTimeout: 60,
-      // A dropped caller (network change, locked phone) has two minutes to come back before the room closes.
-      departureTimeout: 120,
-      maxParticipants: 2,
-    })
-    await livekit.createDispatch(room, LIVE_AGENT, metadata)
     const participantToken = await livekit.participantToken({
       room,
       identity: `user-${user.slice(0, 8)}`,
       name: "You",
       ttlSeconds: maxSeconds + 300,
     })
+    try {
+      await livekit.createRoom({
+        name: room,
+        emptyTimeout: 60,
+        // A dropped caller (network change, locked phone) has two minutes to come back before the room closes.
+        departureTimeout: 120,
+        maxParticipants: 2,
+      })
+      await livekit.createDispatch(room, LIVE_AGENT, metadata)
+    } catch (error) {
+      // createRoom can time out after committing: delete even if its response never arrived.
+      await livekit.deleteRoom(room).catch(() => {})
+      throw error
+    }
     return json(
       {
         server_url: url,
@@ -319,7 +371,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         : AUDIO_PATHS.includes(path)
         ? ["inference", "voice"]
         : ["inference"]
-      const user = await verifyToken(token, key, scopes)
+      const { user, scope } = await verifyClaims(token, key, scopes)
       if (request.method === "GET" && path === "/v1/provider") {
         return json(
           {
@@ -359,17 +411,17 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         const reported = input.seconds
         if (
           Object.keys(input).some((k) => k !== "seconds") || typeof reported !== "number" ||
-          !Number.isFinite(reported) || reported <= 0
+          !Number.isFinite(reported) || reported <= 0 || reported > LIVE_USAGE_MAX_SECONDS
         ) {
           throw new HttpError(400, "invalid_seconds", "seconds must be a positive number.")
         }
-        const seconds = Math.min(LIVE_USAGE_MAX_SECONDS, Math.ceil(reported))
+        const seconds = Math.ceil(reported)
         phase = "reservation"
         const result = await deps.rpc("boss_ai_reserve", {
           p_user_id: user,
           p_model_id: LIVE_STT_MODEL,
           p_request_id: requestId,
-        }) as { error?: string; usage?: unknown } | null
+        }) as { error?: string; usage?: unknown; model: Model } | null
         if (!result || result.error === "forbidden") {
           throw new HttpError(403, "forbidden", "Voice calls are not available for your account.")
         }
@@ -384,9 +436,17 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         if (result.error) {
           throw new HttpError(429, "busy", "Too many requests for this model. Try again shortly.")
         }
-        await settleReservation(deps, requestId, seconds, audit)
+        const settled = await settleReservation(deps, requestId, seconds, audit)
         const quota = await remainingQuota(deps, user, LIVE_STT_MODEL)
-        return json({ billed_seconds: seconds, ...quota }, 200, requestId)
+        return json(
+          {
+            billed_seconds: settled ? Math.min(seconds, result.model.max_output_tokens) : null,
+            ...(settled ? {} : { billing_status: "reservation_retained" }),
+            ...quota,
+          },
+          200,
+          requestId,
+        )
       }
       const kind = request.method === "POST" && Object.hasOwn(ROUTES, path)
         ? ROUTES[path]
@@ -397,6 +457,15 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         : await readJson(request.body)
       if (typeof input.model !== "string" || !/^[a-z0-9][a-z0-9._-]{0,99}$/.test(input.model)) {
         throw new HttpError(400, "invalid_model", "Choose a published BOSS model.")
+      }
+      if (
+        scope === "voice" && input.model !== (kind === "speech" ? LIVE_TTS_MODEL : LIVE_STT_MODEL)
+      ) {
+        throw new HttpError(
+          403,
+          "forbidden",
+          "This token is restricted to the call's voice models.",
+        )
       }
       phase = "validation"
       const lookup = await deps.rpc("boss_ai_lookup", {
@@ -521,7 +590,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           await settleWithRetry(measuredTokens)
           reservation = undefined
           // A retained reservation (unknown duration) bills the full reserved window.
-          const billed = measuredTokens ?? result.model.max_output_tokens
+          const billed = Math.min(measuredTokens ?? Infinity, result.model.max_output_tokens)
           const quota = await remainingQuota(deps, user, input.model as string)
           return json(
             { text: payload.text, usage: { seconds, billed_seconds: billed, ...quota } },

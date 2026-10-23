@@ -4,7 +4,6 @@ import { invalid, Model, Obj, object } from "./wire.ts"
 const FORMATS = ["wav", "mp3", "webm", "ogg", "flac", "m4a"]
 const MAX_SPEECH_CHARS = 2_000
 const CHARS_PER_SECOND = 14
-const WAV_HEAD_CHARS = 8_192
 const MIN_WAV_BYTE_RATE = 2_000
 const MAX_WAV_BYTE_RATE = 1_536_000
 export const MAX_AUDIO_OUTPUT_BYTES = 16 * 1024 * 1024
@@ -44,14 +43,13 @@ export function transcriptionBody(
 }
 
 /**
- * Seconds of a base64 PCM WAV, or null when it cannot be trusted. Walks the RIFF chunks of the first
- * decoded kilobytes, requires a self-consistent PCM `fmt ` chunk, and divides the bytes that really
+ * Seconds of a base64 PCM WAV, or null when it cannot be trusted. Walks the bounded upload’s RIFF chunks, requires a self-consistent PCM `fmt ` chunk, and divides the bytes that really
  * follow the `data` header by the byte rate (the declared sizes are client-controlled).
  */
 export function wavSeconds(data: string): number | null {
   try {
     const head = Uint8Array.from(
-      atob(data.slice(0, WAV_HEAD_CHARS)),
+      atob(data),
       (c) => c.charCodeAt(0),
     )
     const view = new DataView(head.buffer)
@@ -59,7 +57,8 @@ export function wavSeconds(data: string): number | null {
     if (head.length < 12 || text(0) !== "RIFF" || text(8) !== "WAVE") return null
     let rate = 0
     let at = 12
-    while (at + 8 <= head.length) {
+    let chunks = 0
+    while (at + 8 <= head.length && chunks++ < 1024) {
       const id = text(at)
       const size = view.getUint32(at + 4, true)
       const body = at + 8
@@ -85,8 +84,19 @@ export function wavSeconds(data: string): number | null {
         rate = byteRate
       } else if (id === "data") {
         if (rate === 0) return null
-        const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0
-        const bytes = data.length * 3 / 4 - padding - body
+        const bytes = head.length - body
+        // Exclude well-formed metadata after audio. Broken/streaming size fields still use
+        // the actual bytes, rather than trusting a hostile zero/oversized declared length.
+        let tail = body + size + (size & 1)
+        if (tail <= head.length) {
+          while (
+            tail + 8 <= head.length && chunks++ < 1024 &&
+            ["LIST", "JUNK", "bext", "iXML", "ID3 ", "id3 "].includes(text(tail))
+          ) {
+            tail += 8 + view.getUint32(tail + 4, true) + (view.getUint32(tail + 4, true) & 1)
+          }
+          if (tail === head.length) return size / rate
+        }
         return bytes >= 0 ? bytes / rate : null
       }
       at = body + size + (size & 1)
@@ -133,8 +143,7 @@ export function smallestRemaining(usage: unknown): Remaining | null {
 }
 
 export function speechBody(input: Obj, model: Model): { body: Obj; seconds: number } {
-  // OpenAI's optional speech fields, as SDK clients send them, are accepted and ignored: the output is always mp3
-  // streamed as bytes, at normal speed.
+  // Accept only output options this endpoint can honor: mp3 bytes at normal speed.
   onlyKeys(input, [
     "model",
     "input",
@@ -145,6 +154,8 @@ export function speechBody(input: Obj, model: Model): { body: Obj; seconds: numb
     "instructions",
   ])
   if (input.response_format !== undefined && input.response_format !== "mp3") throw invalid()
+  if (input.speed !== undefined && input.speed !== 1) throw invalid()
+  if (input.stream_format !== undefined && input.stream_format !== "audio") throw invalid()
   const text = input.input
   if (typeof text !== "string" || !text.length || text.length > MAX_SPEECH_CHARS) {
     throw new HttpError(400, "invalid_input", "Speech input must be 1 to 2000 characters.")
@@ -230,8 +241,15 @@ export async function multipartTranscription(request: Request): Promise<Obj> {
   }
   let form: FormData
   try {
-    form = await request.formData()
-  } catch {
+    if (!request.body) throw invalid()
+    const limited = capped(request.body, MAX_UPLOAD_BYTES, () => {})
+    form = await new Response(limited, {
+      headers: { "content-type": request.headers.get("content-type")! },
+    }).formData()
+  } catch (error) {
+    if (error instanceof Error && error.message === "Audio response too large") {
+      throw new HttpError(413, "too_large", "The AI request or response is too large.")
+    }
     throw invalid()
   }
   const file = form.get("file")
@@ -241,7 +259,10 @@ export async function multipartTranscription(request: Request): Promise<Obj> {
     throw new HttpError(413, "too_large", "The AI request or response is too large.")
   }
   const ext = file.name.split(".").pop()?.toLowerCase() ?? ""
-  const format = UPLOAD_FORMATS[file.type.toLowerCase()] ?? (FORMATS.includes(ext) ? ext : "")
+  const mime = file.type.toLowerCase().split(";", 1)[0].trim()
+  const format = Object.hasOwn(UPLOAD_FORMATS, mime)
+    ? UPLOAD_FORMATS[mime]
+    : (FORMATS.includes(ext) ? ext : "")
   if (!format) throw invalid()
   const bytes = new Uint8Array(await file.arrayBuffer())
   let binary = ""

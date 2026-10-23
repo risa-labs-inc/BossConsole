@@ -23,7 +23,8 @@ export function signingKey(secret: string | undefined): Uint8Array {
 }
 
 export type Scope = "inference" | "voice"
-const MAX_VOICE_AGE = 3600 + 300
+export const LIVE_MAX_SECONDS = 3600
+const MAX_VOICE_AGE = LIVE_MAX_SECONDS + 300
 
 /** A call-scoped token: voice routes only, valid for the call plus a five minute grace. */
 export async function mintVoiceToken(userId: string, key: Uint8Array, maxSeconds: number) {
@@ -48,11 +49,11 @@ export async function mintToken(userId: string, key: Uint8Array) {
   }
 }
 
-export async function verifyToken(
+export async function verifyClaims(
   token: string,
   key: Uint8Array,
   scopes: Scope[] = ["inference"],
-): Promise<string> {
+): Promise<{ user: string; scope: Scope }> {
   try {
     const { payload } = await jwtVerify(token, key, {
       algorithms: ["HS256"],
@@ -68,8 +69,8 @@ export async function verifyToken(
     const limit = scope === "inference"
       ? lifetime
       : Math.min(payload.exp! - payload.iat!, MAX_VOICE_AGE)
-    if (age > limit) throw new Error()
-    return payload.sub
+    if (age < 0 || age > limit) throw new Error()
+    return { user: payload.sub, scope }
   } catch {
     throw new HttpError(401, "unauthorized", "Sign in to BOSS to use AI.")
   }
@@ -81,4 +82,12 @@ export function bearer(request: Request): string {
     throw new HttpError(401, "unauthorized", "Sign in to BOSS to use AI.")
   }
   return match[1]
+}
+
+export async function verifyToken(
+  token: string,
+  key: Uint8Array,
+  scopes: Scope[] = ["inference"],
+): Promise<string> {
+  return (await verifyClaims(token, key, scopes)).user
 }

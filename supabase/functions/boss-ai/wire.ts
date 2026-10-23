@@ -419,7 +419,7 @@ export function requestBody(
 // every other upstream caches automatically or not at all and gets the request unchanged. Gemini is never
 // marked: it caches implicitly, and an explicit cache cost +1.4-3.2 s to the first token without paying back
 // on reuse (measured on flash-lite, short and 23k-char prompts).
-export function takesCacheControl(upstreamModel: string, baseUrl: string): boolean {
+function takesCacheControl(upstreamModel: string, baseUrl: string): boolean {
   return isOpenRouter(baseUrl) && upstreamModel.toLowerCase().startsWith("anthropic/")
 }
 
