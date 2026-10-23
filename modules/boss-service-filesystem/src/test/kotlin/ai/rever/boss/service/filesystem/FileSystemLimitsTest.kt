@@ -52,6 +52,28 @@ class FileSystemLimitsTest {
         }
     }
 
+    private fun createTestLink(link: Path, target: Path): Path {
+        if (Platform.isWindows()) {
+            val script =
+                "\$ErrorActionPreference='Stop'; " +
+                    "New-Item -ItemType Junction -Path \$env:NATIVE_TEST_LINK " +
+                    "-Target \$env:NATIVE_TEST_TARGET | Out-Null"
+            val builder = ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+            builder.environment()["NATIVE_TEST_LINK"] = link.toString()
+            builder.environment()["NATIVE_TEST_TARGET"] = target.toString()
+            val process = builder.start()
+            try {
+                assertTrue(process.waitFor(60, TimeUnit.SECONDS), "Junction fixture creation timed out")
+                assertEquals(0, process.exitValue(), process.errorStream.bufferedReader().readText())
+            } finally {
+                process.destroyForcibly()
+            }
+            return link
+        } else {
+            return Files.createSymbolicLink(link, target)
+        }
+    }
+
     @Test
     fun `scan refuses an alias into a blocked system root`() =
         runBlocking<Unit> {
@@ -99,11 +121,10 @@ class FileSystemLimitsTest {
     @Test
     fun `scan follows the requested root alias while leaving descendant links untraversed`() =
         runBlocking {
-            if (Platform.isWindows()) return@runBlocking
             val real = Files.createDirectory(root.resolve("real"))
             Files.writeString(real.resolve("content"), "ok")
-            Files.createSymbolicLink(real.resolve("loop"), real)
-            val alias = Files.createSymbolicLink(root.resolve("alias"), real)
+            createTestLink(real.resolve("loop"), real)
+            val alias = createTestLink(root.resolve("alias"), real)
             val result =
                 stub.scanDirectory(
                     ScanDirectoryRequest
@@ -198,7 +219,13 @@ class FileSystemLimitsTest {
     fun `reads through file links resolve the target before the bounded open`() =
         runBlocking {
             val target = Files.writeString(root.resolve("target"), "linked content")
-            val link = Files.createSymbolicLink(root.resolve("file-link"), target)
+            val link = root.resolve("file-link")
+            try {
+                Files.createSymbolicLink(link, target)
+            } catch (e: IOException) {
+                if (!System.getProperty("os.name").startsWith("Windows")) throw e
+                org.junit.Assume.assumeTrue("Symbolic link creation is not permitted on this Windows host", false)
+            }
             val response = stub.readFile(ReadFileRequest.newBuilder().setPath(link.toString()).build())
             assertTrue(response.errorMessage.isEmpty(), response.errorMessage)
             assertEquals("linked content", response.content.toStringUtf8())
