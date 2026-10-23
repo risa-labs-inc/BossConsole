@@ -6,10 +6,12 @@ const BUCKET_NAME = 'plugin-jars'
  * Normalize storage URLs to be accessible from outside Docker network.
  * Replaces internal Docker hostnames (kong:8000) with the public Supabase URL.
  */
-function normalizeStorageUrl(url: string): string {
+export function normalizeStorageUrl(url: string): string {
   // Get the public host port from environment (set by local Supabase)
   const hostPort = Deno.env.get("SUPABASE_INTERNAL_HOST_PORT") || "54321"
-  const publicUrl = `http://127.0.0.1:${hostPort}`
+  // Local stacks only: where clients reach this stack when it is not 127.0.0.1 (e.g. a test cluster
+  // behind TLS). Production URLs never match the internal hosts below, so this never applies there.
+  const publicUrl = (Deno.env.get("PLUGIN_STORE_PUBLIC_URL") || `http://127.0.0.1:${hostPort}`).replace(/\/+$/, "")
 
   // Replace internal Docker hostnames with public URL
   // kong:8000 is the internal API gateway in local Supabase
@@ -25,7 +27,10 @@ function normalizeStorageUrl(url: string): string {
 export async function getSignedDownloadUrl(
   supabase: SupabaseClient,
   jarPath: string,
-  expiresIn: number = 3600 // 1 hour default
+  expiresIn: number = 3600, // 1 hour default
+  // This function fetching the JAR itself (finalize's hash): the URL as storage issued it, reachable
+  // from here. Only URLs handed to clients are rewritten for where clients reach the stack.
+  { serverSide = false }: { serverSide?: boolean } = {},
 ): Promise<string> {
   const { data, error } = await supabase
     .storage
@@ -41,7 +46,7 @@ export async function getSignedDownloadUrl(
     throw new Error('Failed to create download URL: no URL returned')
   }
 
-  return normalizeStorageUrl(data.signedUrl)
+  return serverSide ? data.signedUrl : normalizeStorageUrl(data.signedUrl)
 }
 
 /**

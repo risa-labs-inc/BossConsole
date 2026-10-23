@@ -181,6 +181,100 @@ export function isOptimistRedirect(redirectTo: string | undefined): boolean {
   return !!redirectTo && OPTIMIST_REDIRECTS.has(redirectTo)
 }
 
+// Agent hosts (https://<slug>.<AGENTS_BASE_DOMAIN>/auth/callback, plus console.<base>) use the web
+// arm under the agent's own name. The arm is off unless AGENTS_BASE_DOMAIN is set. Lockstep:
+// config.toml additional_redirect_urls (glob), the prod Auth allow-list, and the email templates'
+// `$agent` predicate. A slug is accepted only if public.agent_public lists it (live agents only).
+const AGENT_SLUG_RE = /^[a-z][a-z0-9-]{1,30}[a-z0-9]$/
+
+/**
+ * Label of a redirect_to that is a sign-in callback on a host under `baseDomain` (`https://<label>.<base>[:port]/auth/callback`,
+ * a query allowed: a custom domain's sign-in lands on its agent host with `?handoff=<host>`), or null. GoTrue checks the
+ * full value against its allow-list when it verifies; this only decides that the browser, never an app, finishes it.
+ */
+export function agentHostLabel(redirectTo: string | undefined, baseDomain: string | undefined): string | null {
+  const base = baseDomain?.trim().toLowerCase().replace(/^\.+|\.+$/g, "")
+  if (!redirectTo || !base) return null
+  let u: URL
+  try {
+    u = new URL(redirectTo)
+  } catch {
+    return null
+  }
+  if (u.protocol !== "https:" || u.username || u.password || u.hash) return null
+  if (u.pathname !== "/auth/callback") return null
+  const suffix = `.${base}`
+  if (!u.hostname.endsWith(suffix)) return null
+  const label = u.hostname.slice(0, -suffix.length)
+  return AGENT_SLUG_RE.test(label) ? label : null
+}
+
+/** Name of the live agent with this slug, via the anon-readable public.agent_public view. */
+async function lookupLiveAgentName(slug: string): Promise<string | null> {
+  const url = Deno.env.get("SUPABASE_URL")
+  const key = Deno.env.get("SUPABASE_ANON_KEY")
+  if (!url || !key) return null
+  try {
+    const res = await fetch(`${url}/rest/v1/agent_public?slug=eq.${encodeURIComponent(slug)}&select=name&limit=1`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+    })
+    if (!res.ok) return null
+    const rows = await res.json()
+    return typeof rows?.[0]?.name === "string" ? rows[0].name : null
+  } catch {
+    return null
+  }
+}
+
+// Swappable so tests need no network.
+export const agentLookup = { liveAgentName: lookupLiveAgentName }
+
+/** BOSS in the browser (web.<base>): a person's own BOSS desktop. Its sign-in finishes in the browser, never in the app. */
+const BOSS_WEB: Brand = {
+  scheme: "https",
+  tokenParam: "token",
+  name: "BOSS",
+  tagline: "Your BOSS desktop, in the browser",
+  appLabel: "BOSS in your browser",
+  footerLine: "BOSS - Business Operating System as Service",
+  copyright: "© 2026 BOSS. All rights reserved.",
+}
+
+/** A sign-in on a host under the base domain whose agent this cannot name (not live, or not looked up): still the browser. */
+const BASE_HOST: Brand = {
+  scheme: "https",
+  tokenParam: "token",
+  name: "Secure sign-in",
+  tagline: "Signing you in",
+  appLabel: "your sign-in",
+  footerLine: "",
+  copyright: "",
+}
+
+/**
+ * The brand for a sign-in on a host under AGENTS_BASE_DOMAIN: console.<base> and web.<base> are BOSS's own, any other label an
+ * agent (its live name). Every one of them finishes in the browser: an https callback is never handed to a desktop app.
+ */
+async function agentBrand(redirectTo: string | undefined): Promise<Brand | null> {
+  const label = agentHostLabel(redirectTo, Deno.env.get("AGENTS_BASE_DOMAIN"))
+  if (!label) return null
+  if (label === "console") return { ...BRANDS.boss, scheme: "https" }
+  if (label === "web") return BOSS_WEB
+  const name = await agentLookup.liveAgentName(label)
+  if (!name) return BASE_HOST
+  // The name is admin-controlled and is interpolated into HTML below: escape it once here.
+  const safe = htmlAttr(name)
+  return {
+    scheme: "https",
+    tokenParam: "token",
+    name: safe,
+    tagline: "Secure sign-in",
+    appLabel: safe,
+    footerLine: safe,
+    copyright: "",
+  }
+}
+
 /**
  * Generates HTML page that auto-redirects to the app's deep link, with a manual
  * fallback button for browsers that block custom-scheme redirects.
@@ -214,12 +308,25 @@ export function jsStringLiteral(s: string): string {
 }
 
 function generateRedirectPage(deepLink: string, brand: Brand): string {
+  // https targets finish in the browser: no "app" wording and no emoji there. Only a custom-scheme handoff is the desktop app.
+  const browser = brand.scheme === "https"
+  const title = browser ? "Signing you in" : `Opening ${brand.appLabel}`
+  const heading = title
+  const lead = browser ? "Redirecting you to finish signing in..." : `Redirecting you to ${brand.name}...`
+  const fallback = browser ? "If this page doesn't continue automatically:" : "If the app doesn't open automatically:"
+  const buttonLabel = browser ? "Continue" : `Open ${brand.appLabel}`
+  const noticeTitle = browser ? "Secure sign-in" : "🔒 Secure Authentication"
+  const noticeBody = browser
+    ? "You're being securely redirected. This link is valid for one-time use only."
+    : `You're being securely redirected to ${brand.name}. This link is valid for one-time use only.`
+  // The copyright sign is Extended_Pictographic and can render as an emoji.
+  const copyright = browser ? brand.copyright.replace(/^©/, "Copyright") : brand.copyright
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Opening ${brand.appLabel}</title>
+    <title>${title}</title>
     <style>
         body {
             margin: 0;
@@ -346,19 +453,19 @@ function generateRedirectPage(deepLink: string, brand: Brand): string {
             <p>${brand.tagline}</p>
         </div>
         <div class="content">
-            <h2>Opening ${brand.appLabel}</h2>
+            <h2>${heading}</h2>
             <div class="spinner"></div>
-            <p>Redirecting you to ${brand.name}...</p>
-            <p style="margin-bottom: 16px; color: #AAAAAA; font-size: 14px;">If the app doesn't open automatically:</p>
-            <a href="${htmlAttr(deepLink)}" class="button">Open ${brand.appLabel}</a>
+            <p>${lead}</p>
+            <p style="margin-bottom: 16px; color: #AAAAAA; font-size: 14px;">${fallback}</p>
+            <a href="${htmlAttr(deepLink)}" class="button">${buttonLabel}</a>
         </div>
         <div class="notice">
-            <p>🔒 Secure Authentication</p>
-            <p>You're being securely redirected to ${brand.name}. This link is valid for one-time use only.</p>
+            <p>${noticeTitle}</p>
+            <p>${noticeBody}</p>
         </div>
         <div class="footer">
             <p>${brand.footerLine}</p>
-            <p>${brand.copyright}</p>
+            <p>${copyright}</p>
         </div>
     </div>
     <script>
@@ -377,7 +484,7 @@ app.get("/health", (c) => {
 })
 
 // Main redirect endpoint
-app.get("/", (c) => {
+app.get("/", async (c) => {
   // Token: explicit param first (`token`, with `token_hash` accepted as the
   // BossTerm-contract alias), else extracted from the full Supabase
   // confirmation URL passed as `url=` (the email-template case).
@@ -434,7 +541,7 @@ app.get("/", (c) => {
     ? BRANDS.web
     : isOptimistRedirect(redirectTo) ? BRANDS.optimist
     : isMaxRedirect(redirectTo) ? BRANDS.max
-    : isFluckWebRedirect(redirectTo) ? BRANDS.fluck : null
+    : isFluckWebRedirect(redirectTo) ? BRANDS.fluck : await agentBrand(redirectTo)
   if (webBrand) {
     const origin = firstPartyGoTrueOrigin(confirmationUrl)
     if (!origin) return c.json({ error: "Unsupported confirmation URL host" }, 400)

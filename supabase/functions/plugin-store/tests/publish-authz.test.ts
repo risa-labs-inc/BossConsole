@@ -17,6 +17,7 @@ import { assert, assertEquals, assertFalse } from "@std/assert"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import {
   authorizeExistingPluginPublish,
+  authorizeVersionPublish,
   authorizeNewPluginPublish,
   preflightPublishAuthz,
 } from "../services/publish-authz.ts"
@@ -31,6 +32,7 @@ const ORG_BOSS = "33333333-3333-4333-8333-333333333333"
 interface StubOpts {
   /** Answer for user_can_publish_org_plugin, per org id. An absent id answers false. */
   canPublish?: Record<string, boolean>
+  orgAdmin?: boolean
   /** Rows for get_my_organisations, in envelope `data` shape. */
   orgs?: Array<Record<string, unknown>>
   /** Answer for the user_has_permission probe (API-key callers, who carry no claim). */
@@ -49,6 +51,9 @@ function stub(opts: StubOpts = {}): { client: SupabaseClient; calls: string[] } 
       }
       if (fn === "user_can_publish_org_plugin") {
         return Promise.resolve({ data: opts.canPublish?.[args.p_org_id as string] === true, error: null })
+      }
+      if (fn === "user_is_org_admin") {
+        return Promise.resolve({ data: opts.orgAdmin === true, error: null })
       }
       if (fn === "get_my_organisations") {
         return Promise.resolve({ data: { success: true, data: opts.orgs ?? [] }, error: null })
@@ -288,6 +293,58 @@ Deno.test("an API key is judged by its owner's live roles", async () => {
 })
 
 // ---------------------------------------------------------------------------
+// Co-maintainers (owner decision 2026-10-16): an org admin may version their org's plugin
+// ---------------------------------------------------------------------------
+
+const AUTHOR = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+const NOT_OWNER = "Not authorized to publish to this plugin"
+
+Deno.test("a non-author org admin may publish a new version of their org's plugin", async () => {
+  const { client } = stub({ orgAdmin: true, canPublish: { [ORG_MINE]: true }, orgs: [member(ORG_MINE)] })
+  const result = await authorizeVersionPublish(client, user(), AUTHOR, ORG_MINE, NOT_OWNER)
+  assertEquals(allowed(result), { orgId: ORG_MINE, orgScoped: true })
+})
+
+Deno.test("a non-author member the org's publish policy does not admit is refused with the old message", async () => {
+  const { client } = stub({ canPublish: { [ORG_MINE]: false }, orgs: [member(ORG_MINE)] })
+  const result = refused(await authorizeVersionPublish(client, user(), AUTHOR, ORG_MINE, NOT_OWNER))
+  assertEquals(result, { status: 403, error: NOT_OWNER })
+})
+
+Deno.test("a non-author outside the plugin's org is refused", async () => {
+  const { client } = stub({ canPublish: { [ORG_OTHER]: true }, orgs: [member(ORG_MINE)] })
+  assertEquals(refused(await authorizeVersionPublish(client, user(), AUTHOR, ORG_OTHER, NOT_OWNER)).error, NOT_OWNER)
+})
+
+Deno.test("a plugins.create holder who is not the author cannot version someone else's plugin", async () => {
+  // Public/boss-owned (no org) and org-owned alike: the permission arm is never org-scoped.
+  const a = stub({})
+  assertEquals(refused(await authorizeVersionPublish(a.client, creator(), AUTHOR, null, NOT_OWNER)).status, 403)
+  const b = stub({ canPublish: { [ORG_OTHER]: true }, orgs: [member(ORG_MINE)] })
+  assertEquals(refused(await authorizeVersionPublish(b.client, creator(), AUTHOR, ORG_OTHER, NOT_OWNER)).error, NOT_OWNER)
+})
+
+Deno.test("the author is judged exactly as before, with or without a non-org-scoped grant", async () => {
+  const held = stub({})
+  assertEquals(allowed(await authorizeVersionPublish(held.client, creator({ userId: AUTHOR }), AUTHOR, null, NOT_OWNER)).orgScoped, false)
+  const org = stub({ canPublish: { [ORG_MINE]: true }, orgs: [member(ORG_MINE)] })
+  assertEquals(allowed(await authorizeVersionPublish(org.client, user({ userId: AUTHOR }), AUTHOR, ORG_MINE, NOT_OWNER)).orgScoped, true)
+  const bad = stub({ canPublish: { [ORG_MINE]: false }, orgs: [member(ORG_MINE)] })
+  assertEquals(refused(await authorizeVersionPublish(bad.client, user({ userId: AUTHOR }), AUTHOR, ORG_MINE, NOT_OWNER)).status, 403)
+})
+
+Deno.test("an unreadable membership list still surfaces as a 500 for a non-author", async () => {
+  const { client } = stub({ failing: ["get_my_organisations"] })
+  assertEquals(refused(await authorizeVersionPublish(client, user(), AUTHOR, ORG_MINE, NOT_OWNER)).status, 500)
+})
+
+Deno.test("all four version-publishing sites use authorizeVersionPublish, not a bare author check", () => {
+  const src = Deno.readTextFileSync(new URL("../routes/publish.ts", import.meta.url))
+  assertEquals(src.match(/authorizeVersionPublish\(/g)?.length, 4)
+  assertEquals(src.match(/authorId !== user\.userId/g)?.length ?? 0, 0)
+})
+
+// ---------------------------------------------------------------------------
 // The GitHub routes' preflight
 // ---------------------------------------------------------------------------
 
@@ -312,4 +369,20 @@ Deno.test("preflight refuses a caller with no rights before any GitHub work", as
 Deno.test("preflight fails closed when memberships cannot be read", async () => {
   const { client } = stub({ failing: ["get_my_organisations"] })
   assertEquals((await preflightPublishAuthz(client, user()))?.status, 500)
+})
+
+Deno.test("a member allowed to create org plugins cannot version another author's plugin", async () => {
+  const { client } = stub({ orgAdmin: false, canPublish: { [ORG_MINE]: true }, orgs: [member(ORG_MINE)] })
+  assertEquals(refused(await authorizeVersionPublish(client, user(), AUTHOR, ORG_MINE, NOT_OWNER)).status, 403)
+})
+
+Deno.test("global create permission does not remove an org admin's co-maintainer rights", async () => {
+  const { client } = stub({ orgAdmin: true, canPublish: { [ORG_MINE]: true }, orgs: [member(ORG_MINE)] })
+  assertEquals(allowed(await authorizeVersionPublish(client, creator(), AUTHOR, ORG_MINE, NOT_OWNER)),
+    { orgId: ORG_MINE, orgScoped: true })
+})
+
+Deno.test("a failed org admin check refuses co-maintainer publishing", async () => {
+  const { client } = stub({ failing: ["user_is_org_admin"], canPublish: { [ORG_MINE]: true }, orgs: [member(ORG_MINE)] })
+  assertEquals(refused(await authorizeVersionPublish(client, user(), AUTHOR, ORG_MINE, NOT_OWNER)).status, 500)
 })

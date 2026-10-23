@@ -45,6 +45,18 @@ with intentionally_anon as (
     'public.get_popular_tags(integer)',
     'public.can_view_plugin_row(text,uuid,uuid,boolean)',
     'public.authorize(text)', 'public.is_user_admin(uuid)',
+    -- Agents platform (20261019150000): the chat server resolves an agent from the
+    -- request Host and answers Caddy's on-demand TLS ask before anyone signs in,
+    -- with the anon key. Both reveal only host -> live agent slug, which
+    -- agent_public and DNS already publish; neither touches an identity.
+    'public.agent_for_host(text)', 'public.domain_tls_allowed(text)',
+    -- Web console (20261021130000): chat reads the web_pod_self_serve platform
+    -- flag with the anon key before sign-in. It returns one boolean; no identity.
+    'public.web_pod_self_serve()',
+    -- Suspended agents (20261022120000): chat asks whether a host's agent is suspended
+    -- before sign-in, to answer 503 instead of the sign-in page. One boolean about a
+    -- public host; no identity.
+    'public.agent_unavailable(text)',
     -- The fluck-web function redeems a plugin-minted push ticket with the anon key (it holds no
     -- service-role key); the single-use 256-bit ticket is the whole credential (20261013100000; prune widened in 20261013200000).
     'public.fluck_web_push_redeem(text)', 'public.fluck_web_push_prune(text,uuid[],uuid[])'

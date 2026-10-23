@@ -192,7 +192,7 @@ select is(
 select is(
     (select count(*)::int from public.organisation_roles orl
       join public.organisations o on o.id = orl.org_id
-     where o.slug='pgtacme'),
+     where o.slug='pgtacme' and orl.preset is null),
     2,
     'approval creates the admin and user roles'
 );

@@ -9,7 +9,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert"
 // Import the app module (not index.ts, which calls Deno.serve) so no listener starts under test.
-import { app, FLUCK_WEB_REDIRECTS, htmlAttr, jsStringLiteral, MAX_REDIRECTS, OPTIMIST_REDIRECTS } from "../app.ts"
+import { agentHostLabel, agentLookup, app, FLUCK_WEB_REDIRECTS, htmlAttr, MAX_REDIRECTS, jsStringLiteral, OPTIMIST_REDIRECTS } from "../app.ts"
 
 async function pageFor(path: string): Promise<string> {
   return await (await app.request(path)).text()
@@ -295,6 +295,170 @@ Deno.test("fluck-web redirect allow-list is in lockstep with config.toml and bot
   assertEquals(configuredFluckUrls, all)
   assertEquals(fluckPredicateUrls(await read("templates/email/magic-link.html")), all.filter((u) => !isLoopback(u)))
   assertEquals(fluckPredicateUrls(await read("templates/email/magic-link-local.html")), all.filter(isLoopback))
+})
+
+
+// (i) Agent hosts: https://<slug>.<AGENTS_BASE_DOMAIN>/auth/callback
+
+const GOTRUE = encodeURIComponent("https://api.risaboss.com/auth/v1/verify?token=t1")
+const agentLink = (rt: string) => `/redirect?url=${GOTRUE}&type=magiclink&redirect_to=${encodeURIComponent(rt)}`
+
+function setBase(v: string | undefined) {
+  if (v === undefined) {
+    Deno.env.delete("AGENTS_BASE_DOMAIN")
+  } else {
+    Deno.env.set("AGENTS_BASE_DOMAIN", v)
+  }
+}
+
+async function withAgents<T>(base: string | undefined, live: Record<string, string>, fn: () => Promise<T>): Promise<T> {
+  const prev = Deno.env.get("AGENTS_BASE_DOMAIN")
+  const prevLookup = agentLookup.liveAgentName
+  setBase(base)
+  agentLookup.liveAgentName = (slug: string) => Promise.resolve(live[slug] ?? null)
+  try {
+    return await fn()
+  } finally {
+    setBase(prev)
+    agentLookup.liveAgentName = prevLookup
+  }
+}
+
+Deno.test("agent host: a live agent's redirect_to bounces to GoTrue verify under the agent's name", async () => {
+  await withAgents("bossconsole.ai", { acme: "Acme Assistant" }, async () => {
+    const rt = "https://acme.bossconsole.ai/auth/callback"
+    const html = await pageFor(agentLink(rt))
+    assertStringIncludes(html, "<h1>Acme Assistant</h1>")
+    assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=t1&amp;type=magiclink&amp;redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
+    assert(!html.includes("boss://auth/verify"))
+  })
+})
+
+Deno.test("agent host: console.<base> is branded BOSS Console without a lookup", async () => {
+  await withAgents("bossconsole.ai", {}, async () => {
+    const html = await pageFor(agentLink("https://console.bossconsole.ai/auth/callback"))
+    assertStringIncludes(html, "<h1>BOSS Console</h1>")
+    assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=t1")
+  })
+})
+
+Deno.test("agent host: an unknown or non-live slug still finishes in the browser, under a neutral name", async () => {
+  await withAgents("bossconsole.ai", { acme: "Acme" }, async () => {
+    const html = await pageFor(agentLink("https://ghost.bossconsole.ai/auth/callback"))
+    assert(!html.includes("boss://"), "an https callback is never handed to the desktop app")
+    assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=t1")
+    assertStringIncludes(html, "<h1>Secure sign-in</h1>")
+  })
+})
+
+Deno.test("web.<base>: BOSS in the browser signs in in the browser, never through the BOSS app (the deep link was the bug)", async () => {
+  await withAgents("bossconsole.ai", {}, async () => {
+    for (const rt of ["https://web.bossconsole.ai/auth/callback", "https://web.bossconsole.ai:8443/auth/callback"]) {
+      const html = await pageFor(agentLink(rt))
+      assert(!html.includes("boss://"), rt)
+      assertStringIncludes(html, "<h1>BOSS</h1>")
+      assertStringIncludes(html, "https://api.risaboss.com/auth/v1/verify?token=t1&amp;type=magiclink&amp;redirect_to=" + encodeURIComponent(rt).replace(/&/g, "&amp;"))
+    }
+  })
+})
+
+Deno.test("custom domain hand-off: the agent host's callback with ?handoff= finishes in the browser too", async () => {
+  await withAgents("bossconsole.ai", { acme: "Acme" }, async () => {
+    const rt = "https://acme.bossconsole.ai/auth/callback?handoff=chat.acme.example"
+    const html = await pageFor(agentLink(rt))
+    assert(!html.includes("boss://"))
+    assertStringIncludes(html, "<h1>Acme</h1>")
+  })
+})
+
+Deno.test("agent host: arm is off when AGENTS_BASE_DOMAIN is unset", async () => {
+  await withAgents(undefined, { acme: "Acme" }, async () => {
+    const html = await pageFor("/redirect?token=abc&redirect_to=" + encodeURIComponent("https://acme.bossconsole.ai/auth/callback"))
+    assertStringIncludes(html, "boss://auth/verify?token=abc")
+  })
+})
+
+Deno.test("agent host: only https + /auth/callback with a single label under the base is accepted", () => {
+  const ok = (u: string) => agentHostLabel(u, "bossconsole.ai")
+  assertEquals(ok("https://acme.bossconsole.ai/auth/callback"), "acme")
+  assertEquals(ok("https://acme.bossconsole.ai:8443/auth/callback"), "acme")
+  assertEquals(ok("https://acme.bossconsole.ai/auth/callback?handoff=chat.acme.example"), "acme")
+  for (const bad of [
+    "http://acme.bossconsole.ai/auth/callback",
+    "https://acme.bossconsole.ai/auth/callback/x",
+    "https://acme.bossconsole.ai/auth/callback#x",
+    "https://a.b.bossconsole.ai/auth/callback",
+    "https://bossconsole.ai/auth/callback",
+    "https://acme.bossconsole.ai.evil.example/auth/callback",
+    "https://acme.evilbossconsole.ai/auth/callback",
+    "https://user@acme.bossconsole.ai/auth/callback",
+    "https://-x.bossconsole.ai/auth/callback",
+  ]) assertEquals(ok(bad), null, bad)
+  assertEquals(agentHostLabel("https://acme.bossconsole.ai/auth/callback", undefined), null)
+})
+
+Deno.test("agent host: an agent name is HTML-escaped on the page", async () => {
+  await withAgents("bossconsole.ai", { acme: "<img src=x onerror=alert(1)>" }, async () => {
+    const html = await pageFor(agentLink("https://acme.bossconsole.ai/auth/callback"))
+    assert(!html.includes("<img src=x"))
+    assertStringIncludes(html, "&lt;img src=x onerror=alert(1)&gt;")
+  })
+})
+
+Deno.test("agent host: the glob is in config.toml and both templates carry the $agent predicate", async () => {
+  assertStringIncludes(await read("config.toml"), '"https://*.bossconsole.ai/auth/callback"')
+  for (const f of ["templates/email/magic-link.html", "templates/email/magic-link-local.html"]) {
+    const tpl = await read(f)
+    const line = tpl.match(/\{\{ \$agent := [^\n]*/)?.[0] ?? ""
+    // Every redirect_to the other brands recognise must be excluded or it would be misread as an agent.
+    for (const brand of ["$bossterm", "$max", "$optimist", "$fluck", "$web"]) {
+      assertStringIncludes(line, brand, "known brands must be excluded from generic agent branding")
+    }
+    for (const k of ["boss://auth/verify", "boss://auth/callback", "bossterm://auth/callback", "http://127.0.0.1:3000", "https://127.0.0.1:3000"]) {
+      assertStringIncludes(line, `(ne .RedirectTo "${k}")`)
+    }
+    assertStringIncludes(tpl, "{{ if $agent }}your agent{{")
+  }
+})
+
+
+// (j) Interstitial wording: browser targets never mention the app and carry no emoji.
+
+const EMOJI = /\p{Extended_Pictographic}/u
+const APP_WORD = /\bapps?\b/i
+const CONSOLE_GOTRUE = "https://api.risaboss.com/auth/v1/verify?token=t1"
+
+function assertBrowserPage(html: string) {
+  assert(!APP_WORD.test(html.replace(/<style>[\s\S]*?<\/style>/, "")), "page must not mention the app")
+  assert(!EMOJI.test(html), "page must contain no emoji")
+  assert(!html.replace("<!DOCTYPE", "").includes("!"), "page copy must not use exclamation marks")
+}
+
+Deno.test("interstitial: web host and agent host targets have no app wording and no emoji", async () => {
+  await withAgents("bossconsole.ai", { acme: "Acme" }, async () => {
+    for (const rt of [
+      "https://web.bossconsole.ai/auth/callback",
+      "https://console.bossconsole.ai/auth/callback",
+      "https://acme.bossconsole.ai/auth/callback",
+      "https://ghost.bossconsole.ai/auth/callback", // not live: base-host brand
+      "https://cli.risaboss.com/auth",
+      "https://askoptimist.com/auth/callback",
+    ]) {
+      const html = await pageFor(agentLink(rt).replace(GOTRUE, encodeURIComponent(CONSOLE_GOTRUE)))
+      assertStringIncludes(html, "/auth/v1/verify?token=t1")
+      assertStringIncludes(html, "Signing you in")
+      assertBrowserPage(html)
+    }
+  })
+})
+
+Deno.test("interstitial: desktop app handoff keeps the app wording", async () => {
+  for (const path of ["/redirect?token=abc", "/redirect?token=abc&app=bossterm"]) {
+    const html = await pageFor(path)
+    assertStringIncludes(html, "If the app doesn't open automatically:")
+    assertStringIncludes(html, "Secure Authentication")
+    assertStringIncludes(html, "Opening ")
+  }
 })
 
 const maxPredicateUrls = (tpl: string) =>

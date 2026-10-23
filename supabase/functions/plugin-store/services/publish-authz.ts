@@ -59,9 +59,54 @@ const NO_ORG_REFUSAL =
   `Publishing requires either the "${PLUGIN_CREATE_PERMISSION}" permission or an organisation ` +
   "you may publish for, and you belong to none."
 
+/** Agent adapter plugins (agents platform): one per agent, owned by the agent's organisation. */
+export const AGENT_PLUGIN_PREFIX = "ai.rever.boss.plugin.dynamic.agent."
+
+const AGENT_PUBLISH_REFUSAL =
+  'Publishing an agent requires the "agents.publish" permission in the agent\'s organisation.'
+
+const AGENT_UNKNOWN_REFUSAL =
+  "No agent uses this plugin id. Create the agent in the console before publishing its plugin."
+
+const AGENT_ORG_REFUSAL = "An agent's plugin is published for the agent's own organisation."
+
 const AMBIGUOUS_ORG_REFUSAL =
   "Name the organisation to publish for. You belong to more than one, and publishing without " +
   `naming one goes to the BOSS store, which requires the "${PLUGIN_CREATE_PERMISSION}" permission.`
+
+/**
+ * Gate any publish of an agent adapter plugin, or return null when `pluginId` is not one.
+ *
+ * The decision is `agents.publish` in the agent's organisation, read live
+ * (`agent_plugin_publish_authz`), and it REPLACES the store's other rules for these ids: authorship,
+ * publish_policy and `plugins.create` neither grant nor are needed. So a demoted author is refused at
+ * once, an agent manager who is not an org admin may publish, and a release key cannot overwrite an
+ * organisation's agent. The plugin always lands on the agent's organisation (`orgScoped`, so a new
+ * row gets `visibility = 'org'`); naming another organisation is refused, as is an id no agent uses.
+ */
+export async function authorizeAgentPluginPublish(
+  supabase: SupabaseClient,
+  user: AuthResult,
+  pluginId: string | null | undefined,
+  requestedOrgId?: string | null,
+): Promise<PublishAuthz | null> {
+  if (!pluginId?.startsWith(AGENT_PLUGIN_PREFIX)) return null
+  const { data, error } = await supabase.rpc("agent_plugin_publish_authz", {
+    p_user_id: user.userId,
+    p_plugin_id: pluginId,
+  })
+  const answer = data as { agent?: unknown; org_id?: unknown; allowed?: unknown } | null
+  if (error || !answer || answer.agent !== true) {
+    if (error) console.error("agent_plugin_publish_authz failed:", error.message)
+    return { ok: false, status: 500, error: ORG_CHECK_UNAVAILABLE }
+  }
+  if (typeof answer.org_id !== "string") return { ok: false, status: 403, error: AGENT_UNKNOWN_REFUSAL }
+  if (answer.allowed !== true) return { ok: false, status: 403, error: AGENT_PUBLISH_REFUSAL }
+  if (requestedOrgId?.trim() && requestedOrgId.trim() !== answer.org_id) {
+    return { ok: false, status: 403, error: AGENT_ORG_REFUSAL }
+  }
+  return { ok: true, orgId: answer.org_id, orgScoped: true }
+}
 
 /**
  * Gate a NEW plugin, and decide which organisation owns it.
@@ -75,7 +120,11 @@ export async function authorizeNewPluginPublish(
   supabase: SupabaseClient,
   user: AuthResult,
   requestedOrgId?: string | null,
+  pluginId?: string | null,
 ): Promise<PublishAuthz> {
+  const agent = await authorizeAgentPluginPublish(supabase, user, pluginId, requestedOrgId)
+  if (agent) return agent
+
   const resolution = await resolvePublishOrg(supabase, user, requestedOrgId)
 
   // Rule 1 is decided BEFORE the resolver's refusal is honoured, and the order is the whole point.
@@ -160,10 +209,14 @@ export async function preflightPublishAuthz(
  * a property of the plugin (see `resolvePublishOrg`'s own note), so re-deriving here would let a
  * membership change move somebody else's plugin.
  *
- * Authorship is NOT checked here. Every route that calls this already refuses
- * `plugin.authorId !== user.userId` before reaching it, for every caller including admins, and
- * this deliberately does not widen that to "any admin of the owning organisation" - that is a
- * separate product decision about co-maintainers.
+ * Authorship is NOT checked here; `authorizeVersionPublish` layers it on top.
+ *
+ * Owner decision (2026-10-16): organisation admins may publish new versions of their organisation's
+ * plugins even when they are not the original author (co-maintainers). That is allowed only when
+ * the caller is an active admin of the plugin's recorded non-system organisation and passes its
+ * publish policy. `authorizeVersionPublish` checks admin status separately: orgScoped alone
+ * also admits ordinary members when the organisation's publishing policy allows them.
+ * A global `plugins.create` grant alone never permits versioning somebody else's plugin.
  */
 export async function authorizeExistingPluginPublish(
   supabase: SupabaseClient,
@@ -174,6 +227,15 @@ export async function authorizeExistingPluginPublish(
     return { ok: true, orgId: pluginOrgId, orgScoped: false }
   }
 
+  return authorizeOrgVersionPublish(supabase, user, pluginOrgId)
+}
+
+/** The organisation policy arm, independent of global create permission. */
+async function authorizeOrgVersionPublish(
+  supabase: SupabaseClient,
+  user: AuthResult,
+  pluginOrgId: string | null,
+): Promise<PublishAuthz> {
   // Null means the row predates `plugins_default_org` or was written around it; either way it is
   // not an organisation this caller can claim, and the trigger's answer would have been `@boss`.
   if (pluginOrgId === null) {
@@ -191,4 +253,39 @@ export async function authorizeExistingPluginPublish(
   if (!allowed) return { ok: false, status: 403, error: POLICY_REFUSAL }
 
   return { ok: true, orgId: pluginOrgId, orgScoped: true }
+}
+
+/**
+ * Gate a new version of an existing plugin: the author (as before), or - since 2026-10-16 - an
+ * organisation admin of the plugin's recorded organisation (see `authorizeExistingPluginPublish`).
+ * An agent adapter (`pluginId` in the agent namespace) is decided by `authorizeAgentPluginPublish`
+ * alone.
+ * Non-authors who do not qualify get `notOwnerError` with 403, the message the per-route author
+ * check used to give; an unavailable org lookup still surfaces as its 500.
+ */
+export async function authorizeVersionPublish(
+  supabase: SupabaseClient,
+  user: AuthResult,
+  pluginAuthorId: string | null,
+  pluginOrgId: string | null,
+  notOwnerError: string,
+  pluginId?: string | null,
+): Promise<PublishAuthz> {
+  const agent = await authorizeAgentPluginPublish(supabase, user, pluginId)
+  if (agent) {
+    // A row recorded against another organisation (squatted before the agent existed) is never
+    // the agent's to version.
+    if (agent.ok && pluginOrgId !== agent.orgId) return { ok: false, status: 403, error: AGENT_ORG_REFUSAL }
+    return agent
+  }
+
+  if (pluginAuthorId === user.userId) return authorizeExistingPluginPublish(supabase, user, pluginOrgId)
+  const authz = await authorizeOrgVersionPublish(supabase, user, pluginOrgId)
+  if (!authz.ok) return authz.status === 500 ? authz : { ok: false, status: 403, error: notOwnerError }
+  const { data, error } = await supabase.rpc("user_is_org_admin", {
+    p_user_id: user.userId,
+    p_org_id: pluginOrgId,
+  })
+  if (error) return { ok: false, status: 500, error: ORG_CHECK_UNAVAILABLE }
+  return data === true ? authz : { ok: false, status: 403, error: notOwnerError }
 }

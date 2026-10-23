@@ -214,7 +214,7 @@ DROP FUNCTION IF EXISTS public.fluck_web_push_prune(text, uuid[]);
 
 -- Drops dead subscriptions and devices (the push service answered 404/410, or APNs said the token
 -- is bad). Only the ticket owner's rows, only while a REDEEMED ticket is unexpired.
-CREATE OR REPLACE FUNCTION public.fluck_web_push_prune(p_ticket text, p_ids uuid[], p_device_ids uuid[] DEFAULT '{}'::uuid[])
+CREATE OR REPLACE FUNCTION public.fluck_web_push_prune(p_ticket text, p_ids uuid[], p_device_ids uuid[])
 RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
     owner_id uuid;
