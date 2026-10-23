@@ -59,7 +59,7 @@ interface Brand {
   copyright: string
 }
 
-const BRANDS: Record<"boss" | "bossterm" | "web" | "optimist" | "fluck", Brand> = {
+const BRANDS: Record<"boss" | "bossterm" | "web" | "optimist" | "max" | "fluck", Brand> = {
   fluck: {
     scheme: "https",
     tokenParam: "token",
@@ -86,6 +86,15 @@ const BRANDS: Record<"boss" | "bossterm" | "web" | "optimist" | "fluck", Brand> 
     appLabel: "Optimist",
     footerLine: "Optimist - by Risa Labs",
     copyright: "© 2025 Risa Labs. All rights reserved.",
+  },
+  max: {
+    scheme: "https",
+    tokenParam: "token",
+    name: "Max",
+    tagline: "Gets it done.",
+    appLabel: "Max",
+    footerLine: "Max - by Risa Labs",
+    copyright: "© 2026 Risa Labs. All rights reserved.",
   },
   boss: {
     scheme: "boss",
@@ -138,6 +147,18 @@ export const OPTIMIST_REDIRECTS: ReadonlySet<string> = new Set([
   "http://127.0.0.1:8796/auth/callback", // local optimist chat server (OPTIMIST_PORT default)
 ])
 
+// Max (evolvemax.com) uses the same web arm with its own brand. Lockstep: config.toml
+// additional_redirect_urls, the prod Auth allow-list, and both email templates' `$max` predicate.
+export const MAX_REDIRECTS: ReadonlySet<string> = new Set([
+  "https://evolvemax.com/auth/callback",
+  "https://max.136-70-232-222.sslip.io/auth/callback", // temporary: evolvemax.com before its DNS points at the cluster
+  "http://127.0.0.1:8806/auth/callback", // local Max server
+])
+
+export function isMaxRedirect(redirectTo: string | undefined): boolean {
+  return !!redirectTo && MAX_REDIRECTS.has(redirectTo)
+}
+
 export function isLiveSessionsRedirect(redirectTo: string | undefined): boolean {
   return !!redirectTo && LIVE_SESSIONS_REDIRECTS.has(redirectTo)
 }
@@ -146,7 +167,7 @@ export function isLiveSessionsRedirect(redirectTo: string | undefined): boolean 
 // brand. Same EXACT-match rule and lockstep set: config.toml additional_redirect_urls,
 // fluck-web/utils/config.ts (+ FLUCK_WEB_PUBLIC_BASE_URL), and both email templates' `$fluck`.
 export const FLUCK_WEB_REDIRECTS: ReadonlySet<string> = new Set([
-  "https://fluck.ai/auth",
+  "https://fluck.ai/auth", // fluck.ai vanity host (live in prod before this was in the repo)
   "https://fluck.risaboss.com/auth", // vanity host: a Cloudflare Worker proxies it onto the function
   "https://api.risaboss.com/functions/v1/fluck-web/auth",
   "http://127.0.0.1:54321/functions/v1/fluck-web/auth", // local `supabase start` stack
@@ -412,6 +433,7 @@ app.get("/", (c) => {
   const webBrand = isLiveSessionsRedirect(redirectTo)
     ? BRANDS.web
     : isOptimistRedirect(redirectTo) ? BRANDS.optimist
+    : isMaxRedirect(redirectTo) ? BRANDS.max
     : isFluckWebRedirect(redirectTo) ? BRANDS.fluck : null
   if (webBrand) {
     const origin = firstPartyGoTrueOrigin(confirmationUrl)
