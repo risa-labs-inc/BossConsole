@@ -797,7 +797,7 @@ const SCRIPT = `
     $("push-title").textContent = ios ? "Add Fluck to your Home Screen" : "Turn on notifications for " + name + "?";
     $("push-body").textContent = ios
       ? "iPhone and iPad only send notifications to apps on the Home Screen. Tap Share, choose Add to Home Screen, then open Fluck from there and turn notifications on."
-      : "You will get a notification when " + name + " replies, even when this tab is closed. It never includes the message.";
+      : "You will get a notification when " + name + " replies, even when this tab is closed. Message previews are encrypted by your Fluck before delivery.";
     $("push-yes").classList.toggle("hidden", ios);
     $("push-no").textContent = ios ? "Got it" : "Not now";
     $("push-sheet").classList.remove("hidden");
