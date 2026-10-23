@@ -235,7 +235,7 @@ runs_json="$(gh_source run list \
   --repo "$SOURCE_REPO" \
   --workflow "$WORKFLOW_FILE" \
   --limit 100 \
-  --json displayTitle,status,conclusion)"
+  --json displayTitle,status,conclusion,createdAt)"
 active_status="$(jq -r --arg title "$run_title" \
   'first(.[] | select(.displayTitle == $title and .status != "completed") | .status) // empty' \
   <<< "$runs_json")"
@@ -244,18 +244,47 @@ if [[ -n "$active_status" ]]; then
   noop "release_run_active"
 fi
 
-recent_failures="$(jq -r --arg title "$run_title" '
+# The pause below predates probe_required_artifacts: before the probe was
+# added (BossConsole#678 / commit 8dafac58), Maven propagation gaps let
+# runs dispatch with `jxbrowser-compose` / `-swing` / `-kotlin` still
+# unresolvable, and the build failed at `desktopCompileClasspath`. The probe
+# now blocks those dispatches. A failure pair that BOTH predate the most
+# recent commit touching this script is by definition a pre-probe failure,
+# and a probe that passes NOW means the underlying cause is gone - trust
+# the probe and recover. A failure pair where one or both post-date the
+# latest script change still blocks, so a real workflow bug surfaces.
+# `stale_pause_recovered` is a distinct reason so the autorelease workflow's
+# "Close recovered blocker issues" step closes #747 automatically.
+probe_change_ts="$(git log -1 --format=%ct -- "$SCRIPT_DIR/check-jxbrowser-release.sh" 2>/dev/null || echo 0)"
+recent_failure_state="$(jq -r --arg title "$run_title" '
   [.[] | select(.displayTitle == $title and .status == "completed")][0:2]
   | if length == 2 and all(.[];
       .conclusion == "failure"
       or .conclusion == "timed_out"
       or .conclusion == "startup_failure"
       or .conclusion == "cancelled")
-    then 2
-    else 0
+    then {
+        count: 2,
+        most_recent_ts: (try ((.[0].createdAt | fromdateiso8601)) catch null)
+      }
+    else {count: 0}
     end
 ' <<< "$runs_json")"
-if [[ "$recent_failures" == "2" ]]; then
+recent_failure_count="$(jq -r '.count' <<< "$recent_failure_state")"
+if [[ "$recent_failure_count" == "2" ]]; then
+  most_recent_ts="$(jq -r '.most_recent_ts // empty' <<< "$recent_failure_state")"
+  # Both must be present: the latest script commit timestamp (so we know the
+  # probe change time) and the failure timestamp. A missing createdAt means
+  # the caller is using an older API surface and the old blocking path stands.
+  if [[ -n "$most_recent_ts" && "$most_recent_ts" != "null" \
+        && "$probe_change_ts" -gt 0 \
+        && "$most_recent_ts" -lt "$probe_change_ts" ]]; then
+    echo "::notice::The two most recent $run_title runs predate the probe gate; recovering"
+    emit "should_dispatch=true"
+    emit "reason=stale_pause_recovered"
+    echo "✓ JxBrowser $latest is ready (recovering from pre-probe failures) and requires a BOSS Chromium release"
+    exit 0
+  fi
   echo "::warning::The two most recent $run_title runs failed; automatic retries are paused"
   noop "release_repeatedly_failing"
 fi
