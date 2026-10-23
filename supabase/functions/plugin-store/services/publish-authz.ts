@@ -213,10 +213,10 @@ export async function preflightPublishAuthz(
  *
  * Owner decision (2026-10-16): organisation admins may publish new versions of their organisation's
  * plugins even when they are not the original author (co-maintainers). That is allowed only when
- * this returns ok with `orgScoped === true`, i.e. the caller is an active member of the plugin's
- * recorded organisation and passes its publish policy. A `plugins.create` holder who is not the
- * author is NOT let in through the permission arm (`orgScoped: false`): that grant must not reach
- * somebody else's plugin.
+ * the caller is an active admin of the plugin's recorded non-system organisation and passes its
+ * publish policy. `authorizeVersionPublish` checks admin status separately: orgScoped alone
+ * also admits ordinary members when the organisation's publishing policy allows them.
+ * A global `plugins.create` grant alone never permits versioning somebody else's plugin.
  */
 export async function authorizeExistingPluginPublish(
   supabase: SupabaseClient,
@@ -227,6 +227,15 @@ export async function authorizeExistingPluginPublish(
     return { ok: true, orgId: pluginOrgId, orgScoped: false }
   }
 
+  return authorizeOrgVersionPublish(supabase, user, pluginOrgId)
+}
+
+/** The organisation policy arm, independent of global create permission. */
+async function authorizeOrgVersionPublish(
+  supabase: SupabaseClient,
+  user: AuthResult,
+  pluginOrgId: string | null,
+): Promise<PublishAuthz> {
   // Null means the row predates `plugins_default_org` or was written around it; either way it is
   // not an organisation this caller can claim, and the trigger's answer would have been `@boss`.
   if (pluginOrgId === null) {
@@ -270,9 +279,13 @@ export async function authorizeVersionPublish(
     return agent
   }
 
-  const authz = await authorizeExistingPluginPublish(supabase, user, pluginOrgId)
-  if (pluginAuthorId === user.userId) return authz
-  if (authz.ok && authz.orgScoped) return authz
-  if (!authz.ok && authz.status === 500) return authz
-  return { ok: false, status: 403, error: notOwnerError }
+  if (pluginAuthorId === user.userId) return authorizeExistingPluginPublish(supabase, user, pluginOrgId)
+  const authz = await authorizeOrgVersionPublish(supabase, user, pluginOrgId)
+  if (!authz.ok) return authz.status === 500 ? authz : { ok: false, status: 403, error: notOwnerError }
+  const { data, error } = await supabase.rpc("user_is_org_admin", {
+    p_user_id: user.userId,
+    p_org_id: pluginOrgId,
+  })
+  if (error) return { ok: false, status: 500, error: ORG_CHECK_UNAVAILABLE }
+  return data === true ? authz : { ok: false, status: 403, error: notOwnerError }
 }

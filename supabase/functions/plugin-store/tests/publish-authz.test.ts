@@ -32,6 +32,7 @@ const ORG_BOSS = "33333333-3333-4333-8333-333333333333"
 interface StubOpts {
   /** Answer for user_can_publish_org_plugin, per org id. An absent id answers false. */
   canPublish?: Record<string, boolean>
+  orgAdmin?: boolean
   /** Rows for get_my_organisations, in envelope `data` shape. */
   orgs?: Array<Record<string, unknown>>
   /** Answer for the user_has_permission probe (API-key callers, who carry no claim). */
@@ -50,6 +51,9 @@ function stub(opts: StubOpts = {}): { client: SupabaseClient; calls: string[] } 
       }
       if (fn === "user_can_publish_org_plugin") {
         return Promise.resolve({ data: opts.canPublish?.[args.p_org_id as string] === true, error: null })
+      }
+      if (fn === "user_is_org_admin") {
+        return Promise.resolve({ data: opts.orgAdmin === true, error: null })
       }
       if (fn === "get_my_organisations") {
         return Promise.resolve({ data: { success: true, data: opts.orgs ?? [] }, error: null })
@@ -296,7 +300,7 @@ const AUTHOR = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 const NOT_OWNER = "Not authorized to publish to this plugin"
 
 Deno.test("a non-author org admin may publish a new version of their org's plugin", async () => {
-  const { client } = stub({ canPublish: { [ORG_MINE]: true }, orgs: [member(ORG_MINE)] })
+  const { client } = stub({ orgAdmin: true, canPublish: { [ORG_MINE]: true }, orgs: [member(ORG_MINE)] })
   const result = await authorizeVersionPublish(client, user(), AUTHOR, ORG_MINE, NOT_OWNER)
   assertEquals(allowed(result), { orgId: ORG_MINE, orgScoped: true })
 })
@@ -365,4 +369,20 @@ Deno.test("preflight refuses a caller with no rights before any GitHub work", as
 Deno.test("preflight fails closed when memberships cannot be read", async () => {
   const { client } = stub({ failing: ["get_my_organisations"] })
   assertEquals((await preflightPublishAuthz(client, user()))?.status, 500)
+})
+
+Deno.test("a member allowed to create org plugins cannot version another author's plugin", async () => {
+  const { client } = stub({ orgAdmin: false, canPublish: { [ORG_MINE]: true }, orgs: [member(ORG_MINE)] })
+  assertEquals(refused(await authorizeVersionPublish(client, user(), AUTHOR, ORG_MINE, NOT_OWNER)).status, 403)
+})
+
+Deno.test("global create permission does not remove an org admin's co-maintainer rights", async () => {
+  const { client } = stub({ orgAdmin: true, canPublish: { [ORG_MINE]: true }, orgs: [member(ORG_MINE)] })
+  assertEquals(allowed(await authorizeVersionPublish(client, creator(), AUTHOR, ORG_MINE, NOT_OWNER)),
+    { orgId: ORG_MINE, orgScoped: true })
+})
+
+Deno.test("a failed org admin check refuses co-maintainer publishing", async () => {
+  const { client } = stub({ failing: ["user_is_org_admin"], canPublish: { [ORG_MINE]: true }, orgs: [member(ORG_MINE)] })
+  assertEquals(refused(await authorizeVersionPublish(client, user(), AUTHOR, ORG_MINE, NOT_OWNER)).status, 500)
 })
