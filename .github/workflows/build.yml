@@ -183,6 +183,9 @@ jobs:
         # pre-release page whose "always latest" links point at an older stable.
         run: bash scripts/test/test-release-download-table.sh
 
+      - name: Release sync regression tests
+        run: python3 scripts/test/test-sync-release.py
+
   version-check:
     runs-on: ubuntu-latest
     outputs:

@@ -451,6 +451,12 @@ verify_jwt = false
 import_map = "./functions/fluck-web/deno.json"
 entrypoint = "./functions/fluck-web/index.ts"
 
+[functions.fluck-ai]
+# Same portal and authentication rules, isolated to the new public origin.
+verify_jwt = false
+import_map = "./functions/fluck-ai/deno.json"
+entrypoint = "./functions/fluck-ai/index.ts"
+
 [functions.user-settings]
 # Browser navigations carry a one-use handoff or signed HttpOnly cookie, not a JWT header.
 # The handler authenticates both itself and checks Origin plus CSRF on every write.

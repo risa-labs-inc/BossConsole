@@ -56,7 +56,10 @@ with intentionally_anon as (
     -- Suspended agents (20261022120000): chat asks whether a host's agent is suspended
     -- before sign-in, to answer 503 instead of the sign-in page. One boolean about a
     -- public host; no identity.
-    'public.agent_unavailable(text)'
+    'public.agent_unavailable(text)',
+    -- The fluck-web function redeems a plugin-minted push ticket with the anon key (it holds no
+    -- service-role key); the single-use 256-bit ticket is the whole credential (20261013100000; prune widened in 20261013200000).
+    'public.fluck_web_push_redeem(text)', 'public.fluck_web_push_prune(text,uuid[],uuid[])'
   ]) signature
 ),
 anon_callable as (

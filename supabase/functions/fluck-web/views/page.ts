@@ -24,6 +24,13 @@
  * still unredeemed: the frame closes and the page navigates top-level to the same URL, first
  * replacing its own history entry with `?list=1` so "back" shows the list instead of reopening.
  *
+ * Reconnect and push. The Fluck's web chat endpoint is usually a quick tunnel whose URL changes on
+ * every restart, so on fluck-offline (or fluck-session-lost) the page polls the registry, mints a
+ * fresh ticket and loads the new URL in a SECOND, hidden frame; it swaps frames only when that one
+ * says fluck-hello, so recovery is invisible. The chat cannot ask for notification permission from
+ * inside a cross-origin frame, so it asks this page (fluck-push), which owns the Web Push
+ * subscription for the portal's stable origin and answers with fluck-push-state.
+ *
  * `?instance=<id>` (the Fluck's own "Sign in with BOSS" button) survives sign-in in
  * localStorage for 15 minutes: the magic link opens in a new tab and the OAuth hop leaves
  * the page. Storage may be unavailable; the list is the fallback.
@@ -33,6 +40,7 @@
  */
 
 import { esc, jsonForScript } from "../utils/html.ts"
+import { pwaHeadTags } from "./pwa.ts"
 
 export interface PageModel {
   basePath: string
@@ -181,9 +189,19 @@ const STYLES = `
     font-size: 15px; line-height: 1.5; color: var(--text-3); overflow-wrap: anywhere; }
   .splash-foot { grid-row: 3; align-self: end; padding-top: 24px; }
   @media (prefers-reduced-motion: reduce) { .splash-dots span, .wait-dots span { animation: none; opacity: .55; } }
-  #viewer { display: none; flex: 1; flex-direction: column; min-height: 0; }
+  #viewer { display: none; position: relative; flex: 1; flex-direction: column; min-height: 0; }
   body.viewing #viewer { display: flex; }
-  #fluckframe { display: block; flex: 1; width: 100%; height: 100%; min-height: 0; margin: 0; border: 0; background-color: var(--boot-bg); }
+  #viewer iframe { display: block; flex: 1; width: 100%; height: 100%; min-height: 0; margin: 0; border: 0; background-color: var(--boot-bg); }
+  /* A replacement frame loads under the live one and is swapped in on its fluck-hello. */
+  #viewer iframe.pending { position: absolute; inset: 0; visibility: hidden; pointer-events: none; }
+  /* Notification permission needs a gesture on this top-level page, so the ask is a sheet here. */
+  .sheet { position: fixed; inset: 0; z-index: 10; display: flex; align-items: flex-end; justify-content: center;
+    padding: 16px max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    background-color: rgba(0, 0, 0, 0.4); }
+  .sheet-card { width: 100%; max-width: 440px; display: grid; gap: 6px; padding: 20px; border-radius: 16px;
+    background-color: var(--ink); color: var(--text); }
+  .sheet-card .sub { margin: 0; }
+  .sheet-actions { display: grid; gap: 4px; margin-top: 14px; }
 `
 
 /** Browser script. Plain ES2017, no build step; config comes from the #cfg JSON block. */
@@ -201,6 +219,18 @@ const SCRIPT = `
   var pollTimer = null, openTimer = null, csrf = "", opening = false, requestGeneration = 0;
   var viewing = null; // { url, label } while a Fluck is framed
   var helloTimer = null; // pending top-level fallback until the frame says fluck-hello
+  var frame = $("fluckframe"); // the live frame; a swap replaces it
+  // Seamless reconnect: all of this is background work on a frame the user is not looking at.
+  var SWAP_HELLO_MS = 10000, ONLINE_GRACE_MS = 8000, RECON_GIVE_UP_MS = 10 * 60 * 1000;
+  var WATCH_MS = 20000; // an open Fluck's registry row is checked this often for a new tunnel URL
+  var watchTimer = null, watchBusy = false;
+  var RECON_FIRST_MS = 3000, RECON_MAX_MS = 15000, LOST_RETRY_MS = 4000, LOST_MAX = 3, LOST_WINDOW_MS = 2 * 60 * 1000;
+  var offline = false; // the live frame said fluck-offline and has not said fluck-online since
+  var recon = null; // registry polling while offline: { started, delay, timer, graceTimer, onlineAt, polling, busy }
+  var swap = null; // the hidden replacement frame: { el, url, timer, resolve }
+  var lostTimes = [], lostTimer = null, lostBusy = false, lostGen = 0;
+  var pushBusy = false;
+  var nav = window.navigator || {};
   var params = new URLSearchParams(location.search);
   // ?list=1 (older Fluck builds link back with it): show the list, never auto-open on this load.
   // A reload while a Fluck is open keeps its ?instance=<id> and reopens it with a fresh ticket.
@@ -311,6 +341,8 @@ const SCRIPT = `
   async function signOut() {
     stopPolling(); cancelOpenTimer(); requestGeneration++;
     if (viewing) closeFrame(false);
+    // Before the cookies go: this browser must stop getting this account's notifications.
+    await dropPushSubscription();
     try { await api("/api/logout", { method: "POST", body: {} }); } catch (_) {}
     notice(""); show("signin");
   }
@@ -391,7 +423,7 @@ const SCRIPT = `
       var data = await r.json().catch(function () { return {}; });
       if (r.ok && typeof data.url === "string" && OPEN_URL_RE.test(data.url)) {
         opening = false;
-        openFrame(data.url, title(i), i.instance_id);
+        openFrame(data.url, title(i), i.instance_id, i.agent_name);
         return;
       }
       opening = false;
@@ -428,13 +460,13 @@ const SCRIPT = `
   }
   window.addEventListener("resize", fitViewport);
 
-  function openFrame(url, label, instanceId) {
+  function openFrame(url, label, instanceId, agent) {
     if (viewing) return;
     requestGeneration++;
-    viewing = { url: url, label: label };
-    stopPolling(); cancelOpenTimer();
+    viewing = { url: url, label: label, instanceId: instanceId, agent: agent || "Fluck" };
+    stopPolling(); cancelOpenTimer(); startWatch();
     notice("");
-    $("fluckframe").setAttribute("src", url);
+    frame.setAttribute("src", url);
     document.body.classList.add("viewing");
     if (launching) stopLaunching();
     fitViewport();
@@ -475,9 +507,10 @@ const SCRIPT = `
   function closeFrame(reload) {
     if (!viewing) return;
     cancelHelloTimer();
+    stopRecon(); stopWatch(); offline = false; cancelLost(); hideSheet(); pushBusy = false;
     requestGeneration++;
     viewing = null;
-    $("fluckframe").setAttribute("src", "about:blank");
+    frame.setAttribute("src", "about:blank");
     document.body.classList.remove("viewing");
     document.title = PAGE_TITLE;
     applyTheme(null);
@@ -490,17 +523,343 @@ const SCRIPT = `
     var clean = String(t).replace(/[\\u0000-\\u001f\\u007f]/g, " ").replace(/\\s+/g, " ").trim().slice(0, TITLE_MAX);
     return clean || PAGE_TITLE;
   }
+  function frameOrigin(url) { return new URL(url).origin; }
   function onFrameMessage(ev) {
-    var frame = $("fluckframe");
-    if (!viewing || !frame.contentWindow || ev.source !== frame.contentWindow || ev.origin !== new URL(viewing.url).origin) return;
+    if (!viewing) return;
     var d = ev.data;
     if (!d || typeof d !== "object") return;
+    // The replacement frame is trusted for its hello only, from its own window and origin.
+    if (swap && swap.el.contentWindow && ev.source === swap.el.contentWindow && ev.origin === frameOrigin(swap.url)) {
+      if (d.type === "fluck-hello") commitSwap();
+      return;
+    }
+    if (!frame.contentWindow || ev.source !== frame.contentWindow || ev.origin !== frameOrigin(viewing.url)) return;
     if (d.type === "fluck-hello") cancelHelloTimer();
     else if (d.type === "fluck-signed-out") { dropInstanceFromUrl(); closeFrame(true); }
     else if (d.type === "fluck-switch") { dropInstanceFromUrl(); closeFrame("quiet"); }
     else if (d.type === "fluck-title" && typeof d.title === "string") document.title = frameTitle(d.title);
     else if (d.type === "fluck-theme" && typeof d.color === "string" && THEME_RE.test(d.color)) applyTheme(d.color);
+    else if (d.type === "fluck-offline") onOffline();
+    else if (d.type === "fluck-online") onOnline();
+    else if (d.type === "fluck-session-lost") onSessionLost();
+    else if (d.type === "fluck-push") onPushMessage(d.action);
   }
+
+  // ---- Seamless reconnect ----
+  function dropSwap() {
+    var s = swap;
+    if (!s) return;
+    swap = null;
+    clearTimeout(s.timer);
+    s.el.remove();
+    s.resolve(false);
+  }
+  function stopRecon() {
+    if (recon) { clearTimeout(recon.timer); clearTimeout(recon.graceTimer); recon = null; }
+    dropSwap();
+  }
+  function cancelLost() {
+    lostGen++; lostBusy = false;
+    if (lostTimer) { clearTimeout(lostTimer); lostTimer = null; }
+    dropSwap();
+  }
+  function onOffline() {
+    offline = true;
+    if (!recon) startRecon();
+  }
+  function onOnline() { offline = false; stopRecon(); cancelLost(); }
+  function startRecon() {
+    stopRecon();
+    recon = { started: Date.now(), delay: RECON_FIRST_MS, timer: null, graceTimer: null, onlineAt: 0, polling: false, busy: false };
+    scheduleRecon();
+  }
+  function scheduleRecon() {
+    var r = recon;
+    if (!r) return;
+    clearTimeout(r.timer);
+    r.timer = setTimeout(function () { pollRecon(r); }, r.delay);
+  }
+  // Poll the registry for this Fluck: every 3 s, backing off to 15 s, for at most 10 minutes. Once
+  // it is online and the frame has not said fluck-online within 8 s, load a replacement frame.
+  async function pollRecon(r) {
+    if (recon !== r || !viewing || r.polling) return;
+    if (Date.now() - r.started > RECON_GIVE_UP_MS) { recon = null; return; }
+    r.polling = true;
+    var row = null, unauthorized = false;
+    try {
+      var resp = await api("/api/instances");
+      if (resp.status === 401) unauthorized = true;
+      else if (resp.ok) {
+        var data = await resp.json();
+        if (recon === r && viewing) {
+          csrf = data.csrf || csrf;
+          row = (data.instances || []).filter(function (i) { return i.instance_id === viewing.instanceId; })[0] || null;
+        }
+      }
+    } catch (_) {}
+    r.polling = false;
+    if (recon !== r || !viewing) return;
+    if (unauthorized) { dropInstanceFromUrl(); closeFrame(true); return; }
+    if (row && row.online) {
+      if (!r.onlineAt) {
+        r.onlineAt = Date.now();
+        r.graceTimer = setTimeout(function () { trySwap(r); }, ONLINE_GRACE_MS);
+      } else if (Date.now() - r.onlineAt >= ONLINE_GRACE_MS) trySwap(r);
+    } else {
+      r.onlineAt = 0;
+      clearTimeout(r.graceTimer);
+    }
+    r.delay = Math.min(RECON_MAX_MS, Math.round(r.delay * 1.5));
+    scheduleRecon();
+  }
+  async function trySwap(r) {
+    if (recon !== r || !viewing || r.busy || swap) return;
+    r.busy = true;
+    await loadSwap(function () { return recon === r; });
+    r.busy = false;
+  }
+  // Mint a ticket and load it in a hidden second frame. Resolves true once that frame says hello
+  // and has replaced the live one; false if anything fails, times out or is cancelled (the live
+  // frame is never touched until then). The first-open top-level fallback is never used here.
+  async function loadSwap(alive) {
+    if (!viewing || swap) return false;
+    var id = viewing.instanceId, url = null;
+    try {
+      var r = await api("/api/open", { method: "POST", headers: { "X-Fluck-Web-CSRF": csrf }, body: { instance_id: id } });
+      if (!alive() || !viewing) return false;
+      if (r.status === 401) { dropInstanceFromUrl(); closeFrame(true); return false; }
+      var data = await r.json().catch(function () { return {}; });
+      if (!r.ok || typeof data.url !== "string" || !OPEN_URL_RE.test(data.url)) return false;
+      url = data.url;
+    } catch (_) { return false; }
+    if (!alive() || !viewing || viewing.instanceId !== id || swap) return false;
+    return new Promise(function (resolve) {
+      var f = document.createElement("iframe");
+      f.className = "pending";
+      f.setAttribute("title", "Fluck");
+      f.setAttribute("allow", frame.getAttribute("allow") || "");
+      f.setAttribute("allowfullscreen", "");
+      swap = { el: f, url: url, resolve: resolve, timer: setTimeout(dropSwap, SWAP_HELLO_MS) };
+      $("viewer").appendChild(f);
+      f.setAttribute("src", url);
+    });
+  }
+  function commitSwap() {
+    var s = swap;
+    if (!s) return;
+    swap = null;
+    clearTimeout(s.timer);
+    cancelHelloTimer();
+    var old = frame;
+    old.setAttribute("src", "about:blank");
+    old.remove();
+    s.el.className = "";
+    s.el.id = "fluckframe";
+    frame = s.el;
+    viewing.url = s.url;
+    offline = false;
+    stopRecon();
+    if (lostTimer) { clearTimeout(lostTimer); lostTimer = null; }
+    s.resolve(true);
+  }
+  // A 401 the user did not cause: swap in a fresh-ticket frame right away, at most 3 times in 2
+  // minutes, then behave as if the user had signed out.
+  function onSessionLost() {
+    if (swap || lostBusy || lostTimer) return;
+    attemptLost();
+  }
+  async function attemptLost() {
+    lostTimer = null;
+    if (!viewing) return;
+    var now = Date.now();
+    lostTimes = lostTimes.filter(function (t) { return now - t < LOST_WINDOW_MS; });
+    if (lostTimes.length >= LOST_MAX) { dropInstanceFromUrl(); closeFrame(true); return; }
+    lostTimes.push(now);
+    lostBusy = true;
+    var gen = ++lostGen;
+    var ok = await loadSwap(function () { return lostGen === gen; });
+    if (lostGen !== gen) return;
+    lostBusy = false;
+    if (!ok && viewing) lostTimer = setTimeout(attemptLost, LOST_RETRY_MS);
+  }
+  // Independent of the frame (an older Fluck never posts fluck-offline): when the open Fluck's row
+  // names a different endpoint than the one framed, its tunnel URL rotated, so swap in a fresh ticket.
+  function startWatch() { stopWatch(); watchTimer = setTimeout(watchTick, WATCH_MS); }
+  function stopWatch() { if (watchTimer) { clearTimeout(watchTimer); watchTimer = null; } }
+  async function originRev(url) {
+    var digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(new URL(url).origin));
+    return Array.prototype.map.call(new Uint8Array(digest), function (b) { return (b < 16 ? "0" : "") + b.toString(16); }).join("").slice(0, 16);
+  }
+  async function watchTick() {
+    watchTimer = null;
+    if (!viewing) return;
+    if (document.visibilityState === "visible" && !recon && !swap && !lostBusy && !watchBusy) {
+      watchBusy = true;
+      try {
+        var resp = await api("/api/instances");
+        if (resp.ok && viewing) {
+          var data = await resp.json();
+          csrf = data.csrf || csrf;
+          var id = viewing.instanceId;
+          var row = (data.instances || []).filter(function (i) { return i.instance_id === id; })[0];
+          if (row && row.online && typeof row.endpoint_rev === "string" && viewing && viewing.instanceId === id &&
+              row.endpoint_rev !== await originRev(viewing.url) && !swap && !recon) {
+            await loadSwap(function () { return !!viewing && viewing.instanceId === id; });
+          }
+        }
+      } catch (_) {}
+      watchBusy = false;
+    }
+    if (viewing && !watchTimer) startWatch();
+  }
+  function watchNow() { if (viewing && !watchBusy) { stopWatch(); watchTick(); } }
+
+  // Back in the foreground or back on the network while the frame is offline: look right away.
+  function recheckRecon() {
+    if (!offline || !viewing) return;
+    if (!recon) { startRecon(); return; }
+    recon.delay = RECON_FIRST_MS;
+    clearTimeout(recon.timer);
+    pollRecon(recon);
+  }
+
+  // ---- Web Push bridge ----
+  function isIos() { return /iPad|iPhone|iPod/.test(nav.userAgent || "") || (nav.platform === "MacIntel" && nav.maxTouchPoints > 1); }
+  function isStandalone() { return nav.standalone === true || !!(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches); }
+  // iOS delivers Web Push only to a Home Screen app.
+  function iosNeedsHomeScreen() { return isIos() && !isStandalone(); }
+  function pushSupported() { return !!(nav.serviceWorker && window.PushManager && window.Notification) && !iosNeedsHomeScreen(); }
+  function swUrl() { return base + "/sw.js"; }
+  async function currentSub() {
+    var reg = await nav.serviceWorker.getRegistration(swUrl());
+    return reg && reg.pushManager ? await reg.pushManager.getSubscription() : null;
+  }
+  async function pushState() {
+    if (!pushSupported()) return "unsupported";
+    if (window.Notification.permission === "denied") return "denied";
+    var sub = null;
+    try { sub = await currentSub(); } catch (_) {}
+    return sub && window.Notification.permission === "granted" ? "on" : "off";
+  }
+  // Always to the live frame's own origin, never "*".
+  function replyPush(state) {
+    if (!viewing || !frame.contentWindow) return;
+    try { frame.contentWindow.postMessage({ type: "fluck-push-state", state: state }, frameOrigin(viewing.url)); } catch (_) {}
+  }
+  function urlB64ToBytes(s) {
+    var raw = atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - s.length % 4) % 4));
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function activated(reg) {
+    return new Promise(function (resolve, reject) {
+      if (reg.active) { resolve(reg); return; }
+      var w = reg.installing || reg.waiting;
+      if (!w) { reject(new Error("no worker")); return; }
+      var t = setTimeout(function () { reject(new Error("timeout")); }, 15000);
+      w.addEventListener("statechange", function () { if (w.state === "activated") { clearTimeout(t); resolve(reg); } });
+    });
+  }
+  async function refreshCsrf() {
+    var r = await api("/api/instances");
+    if (r.ok) { var d = await r.json(); csrf = d.csrf || csrf; }
+  }
+  async function postCsrf(path, body) {
+    var r = await api(path, { method: "POST", headers: { "X-Fluck-Web-CSRF": csrf }, body: body });
+    if (r.status === 403) {
+      await refreshCsrf();
+      r = await api(path, { method: "POST", headers: { "X-Fluck-Web-CSRF": csrf }, body: body });
+    }
+    return r;
+  }
+  // Register the worker, subscribe and tell the server. Permission must already be granted.
+  async function subscribeNow() {
+    try {
+      var cr = await api("/api/push/config");
+      if (!cr.ok) return cr.status === 503 ? "unsupported" : "off";
+      var key = (await cr.json()).vapid_public_key;
+      var reg = await nav.serviceWorker.register(swUrl());
+      await activated(reg);
+      var sub = await reg.pushManager.getSubscription();
+      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToBytes(key) });
+      var r = await postCsrf("/api/push/subscribe", { subscription: sub.toJSON() });
+      if (!r.ok) {
+        try { await sub.unsubscribe(); } catch (_) {}
+        return "off";
+      }
+      return "on";
+    } catch (_) { return "off"; }
+  }
+  function showSheet(kind) {
+    var ios = kind === "ios";
+    var name = viewing ? viewing.agent : "Fluck";
+    $("push-title").textContent = ios ? "Add Fluck to your Home Screen" : "Turn on notifications for " + name + "?";
+    $("push-body").textContent = ios
+      ? "iPhone and iPad only send notifications to apps on the Home Screen. Tap Share, choose Add to Home Screen, then open Fluck from there and turn notifications on."
+      : "You will get a notification when " + name + " replies, even when this tab is closed. Message previews are encrypted by your Fluck before delivery.";
+    $("push-yes").classList.toggle("hidden", ios);
+    $("push-no").textContent = ios ? "Got it" : "Not now";
+    $("push-sheet").classList.remove("hidden");
+    var first = ios ? $("push-no") : $("push-yes");
+    if (first.focus) first.focus();
+  }
+  function hideSheet() { $("push-sheet").classList.add("hidden"); }
+  async function pushOn() {
+    if (pushBusy) { replyPush("busy"); return; }
+    if (iosNeedsHomeScreen()) { showSheet("ios"); replyPush("unsupported"); return; }
+    if (!pushSupported()) { replyPush("unsupported"); return; }
+    var perm = window.Notification.permission;
+    if (perm === "denied") { replyPush("denied"); return; }
+    pushBusy = true;
+    replyPush("busy");
+    if (perm === "granted") {
+      var state = await subscribeNow();
+      pushBusy = false;
+      replyPush(state);
+      return;
+    }
+    showSheet("ask");
+  }
+  async function dropPushSubscription() {
+    if (!pushSupported()) return;
+    var endpoint = null;
+    try {
+      var sub = await currentSub();
+      if (sub) { endpoint = sub.endpoint; await sub.unsubscribe(); }
+    } catch (_) {}
+    if (endpoint) { try { await postCsrf("/api/push/unsubscribe", { endpoint: endpoint }); } catch (_) {} }
+  }
+  async function pushOff() {
+    if (!pushSupported()) { replyPush("unsupported"); return; }
+    await dropPushSubscription();
+    replyPush(await pushState());
+  }
+  async function onPushMessage(action) {
+    try {
+      if (action === "query") replyPush(await pushState());
+      else if (action === "on") await pushOn();
+      else if (action === "off") await pushOff();
+    } catch (_) { pushBusy = false; }
+  }
+  $("push-yes").addEventListener("click", function () {
+    // requestPermission is the FIRST call, before any await: iOS drops the gesture across one.
+    var asked = window.Notification.requestPermission();
+    hideSheet();
+    Promise.resolve(asked).then(function (perm) {
+      if (perm === "granted") return subscribeNow();
+      return perm === "denied" ? "denied" : "off";
+    }).catch(function () { return "off"; }).then(function (state) {
+      pushBusy = false;
+      replyPush(state);
+    });
+  });
+  $("push-no").addEventListener("click", function () {
+    var wasAsk = pushBusy;
+    hideSheet();
+    pushBusy = false;
+    if (wasAsk) pushState().then(replyPush);
+  });
   window.addEventListener("message", onFrameMessage);
   window.addEventListener("popstate", function () { if (viewing) closeFrame(true); });
 
@@ -538,8 +897,12 @@ const SCRIPT = `
     if (ev.persisted && !viewing) { opening = false; autoOpenDone = true; loadInstances(false).catch(function () {}); }
   });
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "visible" && !$("list").classList.contains("hidden")) loadInstances(true).catch(function () {});
+    if (document.visibilityState !== "visible") return;
+    recheckRecon();
+    watchNow();
+    if (!$("list").classList.contains("hidden")) loadInstances(true).catch(function () {});
   });
+  window.addEventListener("online", recheckRecon);
 
   // Boot
   oauthErrorNotice();
@@ -573,6 +936,7 @@ export function fluckPage(model: PageModel, nonce: string): string {
 <meta name="robots" content="noindex, nofollow">
 <title>Fluck</title>
 <link rel="icon" type="image/svg+xml" href="${esc(FAVICON)}">
+${pwaHeadTags(model.basePath)}
 <style nonce="${esc(nonce)}">${STYLES}</style>
 </head>
 <body class="launching">
@@ -645,6 +1009,16 @@ export function fluckPage(model: PageModel, nonce: string): string {
     <button id="signout" class="quiet" type="button">Sign out</button>
   </footer>
 </main>
+<div id="push-sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-labelledby="push-title">
+  <div class="sheet-card">
+    <h2 id="push-title"></h2>
+    <p id="push-body" class="sub"></p>
+    <div class="sheet-actions">
+      <button id="push-yes" type="button">Turn on</button>
+      <button id="push-no" class="quiet" type="button">Not now</button>
+    </div>
+  </div>
+</div>
 <!--/email_off-->
 <script id="cfg" type="application/json">${jsonForScript(cfg)}</script>
 <script nonce="${esc(nonce)}">${SCRIPT}</script>

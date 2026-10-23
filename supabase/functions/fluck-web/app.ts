@@ -15,6 +15,11 @@
  *   POST /api/open          {instance_id} + CSRF nonce + exact Origin -> fluck_web_mint_ticket()
  *                           as the user -> {url: <endpoint_url>/#/t/<ticket>}
  *   POST /api/logout        clears the cookies
+ *   GET  /sw.js, /manifest.webmanifest, /icon-512.png   the push service worker and the installable app
+ *   GET  /api/push/config   {vapid_public_key}, 503 until the VAPID secrets are set
+ *   POST /api/push/subscribe, /api/push/unsubscribe     the owner's browser subscription, as the user
+ *   POST /api/push/notify   {ticket, message_id, sealed?} from the Fluck plugin: no cookie; the single-use ticket
+ *                           (fluck_web_push_ticket) is the credential, redeemed with the ANON key
  *   GET  /health
  *
  * Trust model: no service-role key. Every database call carries the caller's own JWT, so
@@ -25,7 +30,9 @@
 
 import { OpenAPIHono } from "@hono/zod-openapi"
 import { authPublicUrl, LIVE_WINDOW_SECONDS, publicBasePath, publicBaseUrl, publicOrigin, readConfig, viaAlias } from "./utils/config.ts"
-import { htmlResponse, jsonResponse, redirectResponse } from "./utils/responses.ts"
+import { assetResponse, htmlResponse, jsonResponse, redirectResponse } from "./utils/responses.ts"
+import { buildApnsPayload, isApnsDevice, isDeadDevice, readApns, sendApns } from "./utils/apns.ts"
+import { b64uDecode, isPushSubscription, readVapid, sendEncryptedWebPush, sendWebPush, sha256Hex, type PushSubscription } from "./utils/webpush.ts"
 import { clientKey, rateLimit } from "./utils/rate-limit.ts"
 import {
   accessCookieName,
@@ -43,6 +50,7 @@ import {
   sessionCookieHeaders,
 } from "./utils/cookies.ts"
 import { fluckPage } from "./views/page.ts"
+import { iconPng, manifestJson, SERVICE_WORKER } from "./views/pwa.ts"
 
 export const app = new OpenAPIHono().basePath("/fluck-web")
 
@@ -55,6 +63,10 @@ const LIST_LIMIT = 120
 const LIST_WINDOW_SECONDS = 60
 const OPEN_LIMIT = 30
 const OPEN_WINDOW_SECONDS = 60
+const PUSH_LIMIT = 30
+const PUSH_WINDOW_SECONDS = 60
+const NOTIFY_LIMIT = 120
+const NOTIFY_WINDOW_SECONDS = 60
 const SESSION_LIMIT = 30
 const SESSION_WINDOW_SECONDS = 300
 const OAUTH_LIMIT = 20
@@ -71,6 +83,12 @@ const OAUTH_ERROR_RE = /^[a-z_]{1,64}$/
 export const INSTANCE_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
 /** fluck_web_mint_ticket returns 32 bytes in unpadded base64url. */
 const TICKET_RE = /^[A-Za-z0-9_-]{43}$/
+const MESSAGE_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const VAPID_PUBLIC_RE = /^[A-Za-z0-9_-]{87}$/
+const PORTAL_ORIGINS = new Set(["https://fluck.risaboss.com", "https://fluck.ai"])
+const PUSH_TIMEOUT_MS = 8000
+const NOTIFY_MAX_BODY = 131072
 const UPSTREAM_TIMEOUT_MS = 5000
 /** fluck_web_mint_ticket lifetime: pending tickets (the too_many_tickets cap) drain within it. */
 const TICKET_TTL_SECONDS = 60
@@ -231,7 +249,7 @@ app.get("/api/instances", async (ctx) => {
     return jsonResponse({ error: "upstream" }, 502, result.setCookies)
   }
   const rows = await resp.json().catch(() => null)
-  const instances = Array.isArray(rows) ? rows.filter(isInstanceRow).map(publicInstance) : []
+  const instances = Array.isArray(rows) ? await Promise.all(rows.filter(isInstanceRow).map(publicInstance)) : []
 
   const existing = cookieToken(ctx.req.header("cookie") ?? null, csrfCookieName(secure))
   const csrf = existing && CSRF_RE.test(existing) ? existing : newCsrfToken()
@@ -300,6 +318,219 @@ app.post("/api/open", async (ctx) => {
   if ("url" in out.body) return jsonResponse(out.body, 200, result.setCookies)
   if (out.body.error === "rate_limited") return tooMany(TICKET_TTL_SECONDS, result.setCookies)
   return jsonResponse(out.body, 409, result.setCookies)
+})
+
+// ---- Web Push ----
+
+app.get("/sw.js", () =>
+  assetResponse(SERVICE_WORKER, "application/javascript; charset=utf-8", "no-cache", { "Service-Worker-Allowed": publicBasePath() || "/" }))
+
+app.get("/manifest.webmanifest", () =>
+  assetResponse(manifestJson(publicBasePath()), "application/manifest+json; charset=utf-8", "public, max-age=3600"))
+
+app.get("/icon-512.png", async () => assetResponse(await iconPng(), "image/png", "public, max-age=86400"))
+
+/** The public half of the VAPID key, which the page hands to PushManager.subscribe. */
+app.get("/api/push/config", (ctx) => {
+  if (ctx.req.header("sec-fetch-site") === "cross-site") return jsonResponse({ error: "forbidden" }, 403)
+  const vapid = readVapid()
+  if (!vapid || !VAPID_PUBLIC_RE.test(vapid.publicKey)) return jsonResponse({ error: "not_configured" }, 503)
+  return jsonResponse({ vapid_public_key: vapid.publicKey })
+})
+
+/**
+ * Same guards as /api/open: same-site only, exact Origin, CSRF nonce, JSON, rate limit. Returns the
+ * refusal, or the parsed body.
+ */
+async function pushUserGuard(ctx: { req: RouteReq }, name: string): Promise<Response | Record<string, unknown>> {
+  if (ctx.req.header("sec-fetch-site") === "cross-site") return jsonResponse({ error: "forbidden" }, 403)
+  const origin = publicOrigin()
+  if (!origin) return jsonResponse({ error: "not_configured" }, 503)
+  const expected = cookieToken(ctx.req.header("cookie") ?? null, csrfCookieName(isSecure(ctx.req)))
+  if (ctx.req.header("origin") !== origin || !expected || !CSRF_RE.test(expected) || expected !== ctx.req.header("x-fluck-web-csrf")) {
+    return jsonResponse({ error: "forbidden" }, 403)
+  }
+  if (!isJson(ctx.req)) return jsonResponse({ error: "invalid_request" }, 415)
+  const limit = rateLimit(`${name}:${clientKey(ctx.req.raw.headers)}`, PUSH_LIMIT, PUSH_WINDOW_SECONDS)
+  if (!limit.allowed) return tooMany(limit.retryAfterSeconds)
+  const body = await readJson(ctx.req.raw)
+  return body ?? jsonResponse({ error: "invalid_request" }, 400)
+}
+
+/** Run one owner RPC as the cookie user and map the outcome the same way for subscribe and unsubscribe. */
+async function pushUserRpc(ctx: { req: RouteReq }, name: string, args: Record<string, unknown>): Promise<Response> {
+  const cfg = readConfig()
+  if (!cfg.supabaseUrl || !cfg.anonKey) return jsonResponse({ error: "not_configured" }, 503)
+  const result = await withUserToken(ctx.req, cfg, (token) => rpc(cfg, token, name, args))
+  if (result.kind === "unauthorized") return jsonResponse({ error: "unauthorized" }, 401, result.setCookies)
+  const resp = result.value
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => null) as Record<string, unknown> | null
+    if (err?.message === "invalid_subscription") return jsonResponse({ error: "invalid_subscription" }, 400, result.setCookies)
+    console.error(`${name} upstream`, resp.status)
+    return jsonResponse({ error: "upstream" }, 502, result.setCookies)
+  }
+  await resp.body?.cancel()
+  return jsonResponse({ ok: true }, 200, result.setCookies)
+}
+
+app.post("/api/push/subscribe", async (ctx) => {
+  const body = await pushUserGuard(ctx, "push-subscribe")
+  if (body instanceof Response) return body
+  const sub = body.subscription
+  if (!isPushSubscription(sub)) return jsonResponse({ error: "invalid_subscription" }, 400)
+  const origin = publicOrigin() as string // pushUserGuard checked it
+  if (!PORTAL_ORIGINS.has(origin)) {
+    console.error("push subscribe refused: the public origin is not a push-capable portal origin")
+    return jsonResponse({ error: "not_configured" }, 503)
+  }
+  // Rebuilt, so only the three stored fields can reach the RPC.
+  return pushUserRpc(ctx, "fluck_web_push_subscribe", {
+    p_subscription: { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } },
+    p_origin: origin,
+  })
+})
+
+app.post("/api/push/unsubscribe", async (ctx) => {
+  const body = await pushUserGuard(ctx, "push-unsubscribe")
+  if (body instanceof Response) return body
+  const endpoint = body.endpoint
+  if (typeof endpoint !== "string" || endpoint.length < 1 || endpoint.length > 1024) return jsonResponse({ error: "invalid_request" }, 400)
+  return pushUserRpc(ctx, "fluck_web_push_unsubscribe", { p_endpoint_hash: await sha256Hex(endpoint) })
+})
+
+interface RedeemedPush {
+  instance_id: string
+  agent_name: string
+  subscriptions: { id: string; subscription: PushSubscription; portal_origin: string }[]
+  devices?: unknown[]
+}
+
+const SEALED_MAX_ENTRIES = 20
+const SEALED_MAX_CHARS = 5500
+const SEALED_MAX_BYTES = 4096
+
+/**
+ * `sealed` maps a target id (from fluck_web_push_keys) to ciphertext the user's own Fluck produced.
+ * Returns the validated map, undefined when absent, or null when malformed. Opaque to this function.
+ */
+function parseSealed(value: unknown): Record<string, string> | undefined | null {
+  if (value === undefined) return undefined
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const entries = Object.entries(value)
+  if (entries.length > SEALED_MAX_ENTRIES) return null
+  const out: Record<string, string> = {}
+  for (const [id, blob] of entries) {
+    if (!UUID_RE.test(id) || typeof blob !== "string" || blob.length < 1 || blob.length > SEALED_MAX_CHARS || !/^[A-Za-z0-9_-]+$/.test(blob)) return null
+    try {
+      if (b64uDecode(blob).length > SEALED_MAX_BYTES) return null
+    } catch {
+      return null
+    }
+    out[id] = blob
+  }
+  return out
+}
+
+function isRedeemedPush(value: unknown): value is RedeemedPush {
+  if (!value || typeof value !== "object") return false
+  const v = value as Record<string, unknown>
+  return typeof v.instance_id === "string" && INSTANCE_ID_RE.test(v.instance_id) && typeof v.agent_name === "string" &&
+    Array.isArray(v.subscriptions)
+}
+
+/**
+ * The Fluck plugin's "a message arrived" ping. No cookie: the plugin minted a single-use ticket as
+ * its signed-in user (fluck_web_push_ticket) and the ticket is the whole credential, redeemed here
+ * with the ANON key. The generic push carries the agent's name and a fixed line. A `sealed` entry is
+ * ciphertext made on the user's own Fluck for one target: it is forwarded as-is and never decrypted.
+ * An unknown, spent or expired ticket is one 410 that says nothing more (404 stays "route missing" for the plugin).
+ */
+app.post("/api/push/notify", async (ctx) => {
+  if (!isJson(ctx.req)) return jsonResponse({ error: "invalid_request" }, 415)
+  const limit = rateLimit(`push-notify:${clientKey(ctx.req.raw.headers)}`, NOTIFY_LIMIT, NOTIFY_WINDOW_SECONDS)
+  if (!limit.allowed) return tooMany(limit.retryAfterSeconds)
+  // Room for 20 sealed entries of 5500 characters.
+  const body = await readJson(ctx.req.raw, NOTIFY_MAX_BODY)
+  const ticket = typeof body?.ticket === "string" ? body.ticket : ""
+  const messageId = typeof body?.message_id === "string" ? body.message_id : ""
+  const sealed = parseSealed(body?.sealed)
+  if (!TICKET_RE.test(ticket) || !MESSAGE_ID_RE.test(messageId) || sealed === null) return jsonResponse({ error: "invalid_request" }, 400)
+  const cfg = readConfig()
+  const vapid = readVapid()
+  // Checked before redeeming so a missing secret never burns the ticket.
+  if (!cfg.supabaseUrl || !cfg.anonKey || !vapid) return jsonResponse({ error: "not_configured" }, 503)
+
+  const redeemed = await rpc(cfg, cfg.anonKey, "fluck_web_push_redeem", { p_ticket: ticket })
+  if (!redeemed.ok) {
+    const err = await redeemed.json().catch(() => null) as Record<string, unknown> | null
+    if (err?.message === "ticket_invalid") return jsonResponse({ error: "unknown_ticket" }, 410)
+    console.error("push redeem upstream", redeemed.status)
+    return jsonResponse({ error: "upstream" }, 502)
+  }
+  const data = await redeemed.json().catch(() => null)
+  if (!isRedeemedPush(data)) {
+    console.error("push redeem returned an unexpected shape")
+    return jsonResponse({ error: "upstream" }, 502)
+  }
+
+  const targets = data.subscriptions.filter((s) =>
+    s && typeof s.id === "string" && UUID_RE.test(s.id) && PORTAL_ORIGINS.has(s.portal_origin) && isPushSubscription(s.subscription)
+  )
+  const apns = readApns()
+  const devices = apns && Array.isArray(data.devices) ? data.devices.filter(isApnsDevice).filter((d) => UUID_RE.test(d.id)) : []
+  const tag = `fluck-${data.instance_id}`
+  const sendOpts = { fetch: deps.fetch, ttlSeconds: 86400, urgency: "normal" as const, timeoutMs: PUSH_TIMEOUT_MS }
+  type Outcome = { dead: boolean; ok: boolean; note?: number }
+  const jobs: { kind: "web" | "apns"; id: string; run: () => Promise<Outcome> }[] = [
+    ...targets.map((t) => ({
+      kind: "web" as const,
+      id: t.id,
+      run: async (): Promise<Outcome> => {
+        const sealedBlob = sealed?.[t.id]
+        const status = sealedBlob
+          ? await sendEncryptedWebPush(t.subscription, b64uDecode(sealedBlob), vapid, sendOpts)
+          : await sendWebPush(t.subscription, new TextEncoder().encode(JSON.stringify({
+            title: data.agent_name,
+            body: "New message",
+            tag,
+            url: `${t.portal_origin}/?instance=${encodeURIComponent(data.instance_id)}`,
+          })), vapid, sendOpts)
+        return { ok: status >= 200 && status < 300, dead: status === 404 || status === 410, note: status }
+      },
+    })),
+    ...devices.map((d) => ({
+      kind: "apns" as const,
+      id: d.id,
+      run: async (): Promise<Outcome> => {
+        const r = await sendApns(d, buildApnsPayload(data.agent_name, data.instance_id, messageId, sealed?.[d.id]), apns!, { fetch: deps.fetch, timeoutMs: PUSH_TIMEOUT_MS })
+        return { ok: r.status === 200, dead: isDeadDevice(r), note: r.status }
+      },
+    })),
+  ]
+  const outcomes = await Promise.allSettled(jobs.map((j) => j.run()))
+  let sent = 0
+  const dead: string[] = []
+  const deadDevices: string[] = []
+  outcomes.forEach((o, i) => {
+    const job = jobs[i]
+    if (o.status === "rejected") console.error(`${job.kind} send failed`, o.reason instanceof Error ? o.reason.name : "error")
+    else if (o.value.ok) sent++
+    else if (o.value.dead) (job.kind === "web" ? dead : deadDevices).push(job.id)
+    else console.warn(`${job.kind} push service answered`, o.value.note)
+  })
+  let pruned = 0
+  if (dead.length > 0 || deadDevices.length > 0) {
+    const resp = await rpc(cfg, cfg.anonKey, "fluck_web_push_prune", { p_ticket: ticket, p_ids: dead, p_device_ids: deadDevices })
+    if (resp.ok) {
+      const removed = await resp.json().catch(() => null)
+      pruned = typeof removed === "number" ? removed : 0
+    } else {
+      await resp.body?.cancel()
+      console.error("push prune upstream", resp.status)
+    }
+  }
+  return jsonResponse({ sent, pruned }, 202)
 })
 
 app.notFound(() => jsonResponse({ error: "not_found" }, 404))
@@ -406,10 +637,15 @@ export function isInstanceRow(row: unknown): row is InstanceRow {
     typeof r.last_seen_at === "string" && typeof r.online === "boolean"
 }
 
-/** What the page sees. The endpoint is withheld: the page only ever navigates to a minted URL. */
-function publicInstance(r: InstanceRow) {
+/**
+ * What the page sees. The endpoint is withheld: the page only ever navigates to a minted URL.
+ * `endpoint_rev` (16 hex of sha256 of the origin) lets an open page see that its Fluck moved to a new
+ * tunnel URL, by hashing the origin it framed, without learning the new one.
+ */
+async function publicInstance(r: InstanceRow) {
   return {
     instance_id: r.instance_id,
+    endpoint_rev: (await sha256Hex(httpsOrigin(r.endpoint_url) as string)).slice(0, 16),
     label: r.label,
     agent_name: r.agent_name,
     app_version: typeof r.app_version === "string" ? r.app_version : null,
@@ -547,12 +783,12 @@ async function gotrueRefresh(cfg: Cfg, refreshToken: string): Promise<{ accessTo
   }
 }
 
-async function readJson(req: Request): Promise<Record<string, unknown> | null> {
+async function readJson(req: Request, maxBytes = 8192): Promise<Record<string, unknown> | null> {
   try {
     const declared = Number(req.headers.get("content-length") ?? "0")
-    if (declared > 8192) return null
+    if (declared > maxBytes) return null
     const text = await req.text()
-    if (text.length > 8192) return null
+    if (text.length > maxBytes) return null
     const parsed = JSON.parse(text)
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null
   } catch {

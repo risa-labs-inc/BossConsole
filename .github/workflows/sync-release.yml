@@ -72,10 +72,11 @@ jobs:
         EVENT_RELEASE_NAME: ${{ github.event.release.name }}
         EVENT_RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
         EVENT_RELEASE_BODY: ${{ github.event.release.body }}
-        WORKFLOW_RUN_STARTED_AT: ${{ github.event.workflow_run.run_started_at }}
+        WORKFLOW_RUN_CREATED_AT: ${{ github.event.workflow_run.created_at }}
         GITHUB_REPOSITORY: ${{ github.repository }}
       run: |
         set -euo pipefail
+        echo "release-found=false" >> "$GITHUB_OUTPUT"
 
         # Get release information (handle release event, manual dispatch, and
         # workflow_run fallback when the upstream Release Build completed).
@@ -101,8 +102,9 @@ jobs:
           # naively picking the latest release would re-sync a stale one —
           # corrupting the public README's date.
           #
-          # Discovery strategy: pick the latest release whose created_at is
-          # at/after the upstream workflow_run started.
+          # Use the original run's creation time, which survives retries.
+          # run_started_at moves forward on a rerun. Release created_at can
+          # reflect the tag's commit date, so compare published_at instead.
           #
           # NOTE on target_commitish: we deliberately do NOT filter by SHA
           # here, because softprops/action-gh-release is invoked without a
@@ -117,12 +119,11 @@ jobs:
           # build produced. Today there is only one release pipeline, so this
           # is acceptable; if that changes, add a tag-resolution pre-job and
           # pass the tag explicitly via workflow_call.
-          if [[ -z "${WORKFLOW_RUN_STARTED_AT}" ]]; then
-            echo "❌ workflow_run event missing run_started_at — cannot gate on freshness."
+          if [[ -z "${WORKFLOW_RUN_CREATED_AT}" ]]; then
+            echo "❌ workflow_run event missing created_at - cannot gate on freshness."
             exit 1
           fi
-          echo "🔍 workflow_run trigger — locating release created at/after ${WORKFLOW_RUN_STARTED_AT}..."
-          RUN_STARTED_EPOCH=$(date -d "$WORKFLOW_RUN_STARTED_AT" +%s)
+          echo "🔍 workflow_run trigger - locating release published at/after ${WORKFLOW_RUN_CREATED_AT}..."
           RELEASE_INFO=""
           # 6 attempts × 10s = 60s grace for API consistency. The upstream
           # build takes many minutes, so the release is virtually always
@@ -134,19 +135,14 @@ jobs:
             # need the most recent release. Don't swallow stderr — a 401 or
             # 403 should fail loudly, not be silently treated as no releases.
             ALL_RELEASES=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=10")
-            LATEST=$(echo "$ALL_RELEASES" | jq -c '.[0]' || echo "null")
+            # GitHub timestamps use UTC ISO 8601, so lexical order is chronological.
+            LATEST=$(echo "$ALL_RELEASES" | jq -c --arg since "$WORKFLOW_RUN_CREATED_AT" '
+              [.[] | select(.draft == false and .published_at != null)
+               | select(.published_at >= $since)] | sort_by(.published_at) | last')
             if [[ "$LATEST" != "null" && -n "$LATEST" ]]; then
-              LATEST_CREATED=$(echo "$LATEST" | jq -r '.created_at')
-              LATEST_EPOCH=$(date -d "$LATEST_CREATED" +%s)
-              # The window is loose by design: run_started_at is when the
-              # upstream workflow began, typically many minutes before the
-              # release is actually published. Any release stamped within
-              # that window from "now" is treated as the one this run made.
-              if [[ "$LATEST_EPOCH" -ge "$RUN_STARTED_EPOCH" ]]; then
-                RELEASE_INFO="$LATEST"
-                echo "  matched latest release (${LATEST_CREATED} >= run start ${WORKFLOW_RUN_STARTED_AT})"
-                break
-              fi
+              RELEASE_INFO="$LATEST"
+              echo "  matched published release"
+              break
             fi
             echo "  attempt ${attempt}/6: no fresh release visible yet, waiting 10s..."
             sleep 10
@@ -246,8 +242,10 @@ jobs:
         # List downloaded assets
         echo "📦 Contents of release-assets directory:"
         ls -la release-assets/
+        echo "release-found=true" >> "$GITHUB_OUTPUT"
 
     - name: Create public release
+      if: steps.download.outputs.release-found == 'true'
       env:
         GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
         RELEASE_TAG: ${{ steps.download.outputs.RELEASE_TAG }}
@@ -321,6 +319,7 @@ jobs:
         fi
     
     - name: Publish release to Supabase Storage
+      if: steps.download.outputs.release-found == 'true'
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -370,6 +369,7 @@ jobs:
         bash scripts/publish-supabase-release.sh boss "$VERSION" "$CHANNEL" release-assets "$BUCKET"
 
     - name: Update public repository README
+      if: steps.download.outputs.release-found == 'true'
       env:
         GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
         RELEASE_TAG: ${{ steps.download.outputs.RELEASE_TAG }}
@@ -434,6 +434,7 @@ jobs:
         rm -f ~/.git-credentials
 
     - name: Notify completion
+      if: steps.download.outputs.release-found == 'true'
       env:
         RELEASE_TAG: ${{ steps.download.outputs.RELEASE_TAG }}
         PUBLIC_REPO: risa-labs-inc/BossConsole-Releases
