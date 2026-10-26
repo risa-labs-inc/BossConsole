@@ -1,6 +1,4 @@
--- pgTAP tests for 20261019140000_agents_rbac: org-scoped agents.* permissions, built-in agent roles,
--- the swapped agents gates, Team RPCs, email-bound invites and the role/permission audit trail.
--- Run with: supabase test db
+-- Shared draft permissions, revision CAS, safe content validation and immutable publication state.
 begin;
 select plan(42);
 

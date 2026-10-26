@@ -74,8 +74,9 @@ CREATE FUNCTION public.managed_agent_draft_update(p_agent_id uuid,p_expected_rev
 LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE a public.agents%ROWTYPE; d public.agent_content_drafts%ROWTYPE; content jsonb; old_revision bigint;
 BEGIN
- -- Lock the agent as the stable serialization point, including the first draft insert.
- SELECT * INTO a FROM public.agents WHERE id=p_agent_id FOR UPDATE;
+ IF auth.uid() IS NULL OR NOT public.has_agent_permission(p_agent_id,'agents.edit') THEN RAISE EXCEPTION 'Permission denied' USING ERRCODE='42501'; END IF;
+ -- Serialize draft writers without blocking FK-only child inserts; recheck permission after waiting.
+ SELECT * INTO a FROM public.agents WHERE id=p_agent_id FOR NO KEY UPDATE;
  IF NOT FOUND OR auth.uid() IS NULL OR NOT public.has_agent_permission(p_agent_id,'agents.edit') THEN RAISE EXCEPTION 'Permission denied' USING ERRCODE='42501'; END IF;
  IF jsonb_typeof(p_patch) IS DISTINCT FROM 'object' OR p_patch='{}'::jsonb OR EXISTS(SELECT 1 FROM jsonb_object_keys(p_patch)x WHERE x NOT IN('soul','identity','skills','custom_connectors')) THEN RAISE EXCEPTION 'invalid_draft_patch' USING ERRCODE='22023'; END IF;
  SELECT * INTO d FROM public.agent_content_drafts WHERE agent_id=p_agent_id;
