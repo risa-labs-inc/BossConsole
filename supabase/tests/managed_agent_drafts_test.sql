@@ -2,7 +2,7 @@
 -- the swapped agents gates, Team RPCs, email-bound invites and the role/permission audit trail.
 -- Run with: supabase test db
 begin;
-select plan(39);
+select plan(40);
 
 -- a1 owner A, a2 second admin of A, a3 agent manager, a4 agent editor (also a plain member of B),
 -- a5 agent analyst, a6 plain member, a7 applicant, a8 invitee, a9 someone else, b1 owner B, c1 platform admin.
@@ -81,6 +81,7 @@ SELECT pg_temp.as_user('a4');
 SELECT is(jsonb_array_length(public.managed_agents_list()),1,'editor sees only editable org agent');
 SELECT throws_ok($q$SELECT public.managed_agent_draft_get(pg_temp.id('beta'))$q$,'42501',NULL,'other org membership grants no edit');
 SELECT is((public.managed_agent_draft_get(pg_temp.id('acme'))->>'revision')::int,0,'absent draft revision0');
+SELECT is(public.managed_agent_draft_get(pg_temp.id('acme'))->>'plugin_id','ai.rever.boss.plugin.dynamic.agent.racme','registered artifact identity returned for source seeding');
 SELECT is((public.managed_agent_draft_update(pg_temp.id('acme'),0,'{"soul":"Persona","skills":{"research":"Do research"}}')->>'revision')::int,1,'editor creates draft');
 SELECT throws_ok($q$SELECT public.managed_agent_draft_update(pg_temp.id('acme'),0,'{"soul":"stale"}')$q$,'40001','draft_revision_conflict','stale editor cannot overwrite');
 SELECT is(public.managed_agent_draft_get(pg_temp.id('acme'))->'content'->>'soul','Persona','conflict preserves content');

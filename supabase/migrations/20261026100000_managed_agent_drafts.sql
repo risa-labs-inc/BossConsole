@@ -53,7 +53,7 @@ CREATE FUNCTION public.managed_agents_list() RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
 BEGIN
  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Permission denied' USING ERRCODE='42501'; END IF;
- RETURN COALESCE((SELECT jsonb_agg(jsonb_build_object('id',a.id,'org_id',a.org_id,'name',a.name,'slug',a.slug,'live_version',a.live_version,'pending_version',a.pending_version) ORDER BY a.id)
+ RETURN COALESCE((SELECT jsonb_agg(jsonb_build_object('id',a.id,'org_id',a.org_id,'name',a.name,'slug',a.slug,'plugin_id',a.plugin_id,'live_version',a.live_version,'pending_version',a.pending_version) ORDER BY a.id)
  FROM public.agents a WHERE public.has_agent_permission(a.id,'agents.edit')),'[]'::jsonb);
 END;
 $$;
@@ -64,7 +64,7 @@ BEGIN
  IF auth.uid() IS NULL OR NOT public.has_agent_permission(p_agent_id,'agents.edit') THEN RAISE EXCEPTION 'Permission denied' USING ERRCODE='42501'; END IF;
  SELECT * INTO STRICT a FROM public.agents WHERE id=p_agent_id;
  SELECT * INTO d FROM public.agent_content_drafts WHERE agent_id=p_agent_id;
- RETURN jsonb_build_object('agent_id',a.id,'live_version',a.live_version,'pending_version',a.pending_version,'revision',COALESCE(d.revision,0),
+ RETURN jsonb_build_object('agent_id',a.id,'plugin_id',a.plugin_id,'live_version',a.live_version,'pending_version',a.pending_version,'revision',COALESCE(d.revision,0),
  'content',COALESCE(d.content,'{"soul":"","identity":"","skills":{},"custom_connectors":[]}'::jsonb),'updated_at',d.updated_at);
 END;
 $$;
