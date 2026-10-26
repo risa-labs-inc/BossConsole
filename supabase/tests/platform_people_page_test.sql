@@ -1,11 +1,14 @@
 BEGIN;
-SELECT plan(15);
+SELECT plan(16);
 INSERT INTO auth.users(id,email,email_confirmed_at)
  SELECT ('e2600000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'person'||n||'@people-page.test',now() FROM generate_series(1,305)n;
 INSERT INTO public.user_roles(user_id,role_id) SELECT 'e2600000-0000-4000-8000-000000000001',id FROM public.roles WHERE name='admin';
 INSERT INTO public.agents_service_accounts(user_id,purpose) VALUES('e2600000-0000-4000-8000-000000000304','provisioner');
 UPDATE auth.users SET deleted_at=now() WHERE id='e2600000-0000-4000-8000-000000000305';
 SELECT ok(NOT has_function_privilege('anon','public.platform_people_page(uuid,int,text)','EXECUTE'),'anonymous directory denied');
+SET LOCAL ROLE anon;
+SELECT throws_ok($q$SELECT public.platform_people_page()$q$,'42501',NULL,'anonymous actual directory call denied');
+RESET ROLE;
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claims','{"sub":"e2600000-0000-4000-8000-000000000002","role":"authenticated"}',true);
 SELECT throws_ok($q$SELECT public.platform_people_page()$q$,'42501',NULL,'ordinary user denied');
