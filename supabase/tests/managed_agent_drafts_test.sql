@@ -2,7 +2,7 @@
 -- the swapped agents gates, Team RPCs, email-bound invites and the role/permission audit trail.
 -- Run with: supabase test db
 begin;
-select plan(40);
+select plan(41);
 
 -- a1 owner A, a2 second admin of A, a3 agent manager, a4 agent editor (also a plain member of B),
 -- a5 agent analyst, a6 plain member, a7 applicant, a8 invitee, a9 someone else, b1 owner B, c1 platform admin.
@@ -89,6 +89,7 @@ SELECT throws_ok($q$SELECT public.managed_agent_draft_update(pg_temp.id('acme'),
 SELECT throws_ok($q$SELECT public.publish_agent(pg_temp.id('acme'),'1.0.0')$q$,'42501',NULL,'edit is not publish');
 SELECT is(public.managed_agent_draft_update(pg_temp.id('acme'),1,'{"identity":"Identity"}')->'content'->>'soul','Persona','patch preserves unmodified source');
 SELECT throws_ok($q$SELECT public.managed_agent_draft_update(pg_temp.id('acme'),2,'{"skills":{"../escape":"x"}}')$q$,'22023','invalid_skill','skill path traversal denied');
+SELECT throws_ok($q$SELECT public.managed_agent_draft_update(pg_temp.id('acme'),2,'{"skills":{"Research":"x","research":"y"}}')$q$,'22023','duplicate_skill','case-insensitive skill collision denied');
 SELECT throws_ok($q$SELECT public.managed_agent_draft_update(pg_temp.id('acme'),2,'{"soul":null}')$q$,'22023','invalid_draft_content','null source forbidden');
 SELECT throws_ok($q$SELECT public.managed_agent_draft_update(pg_temp.id('acme'),2,jsonb_build_object('soul',repeat('x',262145)))$q$,'22023','invalid_draft_content','source size bounded');
 SELECT is((public.managed_agent_draft_update(pg_temp.id('acme'),2,'{"custom_connectors":[{"id":"mcp-example","name":"Example Tools","url":"https://mcp.example.com/api","auth":"oauth"}]}')->>'revision')::int,3,'safe OAuth definition accepted without credentials');
