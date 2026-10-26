@@ -42,6 +42,7 @@ INSERT INTO public.agent_installs(user_id,agent_id,instance_id,port,data_dir,sta
  CASE WHEN slug='peopleremoved' THEN 'removed' ELSE 'running' END,
  CASE WHEN slug='peopleaa' THEN '2026-01-02'::timestamptz WHEN slug='peoplezz' THEN '2026-01-01'::timestamptz ELSE '2026-01-03'::timestamptz END
  FROM agents WHERE slug IN('peoplezz','peopleaa','peopleremoved');
+SELECT set_config('request.jwt.claims','{"sub":"e2600000-0000-4000-8000-000000000001","role":"authenticated"}',true);
 INSERT INTO public.pod_tiers(user_id,tier,note,assigned_by) VALUES('e2600000-0000-4000-8000-000000000002','premium','fixture assignment','e2600000-0000-4000-8000-000000000001');
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claims','{"sub":"e2600000-0000-4000-8000-000000000001","role":"authenticated"}',true);
