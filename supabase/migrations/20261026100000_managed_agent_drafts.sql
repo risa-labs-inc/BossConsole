@@ -24,6 +24,7 @@ BEGIN
  IF (SELECT count(*) FROM jsonb_object_keys(p->'skills'))>100 THEN RAISE EXCEPTION 'too_many_skills' USING ERRCODE='22023'; END IF;
  IF EXISTS(SELECT 1 FROM jsonb_object_keys(p->'skills') AS skill_keys(skill_name) GROUP BY lower(skill_keys.skill_name) HAVING count(*)>1) THEN RAISE EXCEPTION 'duplicate_skill' USING ERRCODE='22023'; END IF;
  FOR k,v IN SELECT * FROM jsonb_each(p->'skills') LOOP
+  IF lower(k) IN('agents','evolve','services','signin') THEN RAISE EXCEPTION 'reserved_skill' USING ERRCODE='22023'; END IF;
   IF k !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' OR jsonb_typeof(v) IS DISTINCT FROM 'string' OR octet_length(v#>>'{}')>262144 THEN
    RAISE EXCEPTION 'invalid_skill' USING ERRCODE='22023';
   END IF;
