@@ -122,8 +122,11 @@ interface Prepared {
   seconds?: number
 }
 const headers = { "Content-Type": "application/json", "Cache-Control": "no-store" }
-const json = (body: unknown, status = 200, requestId = "") =>
-  new Response(JSON.stringify(body), { status, headers: { ...headers, "X-Request-ID": requestId } })
+const json = (body: unknown, status = 200, requestId = "", extra: Record<string, string> = {}) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { ...headers, "X-Request-ID": requestId, ...extra },
+  })
 function failure(error: unknown, requestId: string): Response {
   const e = error instanceof HttpError
     ? error
@@ -510,9 +513,17 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         return json(
           {
             object: "list",
-            data: path === "/v1/models"
-              ? data
-              : (data as Obj[]).map((model) => ({ model: model.id, allowance: model.allowance })),
+            data: path === "/v1/models" ? data : (data as Obj[]).map((model) => ({
+              model: model.id,
+              allowance: model.allowance,
+              ...("over_allowance_model_id" in model
+                ? {
+                  over_allowance_model_id: model.over_allowance_model_id,
+                  downgraded: model.downgraded === true,
+                  downgrade_resets_at: model.downgrade_resets_at ?? null,
+                }
+                : {}),
+            })),
           },
           200,
           requestId,
@@ -620,6 +631,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         model: Model
         connection: Connection
         fallbacks?: Fallback[]
+        downgraded_from?: string
       }
       if (result.error) {
         if (result.error === "duplicate") {
@@ -640,6 +652,15 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       }
       reservation = requestId
       if (result.model.kind !== kind) throw wrongKind()
+      // Over allowance the reservation was admitted against a cheaper model: serve from it, keep
+      // the requested id in responses so clients do not break, and say so in headers.
+      const downgrade: Record<string, string> = result.downgraded_from
+        ? {
+          "X-BOSS-AI-Downgraded-From": result.downgraded_from,
+          "X-BOSS-AI-Served-Model": result.model.id,
+        }
+        : {}
+      if (result.downgraded_from) audit("allowance_downgrade")
       const routes = routesOf(result)
       const live = routes.filter((r) => (cooldown.get(r.key) ?? 0) <= now())
       // A route that failed in a way that predicts the next request failing is skipped for a while;
@@ -779,6 +800,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
             { text: payload.text, usage: { seconds, billed_seconds: billed, ...quota } },
             200,
             requestId,
+            downgrade,
           )
         } finally {
           cleanup()
@@ -808,6 +830,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
               "Content-Type": "audio/mpeg",
               "Cache-Control": "no-store",
               "X-Request-ID": requestId,
+              ...downgrade,
               "X-Billed-Seconds": String(measuredTokens),
             },
           })
@@ -838,7 +861,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           measuredTokens = typeof tokens === "number" ? tokens : null
           await settleWithRetry(measuredTokens)
           reservation = undefined
-          return json(output, 200, requestId)
+          return json(output, 200, requestId, downgrade)
         } finally {
           cleanup()
         }
@@ -914,6 +937,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-store",
           "X-Request-ID": requestId,
+          ...downgrade,
         },
       })
     } catch (error) {

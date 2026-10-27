@@ -419,6 +419,59 @@ entry nor admission. Platform admins hold every permission and see it too. Organ
 cannot grant `ai.*` through `grant_organisation_role_permission`; only a platform admin or an
 operator write can, so holders cannot pass a model on to another organisation.
 
+## Per-user quotas and downgrade
+
+Apply `20261027130000_boss_ai_user_quota_downgrade.sql` (after the fallbacks migration). Everything
+is configuration rows; nothing is hardcoded.
+
+- `boss_ai_user_allowances (user_id, model_id, tokens_per_day/week/month, max_concurrent,
+  over_allowance_model_id, note)`:
+  a non-null field replaces the permission-derived value for that user, raising or lowering it.
+  Access is not granted: the user still needs a permission with an allowance on the model
+  (`boss_ai_policy` returns nothing otherwise, so the override is ignored). The row for the model
+  itself wins over a row for its allowance pool. Service-role only, RLS on.
+- `boss_ai_models.over_allowance_model_id`: the model served instead when this user's allowance
+  cannot fit a request. A user row's `over_allowance_model_id` wins over the model's. Chains are at
+  most 3 hops, may not loop (model-level and user-level edges combined) and must keep the model
+  `kind`; writes that break this are refused.
+- `boss_ai_reserve` keeps its rules (permission, duplicate, every period, concurrency) and, when the
+  requested model is exhausted, repeats them against the target under the target's own policy, usage
+  and concurrency, up to 3 hops. A target the user may not use, or an exhausted end of the chain,
+  returns the usual `allowance_exceeded` with the requested model's usage. The ledger row carries
+  the model actually served, so usage is charged to it (and its pool) and settlement settles that
+  row.
+- The response `model` stays the requested id. Headers: `X-BOSS-AI-Downgraded-From` (requested id)
+  and `X-BOSS-AI-Served-Model` (target); the audit event is `allowance_downgrade`. The target's own
+  upstream, routes, fallbacks and limits apply, so a request its model cannot take (for example a
+  larger `max_tokens`) is a 400 like on any model, and is refunded.
+- `/v1/models` and `/v1/usage` add per model `over_allowance_model_id` (effective for the caller),
+  `downgraded` (a target exists and any period cannot fit a request) and `downgrade_resets_at` (when
+  the last exhausted period resets). Only the caller's own data is returned.
+- A limit that can never fit one request is `misconfigured_allowance` (503) unless a target exists,
+  in which case the request is served from it. That lets a lowered user override force a downgrade.
+
+Because admission reserves the model's whole `context_length`, a model is exhausted as soon as any
+period's remaining is below it: with a 1M-context model the last ~1M tokens of a quota can never be
+used by that model. Size quotas as a multiple of the context length, and expect the downgrade to
+begin about one context length before the nominal cap.
+
+Operator data (applied by hand, not a migration):
+
+```sql
+-- the cheaper model, reachable by the same permission
+INSERT INTO boss_ai_models (id, display_name, connection_id, upstream_model, capabilities, context_length, max_output_tokens, published)
+VALUES ('optimist-lite','Optimist Lite','openrouter-optimist','anthropic/claude-haiku-5.5',ARRAY['text','tools','vision'],200000,8192,true);
+INSERT INTO boss_ai_allowances (model_id, permission_name, tokens_per_day, tokens_per_week, tokens_per_month, max_concurrent)
+VALUES ('optimist-lite','ai.optimist',50000000,200000000,600000000,4);
+-- over-quota users are served by it, with a monthly cap on the main model
+UPDATE boss_ai_models SET over_allowance_model_id='optimist-lite' WHERE id='optimist';
+UPDATE boss_ai_allowances SET tokens_per_month=60000000
+ WHERE model_id='optimist' AND permission_name='ai.optimist';
+-- one user: a bigger monthly cap and a different target
+INSERT INTO boss_ai_user_allowances (user_id, model_id, tokens_per_month, over_allowance_model_id, note)
+VALUES ('<user uuid>','optimist',200000000,'optimist-lite','design partner');
+```
+
 ## Allowance semantics
 
 Request validation uses a read-only, permission-filtered preflight before inserting any ledger row.
