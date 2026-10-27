@@ -479,6 +479,104 @@ INSERT INTO boss_ai_user_allowances (user_id, model_id, tokens_per_month, over_a
 VALUES ('<user uuid>','optimist',200000000,'optimist-lite','design partner');
 ```
 
+## Model routing and monthly budget
+
+Apply `20261027140000_boss_ai_router_budget.sql` (after the quota migration). A router row turns a
+model clients request (for example `optimist`) into a virtual model: for every chat call the gateway
+picks the fast, standard or strong tier model with Risa's in-house decider, subject to a per-user
+monthly USD budget. Clients keep requesting `optimist`; the response `model` stays `optimist`.
+Everything below is a row you can edit; nothing is hardcoded.
+
+**`boss_ai_routers`** (one row per virtual `model_id`):
+
+| Column                                                  | Default                                        | Meaning                                                                                                                            |
+| ------------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`                                               | true                                           | Off = the model is served as before                                                                                                |
+| `decider_connection_id`                                 | required                                       | Connection holding the decider URL and key secret (`risa_qwen_internal`: base URL is the LiteLLM gateway, key `BOSS_AI_RISA_QWEN`) |
+| `decider_model`                                         | `risa-pplx-decider-v1-27b`                     | Echoed back by the gateway and verified                                                                                            |
+| `decider_temperature`                                   | 1.0087417621345625                             | Checkpoint temperature; do not tune it for confidence                                                                              |
+| `decider_timeout_ms`                                    | 2500                                           | One attempt, never retried                                                                                                         |
+| `state_char_budget`                                     | 12000                                          | Most state text sent (the decider takes 10,000 tokens in total)                                                                    |
+| `question`                                              | "Which model tier should handle this request?" |                                                                                                                                    |
+| `choices`                                               | fast / standard / strong                       | Ordered `[{tier,label,description}]`, 2 to 255, unique labels; the first choice is the first option code                           |
+| `min_confidence`                                        | 0.55                                           | Below it the `default_tier` is used                                                                                                |
+| `default_tier`                                          | standard                                       | Also used when the decider fails or times out                                                                                      |
+| `fast_model_id`, `standard_model_id`, `strong_model_id` | required                                       | Tier models; may be `published=false`                                                                                              |
+| `exhausted_model_id`                                    | NULL (= fast)                                  | Served when the budget is used up                                                                                                  |
+| `sticky_within_turn`                                    | true                                           | A tool loop keeps the tier decided for its turn                                                                                    |
+| `monthly_usd_limit`                                     | 100                                            | Per user, UTC calendar month                                                                                                       |
+| `strong_cap_at` / `fast_only_at`                        | 0.60 / 0.85                                    | Spend ratios: strong becomes standard, then everything becomes fast                                                                |
+| `hard_stop_at`                                          | NULL                                           | Ratio of the limit at which calls are refused (429 `budget_exhausted`); NULL = never refuse                                        |
+
+`boss_ai_user_budgets (user_id, router_model_id, monthly_usd_limit, note)` overrides the limit for
+one user.
+
+- **Authorization** for a routed call is the user's policy for the router model (permission, ban,
+  published). Tier models need no allowance and may stay unpublished, so the catalog never shows
+  them and clients cannot request them. If the user does have allowances for a tier model, its token
+  quotas and `over_allowance_model_id` chain still apply to it. The router model's own token
+  allowance does not bind routed calls; the USD budget does. Concurrency uses the router model's
+  `max_concurrent`.
+- **Decider**: `POST {base_url}/v1/embeddings` with the pinned body (`encoding_format:"float"`,
+  `use_activation:false`, `add_special_tokens:false`) and the exact chat template and 255 option
+  codes of the decider notebook. The response must echo the model and carry 255 finite scores;
+  probabilities are softmax(score / temperature) over the first N slots only, where N is the number
+  of choices. No retry, no redirects. Any failure, timeout or low confidence uses `default_tier` and
+  audits `route_decider_failed` / `route_low_confidence`; the request is never failed for it.
+- **State** sent to the decider (never the whole history, at most `state_char_budget` characters):
+  the latest user message, the previous assistant text, tool rounds in this turn, whether images are
+  attached, the estimated prompt size and whether tools are offered.
+- **Sticky**: a call whose last message is a tool result reuses the tier stored for the turn (key =
+  sha256 of user, router and the messages up to the last user message; 30 minutes) because prompt
+  caching is per model. Without a stored decision the decider is asked.
+- **Budget**: spend is `cost_usd` summed over the user's requests served through the router this UTC
+  month, counting the reserved estimate of requests still in flight. At 60% strong calls are served
+  by standard, at 85% everything by fast; a call whose estimate (prompt at the input price plus
+  `min(max_tokens, 8000)` output tokens) would not fit steps down a tier, and one that fits on no
+  tier is served by the exhausted model. At 100% every call is served by the exhausted model with
+  `route_source` `budget`, the header `X-BOSS-AI-Budget: exhausted` and the audit
+  `budget_exhausted_served_fast`: users are not refused unless `hard_stop_at` is set. The database
+  re-checks under its lock, so concurrent calls cannot overspend.
+- **Headers**: `X-BOSS-AI-Tier`, `X-BOSS-AI-Served-Model`, `X-BOSS-AI-Route-Source`
+  (`decider|sticky|default|budget`). `/v1/usage` and `/v1/models` add `budget` for the router model:
+  `monthly_usd_limit`, `spent_usd`, `remaining_usd`, `resets_at` and `state` (`normal`,
+  `strong_capped`, `fast_only`, `exhausted (serving fast model)`, `hard_stopped`).
+- **Pricing and cost**: `boss_ai_models.usd_per_mtok_input|output|cache_read|cache_write` (NULL =
+  unknown: a missing component price uses the input price, no input price means the cost stays the
+  reserved estimate; both log `price_missing`). `boss_ai_requests` records `input_tokens`,
+  `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cost_usd`, `routed_from`, `tier` and
+  `route_source`; `input_tokens` excludes cache reads and writes. A stream cut early records the
+  cancel estimate (no cache split).
+
+Operator data (applied by hand, not a migration). Prices are per million tokens:
+
+```sql
+INSERT INTO boss_ai_models (id, display_name, connection_id, upstream_model, capabilities, context_length, max_output_tokens, published, fallbacks,
+  usd_per_mtok_input, usd_per_mtok_output, usd_per_mtok_cache_read, usd_per_mtok_cache_write) VALUES
+ ('optimist-fast','Optimist Fast','openrouter-optimist','anthropic/claude-haiku-5.5',ARRAY['text','tools','vision'],200000,8192,false,'[]',
+  0.10,0.50,0.01,0.125),
+ ('optimist-standard','Optimist Standard','anthropic','claude-sonnet-5-5',ARRAY['text','tools','vision'],200000,8192,false,
+  '[{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-sonnet-5.5"},{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-haiku-5.5"}]',
+  2.00,10.00,0.20,2.50);
+-- optimist-strong exists: make it the unpublished strong tier (Anthropic native, OpenRouter opus then haiku)
+UPDATE boss_ai_models SET published=false, connection_id='anthropic', upstream_model='claude-opus-5-5',
+  provider_routing=NULL, capabilities=ARRAY['text','tools','vision'], context_length=200000, max_output_tokens=8192,
+  fallbacks='[{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-opus-5.5"},{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-haiku-5.5"}]',
+  usd_per_mtok_input=4.00, usd_per_mtok_output=20.00, usd_per_mtok_cache_read=0.20, usd_per_mtok_cache_write=5.00
+ WHERE id='optimist-strong';
+-- the router: optimist stays published with its ai.optimist allowance (that is the authorization)
+INSERT INTO boss_ai_routers (model_id, decider_connection_id, fast_model_id, standard_model_id, strong_model_id)
+VALUES ('optimist','risa_qwen_internal','optimist-fast','optimist-standard','optimist-strong');
+-- one user with a different monthly limit
+INSERT INTO boss_ai_user_budgets (user_id, router_model_id, monthly_usd_limit, note)
+VALUES ('<user uuid>','optimist',250,'design partner');
+```
+
+Local debugging only: with the environment variable `BOSS_AI_ROUTE_TRACE=1` each routed call logs
+one `route_trace` JSON line (request, user, route source, tier, probabilities, confidence, decider
+latency, served model, token counts, cost, month spend) plus the decider state text and the first
+2,000 characters of the reply. It logs content: never set it in production.
+
 ## Allowance semantics
 
 Request validation uses a read-only, permission-filtered preflight before inserting any ledger row.

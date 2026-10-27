@@ -672,6 +672,8 @@ export class StreamAdapter {
   }
   /** Characters of model output (text, reasoning, tool names and arguments) streamed so far. */
   streamedChars = 0
+  /** The assistant text streamed so far, capped, for the local route trace only. */
+  replyText = ""
   /** Prompt tokens the upstream reported before the end of the stream, when it did. */
   get promptTokens(): number | null {
     return this.anthropic.promptTokens
@@ -688,6 +690,9 @@ export class StreamAdapter {
         if (!d) continue
         for (const k of ["content", "reasoning_content", "reasoning"]) {
           if (typeof d[k] === "string") this.streamedChars += (d[k] as string).length
+        }
+        if (typeof d.content === "string" && this.replyText.length < 2000) {
+          this.replyText = (this.replyText + d.content).slice(0, 2000)
         }
         for (const call of (d.tool_calls as Obj[] | undefined) ?? []) {
           const f = (call.function ?? {}) as Obj
