@@ -1,5 +1,7 @@
 -- Native Anthropic Messages connections and per-model ordered fallbacks.
--- boss_ai_models.fallbacks = [{connection_id, upstream_model, provider_routing?}] (at most 4).
+-- boss_ai_models.fallbacks = [{connection_id, upstream_model, provider_routing?, usd_per_mtok_input?,
+-- usd_per_mtok_output?, usd_per_mtok_cache_read?, usd_per_mtok_cache_write?}] (at most 4); the
+-- prices bill a call served by that fallback (absent: the model's own prices).
 -- boss_ai_lookup/reserve return the resolved list as `fallbacks`, each entry carrying its
 -- connection row (disabled or missing connections are dropped at resolution).
 -- lookup/reserve bodies are copied from 20261015000000_boss_ai_voice.sql plus the `fallbacks` key.
@@ -17,7 +19,10 @@ RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
       SELECT 1 FROM jsonb_array_elements(f) AS e(v) WHERE NOT coalesce(CASE
         WHEN jsonb_typeof(v) <> 'object' THEN false
         ELSE NOT EXISTS (SELECT 1 FROM jsonb_object_keys(v) AS k
-            WHERE k NOT IN ('connection_id','upstream_model','provider_routing'))
+            WHERE k NOT IN ('connection_id','upstream_model','provider_routing',
+              'usd_per_mtok_input','usd_per_mtok_output','usd_per_mtok_cache_read','usd_per_mtok_cache_write'))
+          AND NOT EXISTS (SELECT 1 FROM jsonb_each(v) AS p(k, x)
+            WHERE k LIKE 'usd_per_mtok_%' AND CASE WHEN jsonb_typeof(x) = 'number' THEN (x#>>'{}')::numeric < 0 ELSE true END)
           AND jsonb_typeof(v->'connection_id') = 'string' AND length(v->>'connection_id') > 0
           AND jsonb_typeof(v->'upstream_model') = 'string' AND length(v->>'upstream_model') > 0
           AND (NOT v ? 'provider_routing' OR (jsonb_typeof(v->'provider_routing') = 'object'
@@ -30,7 +35,7 @@ ALTER TABLE public.boss_ai_models
   ADD COLUMN fallbacks jsonb NOT NULL DEFAULT '[]'::jsonb,
   ADD CONSTRAINT boss_ai_models_fallbacks_check CHECK (public.boss_ai_fallbacks_valid(fallbacks));
 COMMENT ON COLUMN public.boss_ai_models.fallbacks IS
-  'Ordered alternate routes tried after the primary: [{connection_id, upstream_model, provider_routing?}], at most 4.';
+  'Ordered alternate routes tried after the primary: [{connection_id, upstream_model, provider_routing?, usd_per_mtok_*?}], at most 4.';
 
 -- A CHECK cannot read other tables: existence is enforced here, and a connection a fallback uses
 -- cannot be deleted or renamed.
@@ -68,6 +73,9 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
     jsonb_build_object('connection_id', e.v->>'connection_id', 'upstream_model', e.v->>'upstream_model')
     || CASE WHEN e.v ? 'provider_routing'
          THEN jsonb_build_object('provider_routing', e.v->'provider_routing') ELSE '{}'::jsonb END
+    || coalesce((SELECT jsonb_object_agg(k, e.v->k) FROM unnest(ARRAY['usd_per_mtok_input',
+         'usd_per_mtok_output','usd_per_mtok_cache_read','usd_per_mtok_cache_write']) AS k
+         WHERE e.v ? k), '{}'::jsonb)
     || jsonb_build_object('connection', to_jsonb(c)) ORDER BY e.ord), '[]'::jsonb)
   FROM jsonb_array_elements(CASE WHEN jsonb_typeof(f) = 'array' THEN f ELSE '[]'::jsonb END)
     WITH ORDINALITY AS e(v, ord)

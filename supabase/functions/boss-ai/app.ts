@@ -254,6 +254,12 @@ interface Route {
   model: Model
   connection: Connection
 }
+const PRICE_KEYS = [
+  "usd_per_mtok_input",
+  "usd_per_mtok_output",
+  "usd_per_mtok_cache_read",
+  "usd_per_mtok_cache_write",
+] as const
 const COOLDOWN_MS = 60_000
 const routeKey = (connection: string | undefined, upstream: string) =>
   `${connection ?? "?"}|${upstream}`
@@ -275,6 +281,10 @@ function routesOf(
         ...model,
         upstream_model: f.upstream_model,
         provider_routing: f.provider_routing ?? null,
+        // A fallback with its own prices is billed at them, not at the tier model's.
+        ...(PRICE_KEYS.some((k) => f[k] !== undefined)
+          ? Object.fromEntries(PRICE_KEYS.map((k) => [k, f[k] ?? null]))
+          : {}),
       },
       connection: f.connection,
     })),
@@ -1025,7 +1035,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         } else if (est) u = { ...est, cacheRead: 0, cacheWrite: 0 }
         else return {}
         lastUsage = usage
-        const { cost, missing } = costUsd(pricesOf(result.model as unknown as Obj), u)
+        const { cost, missing } = costUsd(pricesOf(served.model as unknown as Obj), u)
         if (missing && routing) audit("price_missing")
         lastCost = cost
         return {
@@ -1051,6 +1061,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           confidence: routing.decision?.confidence ?? null,
           decider_latency_ms: routing.decision?.latency_ms ?? null,
           served_model: result.model.id,
+          served_route: served.key,
           input_tokens: u.prompt_tokens ?? null,
           output_tokens: u.completion_tokens ?? null,
           cache_read_tokens: d.cached_tokens ?? 0,

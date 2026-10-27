@@ -319,6 +319,42 @@ Deno.test("failed requests: estimate charged, a refused connection or DNS failur
   assertEquals(later.settled(), [promptEstimate(later, 0)])
 })
 
+Deno.test("a fallback is billed at its own prices, else at the tier's", async () => {
+  const tier = {
+    usd_per_mtok_input: 4,
+    usd_per_mtok_output: 20,
+    usd_per_mtok_cache_read: 0.2,
+    usd_per_mtok_cache_write: 5,
+  }
+  const haiku = {
+    ...fallbacks[1],
+    usd_per_mtok_input: 0.1,
+    usd_per_mtok_output: 0.5,
+    usd_per_mtok_cache_read: 0.01,
+    usd_per_mtok_cache_write: 0.125,
+  }
+  const usage = { prompt_tokens: 1000, completion_tokens: 100 }
+  const priced = await fixture([() => fail(500, { message: "x" }), () => chat(usage)], {
+    fallbacks: [haiku],
+    model: tier,
+  })
+  assertEquals((await priced.send()).status, 200)
+  assert(Math.abs(Number(priced.settles()[0].p_cost_usd) - (1000 * 0.1 + 100 * 0.5) / 1e6) < 1e-12)
+  const unpriced = await fixture([() => fail(500, { message: "x" }), () => chat(usage)], {
+    fallbacks: [fallbacks[1]],
+    model: tier,
+  })
+  await unpriced.send()
+  assert(Math.abs(Number(unpriced.settles()[0].p_cost_usd) - (1000 * 4 + 100 * 20) / 1e6) < 1e-12)
+  // The primary keeps the tier prices.
+  const primary = await fixture([() => message({ input_tokens: 1000, output_tokens: 100 })], {
+    fallbacks: [haiku],
+    model: tier,
+  })
+  await primary.send()
+  assert(Math.abs(Number(primary.settles()[0].p_cost_usd) - (1000 * 4 + 100 * 20) / 1e6) < 1e-12)
+})
+
 Deno.test("fallback: a response that never arrives times out per attempt and falls back", async () => {
   const hang: Responder = (_url, init) =>
     new Promise((_, reject) =>

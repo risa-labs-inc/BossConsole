@@ -197,12 +197,15 @@ shows up in the logs.
 ## Fallbacks
 
 `boss_ai_models.fallbacks` (`jsonb NOT NULL DEFAULT '[]'`) is an ordered array of at most 4
-`{"connection_id", "upstream_model", "provider_routing"?}`; unknown keys, a missing connection or an
-invalid `provider_routing` are refused by the table checks and triggers (a connection used by a
-fallback cannot be deleted or renamed). `boss_ai_lookup`/`boss_ai_reserve` return the resolved list
-as `fallbacks`, each entry with its connection row; disabled connections are dropped. A fallback
-route uses its own connection's `api_type`, its own `upstream_model` and its own `provider_routing`
-(the model's primary routing never applies to it).
+`{"connection_id", "upstream_model", "provider_routing"?, "usd_per_mtok_input"?, "usd_per_mtok_output"?, "usd_per_mtok_cache_read"?, "usd_per_mtok_cache_write"?}`;
+unknown keys, a missing connection or an invalid `provider_routing` are refused by the table checks
+and triggers (a connection used by a fallback cannot be deleted or renamed).
+`boss_ai_lookup`/`boss_ai_reserve` return the resolved list as `fallbacks`, each entry with its
+connection row; disabled connections are dropped. A fallback route uses its own connection's
+`api_type`, its own `upstream_model` and its own `provider_routing` (the model's primary routing
+never applies to it). A call it serves is billed at the entry's `usd_per_mtok_*` prices when it has
+any (missing components fall back to its input price), else at the model's own prices; set them
+whenever a fallback is a cheaper model than the tier.
 
 - The primary is tried first, then each fallback in order, on a network error, an upstream timeout
   before any response (streaming requests only: non-final routes get `attemptTimeoutMs`, 90 s, to
@@ -214,7 +217,10 @@ route uses its own connection's `api_type`, its own `upstream_model` and its own
   the usual `stream_failed` frame. The request keeps one reservation and settles with the measured
   tokens of the route that served. A failed attempt keeps the existing refund rule (400/401/402/403/
   404/405/406/413/415/422/429 prove no work, anything else may have run); a later refundable status
-  never refunds an earlier attempt that may have run.
+  never refunds an earlier attempt that may have run. A refused connection or DNS failure (the
+  request never left) also refunds. When every route failed and a chat call may have run, the
+  request is charged an estimate (request bytes / 3 tokens, input price) and audits
+  `usage_unknown_estimate_charged`, never the whole context reservation.
 - Per-isolate circuit breaker: a route (`connection_id|upstream_model`) that failed with
   401/402/403/429/5xx, or with a 400 whose message names a usage/spend/credit/quota/balance limit,
   is skipped for 60 s. When every route is cooling all of them are tried. Other 400s do not trip it.
@@ -231,7 +237,7 @@ Operator data (applied by hand, not a migration). After
 
 ```sql
 update boss_ai_connections set api_type='anthropic_messages' where id='anthropic';
-update boss_ai_models set connection_id='anthropic', upstream_model='claude-opus-5-5', provider_routing=null, fallbacks='[{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-opus-5.5","provider_routing":{"order":["anthropic","amazon-bedrock","google-vertex"],"allow_fallbacks":true}},{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-haiku-5.5"}]' where id in ('optimist','optimist-strong');
+update boss_ai_models set connection_id='anthropic', upstream_model='claude-opus-5-5', provider_routing=null, fallbacks='[{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-opus-5.5","provider_routing":{"order":["anthropic","amazon-bedrock","google-vertex"],"allow_fallbacks":true},"usd_per_mtok_input":4.00,"usd_per_mtok_output":20.00,"usd_per_mtok_cache_read":0.20,"usd_per_mtok_cache_write":5.00},{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-haiku-5.5","usd_per_mtok_input":0.10,"usd_per_mtok_output":0.50,"usd_per_mtok_cache_read":0.01,"usd_per_mtok_cache_write":0.125}]' where id in ('optimist','optimist-strong');
 ```
 
 Set `provider_routing` to NULL on a model moved to the Anthropic connection: routing on a
@@ -581,12 +587,12 @@ INSERT INTO boss_ai_models (id, display_name, connection_id, upstream_model, cap
  ('optimist-fast','Optimist Fast','openrouter-optimist','anthropic/claude-haiku-5.5',ARRAY['text','tools','vision'],1000000,128000,false,'[]',
   0.10,0.50,0.01,0.125),
  ('optimist-standard','Optimist Standard','anthropic','claude-sonnet-5-5',ARRAY['text','tools','vision'],1000000,128000,false,
-  '[{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-sonnet-5.5"},{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-haiku-5.5"}]',
+  '[{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-sonnet-5.5","usd_per_mtok_input":2.00,"usd_per_mtok_output":10.00,"usd_per_mtok_cache_read":0.20,"usd_per_mtok_cache_write":2.50},{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-haiku-5.5","usd_per_mtok_input":0.10,"usd_per_mtok_output":0.50,"usd_per_mtok_cache_read":0.01,"usd_per_mtok_cache_write":0.125}]',
   2.00,10.00,0.20,2.50);
 -- optimist-strong exists: make it the unpublished strong tier (Anthropic native, OpenRouter opus then haiku)
 UPDATE boss_ai_models SET published=false, connection_id='anthropic', upstream_model='claude-opus-5-5',
   provider_routing=NULL, capabilities=ARRAY['text','tools','vision'], context_length=1000000, max_output_tokens=128000,
-  fallbacks='[{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-opus-5.5"},{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-haiku-5.5"}]',
+  fallbacks='[{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-opus-5.5","usd_per_mtok_input":4.00,"usd_per_mtok_output":20.00,"usd_per_mtok_cache_read":0.20,"usd_per_mtok_cache_write":5.00},{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-haiku-5.5","usd_per_mtok_input":0.10,"usd_per_mtok_output":0.50,"usd_per_mtok_cache_read":0.01,"usd_per_mtok_cache_write":0.125}]',
   usd_per_mtok_input=4.00, usd_per_mtok_output=20.00, usd_per_mtok_cache_read=0.20, usd_per_mtok_cache_write=5.00
  WHERE id='optimist-strong';
 -- the router: optimist stays published with its ai.optimist allowance (that is the authorization)

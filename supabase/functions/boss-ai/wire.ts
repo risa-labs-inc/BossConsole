@@ -49,6 +49,10 @@ export interface Fallback {
   connection_id: string
   upstream_model: string
   provider_routing?: unknown
+  usd_per_mtok_input?: number | null
+  usd_per_mtok_output?: number | null
+  usd_per_mtok_cache_read?: number | null
+  usd_per_mtok_cache_write?: number | null
   connection: Connection
 }
 export function object(value: unknown): Obj {

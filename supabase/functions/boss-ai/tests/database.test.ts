@@ -363,6 +363,14 @@ Deno.test("fallbacks: validated shape, existing connections, resolved by lookup 
       crypto.randomUUID(),
     ])
     assertEquals(reserved.fallbacks.length, 2)
+    // Per-entry prices are accepted and resolved; negative or non-numeric ones are refused.
+    await set(`[${entry(',"usd_per_mtok_input":0.1,"usd_per_mtok_cache_read":0')}]`)
+    const priced = await scalar("SELECT public.boss_ai_lookup($1,'m') AS value", [user])
+    assertEquals(priced.fallbacks[0].usd_per_mtok_input, 0.1)
+    assertEquals(priced.fallbacks[0].usd_per_mtok_cache_read, 0)
+    assert(!("usd_per_mtok_output" in priced.fallbacks[0]))
+    await assertRejects(() => set(`[${entry(',"usd_per_mtok_input":-1')}]`))
+    await assertRejects(() => set(`[${entry(',"usd_per_mtok_output":"2"')}]`))
     for (
       const bad of [
         "{}",
