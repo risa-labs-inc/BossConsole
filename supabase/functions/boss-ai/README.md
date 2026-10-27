@@ -467,7 +467,7 @@ Operator data (applied by hand, not a migration):
 ```sql
 -- the cheaper model, reachable by the same permission
 INSERT INTO boss_ai_models (id, display_name, connection_id, upstream_model, capabilities, context_length, max_output_tokens, published)
-VALUES ('optimist-lite','Optimist Lite','openrouter-optimist','anthropic/claude-haiku-5.5',ARRAY['text','tools','vision'],200000,8192,true);
+VALUES ('optimist-lite','Optimist Lite','openrouter-optimist','anthropic/claude-haiku-5.5',ARRAY['text','tools','vision'],1000000,128000,true);
 INSERT INTO boss_ai_allowances (model_id, permission_name, tokens_per_day, tokens_per_week, tokens_per_month, max_concurrent)
 VALUES ('optimist-lite','ai.optimist',50000000,200000000,600000000,4);
 -- over-quota users are served by it, with a monthly cap on the main model
@@ -553,14 +553,14 @@ Operator data (applied by hand, not a migration). Prices are per million tokens:
 ```sql
 INSERT INTO boss_ai_models (id, display_name, connection_id, upstream_model, capabilities, context_length, max_output_tokens, published, fallbacks,
   usd_per_mtok_input, usd_per_mtok_output, usd_per_mtok_cache_read, usd_per_mtok_cache_write) VALUES
- ('optimist-fast','Optimist Fast','openrouter-optimist','anthropic/claude-haiku-5.5',ARRAY['text','tools','vision'],200000,8192,false,'[]',
+ ('optimist-fast','Optimist Fast','openrouter-optimist','anthropic/claude-haiku-5.5',ARRAY['text','tools','vision'],1000000,128000,false,'[]',
   0.10,0.50,0.01,0.125),
- ('optimist-standard','Optimist Standard','anthropic','claude-sonnet-5-5',ARRAY['text','tools','vision'],200000,8192,false,
+ ('optimist-standard','Optimist Standard','anthropic','claude-sonnet-5-5',ARRAY['text','tools','vision'],1000000,128000,false,
   '[{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-sonnet-5.5"},{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-haiku-5.5"}]',
   2.00,10.00,0.20,2.50);
 -- optimist-strong exists: make it the unpublished strong tier (Anthropic native, OpenRouter opus then haiku)
 UPDATE boss_ai_models SET published=false, connection_id='anthropic', upstream_model='claude-opus-5-5',
-  provider_routing=NULL, capabilities=ARRAY['text','tools','vision'], context_length=200000, max_output_tokens=8192,
+  provider_routing=NULL, capabilities=ARRAY['text','tools','vision'], context_length=1000000, max_output_tokens=128000,
   fallbacks='[{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-opus-5.5"},{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-haiku-5.5"}]',
   usd_per_mtok_input=4.00, usd_per_mtok_output=20.00, usd_per_mtok_cache_read=0.20, usd_per_mtok_cache_write=5.00
  WHERE id='optimist-strong';

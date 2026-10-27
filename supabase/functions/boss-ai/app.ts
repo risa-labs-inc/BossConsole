@@ -117,11 +117,15 @@ function validAgentUrl(value: unknown, deps: Dependencies): value is string {
     return false
   }
 }
-function configuredHttps(value: string, protocols = ["https:"]): string {
+function configuredHttps(value: string, protocols = ["https:"], allowLocal = false): string {
   try {
     const url = new URL(value)
+    // Loopback http only for local development (BOSS_AI_ALLOW_LOCAL_AGENT=1), any port.
+    const local = allowLocal && url.protocol === "http:" &&
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost")
     if (
-      !protocols.includes(url.protocol) || url.username || url.password || url.search || url.hash
+      !(local || protocols.includes(url.protocol)) || url.username || url.password || url.search ||
+      url.hash
     ) throw new Error()
     return value.replace(/\/+$/, "")
   } catch {
@@ -225,11 +229,12 @@ async function settleReservation(
  * an internal host. BOSS_AI_PUBLIC_URL (e.g. https://api.risaboss.com/functions/v1/boss-ai) wins, else SUPABASE_URL.
  */
 function publicBase(deps: Dependencies): string {
+  const local = deps.secret("BOSS_AI_ALLOW_LOCAL_AGENT") === "1"
   const explicit = deps.secret("BOSS_AI_PUBLIC_URL")?.replace(/\/+$/, "")
-  if (explicit) return configuredHttps(explicit)
+  if (explicit) return configuredHttps(explicit, ["https:"], local)
   const supabase = deps.secret("SUPABASE_URL")?.replace(/\/+$/, "")
   if (!supabase) throw new HttpError(503, "voice_unavailable", "Voice calls are not configured.")
-  return `${configuredHttps(supabase)}/functions/v1/boss-ai`
+  return `${configuredHttps(supabase, ["https:"], local)}/functions/v1/boss-ai`
 }
 
 interface Routing {

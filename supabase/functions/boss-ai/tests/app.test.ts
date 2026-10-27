@@ -1229,3 +1229,50 @@ Deno.test("WAV metadata after audio is not billed as speech", () => {
   new DataView(tail.buffer).setUint32(4, 32000, true)
   assertEquals(wavSeconds(btoa(audio + String.fromCharCode(...tail))), 1)
 })
+
+Deno.test("/v1/provider accepts a loopback http base only with BOSS_AI_ALLOW_LOCAL_AGENT=1", async () => {
+  const token = (await mintToken("00000000-0000-0000-0000-000000000001", signingKey(secret)))
+    .access_token
+  const provider = async (env: Record<string, string>) => {
+    const handler = createHandler({
+      sessionUser: () => Promise.resolve(null),
+      secret: (name) => name === "BOSS_AI_SIGNING_SECRET" ? secret : env[name],
+      rpc: () => Promise.resolve(null),
+      fetch: () => {
+        throw new Error("Must not call upstream")
+      },
+    })
+    return await handler(
+      new Request("https://api.example/functions/v1/boss-ai/v1/provider", {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+    )
+  }
+  const local = { BOSS_AI_PUBLIC_URL: "http://127.0.0.1:54321/functions/v1/boss-ai" }
+  const ok = await provider({ ...local, BOSS_AI_ALLOW_LOCAL_AGENT: "1" })
+  assertEquals(ok.status, 200)
+  assertEquals((await ok.json()).baseUrl, "http://127.0.0.1:54321/functions/v1/boss-ai/v1")
+  const localhost = await provider({
+    BOSS_AI_PUBLIC_URL: "http://localhost:8000/functions/v1/boss-ai",
+    BOSS_AI_ALLOW_LOCAL_AGENT: "1",
+  })
+  assertEquals((await localhost.json()).baseUrl, "http://localhost:8000/functions/v1/boss-ai/v1")
+  // SUPABASE_URL is accepted the same way.
+  const viaSupabase = await provider({
+    SUPABASE_URL: "http://127.0.0.1:54321",
+    BOSS_AI_ALLOW_LOCAL_AGENT: "1",
+  })
+  assertEquals((await viaSupabase.json()).baseUrl, "http://127.0.0.1:54321/functions/v1/boss-ai/v1")
+  // Without the flag, or for a non-loopback http host, production behaviour is unchanged.
+  assertEquals((await provider(local)).status, 503)
+  for (const url of ["http://example.com/functions/v1/boss-ai", "http://10.0.0.5/x"]) {
+    assertEquals(
+      (await provider({ BOSS_AI_PUBLIC_URL: url, BOSS_AI_ALLOW_LOCAL_AGENT: "1" })).status,
+      503,
+    )
+  }
+  const prod = await provider({
+    BOSS_AI_PUBLIC_URL: "https://api.risaboss.com/functions/v1/boss-ai",
+  })
+  assertEquals((await prod.json()).baseUrl, "https://api.risaboss.com/functions/v1/boss-ai/v1")
+})
