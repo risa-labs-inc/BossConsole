@@ -149,9 +149,17 @@ export function endpoint(connection: Connection): string {
 }
 
 /** Anthropic authenticates with x-api-key, never Bearer; audio routes are always Bearer. */
-export function upstreamHeaders(connection: Connection, key: string, chat = true): Obj {
+export function upstreamHeaders(
+  connection: Connection,
+  key: string,
+  chat = true,
+): Record<string, string> {
   return chat && connection.api_type === "anthropic_messages"
-    ? { "x-api-key": key, "anthropic-version": ANTHROPIC_VERSION, "Content-Type": "application/json" }
+    ? {
+      "x-api-key": key,
+      "anthropic-version": ANTHROPIC_VERSION,
+      "Content-Type": "application/json",
+    }
     : { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }
 }
 

@@ -48,7 +48,10 @@ export function anthropicMessages(input: Obj[]): { system: Obj[]; messages: Obj[
     // Same-role neighbours merge so roles alternate; tool_results must lead a user turn.
     const all = [...last.content as Obj[], ...blocks]
     last.content = role === "user"
-      ? [...all.filter((b) => b.type === "tool_result"), ...all.filter((b) => b.type !== "tool_result")]
+      ? [
+        ...all.filter((b) => b.type === "tool_result"),
+        ...all.filter((b) => b.type !== "tool_result"),
+      ]
       : all
   }
   for (const m of input) {
@@ -85,9 +88,11 @@ export function anthropicMessages(input: Obj[]): { system: Obj[]; messages: Obj[
   return { system, messages }
 }
 
-function markLast<T extends Obj>(blocks: T[]): T[] {
+// Content blocks that cannot carry cache_control (thinking, unknown types) are left unmarked.
+// Tool definitions have no `type` and always can.
+function markLast<T extends Obj>(blocks: T[], any = false): T[] {
   const last = blocks.length - 1
-  if (last < 0 || !CACHEABLE.includes(String(blocks[last].type))) return blocks
+  if (last < 0 || !(any || CACHEABLE.includes(String(blocks[last].type)))) return blocks
   return blocks.map((b, i) => i === last ? { ...b, cache_control: EPHEMERAL } : b)
 }
 
@@ -105,7 +110,7 @@ export function withAnthropicCache(
   })
   const targets = new Set([messages.length - 1, user - 1].filter((i) => i >= 0))
   return {
-    ...(tools ? { tools: markLast(tools) } : {}),
+    ...(tools ? { tools: markLast(tools, true) } : {}),
     system: markLast(system),
     messages: messages.map((m, i) =>
       targets.has(i) ? { ...m, content: markLast(m.content as Obj[]) } : m
