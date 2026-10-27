@@ -161,6 +161,69 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
   FROM b;
 $$;
 
+-- Policy/usage with an opt-in for unpublished models: a hidden tier model is not callable directly
+-- (the wrappers keep the published filter) but its allowances must still bind routed calls.
+CREATE FUNCTION public.boss_ai_policy_for(p_user_id uuid, p_model_id text, p_include_hidden boolean)
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT CASE WHEN b.n = 0 THEN NULL ELSE jsonb_build_object(
+    'day', coalesce(o.tokens_per_day, b.d), 'week', coalesce(o.tokens_per_week, b.w),
+    'month', coalesce(o.tokens_per_month, b.mo), 'concurrent', coalesce(o.max_concurrent, b.c)) END
+  FROM (
+    SELECT count(*) AS n, max(a.tokens_per_day) AS d, max(a.tokens_per_week) AS w,
+      max(a.tokens_per_month) AS mo, max(a.max_concurrent) AS c
+    FROM public.boss_ai_models m
+    JOIN public.boss_ai_connections c ON c.id = m.connection_id AND c.enabled
+    JOIN public.boss_ai_allowances a ON a.model_id = coalesce(m.allowance_model_id, m.id)
+    WHERE m.id = p_model_id AND (m.published OR p_include_hidden) AND m.enabled
+      AND EXISTS (SELECT 1 FROM auth.users u WHERE u.id = p_user_id
+        AND (u.banned_until IS NULL OR u.banned_until < now()))
+      AND public.user_has_permission(p_user_id, a.permission_name)
+  ) b
+  LEFT JOIN LATERAL (
+    SELECT u.* FROM public.boss_ai_user_allowances u
+    WHERE u.user_id = p_user_id AND u.model_id IN (p_model_id,
+      (SELECT coalesce(m2.allowance_model_id, m2.id) FROM public.boss_ai_models m2
+        WHERE m2.id = p_model_id))
+    ORDER BY (u.model_id = p_model_id) DESC LIMIT 1
+  ) o ON true;
+$$;
+
+CREATE FUNCTION public.boss_ai_usage_for(p_user_id uuid, p_model_id text, p_include_hidden boolean)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  v_policy jsonb := public.boss_ai_policy_for(p_user_id, p_model_id, p_include_hidden);
+  v_pool text := (SELECT coalesce(allowance_model_id, id) FROM public.boss_ai_models
+    WHERE id = p_model_id);
+  v_result jsonb := '{}'::jsonb;
+  v_period text;
+  v_start timestamptz;
+  v_used bigint;
+BEGIN
+  IF v_policy IS NULL THEN RETURN NULL; END IF;
+  FOREACH v_period IN ARRAY ARRAY['day','week','month'] LOOP
+    v_start := date_trunc(v_period, now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC';
+    SELECT coalesce(sum(r.charged_tokens),0) INTO v_used FROM public.boss_ai_requests r
+      JOIN public.boss_ai_models m ON m.id = r.model_id
+      WHERE r.user_id = p_user_id AND coalesce(m.allowance_model_id, m.id) = v_pool
+        AND r.started_at >= v_start;
+    v_result := v_result || jsonb_build_object(v_period, jsonb_build_object(
+      'limit', (v_policy->>v_period)::bigint, 'used', v_used,
+      'remaining', greatest(0, (v_policy->>v_period)::bigint - v_used),
+      'resets_at', (v_start AT TIME ZONE 'UTC' + ('1 ' || v_period)::interval) AT TIME ZONE 'UTC'));
+  END LOOP;
+  RETURN v_result;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.boss_ai_policy(p_user_id uuid, p_model_id text)
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT public.boss_ai_policy_for(p_user_id, p_model_id, false);
+$$;
+CREATE OR REPLACE FUNCTION public.boss_ai_usage(p_user_id uuid, p_model_id text)
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT public.boss_ai_usage_for(p_user_id, p_model_id, false);
+$$;
+
 CREATE OR REPLACE FUNCTION public.boss_ai_catalog(p_user_id uuid)
 RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
   SELECT coalesce(jsonb_agg(jsonb_build_object(
@@ -244,15 +307,16 @@ BEGIN
   IF v_active >= (v_policy->>'concurrent')::integer THEN
     RETURN jsonb_build_object('error','concurrency_exceeded');
   END IF;
-  -- Token allowances on the tier model apply only where the caller has some for it.
+  -- Token allowances on the tier model apply only where the caller has some for it; tier models are
+  -- unpublished, so the lookup includes hidden models.
   LOOP
     SELECT coalesce(allowance_model_id, id) INTO v_pool FROM public.boss_ai_models WHERE id = v_cur;
     PERFORM pg_advisory_xact_lock(hashtextextended(p_user_id::text || ':' || coalesce(v_pool, v_cur), 0));
-    v_sp := public.boss_ai_policy(p_user_id, v_cur);
+    v_sp := public.boss_ai_policy_for(p_user_id, v_cur, true);
     IF v_sp IS NULL THEN EXIT; END IF; -- no allowance for the caller on this model: no token quota
     SELECT * INTO v_model FROM public.boss_ai_models WHERE id = v_cur;
     v_amount := CASE WHEN v_model.kind = 'chat' THEN v_model.context_length ELSE v_model.max_output_tokens END;
-    v_usage := public.boss_ai_usage(p_user_id, v_cur);
+    v_usage := public.boss_ai_usage_for(p_user_id, v_cur, true);
     IF v_hop = 0 THEN v_first_usage := v_usage; END IF;
     v_exhausted := false;
     FOREACH v_period IN ARRAY ARRAY['day','week','month'] LOOP
@@ -301,6 +365,10 @@ BEGIN
 END;
 $$;
 
+REVOKE ALL ON FUNCTION public.boss_ai_policy_for(uuid,text,boolean),
+  public.boss_ai_usage_for(uuid,text,boolean) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.boss_ai_policy_for(uuid,text,boolean),
+  public.boss_ai_usage_for(uuid,text,boolean) TO service_role;
 REVOKE ALL ON FUNCTION public.boss_ai_settle(uuid,bigint,bigint,bigint,bigint,bigint,numeric),
   public.boss_ai_route_context(uuid,text), public.boss_ai_route_get(text,integer),
   public.boss_ai_route_put(text,uuid,text,text),

@@ -518,6 +518,16 @@ one user.
   quotas and `over_allowance_model_id` chain still apply to it. The router model's own token
   allowance does not bind routed calls; the USD budget does. Concurrency uses the router model's
   `max_concurrent`.
+- **Tier quotas** need a `boss_ai_allowances` row on the tier model (e.g. `optimist-strong`), plus
+  an optional per-user `boss_ai_user_allowances` override whose `over_allowance_model_id` is served
+  once it is used up. A tier model with no row for the caller has no token quota.
+
+  ```sql
+  INSERT INTO boss_ai_allowances (model_id, permission_name, tokens_per_day, tokens_per_week, tokens_per_month, max_concurrent)
+  VALUES ('optimist-strong','ai.use',20000000,100000000,300000000,4);
+  INSERT INTO boss_ai_user_allowances (user_id, model_id, tokens_per_month, over_allowance_model_id)
+  VALUES ('<user-uuid>','optimist-strong',50000000,'optimist-fast');
+  ```
 - **Decider**: `POST {base_url}/v1/embeddings` with the pinned body (`encoding_format:"float"`,
   `use_activation:false`, `add_special_tokens:false`) and the exact chat template and 255 option
   codes of the decider notebook. The response must echo the model and carry 255 finite scores;
