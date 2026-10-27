@@ -48,7 +48,12 @@ async function fixture(options: {
     upstreamTimeoutMs: 20,
     settlementTimeoutMs: 5,
     sessionUser: async (t) => t === "boss-session" ? "00000000-0000-0000-0000-000000000001" : null,
-    secret: (name) => name === "BOSS_AI_SIGNING_SECRET" ? secret : "upstream-secret",
+    secret: (name) =>
+      name === "BOSS_AI_SIGNING_SECRET"
+        ? secret
+        : name === "BOSS_AI_PUBLIC_URL"
+        ? "https://api.risaboss.com/functions/v1/boss-ai"
+        : "upstream-secret",
     async rpc(name, params) {
       calls.push({ name, params })
       if (name === "boss_ai_settle") settlements++
@@ -535,7 +540,8 @@ Deno.test("RPC tickets exchange for AI tokens without a BOSS session", async () 
     sessionUser: () => {
       throw new Error("Must not access BOSS session")
     },
-    secret: () => secret,
+    secret: (name) =>
+      name === "BOSS_AI_PUBLIC_URL" ? "https://api.risaboss.com/functions/v1/boss-ai" : secret,
     fetch: () => {
       throw new Error("Must not call upstream")
     },

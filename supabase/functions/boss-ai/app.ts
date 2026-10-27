@@ -598,7 +598,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
             schema: "boss-managed-provider-v1",
             name: "BOSS AI",
             brokerId: "boss-ai",
-            baseUrl: "https://api.risaboss.com/functions/v1/boss-ai/v1",
+            baseUrl: `${publicBase(deps)}/v1`,
             defaultForNewUsers: true,
           },
           200,

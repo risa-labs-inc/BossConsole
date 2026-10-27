@@ -46,6 +46,20 @@ class CredentialBrokersTest {
     }
 
     @Test
+    fun `boss ai base override accepts only risaboss https or loopback http`() {
+        val builtIn = "https://api.risaboss.com/functions/v1/boss-ai"
+        assertEquals(builtIn, CredentialBrokers.resolveBossAiBase(null))
+        assertEquals(builtIn, CredentialBrokers.resolveBossAiBase("  "))
+        assertEquals("http://127.0.0.1:54321/functions/v1/boss-ai", CredentialBrokers.resolveBossAiBase("http://127.0.0.1:54321/functions/v1/boss-ai/"))
+        assertEquals("http://localhost:54321/x", CredentialBrokers.resolveBossAiBase("http://localhost:54321/x"))
+        assertEquals("https://api.risaboss.com/y", CredentialBrokers.resolveBossAiBase("https://api.risaboss.com/y"))
+        assertEquals(builtIn, CredentialBrokers.resolveBossAiBase("http://attacker.example/x"))
+        assertEquals(builtIn, CredentialBrokers.resolveBossAiBase("https://risaboss.com.evil.example/x"))
+        assertEquals(builtIn, CredentialBrokers.resolveBossAiBase("http://127.0.0.1@evil.example/x"))
+        assertEquals(builtIn, CredentialBrokers.resolveBossAiBase("not a url"))
+    }
+
+    @Test
     fun `broker ids are unique`() {
         // find() takes the first match, so a duplicate would silently shadow one.
         val ids = CredentialBrokers.all().map { it.id }
