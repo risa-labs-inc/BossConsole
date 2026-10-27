@@ -682,7 +682,9 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         const attempt = new AbortController()
         const link = () => attempt.abort()
         abort.signal.addEventListener("abort", link, { once: true })
-        const timer = i < order.length - 1
+        // Streams answer with headers at once; a non-stream upstream only after generation ends, so
+        // it gets the overall deadline alone (a short one would re-run a long answer twice).
+        const timer = i < order.length - 1 && input.stream === true
           ? setTimeout(link, deps.attemptTimeoutMs ?? 90_000)
           : undefined
         const release = () => {

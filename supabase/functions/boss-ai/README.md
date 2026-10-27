@@ -199,10 +199,11 @@ route uses its own connection's `api_type`, its own `upstream_model` and its own
 (the model's primary routing never applies to it).
 
 - The primary is tried first, then each fallback in order, on a network error, an upstream timeout
-  before any response (non-final routes get `attemptTimeoutMs`, 90 s, to answer; the 4 minute
-  request deadline still applies) and any non-2xx status. A client cancel or the overall deadline
-  ends the request. A route whose request cannot be built (for example routing on a non-OpenRouter
-  connection) is skipped.
+  before any response (streaming requests only: non-final routes get `attemptTimeoutMs`, 90 s, to
+  answer, since a non-stream upstream answers only after generating; the 4 minute request deadline
+  still applies) and any non-2xx status. A client cancel or the overall deadline ends the request. A
+  route whose request cannot be built (for example routing on a non-OpenRouter connection) is
+  skipped.
 - Nothing falls back once the upstream has answered 2xx: a stream that breaks afterwards ends with
   the usual `stream_failed` frame. The request keeps one reservation and settles with the measured
   tokens of the route that served. A failed attempt keeps the existing refund rule (400/401/402/403/

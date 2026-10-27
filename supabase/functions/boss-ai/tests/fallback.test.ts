@@ -258,7 +258,7 @@ Deno.test("fallback: a response that never arrives times out per attempt and fal
       init.signal!.addEventListener("abort", () => reject(new Error("aborted")), { once: true })
     )
   const f = await fixture([hang, () => chat()], { attempt: 20 })
-  const response = await f.send()
+  const response = await f.send({ stream: true })
   assertEquals(response.status, 200)
   assertEquals(f.fetched.length, 2)
   assert(f.audits.includes("upstream_fallback"))
@@ -462,4 +462,23 @@ Deno.test("a fallback route that cannot be built is skipped, not fatal", async (
     "anthropic/claude-haiku-5.5",
   ])
   assert(f.audits.includes("route_unusable"))
+})
+
+Deno.test("attempt deadline applies to streams only: a slow non-stream answer is not re-run", async () => {
+  const slow: Responder = async () => {
+    await new Promise((r) => setTimeout(r, 80))
+    return message()
+  }
+  const plain = await fixture([slow, () => chat()], { attempt: 20 })
+  const response = await plain.send()
+  assertEquals((await response.json()).choices[0].message.content, "from anthropic")
+  assertEquals(plain.fetched.length, 1)
+  assert(!plain.audits.includes("upstream_fallback"))
+  const hang: Responder = (_url, init) =>
+    new Promise((_, reject) =>
+      init.signal!.addEventListener("abort", () => reject(new Error("aborted")), { once: true })
+    )
+  const streamed = await fixture([hang, () => chat()], { attempt: 20 })
+  assertEquals((await streamed.send({ stream: true })).status, 200)
+  assertEquals(streamed.fetched.length, 2)
 })

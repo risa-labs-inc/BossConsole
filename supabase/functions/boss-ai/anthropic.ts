@@ -54,9 +54,32 @@ export function anthropicMessages(input: Obj[]): { system: Obj[]; messages: Obj[
       ]
       : all
   }
-  for (const m of input) {
-    if (m.role === "system" || m.role === "developer") system.push(...texts(m.content))
-    else if (m.role === "user") push("user", userBlocks(m.content))
+  const isSystem = (m: Obj) => m.role === "system" || m.role === "developer"
+  let leading = true
+  for (let i = 0; i < input.length; i++) {
+    const m = input[i]
+    if (isSystem(m)) {
+      // Only the leading run is top-level `system`: a per-turn system message later on must not
+      // change the cached prefix. Later ones stay in place, as a run merged into one note.
+      if (leading) {
+        system.push(...texts(m.content))
+        continue
+      }
+      const note = [...texts(m.content)]
+      while (i + 1 < input.length && isSystem(input[i + 1])) note.push(...texts(input[++i].content))
+      if (!note.length) continue
+      // The API accepts a mid-conversation system message only right after a user turn and either
+      // last or before an assistant turn; anywhere else it becomes a note in the user turn.
+      const next = input[i + 1]
+      if (messages.at(-1)?.role === "user" && (!next || next.role === "assistant")) {
+        messages.push({ role: "system", content: note })
+      } else {
+        push("user", note.map((b) => ({ ...b, text: `System note: ${b.text}` })))
+      }
+      continue
+    }
+    leading = false
+    if (m.role === "user") push("user", userBlocks(m.content))
     else if (m.role === "assistant") {
       const blocks = texts(m.content)
       for (const value of (m.tool_calls as unknown[] | undefined) ?? []) {
@@ -108,7 +131,12 @@ export function withAnthropicCache(
   messages.forEach((m, i) => {
     if (m.role === "user") user = i
   })
-  const targets = new Set([messages.length - 1, user - 1].filter((i) => i >= 0))
+  // A mid-conversation system message is volatile and not marked: use the turn before it.
+  const real = (i: number) => {
+    while (i >= 0 && messages[i].role === "system") i--
+    return i
+  }
+  const targets = new Set([real(messages.length - 1), real(user - 1)].filter((i) => i >= 0))
   return {
     ...(tools ? { tools: markLast(tools, true) } : {}),
     system: markLast(system),
@@ -122,8 +150,8 @@ function toolChoice(choice: unknown, parallel: unknown): Obj | undefined {
   let out: Obj | undefined
   if (choice === "auto") out = { type: "auto" }
   else if (choice === "none") return { type: "none" }
-  else if (choice === "required") out = { type: "any" }
-  else if (choice) out = { type: "tool", name: object(choice).name }
+  // Opus 5.5 / Sonnet 5.5 reject forced `any`/`tool`: required and named choices stay `auto`.
+  else if (choice) out = { type: "auto" }
   if (parallel === false) out = { ...(out ?? { type: "auto" }), disable_parallel_tool_use: true }
   return out
 }

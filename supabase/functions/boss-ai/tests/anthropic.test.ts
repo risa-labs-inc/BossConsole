@@ -92,12 +92,14 @@ Deno.test("anthropic: tools, tool_choice and parallel_tool_calls map", () => {
     body({ messages, tools, tool_choice, ...extra }).tool_choice
   assertEquals(choice("auto"), { type: "auto" })
   assertEquals(choice("none"), { type: "none" })
-  assertEquals(choice("required"), { type: "any" })
-  assertEquals(choice({ type: "function", function: { name: "b" } }), { type: "tool", name: "b" })
+  // Forced choices would 400 on current models: they degrade to auto.
+  assertEquals(choice("required"), { type: "auto" })
+  assertEquals(choice({ type: "function", function: { name: "b" } }), { type: "auto" })
   assertEquals(choice("required", { parallel_tool_calls: false }), {
-    type: "any",
+    type: "auto",
     disable_parallel_tool_use: true,
   })
+  assertEquals(choice("none", { parallel_tool_calls: false }), { type: "none" })
   assertEquals(body({ messages, tools, parallel_tool_calls: false }).tool_choice, {
     type: "auto",
     disable_parallel_tool_use: true,
@@ -438,4 +440,98 @@ Deno.test("anthropic: stream errors and orphan tool deltas fail the stream", () 
   bare.accept('{"type":"message_stop"}')
   assertEquals(bare.finished, true)
   assertEquals(bare.tokens, null)
+})
+
+Deno.test("anthropic: only the leading system run is top-level, so a per-turn system note keeps the prefix", () => {
+  const turn = (note: string) =>
+    body({
+      messages: [
+        { role: "system", content: "stable" },
+        { role: "developer", content: "also stable" },
+        { role: "user", content: "q1" },
+        { role: "assistant", content: "a1" },
+        { role: "user", content: "q2" },
+        { role: "system", content: note },
+      ],
+    })
+  const one = turn("time is 10:00"), two = turn("time is 10:01")
+  assertEquals(JSON.stringify(one.system), JSON.stringify(two.system))
+  assertEquals((one.system as Obj[]).map((b) => b.text), ["stable", "also stable"])
+  assertEquals(
+    JSON.stringify((one.messages as Obj[]).slice(0, 3)),
+    JSON.stringify((two.messages as Obj[]).slice(0, 3)),
+  )
+  assert(!JSON.stringify(one.system).includes("10:00"))
+})
+
+Deno.test("anthropic: a later system message is a mid-conversation message or a folded note", () => {
+  const roles = (messages: Obj[]) =>
+    (body({ messages }).messages as Obj[]).map((
+      m,
+    ) => [m.role, (m.content as Obj[]).map((b) => b.text)])
+  // After a user turn, last: kept in place as a system message.
+  assertEquals(roles([{ role: "user", content: "q" }, { role: "system", content: "n" }]), [
+    ["user", ["q"]],
+    ["system", ["n"]],
+  ])
+  // After a user turn, before an assistant turn: also in place; consecutive ones merge.
+  assertEquals(
+    roles([
+      { role: "user", content: "q" },
+      { role: "system", content: "n1" },
+      { role: "developer", content: "n2" },
+      { role: "assistant", content: "a" },
+    ]),
+    [["user", ["q"]], ["system", ["n1", "n2"]], ["assistant", ["a"]]],
+  )
+  // Before a user turn: folded into the user turns with a prefix; alternation holds.
+  assertEquals(
+    roles([
+      { role: "user", content: "q" },
+      { role: "system", content: "n" },
+      { role: "user", content: "q2" },
+    ]),
+    [["user", ["q", "System note: n", "q2"]]],
+  )
+  // After an assistant turn: folded into the next user turn.
+  assertEquals(
+    roles([
+      { role: "user", content: "q" },
+      { role: "assistant", content: "a" },
+      { role: "system", content: "n" },
+      { role: "user", content: "q2" },
+    ]),
+    [["user", ["q"]], ["assistant", ["a"]], ["user", ["System note: n", "q2"]]],
+  )
+  // Between an assistant turn and a tool result: the tool_result still leads the user turn.
+  const folded = body({
+    tools: [tool("t")],
+    messages: [
+      { role: "user", content: "q" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{ id: "c", type: "function", function: { name: "t", arguments: "{}" } }],
+      },
+      { role: "system", content: "n" },
+      { role: "tool", tool_call_id: "c", content: "r" },
+    ],
+  }).messages as Obj[]
+  assertEquals(folded.map((m) => m.role), ["user", "assistant", "user"])
+  assertEquals((folded[2].content as Obj[]).map((b) => b.type), ["tool_result", "text"])
+})
+
+Deno.test("anthropic: breakpoints skip a trailing system message and land on the turn before it", () => {
+  const out = body({
+    messages: [
+      { role: "system", content: "s" },
+      { role: "user", content: "q1" },
+      { role: "assistant", content: "a1" },
+      { role: "user", content: "q2" },
+      { role: "system", content: "volatile" },
+    ],
+  })
+  assertEquals(marked(out), ["system[0]", "messages[1].content[0]", "messages[2].content[0]"])
+  assertEquals((out.messages as Obj[]).map((m) => m.role), ["user", "assistant", "user", "system"])
+  assert(!JSON.stringify((out.messages as Obj[])[3]).includes("cache_control"))
 })
