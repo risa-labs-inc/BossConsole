@@ -131,7 +131,7 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
   WITH m AS (
     SELECT date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS s
   ), b AS (
-    SELECT r.*, c AS dc, f AS fm, s AS sm, g AS gm, x AS xm, m.s AS month_start,
+    SELECT r.*, c AS dc, f AS fm, sd AS sm, g AS gm, x AS xm, m.s AS month_start,
       coalesce((SELECT u.monthly_usd_limit FROM public.boss_ai_user_budgets u
         WHERE u.user_id = p_user_id AND u.router_model_id = r.model_id), r.monthly_usd_limit) AS lim,
       (SELECT coalesce(sum(coalesce(q.cost_usd, q.est_cost_usd, 0)), 0)
@@ -140,7 +140,7 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
     FROM public.boss_ai_routers r CROSS JOIN m
     JOIN public.boss_ai_connections c ON c.id = r.decider_connection_id
     JOIN public.boss_ai_models f ON f.id = r.fast_model_id
-    JOIN public.boss_ai_models s ON s.id = r.standard_model_id
+    JOIN public.boss_ai_models sd ON sd.id = r.standard_model_id
     JOIN public.boss_ai_models g ON g.id = r.strong_model_id
     JOIN public.boss_ai_models x ON x.id = coalesce(r.exhausted_model_id, r.fast_model_id)
     WHERE r.model_id = p_model_id AND r.enabled
