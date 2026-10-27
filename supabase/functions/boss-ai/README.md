@@ -10,10 +10,13 @@ desktop is needed.
 1. Apply `20260912000000_boss_ai.sql`, `20260912001000_boss_ai_hardening.sql`,
    `20260912002000_boss_ai_validation.sql`, `20260912003000_boss_ai_allowance_preflight.sql`, and
    `20260912004000_boss_ai_exchange_tickets.sql` in order; `20261015000000_boss_ai_voice.sql` adds
-   audio models. Apply `20261023090000_boss_ai_voice_admission.sql` before deploying the live-call
-   handler update; it adds a service-only admission table/RPC without changing existing accounting
-   functions or policies. Existing chat and STT/TTS clients keep working. Earlier files have already
-   been applied to the preview branch; fixes are forward migrations, not edits to applied history.
+   audio models. Apply `20261027120000_boss_ai_anthropic_fallbacks.sql` before configuring an
+   `anthropic_messages` connection or any fallbacks (it replaces `boss_ai_lookup`/`boss_ai_reserve`
+   with the previous bodies plus a `fallbacks` key). Apply
+   `20261023090000_boss_ai_voice_admission.sql` before deploying the live-call handler update; it
+   adds a service-only admission table/RPC without changing existing accounting functions or
+   policies. Existing chat and STT/TTS clients keep working. Earlier files have already been applied
+   to the preview branch; fixes are forward migrations, not edits to applied history.
 2. Set `BOSS_AI_SIGNING_SECRET` to at least 32 random bytes (encoded as a string). Set upstream API
    keys as secrets named `BOSS_AI_<NAME>`. The signing-secret name is explicitly prohibited as an
    upstream key in both SQL and the handler. Never put these keys in a shared vault entry. Supabase
@@ -102,10 +105,11 @@ INSERT INTO public.boss_ai_allowances
 VALUES ('boss-general', 'ai.use', 100000, 500000, 2000000);
 ```
 
-Repeat the model and allowance inserts to publish multiple models. Connections may use `openai_chat`
-or `openai_responses`; the base URL includes the API version prefix, not `/chat/completions` or
-`/responses`. Modify mappings in a transaction; each admitted request keeps its captured routing
-configuration. Unpublish to stop new requests. In-flight requests are allowed to finish.
+Repeat the model and allowance inserts to publish multiple models. Connections may use
+`openai_chat`, `openai_responses` or `anthropic_messages`; the base URL includes the API version
+prefix, not `/chat/completions`, `/responses` or `/messages`. Modify mappings in a transaction; each
+admitted request keeps its captured routing configuration. Unpublish to stop new requests. In-flight
+requests are allowed to finish.
 
 `boss_ai_models.provider_routing` (NULL by default) is an operator-set OpenRouter `provider` object
 sent with every request for that model. Accepted keys: `order`, `only`, `ignore` (each a list of 1
@@ -134,6 +138,97 @@ upstream-hosted tools, conversation IDs, client-selected providers, redirects, o
 extensions are forwarded. Vision accepts inline PNG/JPEG/WebP images, not remote image URLs. The
 endpoint must enforce the configured context limit; this is part of the upstream contract, not an
 assertion inferred from a model name.
+
+## Native Anthropic (`anthropic_messages`)
+
+Clients still speak Chat Completions. For a connection with `api_type='anthropic_messages'` the
+function posts to `${base_url}/messages` with `x-api-key` and `anthropic-version: 2023-06-01` (never
+Bearer; audio routes stay Bearer) and translates both ways. Anthropic's OpenAI-compat endpoint
+(`api_type='openai_chat'` on `https://api.anthropic.com/v1`) has no prompt caching; do not use it
+for agentic traffic.
+
+- Request: `system`/`developer` messages become top-level `system` text blocks; tools become
+  `{name, description, input_schema}`; `tool_choice` `auto`/`none`/`required`/named maps to
+  `auto`/`none`/`any`/`tool`, and `parallel_tool_calls:false` to `disable_parallel_tool_use`. Inline
+  image data URLs become base64 image blocks. Assistant `tool_calls` become `tool_use` (arguments
+  parsed; invalid JSON is a 400), `role:"tool"` becomes a user `tool_result` (ids are mapped to
+  `[a-zA-Z0-9_-]` identically on both sides). Same-role neighbours merge so roles alternate, with
+  `tool_result` blocks first in a user turn. `max_tokens` is always the computed maximum.
+- Not forwarded: `temperature`/`top_p` (current Claude models reject non-default sampling; the
+  request is still validated), `store`, `provider`, `stream_options`. `response_format`
+  `json_schema` becomes `output_config.format` (`json_schema`; Anthropic requires
+  `additionalProperties:false` on every object and rejects numeric/string constraints, which
+  surfaces as an upstream 400); `json_object` is a 400 for this api_type; `text` is a no-op.
+- Thinking is never requested. OpenAI-format clients cannot round-trip thinking blocks and
+  signatures, so response thinking blocks are dropped and history is replayed without them. Models
+  that always think (Opus 5.5, Sonnet 5.5: `thinking:{type:"disabled"}` is a 400) still run adaptive
+  thinking server-side when the parameter is omitted, and bill for it in `output_tokens`. Forced
+  `tool_choice` (`required`, named) is a 400 on those same models; with fallbacks configured the
+  request is served by the next route.
+- Response: text and `tool_use` become a `chat.completion`; `end_turn`/`stop_sequence`/`pause_turn`
+  map to `stop`, `max_tokens` to `length`, `tool_use` to `tool_calls`, `refusal` to
+  `content_filter`. Streams translate the Anthropic SSE events to `chat.completion.chunk`s
+  (`input_json_delta` to `function.arguments`, index and id stable per tool block), then a usage
+  chunk and `[DONE]`. Settlement uses the measured total.
+- Usage: `prompt_tokens = input + cache_read + cache_creation`, `completion_tokens = output`,
+  `total_tokens` their sum,
+  `prompt_tokens_details {cached_tokens: cache_read, cache_write_tokens:
+  cache_creation}`.
+  Accounting is unchanged in meaning: every processed token is charged, cached or not.
+
+**Caching is always on for this api_type.** `cache_control: ephemeral` (5 minute TTL) is set on the
+last tool, the last system block, the last content block of the final message and the last content
+block of the message before the most recent user turn: at most 4 breakpoints, coinciding targets
+collapse, blocks that cannot carry the mark are skipped. The last one is the previous request's
+write point, which keeps reads inside Anthropic's 20-block lookback during long tool loops. Prefixes
+under the model's minimum cacheable length (512 to 4096 tokens by model) silently do not cache. The
+OpenRouter `anthropic/*` marking above is unchanged.
+
+`cache_miss_large_prompt` is audited when a native or OpenRouter `anthropic/*` response reports more
+than 8000 prompt tokens with zero cache reads and zero cache writes, so a silent caching regression
+shows up in the logs.
+
+## Fallbacks
+
+`boss_ai_models.fallbacks` (`jsonb NOT NULL DEFAULT '[]'`) is an ordered array of at most 4
+`{"connection_id", "upstream_model", "provider_routing"?}`; unknown keys, a missing connection or an
+invalid `provider_routing` are refused by the table checks and triggers (a connection used by a
+fallback cannot be deleted or renamed). `boss_ai_lookup`/`boss_ai_reserve` return the resolved list
+as `fallbacks`, each entry with its connection row; disabled connections are dropped. A fallback
+route uses its own connection's `api_type`, its own `upstream_model` and its own `provider_routing`
+(the model's primary routing never applies to it).
+
+- The primary is tried first, then each fallback in order, on a network error, an upstream timeout
+  before any response (non-final routes get `attemptTimeoutMs`, 90 s, to answer; the 4 minute
+  request deadline still applies) and any non-2xx status. A client cancel or the overall deadline
+  ends the request. A route whose request cannot be built (for example routing on a non-OpenRouter
+  connection) is skipped.
+- Nothing falls back once the upstream has answered 2xx: a stream that breaks afterwards ends with
+  the usual `stream_failed` frame. The request keeps one reservation and settles with the measured
+  tokens of the route that served. A failed attempt keeps the existing refund rule (400/401/402/403/
+  404/405/406/413/415/422/429 prove no work, anything else may have run); a later refundable status
+  never refunds an earlier attempt that may have run.
+- Per-isolate circuit breaker: a route (`connection_id|upstream_model`) that failed with
+  401/402/403/429/5xx, or with a 400 whose message names a usage/spend/credit/quota/balance limit,
+  is skipped for 60 s. When every route is cooling all of them are tried. Other 400s do not trip it.
+- Every failed attempt logs one line,
+  `{event:"upstream_error", request_id, route, status, type,
+  message}`: at most 4 KB of the
+  upstream body is read, only `error.type` (or `error.code`) and `error.message` (300 characters)
+  are kept; network failures log `type` `timeout`/`fetch_error` with no text. Request content and
+  keys are never logged. `upstream_fallback` is audited when a fallback served. The user-facing
+  failure message is unchanged.
+
+Operator data (applied by hand, not a migration). After
+`20261027120000_boss_ai_anthropic_fallbacks.sql`:
+
+```sql
+update boss_ai_connections set api_type='anthropic_messages' where id='anthropic';
+update boss_ai_models set connection_id='anthropic', upstream_model='claude-opus-5-5', provider_routing=null, fallbacks='[{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-opus-5.5","provider_routing":{"order":["anthropic","amazon-bedrock","google-vertex"],"allow_fallbacks":true}},{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-haiku-5.5"}]' where id in ('optimist','optimist-strong');
+```
+
+Set `provider_routing` to NULL on a model moved to the Anthropic connection: routing on a
+non-OpenRouter connection fails the request as a 503 configuration error.
 
 ## Voice (audio models)
 
@@ -400,7 +495,7 @@ requests. App attestation and device-bound signing are not implemented.
 No inference content or credentials are logged. Errors use owned messages. Diagnostics contain only
 owned event/phase names, numeric upstream statuses, request UUIDs, and validated database SQLSTATE
 codes, never exception messages, SQL parameters or upstream bodies. Every response carries
-`X-Request-ID`. No automatic cross-provider fallback is enabled. Routing secrets and configuration
+`X-Request-ID`. Fallbacks are opt-in per model (see Fallbacks). Routing secrets and configuration
 are private, but generated content and provider-specific choice metadata are not an
 upstream-identity anonymization boundary.
 
