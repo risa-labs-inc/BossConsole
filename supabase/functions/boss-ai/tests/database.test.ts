@@ -425,6 +425,7 @@ Deno.test("user quotas: overrides replace limits, downgrade chain serves the tar
         "20261023090000_boss_ai_voice_admission.sql",
         "20261027120000_boss_ai_anthropic_fallbacks.sql",
         "20261027130000_boss_ai_user_quota_downgrade.sql",
+        "20261027140000_boss_ai_router_budget.sql",
       ]
     ) {
       await db.exec(
@@ -714,6 +715,7 @@ Deno.test("user quotas: downgrade serves from the target's own pool", async () =
         "20261023090000_boss_ai_voice_admission.sql",
         "20261027120000_boss_ai_anthropic_fallbacks.sql",
         "20261027130000_boss_ai_user_quota_downgrade.sql",
+        "20261027140000_boss_ai_router_budget.sql",
       ]
     ) {
       await db.exec(
@@ -755,6 +757,311 @@ Deno.test("user quotas: downgrade serves from the target's own pool", async () =
     await assertRejects(() =>
       db.exec("UPDATE public.boss_ai_models SET over_allowance_model_id='c1' WHERE id='stt'")
     )
+  } finally {
+    await db.close()
+  }
+})
+
+Deno.test("router: config, budget state, routed reservation, settlement and sticky decisions", async () => {
+  const db = new PGlite()
+  try {
+    await db.exec(`
+      CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
+      CREATE SCHEMA auth;
+      CREATE TABLE auth.users(id uuid PRIMARY KEY, banned_until timestamptz, is_anonymous boolean NOT NULL DEFAULT false);
+      CREATE TABLE public.permissions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text UNIQUE, description text, is_system boolean);
+      CREATE TABLE public.roles(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text UNIQUE);
+      CREATE TABLE public.role_permissions(role_id uuid, permission_id uuid, UNIQUE(role_id,permission_id));
+      CREATE TABLE public.test_user_permissions(user_id uuid, permission_name text);
+      CREATE FUNCTION public.user_has_permission(p_user_id uuid,p_permission text) RETURNS boolean LANGUAGE sql AS
+        'SELECT EXISTS(SELECT 1 FROM public.test_user_permissions WHERE user_id=p_user_id AND permission_name=p_permission)';
+      INSERT INTO public.roles(name) VALUES('user');
+    `)
+    for (
+      const file of [
+        "20260912000000_boss_ai.sql",
+        "20260912001000_boss_ai_hardening.sql",
+        "20260912002000_boss_ai_validation.sql",
+        "20260912003000_boss_ai_allowance_preflight.sql",
+        "20260912004000_boss_ai_exchange_tickets.sql",
+        "20260924231000_boss_ai_token_eligibility.sql",
+        "20261007000000_boss_ai_optimist_permission.sql",
+        "20261008000000_boss_ai_model_provider_routing.sql",
+        "20261008100000_boss_ai_reserve_ai_grants.sql",
+        "20261015000000_boss_ai_voice.sql",
+        "20261023090000_boss_ai_voice_admission.sql",
+        "20261027120000_boss_ai_anthropic_fallbacks.sql",
+        "20261027130000_boss_ai_user_quota_downgrade.sql",
+        "20261027140000_boss_ai_router_budget.sql",
+      ]
+    ) {
+      await db.exec(
+        await Deno.readTextFile(new URL(`../../../migrations/${file}`, import.meta.url)),
+      )
+    }
+    const u1 = "00000000-0000-0000-0000-000000000001"
+    const u2 = "00000000-0000-0000-0000-000000000002"
+    await db.exec(`
+      INSERT INTO auth.users(id) VALUES('${u1}'),('${u2}');
+      INSERT INTO public.permissions(name) VALUES('ai.optimist') ON CONFLICT DO NOTHING;
+      INSERT INTO public.test_user_permissions VALUES('${u1}','ai.optimist'),('${u2}','ai.use');
+      INSERT INTO public.boss_ai_connections VALUES
+        ('c','https://example.com/v1','BOSS_AI_TEST','openai_chat',true),
+        ('risa_qwen_internal','https://litellm.example','BOSS_AI_RISA_QWEN','openai_chat',true);
+      INSERT INTO public.boss_ai_models(id,display_name,connection_id,upstream_model,context_length,max_output_tokens,published,
+          usd_per_mtok_input,usd_per_mtok_output,usd_per_mtok_cache_read,usd_per_mtok_cache_write) VALUES
+        ('optimist','Optimist','c','unused',200000,8192,true,NULL,NULL,NULL,NULL),
+        ('optimist-fast','Fast','c','haiku',200000,8192,false,0.1,0.5,0.01,0.125),
+        ('optimist-standard','Standard','c','sonnet',200000,8192,false,2,10,0.2,2.5),
+        ('optimist-strong','Strong','c','opus',200000,8192,false,4,20,0.2,5);
+      INSERT INTO public.boss_ai_allowances VALUES('optimist','ai.optimist',100000000,100000000,100000000,2);
+      INSERT INTO public.boss_ai_routers(model_id,decider_connection_id,fast_model_id,standard_model_id,strong_model_id)
+        VALUES('optimist','risa_qwen_internal','optimist-fast','optimist-standard','optimist-strong');
+    `)
+    const scalar = async (sql: string, params: unknown[] = []) =>
+      (await db.query<{ value: any }>(sql, params)).rows[0].value
+    const ctx = (u = u1) =>
+      scalar("SELECT public.boss_ai_route_context($1,'optimist') AS value", [u])
+    const reserve = (
+      u: string,
+      served: string,
+      est = 0.01,
+      tier = "strong",
+      source = "decider",
+    ) => {
+      const id = crypto.randomUUID()
+      return scalar(
+        "SELECT public.boss_ai_reserve_routed($1,'optimist',$2,$3,$4,$5,$6) AS value",
+        [u, served, id, tier, source, est],
+      ).then((r: any) => ({ r, id }))
+    }
+    const spend = (usd: number, u = u1, model = "optimist-strong") =>
+      db.query(
+        `INSERT INTO public.boss_ai_requests(id,user_id,model_id,reserved_tokens,charged_tokens,settled,cost_usd,routed_from,tier,route_source)
+         VALUES(gen_random_uuid(),$1,$2,1000,1000,true,$3,'optimist','strong','decider')`,
+        [u, model, usd],
+      )
+
+    // Defaults: the editable decider config and a $100 budget with the specced thresholds.
+    const c0 = await ctx()
+    assertEquals(c0.router.decider_model, "risa-pplx-decider-v1-27b")
+    assertEquals([
+      c0.router.decider_timeout_ms,
+      c0.router.state_char_budget,
+      c0.router.min_confidence,
+    ], [2500, 12000, 0.55])
+    assertEquals([
+      c0.router.default_tier,
+      c0.router.monthly_usd_limit,
+      c0.router.strong_cap_at,
+      c0.router.fast_only_at,
+    ], ["standard", 100, 0.6, 0.85])
+    assertEquals(c0.router.hard_stop_at, null)
+    assertEquals(c0.router.choices.map((c: any) => c.tier), ["fast", "standard", "strong"])
+    assertEquals(c0.models.exhausted.id, "optimist-fast")
+    assertEquals(c0.decider_connection.base_url, "https://litellm.example")
+    assertEquals([c0.budget.monthly_usd_limit, c0.budget.spent_usd, c0.budget.state], [
+      100,
+      0,
+      "normal",
+    ])
+    assert(
+      String(c0.budget.resets_at).startsWith(
+        new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() + 1, 1))
+          .toISOString().slice(0, 10),
+      ),
+    )
+    assertEquals(
+      await scalar("SELECT public.boss_ai_route_context($1,'optimist-fast') AS value", [u1]),
+      null,
+    )
+    // Lookup carries the router; tier models are unpublished: hidden from the catalog and lookup.
+    assertEquals(
+      (await scalar("SELECT public.boss_ai_lookup($1,'optimist') AS value", [u1])).router.router
+        .model_id,
+      "optimist",
+    )
+    assertEquals(
+      await scalar("SELECT public.boss_ai_lookup($1,'optimist-strong') AS value", [u1]),
+      null,
+    )
+    const catalog = await scalar("SELECT public.boss_ai_catalog($1) AS value", [u1])
+    assertEquals(catalog.map((m: any) => m.id), ["optimist"])
+    assertEquals(catalog[0].budget.state, "normal")
+    // No permission, no routed call; a user override raises the limit for one user only.
+    assertEquals((await reserve(u2, "optimist-fast")).r.error, "forbidden")
+    assertEquals((await reserve(u1, "not-a-tier")).r.error, "forbidden")
+
+    // Routed reservation: ledger row on the served model, routed_from/tier/source, estimate recorded.
+    const a = await reserve(u1, "optimist-strong", 0.5)
+    assertEquals(
+      [a.r.model.id, a.r.routed_from, a.r.tier, a.r.route_source, a.r.budget_exhausted],
+      ["optimist-strong", "optimist", "strong", "decider", false],
+    )
+    const row =
+      (await db.query<any>("SELECT * FROM public.boss_ai_requests WHERE id=$1", [a.id])).rows[0]
+    assertEquals([
+      row.model_id,
+      row.routed_from,
+      row.tier,
+      row.route_source,
+      Number(row.est_cost_usd),
+    ], ["optimist-strong", "optimist", "strong", "decider", 0.5])
+    // In-flight estimate counts toward spend; duplicate and concurrency semantics hold.
+    assertEquals((await ctx()).budget.spent_usd, 0.5)
+    assertEquals(
+      (await scalar(
+        "SELECT public.boss_ai_reserve_routed($1,'optimist','optimist-fast',$2,'fast','decider',0) AS value",
+        [u1, a.id],
+      )).error,
+      "duplicate",
+    )
+    await reserve(u1, "optimist-standard", 0.1)
+    assertEquals((await reserve(u1, "optimist-standard", 0.1)).r.error, "concurrency_exceeded")
+    // Settlement fills the breakdown and cost; the cost replaces the estimate in spend.
+    await db.query("SELECT public.boss_ai_settle($1,1300,1000,100,200,0,0.0076)", [a.id])
+    const done =
+      (await db.query<any>("SELECT * FROM public.boss_ai_requests WHERE id=$1", [a.id])).rows[0]
+    assertEquals([
+      done.input_tokens,
+      done.output_tokens,
+      done.cache_read_tokens,
+      done.cache_write_tokens,
+      Number(done.cost_usd),
+      done.settled,
+    ], [1000, 100, 200, 0, 0.0076, true])
+    assertEquals(Number((await ctx()).budget.spent_usd), 0.1076)
+    await assertRejects(() =>
+      db.query("SELECT public.boss_ai_settle($1,1,-1,0,0,0,0)", [crypto.randomUUID()])
+    )
+    await db.exec("DELETE FROM public.boss_ai_requests")
+
+    // Budget state follows spend: 60% caps strong, 85% fast only, 100% exhausted.
+    const state = async () => (await ctx()).budget.state
+    await spend(59)
+    assertEquals(await state(), "normal")
+    await spend(1)
+    assertEquals(await state(), "strong_capped")
+    await spend(25)
+    assertEquals(await state(), "fast_only")
+    await spend(15)
+    assertEquals(await state(), "exhausted (serving fast model)")
+    // Over budget is served on the exhausted model (default: fast), never refused.
+    const over = await reserve(u1, "optimist-strong", 0.2)
+    assertEquals([over.r.model.id, over.r.tier, over.r.route_source, over.r.budget_exhausted], [
+      "optimist-fast",
+      "fast",
+      "budget",
+      true,
+    ])
+    // A per-user budget override and a router limit change apply immediately.
+    await db.exec(
+      `INSERT INTO public.boss_ai_user_budgets(user_id,router_model_id,monthly_usd_limit,note) VALUES('${u1}','optimist',200,'vip')`,
+    )
+    assertEquals(await state(), "normal")
+    assertEquals((await ctx()).budget.remaining_usd, 100 - 0.2)
+    await db.exec(`DELETE FROM public.boss_ai_user_budgets`)
+    await db.exec("DELETE FROM public.boss_ai_requests")
+    // A call that no longer fits under the lock is substituted by the exhausted model.
+    await spend(99.9)
+    const fit = await reserve(u1, "optimist-strong", 0.5)
+    assertEquals([fit.r.model.id, fit.r.route_source, fit.r.budget_exhausted], [
+      "optimist-fast",
+      "budget",
+      true,
+    ])
+    await db.exec("DELETE FROM public.boss_ai_requests")
+    // A separate exhausted model, and only hard_stop_at refuses.
+    await db.exec(
+      `INSERT INTO public.boss_ai_models(id,display_name,connection_id,upstream_model,context_length,max_output_tokens,published)
+      VALUES('optimist-free','Free','c','free',200000,8192,false);
+      UPDATE public.boss_ai_routers SET exhausted_model_id='optimist-free', hard_stop_at=1.5 WHERE model_id='optimist'`,
+    )
+    assertEquals((await ctx()).models.exhausted.id, "optimist-free")
+    await spend(120)
+    assertEquals((await reserve(u1, "optimist-strong")).r.model.id, "optimist-free")
+    assertEquals(await state(), "exhausted (serving fast model)")
+    await spend(40)
+    assertEquals(await state(), "hard_stopped")
+    const stop = (await reserve(u1, "optimist-strong")).r
+    assertEquals(stop.error, "budget_exhausted")
+    assertEquals(stop.budget.monthly_usd_limit, 100)
+    assert(typeof stop.budget.resets_at === "string")
+    await db.exec(
+      "DELETE FROM public.boss_ai_requests; UPDATE public.boss_ai_routers SET exhausted_model_id=NULL, hard_stop_at=NULL",
+    )
+
+    // Token allowances on a tier model still apply, with its over-allowance downgrade.
+    await db.exec(`UPDATE public.boss_ai_models SET published=true WHERE id='optimist-strong';
+      INSERT INTO public.boss_ai_allowances VALUES('optimist-strong','ai.optimist',200000,200000,200000,2);
+      UPDATE public.boss_ai_models SET published=false, over_allowance_model_id='optimist-standard' WHERE id='optimist-strong'`)
+    // Unpublished means no policy for the tier, so its allowance does not bind (access is the router's).
+    assertEquals((await reserve(u1, "optimist-strong")).r.model.id, "optimist-strong")
+    await db.exec("DELETE FROM public.boss_ai_requests")
+    await db.exec("UPDATE public.boss_ai_models SET published=true WHERE id='optimist-strong'")
+    const q1 = await reserve(u1, "optimist-strong")
+    assertEquals(q1.r.model.id, "optimist-strong")
+    await db.query("SELECT public.boss_ai_settle($1,200000)", [q1.id])
+    const q2 = await reserve(u1, "optimist-strong")
+    assertEquals([q2.r.model.id, q2.r.downgraded_from], ["optimist-standard", "optimist-strong"])
+    await db.exec(
+      "DELETE FROM public.boss_ai_requests; DELETE FROM public.boss_ai_allowances WHERE model_id='optimist-strong'; UPDATE public.boss_ai_models SET published=false WHERE id='optimist-strong'",
+    )
+
+    // Sticky decisions: stored per key, expire after the TTL, scoped by key.
+    await db.query("SELECT public.boss_ai_route_put('k1',$1,'optimist','strong')", [u1])
+    assertEquals(await scalar("SELECT public.boss_ai_route_get('k1') AS value"), "strong")
+    assertEquals(await scalar("SELECT public.boss_ai_route_get('k2') AS value"), null)
+    await db.query("SELECT public.boss_ai_route_put('k1',$1,'optimist','fast')", [u1])
+    assertEquals(await scalar("SELECT public.boss_ai_route_get('k1') AS value"), "fast")
+    await db.exec(
+      "UPDATE public.boss_ai_route_decisions SET created_at = now() - interval '31 minutes'",
+    )
+    assertEquals(await scalar("SELECT public.boss_ai_route_get('k1') AS value"), null)
+    assertEquals(await scalar("SELECT public.boss_ai_route_get('k1', 60) AS value"), "fast")
+
+    // Validation and access.
+    const bad = (sql: string) => assertRejects(() => db.exec(sql))
+    await bad("UPDATE public.boss_ai_routers SET strong_cap_at=0.9, fast_only_at=0.8")
+    await bad("UPDATE public.boss_ai_routers SET monthly_usd_limit=0")
+    await bad("UPDATE public.boss_ai_routers SET hard_stop_at=0")
+    await bad("UPDATE public.boss_ai_routers SET default_tier='huge'")
+    await bad("UPDATE public.boss_ai_routers SET decider_timeout_ms=5")
+    await bad("UPDATE public.boss_ai_routers SET fast_model_id='optimist'")
+    await bad("UPDATE public.boss_ai_routers SET choices='[]'")
+    await bad(
+      `UPDATE public.boss_ai_routers SET choices='[{"tier":"fast","label":"a","description":"b"}]'`,
+    )
+    await bad(
+      `UPDATE public.boss_ai_routers SET choices='[{"tier":"x","label":"a","description":"b"},{"tier":"fast","label":"c","description":"d"}]'`,
+    )
+    await bad(
+      `UPDATE public.boss_ai_routers SET choices='[{"tier":"fast","label":"a","description":"b"},{"tier":"fast","label":"a","description":"d"}]'`,
+    )
+    await bad(
+      `UPDATE public.boss_ai_routers SET choices='[{"tier":"fast","label":"a","description":"b","x":1},{"tier":"fast","label":"c","description":"d"}]'`,
+    )
+    await bad(`INSERT INTO public.boss_ai_user_budgets VALUES('${u1}','optimist',0)`)
+    await bad(`INSERT INTO public.boss_ai_user_budgets VALUES('${u1}','optimist-fast',5)`)
+    await db.exec("UPDATE public.boss_ai_routers SET enabled=false")
+    assertEquals(
+      (await scalar("SELECT public.boss_ai_lookup($1,'optimist') AS value", [u1])).router,
+      null,
+    )
+    assertEquals((await reserve(u1, "optimist-fast")).r.error, "forbidden")
+    await db.exec("UPDATE public.boss_ai_routers SET enabled=true")
+    await db.exec("SET ROLE authenticated")
+    await assertRejects(() => db.query("SELECT * FROM public.boss_ai_routers"))
+    await assertRejects(() => db.query("SELECT * FROM public.boss_ai_user_budgets"))
+    await assertRejects(() => db.query("SELECT * FROM public.boss_ai_route_decisions"))
+    await assertRejects(() => db.query("SELECT public.boss_ai_route_context($1,'optimist')", [u1]))
+    await assertRejects(() =>
+      db.query(
+        "SELECT public.boss_ai_reserve_routed($1,'optimist','optimist-fast',gen_random_uuid(),'fast','decider',0)",
+        [u1],
+      )
+    )
+    await db.exec("RESET ROLE")
   } finally {
     await db.close()
   }
