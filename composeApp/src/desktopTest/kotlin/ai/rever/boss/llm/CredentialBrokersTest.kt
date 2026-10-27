@@ -50,7 +50,8 @@ class CredentialBrokersTest {
         val builtIn = "https://api.risaboss.com/functions/v1/boss-ai"
         assertEquals(builtIn, CredentialBrokers.resolveBossAiBase(null))
         assertEquals(builtIn, CredentialBrokers.resolveBossAiBase("  "))
-        assertEquals("http://127.0.0.1:54321/functions/v1/boss-ai", CredentialBrokers.resolveBossAiBase("http://127.0.0.1:54321/functions/v1/boss-ai/"))
+        val local = "http://127.0.0.1:54321/functions/v1/boss-ai"
+        assertEquals(local, CredentialBrokers.resolveBossAiBase("$local/"))
         assertEquals("http://localhost:54321/x", CredentialBrokers.resolveBossAiBase("http://localhost:54321/x"))
         assertEquals("https://api.risaboss.com/y", CredentialBrokers.resolveBossAiBase("https://api.risaboss.com/y"))
         assertEquals(builtIn, CredentialBrokers.resolveBossAiBase("http://attacker.example/x"))
