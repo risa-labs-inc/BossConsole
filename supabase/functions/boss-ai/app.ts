@@ -27,11 +27,14 @@ import {
   Connection,
   endpoint,
   events,
+  Fallback,
   Model,
   Obj,
   readJson,
   requestBody,
   StreamAdapter,
+  takesCacheControl,
+  upstreamHeaders,
   upstreamKey,
 } from "./wire.ts"
 
@@ -50,6 +53,11 @@ export interface Dependencies {
   upstreamTimeoutMs?: number
   settlementTimeoutMs?: number
   audit?: (event: string, requestId: string) => void
+  /** Sink for per-attempt upstream error lines; defaults to console.warn(JSON). */
+  log?: (entry: Obj) => void
+  /** First-response deadline for every route but the last; the overall deadline still applies. */
+  attemptTimeoutMs?: number
+  now?: () => number
   /** LiveKit clients for /v1/voice/live; tests inject fakes. */
   livekit?: (config: LiveKitConfig) => LiveKit
 }
@@ -202,7 +210,99 @@ function publicBase(deps: Dependencies): string {
   return `${configuredHttps(supabase)}/functions/v1/boss-ai`
 }
 
+interface Route {
+  key: string
+  model: Model
+  connection: Connection
+}
+const COOLDOWN_MS = 60_000
+const routeKey = (connection: string | undefined, upstream: string) =>
+  `${connection ?? "?"}|${upstream}`
+
+/** Primary first, then the model's resolved fallbacks, each with its own upstream model and routing. */
+function routesOf(
+  result: { model: Model; connection: Connection; fallbacks?: Fallback[] },
+): Route[] {
+  const { model, connection } = result
+  return [
+    {
+      key: routeKey(connection.id ?? model.connection_id, model.upstream_model),
+      model,
+      connection,
+    },
+    ...(Array.isArray(result.fallbacks) ? result.fallbacks.slice(0, 4) : []).map((f) => ({
+      key: routeKey(f.connection_id, f.upstream_model),
+      model: {
+        ...model,
+        upstream_model: f.upstream_model,
+        provider_routing: f.provider_routing ?? null,
+      },
+      connection: f.connection,
+    })),
+  ]
+}
+
+// Failures that predict the next request failing too: auth, billing, throttling, outages, and a
+// 400 that names a usage/spend/credit limit (the 2026-10-27 incident). Other 400s are per request.
+const LIMIT_WORDING =
+  /(usage|spend(ing)?|credit|billing|quota|balance).{0,40}(limit|cap|exceed|exhaust|reach)|(limit|cap|exceed|reach).{0,40}(usage|spend|credit|quota|billing)|credit balance|insufficient (funds|credit)/i
+export const trips = (status: number, message: string) =>
+  [401, 402, 403, 429].includes(status) || status >= 500 ||
+  (status === 400 && LIMIT_WORDING.test(message))
+
+/** At most 4 KB of an upstream error body; only error.type/code/message are kept, never content. */
+async function errorInfo(response: Response): Promise<{ type: string | null; message: string }> {
+  const none = { type: null, message: "" }
+  const reader = response.body?.getReader()
+  if (!reader) return none
+  try {
+    const chunks: Uint8Array[] = []
+    let size = 0
+    while (size < 4096) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(value)
+      size += value.length
+    }
+    const bytes = new Uint8Array(size)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.length
+    }
+    const error = (JSON.parse(new TextDecoder().decode(bytes.subarray(0, 4096))) as Obj).error
+    if (!error || typeof error !== "object") return none
+    const e = error as Obj
+    const type = typeof e.type === "string"
+      ? e.type
+      : typeof e.code === "string" || typeof e.code === "number"
+      ? String(e.code)
+      : null
+    return {
+      type: type && type.slice(0, 64),
+      message: typeof e.message === "string" ? e.message.slice(0, 300) : "",
+    }
+  } catch {
+    return none
+  } finally {
+    await reader.cancel().catch(() => {})
+  }
+}
+
+// Routes where a large uncached prompt means caching silently regressed.
+const expectsCache = (r: Route) =>
+  r.connection.api_type === "anthropic_messages" ||
+  (r.connection.api_type === "openai_chat" &&
+    takesCacheControl(r.model.upstream_model, r.connection.base_url))
+const cacheMissLarge = (value: unknown) => {
+  if (!value || typeof value !== "object") return false
+  const u = value as Obj, d = (u.prompt_tokens_details ?? {}) as Obj
+  return Number(u.prompt_tokens) > 8000 && !Number(d.cached_tokens) && !Number(d.cache_write_tokens)
+}
+
 export function createHandler(deps: Dependencies): (request: Request) => Promise<Response> {
+  const cooldown = new Map<string, number>()
+  const now = deps.now ?? Date.now
   const startLiveCall = async (
     request: Request,
     user: string,
@@ -327,6 +427,25 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       try {
         if (deps.audit) deps.audit(event, requestId)
         else console.warn(JSON.stringify({ event, request_id: requestId }))
+      } catch { /* Observability must not change accounting or response cleanup. */ }
+    }
+    const upstreamError = (
+      route: Route,
+      status: number | null,
+      type: string | null,
+      message = "",
+    ) => {
+      const entry = {
+        event: "upstream_error",
+        request_id: requestId,
+        route: route.key,
+        status,
+        type,
+        message,
+      }
+      try {
+        if (deps.log) deps.log(entry)
+        else console.warn(JSON.stringify(entry))
       } catch { /* Observability must not change accounting or response cleanup. */ }
     }
     let reservation: string | undefined
@@ -495,7 +614,13 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         p_user_id: user,
         p_model_id: input.model,
         p_request_id: requestId,
-      }) as { error?: string; usage?: unknown; model: Model; connection: Connection }
+      }) as {
+        error?: string
+        usage?: unknown
+        model: Model
+        connection: Connection
+        fallbacks?: Fallback[]
+      }
       if (result.error) {
         if (result.error === "duplicate") {
           throw new HttpError(409, "duplicate", "This request has already been admitted.")
@@ -515,12 +640,11 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       }
       reservation = requestId
       if (result.model.kind !== kind) throw wrongKind()
-      const prepared = prepare(result.model, result.connection)
-      const body = prepared.body
-      const url = kind === "chat"
-        ? endpoint(result.connection)
-        : audioEndpoint(result.connection, kind === "speech" ? "speech" : "transcriptions")
-      const apiKey = upstreamKey(result.connection, deps.secret)
+      const routes = routesOf(result)
+      const live = routes.filter((r) => (cooldown.get(r.key) ?? 0) <= now())
+      // A route that failed in a way that predicts the next request failing is skipped for a while;
+      // when every route is cooling, all of them are tried.
+      const order = live.length ? live : routes
       // Never follow redirects with an upstream credential. Only configured servers
       // receive it; request-supplied routing and provider overrides are rejected.
       const abort = new AbortController()
@@ -532,38 +656,95 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         clearTimeout(timeout)
         request.signal.removeEventListener("abort", cancel)
       }
-      let upstream: Response
-      try {
+      let won: { route: Route; prepared: Prepared; upstream: Response } | undefined
+      let failed: unknown
+      // An earlier attempt may have run inference: a later refundable status cannot refund it.
+      let unknownOutcome = false
+      for (let i = 0; i < order.length && !won; i++) {
+        const route = order[i]
         if (abort.signal.aborted) {
-          throw new HttpError(499, "cancelled", "The AI request was cancelled.")
+          failed ??= new HttpError(499, "cancelled", "The AI request was cancelled.")
+          break
         }
-        phase = "upstream_dispatch"
-        dispatched = true
-        upstream = await deps.fetch(url, {
-          method: "POST",
-          redirect: "error",
-          signal: abort.signal,
-          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        })
-      } catch (e) {
-        cleanup()
-        throw e
+        let prepared: Prepared, url: string, apiKey: string
+        try {
+          prepared = prepare(route.model, route.connection)
+          url = kind === "chat"
+            ? endpoint(route.connection)
+            : audioEndpoint(route.connection, kind === "speech" ? "speech" : "transcriptions")
+          apiKey = upstreamKey(route.connection, deps.secret)
+        } catch (e) {
+          audit("route_unusable")
+          failed = e
+          continue
+        }
+        // Non-final routes get a first-response deadline so a hung route leaves time for the next.
+        const attempt = new AbortController()
+        const link = () => attempt.abort()
+        abort.signal.addEventListener("abort", link, { once: true })
+        const timer = i < order.length - 1
+          ? setTimeout(link, deps.attemptTimeoutMs ?? 90_000)
+          : undefined
+        const release = () => {
+          clearTimeout(timer)
+          abort.signal.removeEventListener("abort", link)
+        }
+        let upstream: Response
+        try {
+          phase = "upstream_dispatch"
+          dispatched = true
+          upstream = await deps.fetch(url, {
+            method: "POST",
+            redirect: "error",
+            signal: attempt.signal,
+            headers: upstreamHeaders(route.connection, apiKey, kind === "chat"),
+            body: JSON.stringify(prepared.body),
+          })
+        } catch (e) {
+          release()
+          unknownOutcome = true
+          failed = e
+          upstreamError(
+            route,
+            null,
+            abort.signal.aborted || attempt.signal.aborted ? "timeout" : "fetch_error",
+          )
+          // A client cancel or the overall deadline ends the request; only a failed route falls back.
+          if (abort.signal.aborted) break
+          continue
+        }
+        clearTimeout(timer)
+        if (!upstream.ok) {
+          const info = await errorInfo(upstream)
+          release()
+          upstreamError(route, upstream.status, info.type, info.message)
+          // Known validation/auth/billing rejections can be refunded. A timeout or 5xx
+          // does not prove inference did not run (a proxy can fail after forwarding).
+          if ([400, 401, 402, 403, 404, 405, 406, 413, 415, 422, 429].includes(upstream.status)) {
+            dispatched = unknownOutcome
+          } else unknownOutcome = true
+          if (trips(upstream.status, info.message)) cooldown.set(route.key, now() + COOLDOWN_MS)
+          audit(`upstream_status_${upstream.status}`)
+          failed = new HttpError(
+            upstream.status === 429 ? 503 : 502,
+            "upstream_error",
+            "The model is temporarily unavailable. Please try again.",
+          )
+          continue
+        }
+        cooldown.delete(route.key)
+        won = { route, prepared, upstream }
       }
-      if (!upstream.ok) {
-        await upstream.body?.cancel()
+      if (!won) {
         cleanup()
-        // Known validation/auth/billing rejections can be refunded. A timeout or 5xx
-        // does not prove inference did not run (a proxy can fail after forwarding).
-        if ([400, 401, 402, 403, 404, 405, 406, 413, 415, 422, 429].includes(upstream.status)) {
-          dispatched = false
+        throw failed ?? new HttpError(503, "unavailable", "BOSS AI is temporarily unavailable.")
+      }
+      const { route: served, prepared, upstream } = won
+      if (served !== routes[0]) audit("upstream_fallback")
+      const cacheMiss = (u: unknown) => {
+        if (kind === "chat" && expectsCache(served) && cacheMissLarge(u)) {
+          audit("cache_miss_large_prompt")
         }
-        audit(`upstream_status_${upstream.status}`)
-        throw new HttpError(
-          upstream.status === 429 ? 503 : 502,
-          "upstream_error",
-          "The model is temporarily unavailable. Please try again.",
-        )
       }
       const settleWithRetry = async (tokens: number | null) => {
         if (tokens === null) audit("usage_unknown_reservation_retained")
@@ -647,9 +828,10 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           const output = completion(
             payload,
             input.model,
-            result.connection.api_type,
+            served.connection.api_type,
             requestId,
           )
+          cacheMiss(output.usage)
           const tokens = (output.usage as Obj | null)?.total_tokens
           measuredTokens = typeof tokens === "number" ? tokens : null
           await settleWithRetry(measuredTokens)
@@ -663,7 +845,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         cleanup()
         throw new Error("Missing stream")
       }
-      const adapter = new StreamAdapter(input.model, result.connection.api_type, requestId)
+      const adapter = new StreamAdapter(input.model, served.connection.api_type, requestId)
       const iterator = events(upstream.body, abort.signal)[Symbol.asyncIterator]()
       const encoder = new TextEncoder()
       const frame = (data: unknown) =>
@@ -676,6 +858,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         abort.abort()
         cleanup()
         await iterator.return?.(undefined).catch(() => {})
+        if (adapter.finished) cacheMiss(adapter.usage)
         // If settlement fails the full reservation remains charged. Never refund
         // an unknown outcome merely because a worker or a client disconnected.
         await settleWithRetry(tokens)
@@ -684,19 +867,25 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       const stream = new ReadableStream<Uint8Array>({
         async pull(controller) {
           try {
-            const next = await iterator.next()
-            if (next.done) {
-              if (!adapter.finished) throw new Error("Truncated stream")
-              await finish(adapter.tokens)
-              controller.enqueue(frame("[DONE]"))
-              controller.close()
-              return
-            }
-            for (const chunk of adapter.accept(next.value)) controller.enqueue(frame(chunk))
-            if (adapter.finished) {
-              await finish(adapter.tokens)
-              controller.enqueue(frame("[DONE]"))
-              controller.close()
+            // A pull that enqueues nothing is never called again: keep reading until a frame is out.
+            while (true) {
+              const next = await iterator.next()
+              if (next.done) {
+                if (!adapter.finished) throw new Error("Truncated stream")
+                await finish(adapter.tokens)
+                controller.enqueue(frame("[DONE]"))
+                controller.close()
+                return
+              }
+              const chunks = adapter.accept(next.value)
+              for (const chunk of chunks) controller.enqueue(frame(chunk))
+              if (adapter.finished) {
+                await finish(adapter.tokens)
+                controller.enqueue(frame("[DONE]"))
+                controller.close()
+                return
+              }
+              if (chunks.length) return
             }
           } catch {
             audit("stream_failed")
