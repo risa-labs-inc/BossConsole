@@ -494,6 +494,12 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
     // budget. A decider failure never fails the request: it falls back to the default tier.
     const route = async (ctx: RouteContext, body: Obj, user: string): Promise<Routing> => {
       const cfg = ctx.router
+      // A malformed context must never route to a model named "undefined".
+      for (const k of ["fast", "standard", "strong", "exhausted"] as const) {
+        if (typeof ctx.models?.[k]?.id !== "string") {
+          throw new HttpError(503, "configuration", "BOSS AI is temporarily unavailable.")
+        }
+      }
       if (hardStopped(ctx)) throw budgetExhausted(ctx.budget)
       const messages = body.messages as Obj[]
       const toolsOffered = Array.isArray(body.tools) && body.tools.length > 0

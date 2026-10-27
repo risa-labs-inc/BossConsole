@@ -862,6 +862,34 @@ Deno.test("router: config, budget state, routed reservation, settlement and stic
     assertEquals(c0.router.hard_stop_at, null)
     assertEquals(c0.router.choices.map((c: any) => c.tier), ["fast", "standard", "strong"])
     assertEquals(c0.models.exhausted.id, "optimist-fast")
+    // Regression: every tier is the full configured model row (a CTE column once shadowed the
+    // standard alias and returned the month-start timestamp, so standard calls were forbidden).
+    for (
+      const [tier, id, upstream] of [
+        ["fast", "optimist-fast", "haiku"],
+        ["standard", "optimist-standard", "sonnet"],
+        ["strong", "optimist-strong", "opus"],
+        ["exhausted", "optimist-fast", "haiku"],
+      ]
+    ) {
+      assertEquals(typeof c0.models[tier], "object", tier)
+      assertEquals(c0.models[tier].id, id, tier)
+      assertEquals(c0.models[tier].upstream_model, upstream, tier)
+      assertEquals(c0.models[tier].connection_id, "c", tier)
+      assert("usd_per_mtok_input" in c0.models[tier], tier)
+    }
+    assertEquals(Object.keys(c0.models).sort(), ["exhausted", "fast", "standard", "strong"])
+    // The router object carries config only: no helper columns leak into it.
+    for (const leaked of ["dc", "fm", "sm", "gm", "xm", "month_start", "lim", "spent"]) {
+      assert(!(leaked in c0.router), leaked)
+    }
+    // Each reservation on a tier serves exactly that configured model.
+    for (const served of ["optimist-fast", "optimist-standard", "optimist-strong"]) {
+      const t = await reserve(u1, served, 0.001, "standard", "default")
+      assertEquals(t.r.model.id, served)
+      await db.query("SELECT public.boss_ai_settle($1,1)", [t.id])
+    }
+    await db.exec("DELETE FROM public.boss_ai_requests")
     assertEquals(c0.decider_connection.base_url, "https://litellm.example")
     assertEquals([c0.budget.monthly_usd_limit, c0.budget.spent_usd, c0.budget.state], [
       100,

@@ -353,6 +353,17 @@ Deno.test("router: low confidence, decider failure and timeout use the default t
   assertEquals(headersOf(r3).tier, "standard")
   assert(hung.audits.includes("route_decider_failed"))
   assertEquals(hung.deciderCalls().length, 1)
+  // The default tier is served by the configured standard model, end to end.
+  assertEquals(failed.reserved()!.p_served_model_id, "optimist-standard")
+  assertEquals(failed.reserved()!.p_tier, "standard")
+  assertEquals(failed.fetched.at(-1)!.url, "https://api.anthropic.com/v1/messages")
+  assertEquals(failed.fetched.at(-1)!.body.model, "claude-sonnet-5-5")
+  // A malformed context (a tier that is not a model row) is a configuration error, never "undefined".
+  const broken = await fixture({
+    models: { ...models, standard: "2026-10-01T00:00:00Z" as unknown as Obj },
+  })
+  assertEquals((await broken.send()).status, 503)
+  assertEquals(broken.reserved(), undefined)
   // A different default tier is honoured; a missing decider key is also just a default.
   const strongDefault = await fixture({ scores: "fail", routerPatch: { default_tier: "strong" } })
   assertEquals(headersOf(await strongDefault.send()).tier, "strong")
