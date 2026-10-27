@@ -302,6 +302,7 @@ Deno.test("failed requests: estimate charged, a refused connection or DNS failur
     assertEquals((await f.send()).status, 503)
     assertEquals(f.fetched.length, 3)
     assertEquals(f.settled(), [0])
+    assertEquals(f.settles()[0].p_cost_usd, 0)
   }
   // A reset or timeout may have reached the upstream.
   const reset = await fixture([() => {

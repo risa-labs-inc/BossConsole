@@ -1298,7 +1298,14 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           )
         } else {
           if (dispatched && measuredTokens === null) audit("usage_unknown_reservation_retained")
-          await settleReservation(deps, reservation, dispatched ? measuredTokens : 0, audit)
+          // A refund also zeroes cost, or the budget keeps counting the pre-dispatch estimate.
+          await settleReservation(
+            deps,
+            reservation,
+            dispatched ? measuredTokens : 0,
+            audit,
+            dispatched ? {} : { p_cost_usd: 0 },
+          )
         }
       }
       return failure(error, requestId)
