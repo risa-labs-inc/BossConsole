@@ -613,12 +613,12 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         )
       }
       if (lookup.model.kind !== kind) throw wrongKind()
-      const prepare = (model: Model, connection: Connection): Prepared =>
+      const prepare = (model: Model, connection: Connection, source: Obj = input): Prepared =>
         kind === "transcription"
-          ? transcriptionBody(input, model)
+          ? transcriptionBody(source, model)
           : kind === "speech"
-          ? speechBody(input, model)
-          : { body: requestBody(input, model, connection.api_type, connection.base_url) }
+          ? speechBody(source, model)
+          : { body: requestBody(source, model, connection.api_type, connection.base_url) }
       prepare(lookup.model, lookup.connection)
       phase = "reservation"
       const result = await deps.rpc("boss_ai_reserve", {
@@ -661,6 +661,18 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         }
         : {}
       if (result.downgraded_from) audit("allowance_downgrade")
+      // The user did not choose the target, so a limit only it has must not fail their request.
+      const sent: Obj = result.downgraded_from && kind === "chat"
+        ? Object.fromEntries(
+          Object.entries(input).map(([k, v]) => [
+            k,
+            ["max_tokens", "max_completion_tokens"].includes(k) && Number.isSafeInteger(v) &&
+              Number(v) > result.model.max_output_tokens
+              ? result.model.max_output_tokens
+              : v,
+          ]),
+        )
+        : input
       const routes = routesOf(result)
       const live = routes.filter((r) => (cooldown.get(r.key) ?? 0) <= now())
       // A route that failed in a way that predicts the next request failing is skipped for a while;
@@ -689,7 +701,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         }
         let prepared: Prepared, url: string, apiKey: string
         try {
-          prepared = prepare(route.model, route.connection)
+          prepared = prepare(route.model, route.connection, sent)
           url = kind === "chat"
             ? endpoint(route.connection)
             : audioEndpoint(route.connection, kind === "speech" ? "speech" : "transcriptions")

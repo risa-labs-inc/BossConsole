@@ -160,12 +160,24 @@ Deno.test("no downgrade: no headers and no audit", async () => {
   assertEquals(f.fetched[0].url, "https://api.anthropic.com/v1/messages")
 })
 
-Deno.test("downgrade: a request the target cannot take is refused as for any model, and refunded", async () => {
-  const f = await fixture({ targetModel: target({ max_output_tokens: 100 }) })
-  const response = await f.send({ max_tokens: 2000 })
-  assertEquals(response.status, 400)
-  assertEquals(f.fetched.length, 0)
-  assertEquals(f.settles()[0].p_tokens, 0)
+Deno.test("downgrade: max_tokens above the target's limit is clamped; without a downgrade it stays a 400", async () => {
+  for (const key of ["max_tokens", "max_completion_tokens"]) {
+    const f = await fixture({ targetModel: target({ max_output_tokens: 100 }) })
+    const response = await f.send({ [key]: 2000 })
+    assertEquals(response.status, 200)
+    assertEquals(f.fetched[0].body.max_completion_tokens, 100)
+    assertEquals(f.settles()[0].p_tokens, 25)
+  }
+  // A value within the target's limit is untouched.
+  const within = await fixture({ targetModel: target({ max_output_tokens: 100 }) })
+  await within.send({ max_tokens: 50 })
+  assertEquals(within.fetched[0].body.max_completion_tokens, 50)
+  // Not downgraded: the requested model's own limit still rejects, before any reservation.
+  const plain = await fixture({ downgraded: false })
+  const rejected = await plain.send({ max_tokens: 5000 })
+  assertEquals(rejected.status, 400)
+  assertEquals(plain.fetched.length, 0)
+  assertEquals(plain.reserves().length, 0)
 })
 
 Deno.test("downgrade: an upstream failure on the target keeps the usual refund rules", async () => {

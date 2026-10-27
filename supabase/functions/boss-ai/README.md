@@ -442,8 +442,9 @@ is configuration rows; nothing is hardcoded.
   row.
 - The response `model` stays the requested id. Headers: `X-BOSS-AI-Downgraded-From` (requested id)
   and `X-BOSS-AI-Served-Model` (target); the audit event is `allowance_downgrade`. The target's own
-  upstream, routes, fallbacks and limits apply, so a request its model cannot take (for example a
-  larger `max_tokens`) is a 400 like on any model, and is refunded.
+  upstream, routes, fallbacks and limits apply. A `max_tokens`/`max_completion_tokens` above the
+  target's `max_output_tokens` is clamped to it rather than rejected, since the user did not choose
+  the target; other requests the target cannot take are a 400 and refunded.
 - `/v1/models` and `/v1/usage` add per model `over_allowance_model_id` (effective for the caller),
   `downgraded` (a target exists and any period cannot fit a request) and `downgrade_resets_at` (when
   the last exhausted period resets). Only the caller's own data is returned.
