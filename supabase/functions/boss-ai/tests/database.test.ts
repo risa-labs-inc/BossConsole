@@ -1,5 +1,5 @@
 import { PGlite } from "npm:@electric-sql/pglite@0.3.14"
-import { assertEquals, assertRejects } from "@std/assert"
+import { assert, assertEquals, assertRejects } from "@std/assert"
 
 // Runs the real migration in PostgreSQL/WASM; only the surrounding auth/RBAC
 // schema is a fixture. No Supabase project or Docker daemon is required.
@@ -390,6 +390,371 @@ Deno.test("fallbacks: validated shape, existing connections, resolved by lookup 
     await db.exec("SET ROLE authenticated")
     await assertRejects(() => db.query("SELECT public.boss_ai_resolve_fallbacks('[]')"))
     await db.exec("RESET ROLE")
+  } finally {
+    await db.close()
+  }
+})
+
+Deno.test("user quotas: overrides replace limits, downgrade chain serves the target", async () => {
+  const db = new PGlite()
+  try {
+    await db.exec(`
+      CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
+      CREATE SCHEMA auth;
+      CREATE TABLE auth.users(id uuid PRIMARY KEY, banned_until timestamptz, is_anonymous boolean NOT NULL DEFAULT false);
+      CREATE TABLE public.permissions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text UNIQUE, description text, is_system boolean);
+      CREATE TABLE public.roles(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text UNIQUE);
+      CREATE TABLE public.role_permissions(role_id uuid, permission_id uuid, UNIQUE(role_id,permission_id));
+      CREATE TABLE public.test_user_permissions(user_id uuid, permission_name text);
+      CREATE FUNCTION public.user_has_permission(p_user_id uuid,p_permission text) RETURNS boolean LANGUAGE sql AS
+        'SELECT EXISTS(SELECT 1 FROM public.test_user_permissions WHERE user_id=p_user_id AND permission_name=p_permission)';
+      INSERT INTO public.roles(name) VALUES('user');
+    `)
+    for (
+      const file of [
+        "20260912000000_boss_ai.sql",
+        "20260912001000_boss_ai_hardening.sql",
+        "20260912002000_boss_ai_validation.sql",
+        "20260912003000_boss_ai_allowance_preflight.sql",
+        "20260912004000_boss_ai_exchange_tickets.sql",
+        "20260924231000_boss_ai_token_eligibility.sql",
+        "20261007000000_boss_ai_optimist_permission.sql",
+        "20261008000000_boss_ai_model_provider_routing.sql",
+        "20261008100000_boss_ai_reserve_ai_grants.sql",
+        "20261015000000_boss_ai_voice.sql",
+        "20261023090000_boss_ai_voice_admission.sql",
+        "20261027120000_boss_ai_anthropic_fallbacks.sql",
+        "20261027130000_boss_ai_user_quota_downgrade.sql",
+      ]
+    ) {
+      await db.exec(
+        await Deno.readTextFile(new URL(`../../../migrations/${file}`, import.meta.url)),
+      )
+    }
+    const u1 = "00000000-0000-0000-0000-000000000001"
+    const u2 = "00000000-0000-0000-0000-000000000002"
+    const u3 = "00000000-0000-0000-0000-000000000003"
+    await db.exec(`
+      INSERT INTO auth.users(id) VALUES('${u1}'),('${u2}'),('${u3}');
+      INSERT INTO public.permissions(name) VALUES('ai.lite');
+      INSERT INTO public.test_user_permissions VALUES('${u1}','ai.use'),('${u1}','ai.lite'),('${u2}','ai.use'),('${u3}','ai.lite');
+      INSERT INTO public.boss_ai_connections VALUES('c','https://example.com/v1','BOSS_AI_TEST','openai_chat',true);
+      INSERT INTO public.boss_ai_models(id,display_name,connection_id,upstream_model,kind,context_length,max_output_tokens,published) VALUES
+        ('big','Big','c','big','chat',1024,100,true),
+        ('mid','Mid','c','mid','chat',1024,100,true),
+        ('lite','Lite','c','lite','chat',1024,100,true),
+        ('tiny','Tiny','c','tiny','chat',1024,100,true),
+        ('voice','Voice','c','v','speech',1024,10,true);
+      INSERT INTO public.boss_ai_allowances VALUES
+        ('big','ai.use',2048,2048,2048,2),
+        ('mid','ai.use',100000,100000,100000,2),
+        ('lite','ai.lite',100000,100000,100000,2),
+        ('tiny','ai.use',100000,100000,100000,2);
+    `)
+    const scalar = async (sql: string, params: unknown[] = []) =>
+      (await db.query<{ value: any }>(sql, params)).rows[0].value
+    const policy = (u: string, m = "big") =>
+      scalar("SELECT public.boss_ai_policy($1,$2) AS value", [u, m])
+    const reserve = (u: string, m = "big") =>
+      scalar("SELECT public.boss_ai_reserve($1,$2,$3) AS value", [u, m, crypto.randomUUID()])
+    const serve = async (u: string, m = "big") => {
+      const id = crypto.randomUUID()
+      const r = await scalar("SELECT public.boss_ai_reserve($1,$2,$3) AS value", [u, m, id])
+      return { r, id }
+    }
+    const row = (id: string) =>
+      scalar("SELECT model_id AS value FROM public.boss_ai_requests WHERE id=$1", [id])
+
+    // Overrides replace per field, can raise or lower, and null falls through.
+    assertEquals(await policy(u1), { day: 2048, week: 2048, month: 2048, concurrent: 2 })
+    await db.exec(
+      `INSERT INTO public.boss_ai_user_allowances(user_id,model_id,tokens_per_month,max_concurrent)
+      VALUES('${u1}','big',50000,7)`,
+    )
+    assertEquals(await policy(u1), { day: 2048, week: 2048, month: 50000, concurrent: 7 })
+    await db.exec(
+      `UPDATE public.boss_ai_user_allowances SET tokens_per_month=500, max_concurrent=NULL`,
+    )
+    assertEquals(await policy(u1), { day: 2048, week: 2048, month: 500, concurrent: 2 })
+    // An override never grants access: u3 has no permission for big.
+    await db.exec(`INSERT INTO public.boss_ai_user_allowances(user_id,model_id,tokens_per_day)
+      VALUES('${u3}','big',999999)`)
+    assertEquals(await policy(u3), null)
+    assertEquals((await reserve(u3)).error, "forbidden")
+    assertEquals(await scalar("SELECT public.boss_ai_lookup($1,'big') AS value", [u3]), null)
+    // Per-user data stays per user.
+    assertEquals((await policy(u2)).month, 2048)
+    // Checks and no client access.
+    await assertRejects(() =>
+      db.exec(
+        `INSERT INTO public.boss_ai_user_allowances(user_id,model_id,tokens_per_day) VALUES('${u2}','big',0)`,
+      )
+    )
+    await assertRejects(() =>
+      db.exec(
+        `INSERT INTO public.boss_ai_user_allowances(user_id,model_id,max_concurrent) VALUES('${u2}','big',101)`,
+      )
+    )
+    await assertRejects(() =>
+      db.exec(
+        `INSERT INTO public.boss_ai_user_allowances(user_id,model_id,over_allowance_model_id) VALUES('${u2}','big','big')`,
+      )
+    )
+    await db.exec("SET ROLE authenticated")
+    await assertRejects(() => db.query("SELECT * FROM public.boss_ai_user_allowances"))
+    await assertRejects(() => db.query("SELECT public.boss_ai_next_model($1,'big')", [u1]))
+    await db.exec("RESET ROLE")
+    await db.exec(`DELETE FROM public.boss_ai_user_allowances WHERE user_id='${u3}'`)
+
+    // Exhausted with no target: the existing allowance_exceeded; nothing is charged.
+    const a = await serve(u1)
+    assertEquals(a.r.error, "allowance_exceeded")
+    assertEquals(await scalar("SELECT count(*)::int AS value FROM public.boss_ai_requests"), 0)
+    await db.exec(`DELETE FROM public.boss_ai_user_allowances WHERE user_id='${u1}'`)
+
+    // One hop: big -> mid. First request fits big; the next two exhaust it and are served by mid.
+    await db.exec("UPDATE public.boss_ai_models SET over_allowance_model_id='mid' WHERE id='big'")
+    const first = await serve(u1)
+    assertEquals(first.r.model.id, "big")
+    assertEquals(first.r.downgraded_from, undefined)
+    await db.query("SELECT public.boss_ai_settle($1,1024)", [first.id])
+    const second = await serve(u1)
+    assertEquals(second.r.model.id, "big")
+    await db.query("SELECT public.boss_ai_settle($1,1024)", [second.id])
+    const down = await serve(u1)
+    assertEquals(down.r.model.id, "mid")
+    assertEquals(down.r.downgraded_from, "big")
+    assertEquals(down.r.model.upstream_model, "mid")
+    assertEquals(down.r.connection.api_type, "openai_chat")
+    assert(Array.isArray(down.r.fallbacks))
+    // The ledger row and usage belong to the served model; settlement charges the target.
+    assertEquals(await row(down.id), "mid")
+    await db.query("SELECT public.boss_ai_settle($1,40)", [down.id])
+    assertEquals(
+      (await scalar("SELECT public.boss_ai_usage($1,'mid') AS value", [u1])).day.used,
+      40,
+    )
+    assertEquals(
+      (await scalar("SELECT public.boss_ai_usage($1,'big') AS value", [u1])).day.used,
+      2048,
+    )
+    // Duplicate and concurrency semantics survive on the target.
+    assertEquals(
+      (await scalar("SELECT public.boss_ai_reserve($1,'big',$2) AS value", [u1, down.id])).error,
+      "duplicate",
+    )
+    await serve(u1)
+    await serve(u1)
+    assertEquals((await reserve(u1)).error, "concurrency_exceeded")
+    await db.exec("DELETE FROM public.boss_ai_requests WHERE NOT settled")
+    // Another user is unaffected by u1's usage.
+    assertEquals((await serve(u2)).r.model.id, "big")
+    await db.exec("DELETE FROM public.boss_ai_requests WHERE user_id = '" + u2 + "'")
+
+    // Catalog and usage: effective target and downgraded state with resets_at, own data only.
+    const cat = (await scalar("SELECT public.boss_ai_catalog($1) AS value", [u1])).find((m: any) =>
+      m.id === "big"
+    )
+    assertEquals(cat.over_allowance_model_id, "mid")
+    assertEquals(cat.downgraded, true)
+    assert(typeof cat.downgrade_resets_at === "string")
+    const mid = (await scalar("SELECT public.boss_ai_catalog($1) AS value", [u1])).find((m: any) =>
+      m.id === "mid"
+    )
+    assertEquals([mid.over_allowance_model_id, mid.downgraded, mid.downgrade_resets_at], [
+      null,
+      false,
+      null,
+    ])
+    const other = (await scalar("SELECT public.boss_ai_catalog($1) AS value", [u2])).find((
+      m: any,
+    ) => m.id === "big")
+    assertEquals(other.downgraded, false)
+
+    // Two hops: mid -> lite requires ai.lite; a user without it gets allowance_exceeded.
+    await db.exec(
+      `UPDATE public.boss_ai_allowances SET tokens_per_day=1024,tokens_per_week=1024,tokens_per_month=1024 WHERE model_id='mid'`,
+    )
+    await db.exec("UPDATE public.boss_ai_models SET over_allowance_model_id='lite' WHERE id='mid'")
+    const hop2 = await serve(u1)
+    assertEquals([hop2.r.model.id, hop2.r.downgraded_from], ["lite", "big"])
+    assertEquals(await row(hop2.id), "lite")
+    const noPerm = await serve(u2)
+    assertEquals(noPerm.r.model.id, "big")
+    await db.exec(
+      `INSERT INTO public.boss_ai_requests(id,user_id,model_id,reserved_tokens,charged_tokens)
+      VALUES(gen_random_uuid(),'${u2}','big',2048,2048)`,
+    )
+    // u2: big exhausted -> mid (permitted, 1024 fits one request) ...
+    assertEquals((await serve(u2)).r.model.id, "mid")
+    await db.exec(
+      `INSERT INTO public.boss_ai_requests(id,user_id,model_id,reserved_tokens,charged_tokens)
+      VALUES(gen_random_uuid(),'${u2}','mid',1024,1024)`,
+    )
+    // ... then mid exhausted -> lite, which u2 may not use: allowance_exceeded with big's usage.
+    const stop = await serve(u2)
+    assertEquals(stop.r.error, "allowance_exceeded")
+    assertEquals(stop.r.usage.day.limit, 2048)
+    // Target also exhausted and no further target.
+    await db.exec(
+      `INSERT INTO public.boss_ai_requests(id,user_id,model_id,reserved_tokens,charged_tokens)
+      VALUES(gen_random_uuid(),'${u1}','lite',100000,100000)`,
+    )
+    assertEquals((await serve(u1)).r.error, "allowance_exceeded")
+
+    // A per-user target overrides the model's; a per-user lowered limit forces a downgrade.
+    await db.exec("DELETE FROM public.boss_ai_requests")
+    await db.exec(
+      `INSERT INTO public.boss_ai_user_allowances(user_id,model_id,tokens_per_day,over_allowance_model_id)
+      VALUES('${u2}','big',10,'tiny')`,
+    )
+    assertEquals(
+      await scalar("SELECT public.boss_ai_lookup($1,'big')->>'error' AS value", [u2]),
+      null,
+    )
+    const forced = await serve(u2)
+    assertEquals([forced.r.model.id, forced.r.downgraded_from], ["tiny", "big"])
+    // Without any target a limit below one request stays a configuration fault.
+    await db.exec(
+      `UPDATE public.boss_ai_models SET over_allowance_model_id=NULL WHERE id IN ('big','mid')`,
+    )
+    assertEquals(
+      await scalar("SELECT public.boss_ai_lookup($1,'big')->>'error' AS value", [u1]),
+      null,
+    )
+    await db.exec(
+      `INSERT INTO public.boss_ai_user_allowances(user_id,model_id,tokens_per_day) VALUES('${u1}','big',10)`,
+    )
+    assertEquals(
+      await scalar("SELECT public.boss_ai_lookup($1,'big')->>'error' AS value", [u1]),
+      "misconfigured_allowance",
+    )
+    await db.exec(`DELETE FROM public.boss_ai_user_allowances WHERE user_id='${u1}'`)
+
+    // Cycles, depth and kind mismatches are refused at write time, model-level and user-level.
+    await db.exec(`DELETE FROM public.boss_ai_user_allowances`)
+    await db.exec("UPDATE public.boss_ai_models SET over_allowance_model_id='mid' WHERE id='big'")
+    await db.exec("UPDATE public.boss_ai_models SET over_allowance_model_id='lite' WHERE id='mid'")
+    await assertRejects(() =>
+      db.exec("UPDATE public.boss_ai_models SET over_allowance_model_id='big' WHERE id='lite'")
+    )
+    await assertRejects(() =>
+      db.exec("UPDATE public.boss_ai_models SET over_allowance_model_id='mid' WHERE id='lite'")
+    )
+    await db.exec("UPDATE public.boss_ai_models SET over_allowance_model_id='tiny' WHERE id='lite'")
+    // big -> mid -> lite -> tiny is 3 hops: allowed. A fourth is not.
+    await assertRejects(
+      () =>
+        db.exec(
+          "INSERT INTO public.boss_ai_models(id,display_name,connection_id,upstream_model,context_length,max_output_tokens,over_allowance_model_id) VALUES('x','X','c','x',1024,10,'big')",
+        ),
+      undefined,
+    )
+    await db.exec(
+      "INSERT INTO public.boss_ai_models(id,display_name,connection_id,upstream_model,context_length,max_output_tokens) VALUES('x','X','c','x',1024,10)",
+    )
+    await assertRejects(() =>
+      db.exec("UPDATE public.boss_ai_models SET over_allowance_model_id='x' WHERE id='tiny'")
+    )
+    await db.exec("UPDATE public.boss_ai_models SET over_allowance_model_id=NULL WHERE id='lite'")
+    // User-level overrides combine with model-level chains.
+    await assertRejects(() =>
+      db.exec(
+        `INSERT INTO public.boss_ai_user_allowances(user_id,model_id,over_allowance_model_id) VALUES('${u1}','lite','big')`,
+      )
+    )
+    await db.exec(
+      `INSERT INTO public.boss_ai_user_allowances(user_id,model_id,over_allowance_model_id) VALUES('${u1}','tiny','x')`,
+    )
+    // That makes big -> mid -> lite is fine, but a model-level edge closing a loop for u1 is caught.
+    await assertRejects(() =>
+      db.exec("UPDATE public.boss_ai_models SET over_allowance_model_id='big' WHERE id='x'")
+    )
+    await assertRejects(() =>
+      db.exec("UPDATE public.boss_ai_models SET over_allowance_model_id='voice' WHERE id='big'")
+    )
+    // Deleting a user removes their overrides.
+    await db.exec(`DELETE FROM auth.users WHERE id='${u1}'`)
+    assertEquals(
+      await scalar("SELECT count(*)::int AS value FROM public.boss_ai_user_allowances"),
+      0,
+    )
+  } finally {
+    await db.close()
+  }
+})
+
+Deno.test("user quotas: downgrade serves from the target's own pool", async () => {
+  const db = new PGlite()
+  try {
+    await db.exec(`
+      CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
+      CREATE SCHEMA auth;
+      CREATE TABLE auth.users(id uuid PRIMARY KEY, banned_until timestamptz, is_anonymous boolean NOT NULL DEFAULT false);
+      CREATE TABLE public.permissions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text UNIQUE, description text, is_system boolean);
+      CREATE TABLE public.roles(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text UNIQUE);
+      CREATE TABLE public.role_permissions(role_id uuid, permission_id uuid, UNIQUE(role_id,permission_id));
+      CREATE TABLE public.test_user_permissions(user_id uuid, permission_name text);
+      CREATE FUNCTION public.user_has_permission(p_user_id uuid,p_permission text) RETURNS boolean LANGUAGE sql AS
+        'SELECT EXISTS(SELECT 1 FROM public.test_user_permissions WHERE user_id=p_user_id AND permission_name=p_permission)';
+      INSERT INTO public.roles(name) VALUES('user');
+    `)
+    for (
+      const file of [
+        "20260912000000_boss_ai.sql",
+        "20260912001000_boss_ai_hardening.sql",
+        "20260912002000_boss_ai_validation.sql",
+        "20260912003000_boss_ai_allowance_preflight.sql",
+        "20260912004000_boss_ai_exchange_tickets.sql",
+        "20260924231000_boss_ai_token_eligibility.sql",
+        "20261007000000_boss_ai_optimist_permission.sql",
+        "20261008000000_boss_ai_model_provider_routing.sql",
+        "20261008100000_boss_ai_reserve_ai_grants.sql",
+        "20261015000000_boss_ai_voice.sql",
+        "20261023090000_boss_ai_voice_admission.sql",
+        "20261027120000_boss_ai_anthropic_fallbacks.sql",
+        "20261027130000_boss_ai_user_quota_downgrade.sql",
+      ]
+    ) {
+      await db.exec(
+        await Deno.readTextFile(new URL(`../../../migrations/${file}`, import.meta.url)),
+      )
+    }
+    const u = "00000000-0000-0000-0000-000000000001"
+    await db.exec(`
+      INSERT INTO auth.users(id) VALUES('${u}');
+      INSERT INTO public.test_user_permissions VALUES('${u}','ai.use');
+      INSERT INTO public.boss_ai_connections VALUES('c','https://example.com/v1','BOSS_AI_TEST','openai_chat',true);
+      INSERT INTO public.boss_ai_models(id,display_name,connection_id,upstream_model,kind,context_length,max_output_tokens,published) VALUES
+        ('stt','Stt','c','stt','transcription',1024,60,true),
+        ('tts','Tts','c','tts','speech',1024,20,true),
+        ('stt-lite','SttLite','c','stt2','transcription',1024,60,true);
+      UPDATE public.boss_ai_models SET allowance_model_id='stt' WHERE id='tts';
+      INSERT INTO public.boss_ai_allowances VALUES('stt','ai.use',100,100,100,2),('stt-lite','ai.use',1000,1000,1000,2);
+    `)
+    const scalar = async (sql: string, params: unknown[] = []) =>
+      (await db.query<{ value: any }>(sql, params)).rows[0].value
+    const reserve = (m: string) =>
+      scalar("SELECT public.boss_ai_reserve($1,$2,$3) AS value", [u, m, crypto.randomUUID()])
+    // Pooling still works: tts draws from stt's seconds, so a downgrade of stt sees tts usage too.
+    await db.exec(
+      "UPDATE public.boss_ai_models SET over_allowance_model_id='stt-lite' WHERE id='stt'",
+    )
+    const t1 = await reserve("tts")
+    assertEquals(t1.model.id, "tts")
+    await db.exec("UPDATE public.boss_ai_requests SET charged_tokens=60, settled=true")
+    assertEquals((await scalar("SELECT public.boss_ai_usage($1,'stt') AS value", [u])).day.used, 60)
+    // 40 seconds left < 60 needed: stt downgrades; tts needs only 20 and still fits.
+    const s = await reserve("stt")
+    assertEquals([s.model.id, s.downgraded_from], ["stt-lite", "stt"])
+    assertEquals((await reserve("tts")).model.id, "tts")
+    // A kind mismatch is refused.
+    await db.exec(
+      "INSERT INTO public.boss_ai_models(id,display_name,connection_id,upstream_model,context_length,max_output_tokens) VALUES('c1','C','c','c',1024,10)",
+    )
+    await assertRejects(() =>
+      db.exec("UPDATE public.boss_ai_models SET over_allowance_model_id='c1' WHERE id='stt'")
+    )
   } finally {
     await db.close()
   }
