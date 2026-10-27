@@ -24,15 +24,18 @@ import {
 import {
   applyBudget,
   budgetExhausted,
-  buildState,
   costUsd,
   decide,
+  decideSystemOne,
   Decision,
   estimateUsd,
+  formatState,
   hardStopped,
   isContinuation,
+  optionalKey,
   pricesOf,
   RouteContext,
+  stateFields,
   stickyKey,
   Tier,
   TIERS,
@@ -338,6 +341,7 @@ const cacheMissLarge = (value: unknown) => {
 
 export function createHandler(deps: Dependencies): (request: Request) => Promise<Response> {
   const cooldown = new Map<string, number>()
+  const allowLocal = deps.secret("BOSS_AI_ALLOW_LOCAL_AGENT") === "1"
   const now = deps.now ?? Date.now
   const startLiveCall = async (
     request: Request,
@@ -492,11 +496,11 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       const cfg = ctx.router
       if (hardStopped(ctx)) throw budgetExhausted(ctx.budget)
       const messages = body.messages as Obj[]
-      const state = buildState(
-        messages,
-        Array.isArray(body.tools) && body.tools.length > 0,
-        cfg.state_char_budget,
-      )
+      const toolsOffered = Array.isArray(body.tools) && body.tools.length > 0
+      const fields = stateFields(messages, toolsOffered, cfg.state_char_budget)
+      const state = cfg.decider_api === "systemone"
+        ? JSON.stringify(fields)
+        : formatState(fields, cfg.state_char_budget)
       const key = await stickyKey(user, String(body.model), messages)
       let tier: Tier = cfg.default_tier
       let source: Routing["source"] = "default"
@@ -510,13 +514,23 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         source = "sticky"
       } else {
         try {
-          decision = await decide(
-            deps.fetch,
-            ctx.decider_connection,
-            upstreamKey(ctx.decider_connection, deps.secret),
-            cfg,
-            state,
-          )
+          decision = cfg.decider_api === "systemone"
+            ? await decideSystemOne(
+              deps.fetch,
+              ctx.decider_connection,
+              optionalKey(ctx.decider_connection, deps.secret),
+              cfg,
+              fields,
+              allowLocal,
+            )
+            : await decide(
+              deps.fetch,
+              ctx.decider_connection,
+              upstreamKey(ctx.decider_connection, deps.secret),
+              cfg,
+              state,
+              allowLocal,
+            )
           if (decision.confidence >= cfg.min_confidence) {
             tier = decision.tier
             source = "decider"
@@ -855,9 +869,11 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         let prepared: Prepared, url: string, apiKey: string
         try {
           prepared = prepare(route.model, route.connection, sent)
-          url = kind === "chat"
-            ? endpoint(route.connection)
-            : audioEndpoint(route.connection, kind === "speech" ? "speech" : "transcriptions")
+          url = kind === "chat" ? endpoint(route.connection, allowLocal) : audioEndpoint(
+            route.connection,
+            kind === "speech" ? "speech" : "transcriptions",
+            allowLocal,
+          )
           apiKey = upstreamKey(route.connection, deps.secret)
         } catch (e) {
           audit("route_unusable")

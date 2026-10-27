@@ -426,6 +426,7 @@ Deno.test("user quotas: overrides replace limits, downgrade chain serves the tar
         "20261027120000_boss_ai_anthropic_fallbacks.sql",
         "20261027130000_boss_ai_user_quota_downgrade.sql",
         "20261027140000_boss_ai_router_budget.sql",
+        "20261027150000_boss_ai_decider_api.sql",
       ]
     ) {
       await db.exec(
@@ -716,6 +717,7 @@ Deno.test("user quotas: downgrade serves from the target's own pool", async () =
         "20261027120000_boss_ai_anthropic_fallbacks.sql",
         "20261027130000_boss_ai_user_quota_downgrade.sql",
         "20261027140000_boss_ai_router_budget.sql",
+        "20261027150000_boss_ai_decider_api.sql",
       ]
     ) {
       await db.exec(
@@ -793,6 +795,7 @@ Deno.test("router: config, budget state, routed reservation, settlement and stic
         "20261027120000_boss_ai_anthropic_fallbacks.sql",
         "20261027130000_boss_ai_user_quota_downgrade.sql",
         "20261027140000_boss_ai_router_budget.sql",
+        "20261027150000_boss_ai_decider_api.sql",
       ]
     ) {
       await db.exec(
@@ -1043,6 +1046,29 @@ Deno.test("router: config, budget state, routed reservation, settlement and stic
     )
     await bad(`INSERT INTO public.boss_ai_user_budgets VALUES('${u1}','optimist',0)`)
     await bad(`INSERT INTO public.boss_ai_user_budgets VALUES('${u1}','optimist-fast',5)`)
+    // decider_api defaults to the hosted decider; systemone is allowed, anything else is not.
+    assertEquals((await ctx()).router.decider_api, "litellm_embeddings")
+    await db.exec(
+      "UPDATE public.boss_ai_routers SET decider_api='systemone', decider_model='decider:4b'",
+    )
+    assertEquals((await ctx()).router.decider_api, "systemone")
+    await bad("UPDATE public.boss_ai_routers SET decider_api='other'")
+    await db.exec(
+      "UPDATE public.boss_ai_routers SET decider_api='litellm_embeddings', decider_model='risa-pplx-decider-v1-27b'",
+    )
+    // Connections may point at local http hosts; other http URLs stay refused.
+    await db.exec(
+      "INSERT INTO public.boss_ai_connections VALUES('ollaya-local','http://host.docker.internal:11437','BOSS_AI_OLLAYA','openai_chat',true),('l2','http://localhost/v1','BOSS_AI_L2','openai_chat',true),('l3','http://127.0.0.1:4000','BOSS_AI_L3','openai_chat',true)",
+    )
+    await bad(
+      "INSERT INTO public.boss_ai_connections VALUES('x1','http://example.com/v1','BOSS_AI_X1','openai_chat',true)",
+    )
+    await bad(
+      "INSERT INTO public.boss_ai_connections VALUES('x2','http://localhost.evil.com/v1','BOSS_AI_X2','openai_chat',true)",
+    )
+    await bad(
+      "INSERT INTO public.boss_ai_connections VALUES('x3','ftp://localhost','BOSS_AI_X3','openai_chat',true)",
+    )
     await db.exec("UPDATE public.boss_ai_routers SET enabled=false")
     assertEquals(
       (await scalar("SELECT public.boss_ai_lookup($1,'optimist') AS value", [u1])).router,

@@ -61,6 +61,7 @@ const connections: Record<string, Connection> = {
 }
 const router = {
   model_id: "optimist",
+  decider_api: "litellm_embeddings",
   decider_model: "risa-pplx-decider-v1-27b",
   decider_temperature: 1.0087417621345625,
   decider_timeout_ms: 500,
@@ -96,6 +97,14 @@ interface Options {
   models?: Record<string, Obj>
   secrets?: Record<string, string>
   stream?: string
+  ollaya?: Obj | "fail"
+  localUpstream?: boolean
+}
+const ollayaConn: Connection = {
+  id: "ollaya-local",
+  base_url: "http://host.docker.internal:11437",
+  api_type: "openai_chat",
+  api_key_secret: "BOSS_AI_OLLAYA",
 }
 
 async function fixture(options: Options = {}) {
@@ -106,11 +115,15 @@ async function fixture(options: Options = {}) {
   const tm = options.models ?? models
   const token = (await mintToken(user, signingKey(secret))).access_token
   const limit = 100, spent = options.spent ?? 0
-  const rt = { ...router, ...(options.routerPatch ?? {}) }
+  const rt = {
+    ...router,
+    ...(options.ollaya ? { decider_api: "systemone", decider_model: "decider:4b" } : {}),
+    ...(options.routerPatch ?? {}),
+  }
   const exhaustedModel = tm.exhausted ?? tm.fast
   const ctx = {
     router: rt,
-    decider_connection: decider,
+    decider_connection: options.ollaya ? ollayaConn : decider,
     models: { ...tm, exhausted: exhaustedModel },
     budget: {
       monthly_usd_limit: limit,
@@ -154,7 +167,9 @@ async function fixture(options: Options = {}) {
         )!
         return Promise.resolve({
           model: row,
-          connection: connections[served],
+          connection: options.localUpstream
+            ? { ...openrouter, base_url: "http://127.0.0.1:4000/v1" }
+            : connections[served],
           fallbacks: [],
           routed_from: "optimist",
           tier: params.p_tier,
@@ -167,6 +182,10 @@ async function fixture(options: Options = {}) {
     async fetch(url, init) {
       const body = JSON.parse(String(init!.body))
       fetched.push({ url: String(url), body })
+      if (String(url) === "http://host.docker.internal:11437/v1/systemone") {
+        if (options.ollaya === "fail") return new Response("{}", { status: 503 })
+        return new Response(JSON.stringify({ answers: { tier: options.ollaya } }), { status: 200 })
+      }
       if (String(url) === DECIDER) {
         if (options.scores === "fail") return new Response("{}", { status: 500 })
         if (options.scores === "hang") {
@@ -217,6 +236,12 @@ async function fixture(options: Options = {}) {
   const settle = () => calls.filter((c) => c.name === "boss_ai_settle").at(-1)?.params
   const deciderCalls = () => fetched.filter((f) => f.url === DECIDER)
   return { send, calls, fetched, audits, logs, reserved, settle, deciderCalls, token, handler }
+}
+
+const ASK_STRONG = {
+  choice: "strong",
+  confidence: 0.92,
+  probabilities: { fast: 0.01, standard: 0.07, strong: 0.92 },
 }
 
 const headersOf = (r: Response) => ({
@@ -538,4 +563,59 @@ Deno.test("/v1/usage reports the router model's budget", async () => {
     }),
   )
   assertEquals((await response.json()).data[0].budget, budget)
+})
+
+Deno.test("systemone decider: tier from answers.tier, no Bearer without a key, local http needs the flag", async () => {
+  const local = { BOSS_AI_ALLOW_LOCAL_AGENT: "1", BOSS_AI_OLLAYA: "", BOSS_AI_ROUTE_TRACE: "1" }
+  const f = await fixture({ ollaya: ASK_STRONG, secrets: local })
+  const response = await f.send({ tools: [{ type: "function", function: { name: "t" } }] })
+  assertEquals(response.status, 200)
+  assertEquals(headersOf(response), {
+    tier: "strong",
+    served: "optimist-strong",
+    source: "decider",
+    budget: null,
+  })
+  const asked = f.fetched.find((x) => x.url.endsWith("/v1/systemone"))!
+  assertEquals(asked.body.model, "decider:4b")
+  assertEquals((asked.body.state as Obj).message, "please debug this failing test")
+  assertEquals((asked.body.state as Obj).tools_offered, true)
+  assertEquals(Object.keys(((asked.body.questions as Obj).tier as Obj).criteria as Obj), [
+    "fast",
+    "standard",
+    "strong",
+  ])
+  // Trace carries the same fields as the hosted decider, the state as JSON.
+  const trace = f.logs.find((l) => l.event === "route_trace")!
+  assertEquals(trace.probabilities, ASK_STRONG.probabilities)
+  assertEquals(trace.confidence, 0.92)
+  assert(typeof trace.decider_latency_ms === "number")
+  assertEquals(JSON.parse(String(trace.decider_state)).message, "please debug this failing test")
+  // Without the local flag the http decider is refused and the default tier serves the call.
+  const prod = await fixture({ ollaya: ASK_STRONG, secrets: { BOSS_AI_OLLAYA: "" } })
+  const r = await prod.send()
+  assertEquals(r.status, 200)
+  assertEquals(headersOf(r).source, "default")
+  assert(prod.audits.includes("route_decider_failed"))
+  assertEquals(prod.fetched.some((x) => x.url.endsWith("/v1/systemone")), false)
+  // A failing local decider also falls back to the default tier.
+  const down = await fixture({ ollaya: "fail", secrets: local })
+  assertEquals(headersOf(await down.send()).tier, "standard")
+  assert(down.audits.includes("route_decider_failed"))
+  // Low confidence uses the default tier here as well.
+  const unsure = await fixture({
+    ollaya: { choice: "strong", confidence: 0.4, probabilities: { strong: 0.4 } },
+    secrets: local,
+  })
+  assertEquals(headersOf(await unsure.send()).source, "default")
+  assert(unsure.audits.includes("route_low_confidence"))
+})
+
+Deno.test("regular upstream connections may use local http only with BOSS_AI_ALLOW_LOCAL_AGENT=1", async () => {
+  const on = await fixture({ localUpstream: true, secrets: { BOSS_AI_ALLOW_LOCAL_AGENT: "1" } })
+  assertEquals((await on.send()).status, 200)
+  assertEquals(on.fetched.at(-1)!.url, "http://127.0.0.1:4000/v1/chat/completions")
+  const off = await fixture({ localUpstream: true })
+  assertEquals((await off.send()).status, 503)
+  assertEquals(off.fetched.some((x) => x.url.startsWith("http://127.0.0.1")), false)
 })

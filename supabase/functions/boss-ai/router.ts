@@ -1,5 +1,5 @@
 import { HttpError } from "./auth.ts"
-import { Connection, Obj, object, readJson } from "./wire.ts"
+import { Connection, Obj, object, readJson, urlAllowed } from "./wire.ts"
 
 // Model routing: a decider model picks the tier (fast/standard/strong) that serves each call.
 // The decider contract (prompt template, option codes, temperature, 255 raw scores) is pinned to
@@ -34,6 +34,7 @@ export interface Choice {
 }
 export interface RouterConfig {
   model_id: string
+  decider_api: "litellm_embeddings" | "systemone"
   decider_model: string
   decider_temperature: number
   decider_timeout_ms: number
@@ -136,13 +137,25 @@ export function parseDecision(body: Obj, config: RouterConfig): Omit<Decision, "
   }
 }
 
-function embeddingsUrl(connection: Connection): string {
+function deciderUrl(connection: Connection, path: string, allowLocal: boolean): string {
   const url = new URL(connection.base_url)
-  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
+  if (!urlAllowed(url, allowLocal) || url.username || url.password || url.search || url.hash) {
     throw new Error("Decider connection must be a plain https URL.")
   }
   const base = url.toString().replace(/\/$/, "")
-  return base.endsWith("/v1") ? `${base}/embeddings` : `${base}/v1/embeddings`
+  return base.endsWith("/v1") ? `${base}/${path}` : `${base}/v1/${path}`
+}
+
+/** The connection's key when its secret is set and non-empty, else none (local deciders). */
+export function optionalKey(
+  connection: Connection,
+  read: (name: string) => string | undefined,
+): string | null {
+  if (
+    !/^BOSS_AI_[A-Z0-9_]+$/.test(connection.api_key_secret) ||
+    connection.api_key_secret === "BOSS_AI_SIGNING_SECRET"
+  ) throw new Error("Invalid decider key name.")
+  return read(connection.api_key_secret) || null
 }
 
 /** One request, no retry, no redirect; any failure throws and the caller uses the default tier. */
@@ -152,13 +165,14 @@ export async function decide(
   key: string,
   config: RouterConfig,
   state: string,
+  allowLocal = false,
 ): Promise<Decision> {
   const input = decisionPrompt(state, config.question, config.choices)
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), config.decider_timeout_ms)
   const started = performance.now()
   try {
-    const response = await fetchFn(embeddingsUrl(connection), {
+    const response = await fetchFn(deciderUrl(connection, "embeddings", allowLocal), {
       method: "POST",
       redirect: "error",
       signal: abort.signal,
@@ -200,8 +214,17 @@ export const lastUserIndex = (messages: Obj[]) => messages.findLastIndex((m) => 
 /** True when no user message follows the last decision: a tool loop inside one turn. */
 export const isContinuation = (messages: Obj[]) => messages.at(-1)?.role === "tool"
 
-/** What the decider sees: never the whole history, at most `budget` characters. */
-export function buildState(messages: Obj[], toolsOffered: boolean, budget: number): string {
+export interface StateFields {
+  message: string
+  previous_assistant: string
+  tool_rounds: number
+  images: boolean
+  prompt_tokens_estimate: number
+  tools_offered: boolean
+}
+
+/** What the decider sees: never the whole history, at most `budget` characters of text. */
+export function stateFields(messages: Obj[], toolsOffered: boolean, budget: number): StateFields {
   const last = lastUserIndex(messages)
   const user = last >= 0 ? textOf(messages[last].content).trim() : ""
   const previous = messages.slice(0, last >= 0 ? last : messages.length).findLast((m) =>
@@ -214,16 +237,101 @@ export function buildState(messages: Obj[], toolsOffered: boolean, budget: numbe
     ).length
   const images = messages.some((m) => hasImage(m.content))
   const size = Math.ceil(JSON.stringify(messages).length / 3)
-  const footer = `Tool rounds so far in this turn: ${rounds}\nImages attached: ${
-    images ? "yes" : "no"
-  }\nEstimated prompt size: ${size} tokens\nTools offered: ${toolsOffered ? "yes" : "no"}`
+  const footer = footerText(rounds, images, size, toolsOffered)
   const room = Math.max(0, budget - footer.length - 80)
   const assistantRoom = assistant ? Math.min(Math.floor(room / 4), assistant.length) : 0
-  const userText = clip(user || "(none)", room - assistantRoom)
-  const parts = [`Latest user message:\n${userText}`]
-  if (assistant) parts.push(`Previous assistant message:\n${clip(assistant, assistantRoom)}`)
-  parts.push(footer)
+  return {
+    message: clip(user || "(none)", room - assistantRoom),
+    previous_assistant: assistant ? clip(assistant, assistantRoom) : "",
+    tool_rounds: rounds,
+    images,
+    prompt_tokens_estimate: size,
+    tools_offered: toolsOffered,
+  }
+}
+const footerText = (rounds: number, images: boolean, size: number, tools: boolean) =>
+  `Tool rounds so far in this turn: ${rounds}\nImages attached: ${
+    images ? "yes" : "no"
+  }\nEstimated prompt size: ${size} tokens\nTools offered: ${tools ? "yes" : "no"}`
+
+export function formatState(f: StateFields, budget: number): string {
+  const parts = [`Latest user message:\n${f.message}`]
+  if (f.previous_assistant) parts.push(`Previous assistant message:\n${f.previous_assistant}`)
+  parts.push(footerText(f.tool_rounds, f.images, f.prompt_tokens_estimate, f.tools_offered))
   return parts.join("\n\n").slice(0, budget)
+}
+
+export const buildState = (messages: Obj[], toolsOffered: boolean, budget: number): string =>
+  formatState(stateFields(messages, toolsOffered, budget), budget)
+
+/**
+ * Ollaya/Jev-compatible decider: POST /v1/systemone with the state fields and one `tier` choice
+ * question. Same limits as `decide`: one attempt, no redirect, any failure throws. The Bearer header
+ * is sent only when the connection's secret is non-empty.
+ */
+export async function decideSystemOne(
+  fetchFn: typeof fetch,
+  connection: Connection,
+  key: string | null,
+  config: RouterConfig,
+  fields: StateFields,
+  allowLocal = false,
+): Promise<Decision> {
+  // Criteria are keyed by tier, in choice order; two choices on one tier share an entry.
+  const criteria: Record<string, string> = {}
+  const labels: Record<string, string> = {}
+  for (const c of config.choices) {
+    criteria[c.tier] = criteria[c.tier] ? `${criteria[c.tier]} / ${c.description}` : c.description
+    labels[c.tier] ??= c.label
+  }
+  const tiers = Object.keys(criteria) as Tier[]
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), config.decider_timeout_ms)
+  const started = performance.now()
+  try {
+    const response = await fetchFn(deciderUrl(connection, "systemone", allowLocal), {
+      method: "POST",
+      redirect: "error",
+      signal: abort.signal,
+      headers: {
+        ...(key ? { Authorization: `Bearer ${key}` } : {}),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: config.decider_model,
+        state: fields,
+        questions: {
+          tier: { type: "choice", instructions: config.question, criteria },
+        },
+      }),
+    })
+    if (response.status !== 200) {
+      await response.body?.cancel().catch(() => {})
+      throw new Error(`Decider returned HTTP ${response.status}.`)
+    }
+    const answer = object(object(object(await readJson(response.body, 256 * 1024)).answers).tier)
+    const choice = answer.choice
+    const confidence = answer.confidence
+    const probs = object(answer.probabilities)
+    if (
+      typeof choice !== "string" || !tiers.includes(choice as Tier) ||
+      typeof confidence !== "number" || !Number.isFinite(confidence) || confidence < 0 ||
+      confidence > 1 ||
+      Object.entries(probs).some(([k, v]) =>
+        !tiers.includes(k as Tier) || typeof v !== "number" || !Number.isFinite(v) || v < 0
+      )
+    ) throw new Error("Invalid decider answer.")
+    return {
+      index: tiers.indexOf(choice as Tier),
+      tier: choice as Tier,
+      label: labels[choice],
+      confidence,
+      probabilities: probs as Record<string, number>,
+      latency_ms: Math.round(performance.now() - started),
+    }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export async function stickyKey(userId: string, modelId: string, messages: Obj[]): Promise<string> {

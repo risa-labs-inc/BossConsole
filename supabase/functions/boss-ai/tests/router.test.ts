@@ -5,6 +5,7 @@ import {
   Choice,
   costUsd,
   decide,
+  decideSystemOne,
   decisionProbabilities,
   decisionPrompt,
   DEFAULT_TEMPERATURE,
@@ -12,13 +13,15 @@ import {
   hardStopped,
   isContinuation,
   OPTION_CODES,
+  optionalKey,
   parseDecision,
   pricesOf,
   RouteContext,
   RouterConfig,
+  stateFields,
   stickyKey,
 } from "../router.ts"
-import { Connection, Obj } from "../wire.ts"
+import { audioEndpoint, Connection, endpoint, Obj } from "../wire.ts"
 
 const choices: Choice[] = [
   { tier: "fast", label: "Quick reply", description: "Greeting or one-liner." },
@@ -27,6 +30,7 @@ const choices: Choice[] = [
 ]
 const config: RouterConfig = {
   model_id: "optimist",
+  decider_api: "litellm_embeddings",
   decider_model: "risa-pplx-decider-v1-27b",
   decider_temperature: DEFAULT_TEMPERATURE,
   decider_timeout_ms: 200,
@@ -395,4 +399,190 @@ Deno.test("cost: cache tokens at their own prices, unknown prices fall back or a
     estimateUsd({ input: 4, output: 20, cache_read: 0.2, cache_write: 5 }, 0, 100).cost,
     2000 / 1e6,
   )
+})
+
+const ollaya: Connection = {
+  id: "ollaya-local",
+  base_url: "http://host.docker.internal:11437",
+  api_type: "openai_chat",
+  api_key_secret: "BOSS_AI_OLLAYA",
+}
+const s1config: RouterConfig = { ...config, decider_api: "systemone", decider_model: "decider:4b" }
+const fields = stateFields([{ role: "user", content: "fix the flaky test" }], true, 12_000)
+const answer = (tier: string, confidence: number, probabilities: unknown) =>
+  new Response(JSON.stringify({ answers: { tier: { choice: tier, confidence, probabilities } } }), {
+    status: 200,
+  })
+
+Deno.test("systemone: POST /v1/systemone with state fields and one tier choice question", async () => {
+  const seen: { url: string; init: RequestInit }[] = []
+  const decision = await decideSystemOne(
+    (url, init) => {
+      seen.push({ url: String(url), init: init! })
+      return Promise.resolve(answer("strong", 0.9, { fast: 0.02, standard: 0.08, strong: 0.9 }))
+    },
+    ollaya,
+    null,
+    s1config,
+    fields,
+    true,
+  )
+  assertEquals([decision.tier, decision.confidence, decision.index], ["strong", 0.9, 2])
+  assertEquals(decision.probabilities, { fast: 0.02, standard: 0.08, strong: 0.9 })
+  assertEquals(decision.label, "Hard task")
+  assert(decision.latency_ms >= 0)
+  assertEquals(seen.length, 1)
+  assertEquals(seen[0].url, "http://host.docker.internal:11437/v1/systemone")
+  assertEquals(seen[0].init.redirect, "error")
+  // No Bearer header without a key.
+  assertEquals(Object.keys(seen[0].init.headers as Obj), ["Content-Type"])
+  assertEquals(JSON.parse(String(seen[0].init.body)), {
+    model: "decider:4b",
+    state: {
+      message: "fix the flaky test",
+      previous_assistant: "",
+      tool_rounds: 0,
+      images: false,
+      prompt_tokens_estimate: fields.prompt_tokens_estimate,
+      tools_offered: true,
+    },
+    questions: {
+      tier: {
+        type: "choice",
+        instructions: "Which model tier should handle this request?",
+        criteria: {
+          fast: "Greeting or one-liner.",
+          standard: "Routine work.",
+          strong: "Hard reasoning or code.",
+        },
+      },
+    },
+  })
+  // With a key the Bearer header is sent.
+  let auth: unknown
+  await decideSystemOne(
+    (_u, init) => {
+      auth = (init!.headers as Obj).Authorization
+      return Promise.resolve(answer("fast", 0.7, { fast: 0.7 }))
+    },
+    { ...ollaya, base_url: "https://x.example/v1" },
+    "k-1",
+    s1config,
+    fields,
+  )
+  assertEquals(auth, "Bearer k-1")
+  // Choices sharing a tier share one criteria entry.
+  let sent: Obj = {}
+  await decideSystemOne(
+    (_u, init) => {
+      sent = JSON.parse(String(init!.body))
+      return Promise.resolve(answer("fast", 0.7, {}))
+    },
+    ollaya,
+    null,
+    {
+      ...s1config,
+      choices: [...choices, { tier: "fast", label: "Also quick", description: "Thanks." }],
+    },
+    fields,
+    true,
+  )
+  assertEquals((sent.questions as any).tier.criteria.fast, "Greeting or one-liner. / Thanks.")
+})
+
+Deno.test("systemone fails closed: status, shape, unknown tier, bad numbers, http without the flag, timeout", async () => {
+  let calls = 0
+  const run = (r: () => Response, conn = ollaya, allow = true) =>
+    decideSystemOne(
+      () => {
+        calls++
+        return Promise.resolve(r())
+      },
+      conn,
+      null,
+      s1config,
+      fields,
+      allow,
+    )
+  await assertRejects(() => run(() => new Response("{}", { status: 500 })))
+  await assertRejects(() => run(() => new Response("nope", { status: 200 })))
+  await assertRejects(() =>
+    run(() => new Response(JSON.stringify({ answers: {} }), { status: 200 }))
+  )
+  await assertRejects(() => run(() => answer("huge", 0.9, { fast: 1 })))
+  await assertRejects(() => run(() => answer("fast", NaN, { fast: 1 })))
+  await assertRejects(() => run(() => answer("fast", 1.5, { fast: 1 })))
+  await assertRejects(() => run(() => answer("fast", 0.9, { fast: "x" })))
+  await assertRejects(() => run(() => answer("fast", 0.9, { nonsense: 1 })))
+  await assertRejects(() => run(() => answer("fast", 0.9, null)))
+  assertEquals(calls, 9)
+  // Plain http only with the local flag, and only for the local hosts.
+  await assertRejects(() => run(() => answer("fast", 0.9, { fast: 1 }), ollaya, false))
+  await assertRejects(() =>
+    run(() => answer("fast", 0.9, { fast: 1 }), { ...ollaya, base_url: "http://example.com" })
+  )
+  assertEquals(calls, 9)
+  await assertRejects(() =>
+    decideSystemOne(
+      (_u, init) =>
+        new Promise((_, reject) =>
+          init!.signal!.addEventListener("abort", () => reject(new Error("a")))
+        ),
+      ollaya,
+      null,
+      { ...s1config, decider_timeout_ms: 30 },
+      fields,
+      true,
+    )
+  )
+})
+
+Deno.test("optionalKey: empty or unset secret means no key; invalid names fail", () => {
+  assertEquals(optionalKey(ollaya, () => undefined), null)
+  assertEquals(optionalKey(ollaya, () => ""), null)
+  assertEquals(optionalKey(ollaya, () => "abc"), "abc")
+  assertThrows(() =>
+    optionalKey({ ...ollaya, api_key_secret: "BOSS_AI_SIGNING_SECRET" }, () => "x")
+  )
+  assertThrows(() => optionalKey({ ...ollaya, api_key_secret: "lowercase" }, () => "x"))
+})
+
+Deno.test("local http: loopback and host.docker.internal for the decider and upstream, only with the flag", async () => {
+  const hosts = ["127.0.0.1:11437", "localhost", "host.docker.internal:8080"]
+  for (const h of hosts) {
+    const c = { ...ollaya, base_url: `http://${h}` }
+    assertEquals(endpoint(c, true), `http://${h}/chat/completions`)
+    assertEquals(audioEndpoint(c, "speech", true), `http://${h}/audio/speech`)
+    assertThrows(() => endpoint(c))
+    assertThrows(() => endpoint(c, false))
+    assertThrows(() => audioEndpoint(c, "speech"))
+  }
+  for (
+    const bad of [
+      "http://example.com",
+      "http://10.0.0.5:80",
+      "http://127.0.0.1.evil.com",
+      "ftp://localhost",
+    ]
+  ) {
+    assertThrows(() => endpoint({ ...ollaya, base_url: bad }, true))
+  }
+  assertEquals(
+    endpoint({ ...ollaya, base_url: "https://api.example.com/v1" }),
+    "https://api.example.com/v1/chat/completions",
+  )
+  // The hosted decider path accepts the same local hosts under the flag, and refuses them without.
+  const hosted = { ...ollaya, base_url: "http://localhost:4000" }
+  await assertRejects(() =>
+    decide(() => Promise.resolve(reply(scores(0, 5, 0))), hosted, "k", config, "s")
+  )
+  const d = await decide(
+    () => Promise.resolve(reply(scores(0, 5, 0))),
+    hosted,
+    "k",
+    config,
+    "s",
+    true,
+  )
+  assertEquals(d.tier, "standard")
 })

@@ -125,7 +125,13 @@ export async function readJson(
   }
 }
 
-function baseUrl(connection: Connection): string {
+/** Hosts a local stack may reach over plain http (BOSS_AI_ALLOW_LOCAL_AGENT=1 only). */
+export const LOCAL_HOSTS = ["127.0.0.1", "localhost", "host.docker.internal"]
+export const urlAllowed = (url: URL, allowLocal: boolean) =>
+  url.protocol === "https:" ||
+  (allowLocal && url.protocol === "http:" && LOCAL_HOSTS.includes(url.hostname))
+
+function baseUrl(connection: Connection, allowLocal = false): string {
   if (
     !/^BOSS_AI_[A-Z0-9_]+$/.test(connection.api_key_secret) ||
     connection.api_key_secret === "BOSS_AI_SIGNING_SECRET"
@@ -133,7 +139,7 @@ function baseUrl(connection: Connection): string {
     throw new HttpError(503, "configuration", "BOSS AI is temporarily unavailable.")
   }
   const url = new URL(connection.base_url)
-  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
+  if (!urlAllowed(url, allowLocal) || url.username || url.password || url.search || url.hash) {
     throw new HttpError(503, "configuration", "BOSS AI is temporarily unavailable.")
   }
   return url.toString().replace(/\/$/, "")
@@ -144,8 +150,8 @@ const CHAT_PATHS = {
   openai_responses: "/responses",
   anthropic_messages: "/messages",
 }
-export function endpoint(connection: Connection): string {
-  return baseUrl(connection) + CHAT_PATHS[connection.api_type]
+export function endpoint(connection: Connection, allowLocal = false): string {
+  return baseUrl(connection, allowLocal) + CHAT_PATHS[connection.api_type]
 }
 
 /** Anthropic authenticates with x-api-key, never Bearer; audio routes are always Bearer. */
@@ -164,8 +170,12 @@ export function upstreamHeaders(
 }
 
 /** Audio routes ignore api_type: every connection serves them under its base URL. */
-export function audioEndpoint(connection: Connection, route: "transcriptions" | "speech"): string {
-  return `${baseUrl(connection)}/audio/${route}`
+export function audioEndpoint(
+  connection: Connection,
+  route: "transcriptions" | "speech",
+  allowLocal = false,
+): string {
+  return `${baseUrl(connection, allowLocal)}/audio/${route}`
 }
 
 /** Validate at the secret lookup itself, independent of endpoint call ordering. */
