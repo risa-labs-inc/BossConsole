@@ -277,3 +277,120 @@ Deno.test("voice: pooled seconds, per-kind reservation, catalog kind and pool gu
     await db.close()
   }
 })
+
+Deno.test("fallbacks: validated shape, existing connections, resolved by lookup and reserve", async () => {
+  const db = new PGlite()
+  try {
+    await db.exec(`
+      CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
+      CREATE SCHEMA auth;
+      CREATE TABLE auth.users(id uuid PRIMARY KEY, banned_until timestamptz, is_anonymous boolean NOT NULL DEFAULT false);
+      CREATE TABLE public.permissions(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text UNIQUE, description text, is_system boolean);
+      CREATE TABLE public.roles(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text UNIQUE);
+      CREATE TABLE public.role_permissions(role_id uuid, permission_id uuid, UNIQUE(role_id,permission_id));
+      CREATE TABLE public.test_user_permissions(user_id uuid, permission_name text);
+      CREATE FUNCTION public.user_has_permission(p_user_id uuid,p_permission text) RETURNS boolean LANGUAGE sql AS
+        'SELECT EXISTS(SELECT 1 FROM public.test_user_permissions WHERE user_id=p_user_id AND permission_name=p_permission)';
+      INSERT INTO public.roles(name) VALUES('user');
+    `)
+    for (
+      const file of [
+        "20260912000000_boss_ai.sql",
+        "20260912001000_boss_ai_hardening.sql",
+        "20260912002000_boss_ai_validation.sql",
+        "20260912003000_boss_ai_allowance_preflight.sql",
+        "20260912004000_boss_ai_exchange_tickets.sql",
+        "20260924231000_boss_ai_token_eligibility.sql",
+        "20261007000000_boss_ai_optimist_permission.sql",
+        "20261008000000_boss_ai_model_provider_routing.sql",
+        "20261008100000_boss_ai_reserve_ai_grants.sql",
+        "20261015000000_boss_ai_voice.sql",
+        "20261023090000_boss_ai_voice_admission.sql",
+        "20261027120000_boss_ai_anthropic_fallbacks.sql",
+      ]
+    ) {
+      await db.exec(
+        await Deno.readTextFile(new URL(`../../../migrations/${file}`, import.meta.url)),
+      )
+    }
+    const user = "00000000-0000-0000-0000-000000000001"
+    await db.exec(`
+      INSERT INTO auth.users(id) VALUES('${user}');
+      INSERT INTO public.test_user_permissions VALUES('${user}','ai.use');
+      INSERT INTO public.boss_ai_connections VALUES
+        ('anthropic','https://api.anthropic.com/v1','BOSS_AI_ANTHROPIC','anthropic_messages',true),
+        ('or','https://openrouter.ai/api/v1','BOSS_AI_OR','openai_chat',true),
+        ('off','https://example.com/v1','BOSS_AI_OFF','openai_chat',false);
+      INSERT INTO public.boss_ai_models(id,display_name,connection_id,upstream_model,context_length,max_output_tokens,published)
+        VALUES('m','M','anthropic','claude-opus-5-5',1024,128,true);
+      INSERT INTO public.boss_ai_allowances VALUES('m','ai.use',5000,5000,5000,2);
+    `)
+    const scalar = async (sql: string, params: unknown[] = []) =>
+      (await db.query<{ value: any }>(sql, params)).rows[0].value
+    const set = (value: string) =>
+      db.query("UPDATE public.boss_ai_models SET fallbacks=$1::jsonb WHERE id='m'", [value])
+    assertEquals(
+      await scalar("SELECT fallbacks AS value FROM public.boss_ai_models WHERE id='m'"),
+      [],
+    )
+    await assertRejects(() =>
+      db.query(
+        "INSERT INTO public.boss_ai_connections VALUES('x','https://x.example/v1','BOSS_AI_X','nope',true)",
+      )
+    )
+    const entry = (extra = "") =>
+      `{"connection_id":"or","upstream_model":"anthropic/claude-opus-5.5"${extra}}`
+    await set(
+      `[${
+        entry(',"provider_routing":{"order":["anthropic"],"allow_fallbacks":true}')
+      },{"connection_id":"off","upstream_model":"x"},{"connection_id":"or","upstream_model":"anthropic/claude-haiku-5.5"}]`,
+    )
+    const lookup = await scalar("SELECT public.boss_ai_lookup($1,'m') AS value", [user])
+    // Disabled connections are dropped; order and per-entry routing survive; no key material.
+    assertEquals(lookup.fallbacks.map((f: any) => f.upstream_model), [
+      "anthropic/claude-opus-5.5",
+      "anthropic/claude-haiku-5.5",
+    ])
+    assertEquals(lookup.fallbacks[0].provider_routing, {
+      order: ["anthropic"],
+      allow_fallbacks: true,
+    })
+    assertEquals(lookup.fallbacks[0].connection.api_type, "openai_chat")
+    assertEquals(lookup.fallbacks[0].connection.api_key_secret, "BOSS_AI_OR")
+    assertEquals(lookup.connection.api_type, "anthropic_messages")
+    const reserved = await scalar("SELECT public.boss_ai_reserve($1,'m',$2) AS value", [
+      user,
+      crypto.randomUUID(),
+    ])
+    assertEquals(reserved.fallbacks.length, 2)
+    for (
+      const bad of [
+        "{}",
+        "null",
+        `[${entry()},${entry()},${entry()},${entry()},${entry()}]`,
+        `[${entry(',"extra":1')}]`,
+        '[{"connection_id":"or"}]',
+        '[{"upstream_model":"x"}]',
+        '[{"connection_id":"","upstream_model":"x"}]',
+        '[{"connection_id":1,"upstream_model":"x"}]',
+        '[{"connection_id":"or","upstream_model":""}]',
+        "[1]",
+        `[${entry(',"provider_routing":{"nope":true}')}]`,
+        `[${entry(',"provider_routing":null')}]`,
+        '[{"connection_id":"missing","upstream_model":"x"}]',
+      ]
+    ) await assertRejects(() => set(bad))
+    await set(`[${entry()},${entry()},${entry()},${entry()}]`)
+    await assertRejects(() => db.query("DELETE FROM public.boss_ai_connections WHERE id='or'"))
+    await assertRejects(() =>
+      db.query("UPDATE public.boss_ai_connections SET id='or2' WHERE id='or'")
+    )
+    await set("[]")
+    await db.query("DELETE FROM public.boss_ai_connections WHERE id='off'")
+    await db.exec("SET ROLE authenticated")
+    await assertRejects(() => db.query("SELECT public.boss_ai_resolve_fallbacks('[]')"))
+    await db.exec("RESET ROLE")
+  } finally {
+    await db.close()
+  }
+})
