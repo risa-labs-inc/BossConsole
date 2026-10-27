@@ -493,7 +493,8 @@ Everything below is a row you can edit; nothing is hardcoded.
 | ------------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `enabled`                                               | true                                           | Off = the model is served as before                                                                                                |
 | `decider_connection_id`                                 | required                                       | Connection holding the decider URL and key secret (`risa_qwen_internal`: base URL is the LiteLLM gateway, key `BOSS_AI_RISA_QWEN`) |
-| `decider_model`                                         | `risa-pplx-decider-v1-27b`                     | Echoed back by the gateway and verified                                                                                            |
+| `decider_api`                                           | `litellm_embeddings`                           | `litellm_embeddings` (hosted pplx decider) or `systemone` (Ollaya/Jev-compatible, for local use)                                   |
+| `decider_model`                                         | `risa-pplx-decider-v1-27b`                     | Echoed back by the gateway and verified (`litellm_embeddings`); the model name sent to the server (`systemone`)                    |
 | `decider_temperature`                                   | 1.0087417621345625                             | Checkpoint temperature; do not tune it for confidence                                                                              |
 | `decider_timeout_ms`                                    | 2500                                           | One attempt, never retried                                                                                                         |
 | `state_char_budget`                                     | 12000                                          | Most state text sent (the decider takes 10,000 tokens in total)                                                                    |
@@ -523,6 +524,20 @@ one user.
   probabilities are softmax(score / temperature) over the first N slots only, where N is the number
   of choices. No retry, no redirects. Any failure, timeout or low confidence uses `default_tier` and
   audits `route_decider_failed` / `route_low_confidence`; the request is never failed for it.
+- **`systemone` decider** (`20261027150000_boss_ai_decider_api.sql`): `POST {base_url}/v1/systemone`
+  with
+  `{model: decider_model, state: {message, previous_assistant, tool_rounds, images,
+  prompt_tokens_estimate, tools_offered}, questions: {tier: {type:"choice", instructions: question,
+  criteria: {fast, standard, strong}}}}`;
+  criteria keys are the choice tiers in order and the values their descriptions (choices on the same
+  tier are joined with " / "). The answer is read from `answers.tier`: `choice` must be one of those
+  tiers, `confidence` a number from 0 to 1 and `probabilities` finite numbers keyed by tier. Same
+  timeout, no retry, no redirects and default-tier fallback as the hosted decider. The Bearer header
+  is sent only when the connection's secret has a non-empty value.
+- **Local http**: with `BOSS_AI_ALLOW_LOCAL_AGENT=1` (local development only) a connection's
+  `base_url` may be `http://` on `127.0.0.1`, `localhost` or `host.docker.internal` (any port), for
+  the decider and for regular upstream connections; the table check allows these URLs too. Without
+  the flag the function refuses them and only https is used, as before.
 - **State** sent to the decider (never the whole history, at most `state_char_budget` characters):
   the latest user message, the previous assistant text, tool rounds in this turn, whether images are
   attached, the estimated prompt size and whether tools are offered.
@@ -570,6 +585,19 @@ VALUES ('optimist','risa_qwen_internal','optimist-fast','optimist-standard','opt
 -- one user with a different monthly limit
 INSERT INTO boss_ai_user_budgets (user_id, router_model_id, monthly_usd_limit, note)
 VALUES ('<user uuid>','optimist',250,'design partner');
+```
+
+Local Ollaya decider (temporary while the hosted key is unavailable; local stack with
+`BOSS_AI_ALLOW_LOCAL_AGENT=1`, secret `BOSS_AI_OLLAYA` empty or set):
+
+```sql
+INSERT INTO boss_ai_connections (id, base_url, api_key_secret, api_type)
+VALUES ('ollaya-local','http://host.docker.internal:11437','BOSS_AI_OLLAYA','openai_chat');
+UPDATE boss_ai_routers SET decider_connection_id='ollaya-local', decider_api='systemone',
+  decider_model='decider:4b' WHERE model_id='optimist';
+-- back to the hosted pplx decider
+UPDATE boss_ai_routers SET decider_connection_id='risa_qwen_internal', decider_api='litellm_embeddings',
+  decider_model='risa-pplx-decider-v1-27b' WHERE model_id='optimist';
 ```
 
 Local debugging only: with the environment variable `BOSS_AI_ROUTE_TRACE=1` each routed call logs

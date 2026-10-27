@@ -487,7 +487,10 @@ Deno.test("systemone: POST /v1/systemone with state fields and one tier choice q
     fields,
     true,
   )
-  assertEquals((sent.questions as any).tier.criteria.fast, "Greeting or one-liner. / Thanks.")
+  assertEquals(
+    ((sent.questions as Obj).tier as { criteria: Obj }).criteria.fast,
+    "Greeting or one-liner. / Thanks.",
+  )
 })
 
 Deno.test("systemone fails closed: status, shape, unknown tier, bad numbers, http without the flag, timeout", async () => {
