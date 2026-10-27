@@ -405,7 +405,9 @@ Deno.test("explicit upstream rejections refund while ambiguous server faults rem
     const f = await fixture({ upstreamStatus: status })
     const response = await f.handler(f.request(body))
     assertEquals(response.status, status === 429 ? 503 : 502)
-    assertEquals(f.calls.at(-1)?.params.p_tokens, status < 500 && status !== 408 ? 0 : null)
+    const charged = f.calls.at(-1)?.params.p_tokens
+    if (status < 500 && status !== 408) assertEquals(charged, 0)
+    else assert(typeof charged === "number" && charged > 0 && charged < 1024) // estimate, not the reservation
     assert(f.audits.includes(`upstream_status_${status}`))
   }
 })
@@ -415,8 +417,9 @@ Deno.test("failed dispatch and timeout are observable unknown outcomes not infer
     const f = await fixture(options)
     const response = await f.handler(f.request(body))
     assertEquals(response.status, 503)
-    assertEquals(f.calls.at(-1)?.params.p_tokens, null)
-    assert(f.audits.includes("usage_unknown_reservation_retained"))
+    const charged = f.calls.at(-1)?.params.p_tokens
+    assert(typeof charged === "number" && charged > 0 && charged < 1024)
+    assert(f.audits.includes("usage_unknown_estimate_charged"))
     assert(!(await response.text()).includes("private"))
   }
 })

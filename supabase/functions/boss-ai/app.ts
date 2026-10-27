@@ -289,6 +289,21 @@ export const trips = (status: number, message: string) =>
   [401, 402, 403, 429].includes(status) || status >= 500 ||
   (status === 400 && LIMIT_WORDING.test(message))
 
+/** A connect refusal or DNS failure: the request provably never reached the upstream. Deno's fetch
+ * throws TypeError("fetch failed") whose cause chain carries the text; resets and timeouts differ. */
+export function neverReached(error: unknown): boolean {
+  for (let e = error, depth = 0; e && depth < 5; depth++) {
+    const m = String((e as Error).message ?? "")
+    if (
+      /connection refused|\bECONNREFUSED\b|dns error|failed to lookup address|ENOTFOUND/i.test(m)
+    ) {
+      return true
+    }
+    e = (e as Error).cause
+  }
+  return false
+}
+
 /** At most 4 KB of an upstream error body; only error.type/code/message are kept, never content. */
 async function errorInfo(response: Response): Promise<{ type: string | null; message: string }> {
   const none = { type: null, message: "" }
@@ -577,6 +592,8 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
     let reservation: string | undefined
     let dispatched = false
     let measuredTokens: number | null = null
+    // Every route failed with an unknown outcome: settle on a prompt estimate, not the reservation.
+    let failedEstimate: { tokens: number; extra: Obj } | undefined
     let phase = "authentication"
     try {
       const path = new URL(request.url).pathname.replace(/^\/functions\/v1/, "").replace(
@@ -866,6 +883,8 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       let failed: unknown
       // An earlier attempt may have run inference: a later refundable status cannot refund it.
       let unknownOutcome = false
+      // Request size of the latest attempt that may have run.
+      let lastBytes = 0
       for (let i = 0; i < order.length && !won; i++) {
         const route = order[i]
         if (abort.signal.aborted) {
@@ -914,7 +933,12 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           })
         } catch (e) {
           release()
-          unknownOutcome = true
+          // Only a refused connection or a failed DNS lookup proves nothing reached the upstream.
+          if (neverReached(e)) dispatched = unknownOutcome
+          else {
+            unknownOutcome = true
+            lastBytes = payload.length
+          }
           failed = e
           upstreamError(
             route,
@@ -934,7 +958,10 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           // does not prove inference did not run (a proxy can fail after forwarding).
           if ([400, 401, 402, 403, 404, 405, 406, 413, 415, 422, 429].includes(upstream.status)) {
             dispatched = unknownOutcome
-          } else unknownOutcome = true
+          } else {
+            unknownOutcome = true
+            lastBytes = payload.length
+          }
           if (trips(upstream.status, info.message)) cooldown.set(route.key, now() + COOLDOWN_MS)
           audit(`upstream_status_${upstream.status}`)
           failed = new HttpError(
@@ -949,6 +976,25 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       }
       if (!won) {
         cleanup()
+        if (kind === "chat" && dispatched) {
+          const prompt = Math.ceil(lastBytes / 3)
+          const { cost } = costUsd(pricesOf(routes[0].model as unknown as Obj), {
+            input: prompt,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          })
+          failedEstimate = {
+            tokens: Math.max(1, Math.min(prompt, result.model.context_length)),
+            extra: {
+              p_input: prompt,
+              p_output: 0,
+              p_cache_read: 0,
+              p_cache_write: 0,
+              ...(cost === null ? {} : { p_cost_usd: cost }),
+            },
+          }
+        }
         throw failed ?? new HttpError(503, "unavailable", "BOSS AI is temporarily unavailable.")
       }
       const { route: served, prepared, upstream, bytes } = won
@@ -1230,8 +1276,19 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
     } catch (error) {
       if (!(error instanceof HttpError) || error.status >= 500) audit(`${phase}_failed`)
       if (reservation) {
-        if (dispatched && measuredTokens === null) audit("usage_unknown_reservation_retained")
-        await settleReservation(deps, reservation, dispatched ? measuredTokens : 0, audit)
+        if (failedEstimate) {
+          audit("usage_unknown_estimate_charged")
+          await settleReservation(
+            deps,
+            reservation,
+            failedEstimate.tokens,
+            audit,
+            failedEstimate.extra,
+          )
+        } else {
+          if (dispatched && measuredTokens === null) audit("usage_unknown_reservation_retained")
+          await settleReservation(deps, reservation, dispatched ? measuredTokens : 0, audit)
+        }
       }
       return failure(error, requestId)
     }

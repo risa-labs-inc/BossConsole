@@ -52,10 +52,19 @@ const fail = (status: number, error: Obj) => new Response(JSON.stringify({ error
 
 type Responder = (url: string, init: RequestInit, n: number) => Response | Promise<Response>
 
+// Prompt estimate for a request that never got an answer: request bytes / 3 of attempt `n`.
+const promptEstimate = (f: { fetched: { body: Obj }[] }, n = f.fetched.length - 1) =>
+  Math.ceil(JSON.stringify(f.fetched[n].body).length / 3)
+
 async function fixture(
   responders: Responder[],
-  options: { primary?: Connection; fallbacks?: unknown[]; now?: () => number; attempt?: number } =
-    {},
+  options: {
+    primary?: Connection
+    fallbacks?: unknown[]
+    now?: () => number
+    attempt?: number
+    model?: Obj
+  } = {},
 ) {
   const calls: { name: string; params: Obj }[] = []
   const fetched: { url: string; headers: Headers; body: Obj }[] = []
@@ -85,6 +94,7 @@ async function fixture(
             max_output_tokens: 4096,
             provider_routing: null,
             fallbacks: [],
+            ...options.model,
           },
           connection: options.primary ?? anthropic,
           fallbacks: options.fallbacks ?? fallbacks,
@@ -116,8 +126,9 @@ async function fixture(
     )
   const settled = () =>
     calls.filter((c) => c.name === "boss_ai_settle").map((c) => c.params.p_tokens)
+  const settles = () => calls.filter((c) => c.name === "boss_ai_settle").map((c) => c.params)
   const reserves = () => calls.filter((c) => c.name === "boss_ai_reserve").length
-  return { send, fetched, audits, logs, settled, reserves }
+  return { send, fetched, audits, logs, settled, settles, reserves }
 }
 
 Deno.test("native route: /messages with x-api-key, translated body, settlement on measured tokens", async () => {
@@ -224,8 +235,9 @@ Deno.test("fallback: walks every route in order and the final failure message is
     code: "upstream_error",
     message: "The model is temporarily unavailable. Please try again.",
   })
-  // An unknown outcome (5xx) keeps the reservation charged.
-  assertEquals(f.settled(), [null])
+  // An unknown outcome (5xx) is charged the prompt estimate, not the reservation.
+  assertEquals(f.settled(), [promptEstimate(f)])
+  assert(f.audits.includes("usage_unknown_estimate_charged"))
 })
 
 Deno.test("refunds: every attempt provably rejected refunds, any possible inference does not", async () => {
@@ -244,12 +256,67 @@ Deno.test("refunds: every attempt provably rejected refunds, any possible infere
     fallbacks: [fallbacks[0]],
   })
   await mixed.send()
-  assertEquals(mixed.settled(), [null])
+  assertEquals(mixed.settled(), [promptEstimate(mixed, 0)])
   const net = await fixture([() => {
     throw new TypeError("boom")
   }], { fallbacks: [] })
   assertEquals((await net.send()).status, 503)
-  assertEquals(net.settled(), [null])
+  assertEquals(net.settled(), [promptEstimate(net)])
+})
+
+// Deno: TypeError("fetch failed") caused by "... client error (Connect): tcp connect error:
+// Connection refused (os error 61)" or "... dns error: failed to lookup address information".
+const refused = () => {
+  throw new TypeError("fetch failed", {
+    cause: new Error(
+      "error sending request: client error (Connect): tcp connect error: Connection refused (os error 61)",
+    ),
+  })
+}
+const noDns = () => {
+  throw new TypeError("fetch failed", {
+    cause: new Error(
+      "error sending request: client error (Connect): dns error: failed to lookup address information",
+    ),
+  })
+}
+
+Deno.test("failed requests: estimate charged, a refused connection or DNS failure refunds", async () => {
+  const down = await fixture([
+    () => fail(500, { message: "a" }),
+    () => fail(503, { message: "b" }),
+    () => fail(500, { message: "c" }),
+  ], { model: { usd_per_mtok_input: 4, usd_per_mtok_output: 20 } })
+  assertEquals((await down.send()).status, 502)
+  const estimate = promptEstimate(down)
+  assert(estimate > 0 && estimate < 100_000)
+  assertEquals(down.settled(), [estimate])
+  const s = down.settles()[0]
+  assertEquals([s.p_input, s.p_output], [estimate, 0])
+  assert(Math.abs(Number(s.p_cost_usd) - estimate * 4 / 1e6) < 1e-12)
+  assert(down.audits.includes("usage_unknown_estimate_charged"))
+  assert(!down.audits.includes("usage_unknown_reservation_retained"))
+
+  for (const kind of [refused, noDns]) {
+    const f = await fixture([kind])
+    assertEquals((await f.send()).status, 503)
+    assertEquals(f.fetched.length, 3)
+    assertEquals(f.settled(), [0])
+  }
+  // A reset or timeout may have reached the upstream.
+  const reset = await fixture([() => {
+    throw new TypeError("fetch failed", { cause: new Error("connection reset by peer") })
+  }])
+  await reset.send()
+  assertEquals(reset.settled(), [promptEstimate(reset)])
+  // First route refused, second answered 500: the 500 may have run.
+  const mixed = await fixture([refused, () => fail(500, { message: "x" }), refused])
+  await mixed.send()
+  assertEquals(mixed.settled(), [promptEstimate(mixed, 1)])
+  // 500 then refused: still unknown.
+  const later = await fixture([() => fail(500, { message: "x" }), refused, refused])
+  await later.send()
+  assertEquals(later.settled(), [promptEstimate(later, 0)])
 })
 
 Deno.test("fallback: a response that never arrives times out per attempt and falls back", async () => {

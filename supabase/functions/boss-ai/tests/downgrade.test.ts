@@ -184,7 +184,7 @@ Deno.test("downgrade: an upstream failure on the target keeps the usual refund r
   const f = await fixture({ fetchStatus: 500 })
   const response = await f.send()
   assertEquals(response.status, 502)
-  assertEquals(f.settles()[0].p_tokens, null)
+  assertEquals(typeof f.settles()[0].p_tokens, "number") // prompt estimate, not the reservation
 })
 
 Deno.test("/v1/usage and /v1/models expose the effective target and downgraded state", async () => {
