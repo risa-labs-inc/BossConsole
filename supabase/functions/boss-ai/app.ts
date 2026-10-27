@@ -58,6 +58,8 @@ export interface Dependencies {
   /** First-response deadline for every route but the last; the overall deadline still applies. */
   attemptTimeoutMs?: number
   now?: () => number
+  /** Silence on a stream before a keepalive reasoning delta is sent (default 15 s). */
+  keepaliveMs?: number
   /** LiveKit clients for /v1/voice/live; tests inject fakes. */
   livekit?: (config: LiveKitConfig) => LiveKit
 }
@@ -432,24 +434,26 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         else console.warn(JSON.stringify({ event, request_id: requestId }))
       } catch { /* Observability must not change accounting or response cleanup. */ }
     }
+    const logLine = (entry: Obj) => {
+      try {
+        if (deps.log) deps.log(entry)
+        else console.warn(JSON.stringify(entry))
+      } catch { /* Observability must not change accounting or response cleanup. */ }
+    }
     const upstreamError = (
       route: Route,
       status: number | null,
       type: string | null,
       message = "",
     ) => {
-      const entry = {
+      logLine({
         event: "upstream_error",
         request_id: requestId,
         route: route.key,
         status,
         type,
         message,
-      }
-      try {
-        if (deps.log) deps.log(entry)
-        else console.warn(JSON.stringify(entry))
-      } catch { /* Observability must not change accounting or response cleanup. */ }
+      })
     }
     let reservation: string | undefined
     let dispatched = false
@@ -689,7 +693,9 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         clearTimeout(timeout)
         request.signal.removeEventListener("abort", cancel)
       }
-      let won: { route: Route; prepared: Prepared; upstream: Response } | undefined
+      let won:
+        | { route: Route; prepared: Prepared; upstream: Response; bytes: number }
+        | undefined
       let failed: unknown
       // An earlier attempt may have run inference: a later refundable status cannot refund it.
       let unknownOutcome = false
@@ -725,15 +731,17 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           abort.signal.removeEventListener("abort", link)
         }
         let upstream: Response
+        let payload = ""
         try {
           phase = "upstream_dispatch"
           dispatched = true
+          payload = JSON.stringify(prepared.body)
           upstream = await deps.fetch(url, {
             method: "POST",
             redirect: "error",
             signal: attempt.signal,
             headers: upstreamHeaders(route.connection, apiKey, kind === "chat"),
-            body: JSON.stringify(prepared.body),
+            body: payload,
           })
         } catch (e) {
           release()
@@ -768,13 +776,13 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           continue
         }
         cooldown.delete(route.key)
-        won = { route, prepared, upstream }
+        won = { route, prepared, upstream, bytes: payload.length }
       }
       if (!won) {
         cleanup()
         throw failed ?? new HttpError(503, "unavailable", "BOSS AI is temporarily unavailable.")
       }
-      const { route: served, prepared, upstream } = won
+      const { route: served, prepared, upstream, bytes } = won
       if (served !== routes[0]) audit("upstream_fallback")
       const cacheMiss = (u: unknown) => {
         if (kind === "chat" && expectsCache(served) && cacheMissLarge(u)) {
@@ -896,17 +904,51 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         cleanup()
         await iterator.return?.(undefined).catch(() => {})
         if (adapter.finished) cacheMiss(adapter.usage)
+        // A stream cut before its usage arrived is settled on an estimate, never refunded to zero
+        // and no longer the whole context reservation: prompt tokens as reported at the start (else
+        // the request size / 3) plus the output streamed so far / 3, at most the reservation. A
+        // completed stream that never reported usage keeps the full reservation.
+        let settled = tokens
+        if (settled === null && !adapter.finished) {
+          const prompt = adapter.promptTokens ?? Math.ceil(bytes / 3)
+          const output = Math.ceil(adapter.streamedChars / 3)
+          settled = Math.max(1, Math.min(prompt + output, result.model.context_length))
+          audit("usage_estimated_after_cancel")
+          logLine({
+            event: "usage_estimated_after_cancel",
+            request_id: requestId,
+            estimate: settled,
+            prompt,
+            output,
+          })
+        }
         // If settlement fails the full reservation remains charged. Never refund
         // an unknown outcome merely because a worker or a client disconnected.
-        await settleWithRetry(tokens)
+        await settleWithRetry(settled)
       }
+      // While the model thinks the upstream can be silent for minutes and the client gives up on a
+      // stream with no event: send a reasoning delta whenever nothing arrived for a while.
+      let pending: ReturnType<typeof iterator.next> | undefined
+      const silence = deps.keepaliveMs ?? 15_000
       reservation = undefined // The stream now owns cleanup and settlement.
       const stream = new ReadableStream<Uint8Array>({
         async pull(controller) {
           try {
             // A pull that enqueues nothing is never called again: keep reading until a frame is out.
             while (true) {
-              const next = await iterator.next()
+              pending ??= iterator.next()
+              let timer: ReturnType<typeof setTimeout> | undefined
+              const next = await Promise.race([
+                pending,
+                new Promise<"silent">((resolve) => {
+                  timer = setTimeout(() => resolve("silent"), silence)
+                }),
+              ]).finally(() => clearTimeout(timer))
+              if (next === "silent") {
+                controller.enqueue(frame(adapter.keepalive()))
+                return
+              }
+              pending = undefined
               if (next.done) {
                 if (!adapter.finished) throw new Error("Truncated stream")
                 await finish(adapter.tokens)

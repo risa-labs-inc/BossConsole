@@ -670,7 +670,34 @@ export class StreamAdapter {
       choices: [{ index: 0, delta: { role: "assistant", ...delta }, finish_reason: finish }],
     }
   }
+  /** Characters of model output (text, reasoning, tool names and arguments) streamed so far. */
+  streamedChars = 0
+  /** Prompt tokens the upstream reported before the end of the stream, when it did. */
+  get promptTokens(): number | null {
+    return this.anthropic.promptTokens
+  }
+  /** A reasoning delta the client counts as an event while the upstream is silent. */
+  keepalive(): Obj {
+    return this.chunk({ reasoning_content: "\u200b" })
+  }
   accept(data: string): Obj[] {
+    const out = this.acceptEvent(data)
+    for (const chunk of out) {
+      for (const choice of (chunk.choices as Obj[] | undefined) ?? []) {
+        const d = choice.delta as Obj | undefined
+        if (!d) continue
+        for (const k of ["content", "reasoning_content", "reasoning"]) {
+          if (typeof d[k] === "string") this.streamedChars += (d[k] as string).length
+        }
+        for (const call of (d.tool_calls as Obj[] | undefined) ?? []) {
+          const f = (call.function ?? {}) as Obj
+          this.streamedChars += String(f.arguments ?? "").length + String(f.name ?? "").length
+        }
+      }
+    }
+    return out
+  }
+  private acceptEvent(data: string): Obj[] {
     if (data === "[DONE]") {
       if (this.type === "openai_chat") this.finished = true
       return []

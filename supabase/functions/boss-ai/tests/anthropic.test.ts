@@ -73,7 +73,27 @@ Deno.test("anthropic: system, developer, images and max_tokens translate", () =>
   )
   // max_tokens is always set, from the existing computation.
   assertEquals(body({ messages: [{ role: "user", content: "hi" }] }).max_tokens, 2000)
-  assert(!("store" in out) && !("provider" in out) && !("thinking" in out))
+  assert(!("store" in out) && !("provider" in out))
+  // Always-thinking models stream a summarized display; unknown models get no thinking field.
+  assertEquals(out.thinking, { type: "adaptive", display: "summarized" })
+  for (
+    const id of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"]
+  ) {
+    assertEquals(
+      body({ messages: [{ role: "user", content: "x" }] }, { ...model, upstream_model: id })
+        .thinking,
+      {
+        type: "adaptive",
+        display: "summarized",
+      },
+    )
+  }
+  for (const id of ["claude-opus-4-8", "claude-sonnet-4-6", "claude-future-9", "private"]) {
+    assert(
+      !("thinking" in
+        body({ messages: [{ role: "user", content: "x" }] }, { ...model, upstream_model: id })),
+    )
+  }
 })
 
 Deno.test("anthropic: tools, tool_choice and parallel_tool_calls map", () => {
@@ -411,8 +431,10 @@ Deno.test("anthropic: stream events become chunks with stable tool indexes and a
     { index: 1, id: "toolu_b", type: "function", function: { name: "w", arguments: "" } },
     { index: 1, function: { arguments: "{}" } },
   ])
-  // Thinking never reaches the client; the finish chunk precedes the usage chunk.
-  assert(!JSON.stringify(out).includes("hmm"))
+  // Thinking text streams as reasoning deltas (the field the AI Gateway plugin reads); the finish
+  // chunk precedes the usage chunk.
+  assertEquals(deltas.filter((d) => d.reasoning_content).map((d) => d.reasoning_content), ["hmm"])
+  assertEquals(adapter.promptTokens, 107)
   const finish = choices.filter((c) => c.finish_reason)
   assertEquals(finish.map((c) => c.finish_reason), ["tool_calls"])
   const last = out.at(-1)!

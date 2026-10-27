@@ -337,13 +337,15 @@ Deno.test("duplicate admission is a conflict and pre-dispatch abort refunds with
   assertEquals(f.requests.length, 0)
 })
 
-Deno.test("truncated streams report failure and retain reserved usage", async () => {
+Deno.test("truncated streams report failure and settle an estimate, not the reservation", async () => {
   const f = await fixture({ stream: 'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n' })
   const response = await f.handler(f.request({ ...body, stream: true }))
   const output = await response.text()
   assert(output.includes("stream_failed"))
   assert(!output.includes("[DONE]"))
-  assertEquals(f.calls.at(-1)?.params.p_tokens, null)
+  const settled = f.calls.at(-1)?.params.p_tokens as number
+  assert(Number.isInteger(settled) && settled >= 1 && settled < 4096)
+  assert(f.audits.includes("usage_estimated_after_cancel"))
 })
 
 Deno.test("a stalled SSE body times out and settles without hanging the client", async () => {
@@ -354,7 +356,9 @@ Deno.test("a stalled SSE body times out and settles without hanging the client",
   assert(output.includes("stream_failed"))
   assert(!output.includes("[DONE]"))
   assertEquals(f.calls.filter((call) => call.name === "boss_ai_settle").length, 1)
-  assertEquals(f.calls.at(-1)?.params.p_tokens, null)
+  const settled = f.calls.at(-1)?.params.p_tokens as number
+  assert(Number.isInteger(settled) && settled >= 1 && settled < 4096)
+  assert(f.audits.includes("usage_estimated_after_cancel"))
 })
 
 Deno.test("late stream truncation preserves already reported usage", async () => {
@@ -491,14 +495,16 @@ Deno.test("Responses endpoint round trip exposes only the published model", asyn
   assertEquals(f.calls.at(-1)?.params.p_tokens, 5)
 })
 
-Deno.test("stream cancellation retains usage and does not attempt to write to a closed client", async () => {
+Deno.test("stream cancellation settles an estimate and does not attempt to write to a closed client", async () => {
   const f = await fixture({ stream: 'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n' })
   const response = await f.handler(f.request({ ...body, stream: true }))
   const reader = response.body!.getReader()
   await reader.read()
   await reader.cancel()
   assertEquals(f.calls.filter((call) => call.name === "boss_ai_settle").length, 1)
-  assertEquals(f.calls.at(-1)?.params.p_tokens, null)
+  const settled = f.calls.at(-1)?.params.p_tokens as number
+  assert(Number.isInteger(settled) && settled >= 1 && settled < 4096)
+  assert(f.audits.includes("usage_estimated_after_cancel"))
 })
 
 Deno.test("provider publishes discovery metadata without vault or upstream access", async () => {

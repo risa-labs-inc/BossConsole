@@ -2,10 +2,23 @@ import { HttpError } from "./auth.ts"
 import { invalid, Obj, object } from "./wire.ts"
 
 // Native Anthropic Messages translation. Clients stay on OpenAI Chat Completions.
-// Thinking is never requested: OpenAI-format clients cannot round-trip thinking blocks/signatures,
-// so response thinking blocks are dropped and history is replayed without them.
+// Thinking text is streamed to clients as reasoning deltas, but never replayed: OpenAI-format
+// clients cannot round-trip thinking blocks/signatures, so history is sent without them.
 
 export const ANTHROPIC_VERSION = "2023-06-01"
+// Models that always think: requesting a summarized display only makes the thinking visible (it is
+// streamed as it arrives, so the client never sits through minutes of silence) and changes no cost.
+// Unlisted models get no `thinking` field at all: on models where thinking is optional it would
+// switch it on.
+const ALWAYS_THINKS = new Set([
+  "claude-opus-5-5",
+  "claude-opus-5",
+  "claude-sonnet-5-5",
+  "claude-sonnet-5",
+  "claude-haiku-5-5",
+  "claude-fable-5-1",
+  "claude-fable-5",
+])
 const EPHEMERAL = { type: "ephemeral" }
 const CACHEABLE = ["text", "image", "tool_use", "tool_result"]
 
@@ -188,6 +201,9 @@ export function anthropicRequest(a: {
     model: a.upstream,
     max_tokens: a.max,
     stream: a.stream,
+    ...(ALWAYS_THINKS.has(a.upstream)
+      ? { thinking: { type: "adaptive", display: "summarized" } }
+      : {}),
     ...(cached.system.length ? { system: cached.system } : {}),
     messages: cached.messages,
     ...(cached.tools ? { tools: cached.tools } : {}),
@@ -270,6 +286,8 @@ export class AnthropicStream {
   finished = false
   tokens: number | null = null
   usage: Obj | null = null
+  /** input + cache tokens from message_start, known before any output. */
+  promptTokens: number | null = null
   private start: Obj = {}
   private stop: unknown
   private tools = new Map<number, number>()
@@ -291,6 +309,8 @@ export class AnthropicStream {
     switch (e.type) {
       case "message_start":
         this.start = object(object(e.message).usage ?? {})
+        this.promptTokens = Number(anthropicUsage(this.start)?.prompt_tokens ?? NaN)
+        if (!Number.isFinite(this.promptTokens)) this.promptTokens = null
         return [this.chunk({ content: "" })]
       case "content_block_start": {
         const block = object(e.content_block)
@@ -309,6 +329,9 @@ export class AnthropicStream {
       case "content_block_delta": {
         const d = object(e.delta)
         if (d.type === "text_delta") return [this.chunk({ content: String(d.text ?? "") })]
+        if (d.type === "thinking_delta") {
+          return d.thinking ? [this.chunk({ reasoning_content: String(d.thinking) })] : []
+        }
         if (d.type !== "input_json_delta") return []
         const index = this.tools.get(Number(e.index))
         if (index === undefined) throw new Error("Unknown tool")

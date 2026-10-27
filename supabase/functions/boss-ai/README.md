@@ -159,12 +159,18 @@ for agentic traffic.
   `json_schema` becomes `output_config.format` (`json_schema`; Anthropic requires
   `additionalProperties:false` on every object and rejects numeric/string constraints, which
   surfaces as an upstream 400); `json_object` is a 400 for this api_type; `text` is a no-op.
-- Thinking is never requested. OpenAI-format clients cannot round-trip thinking blocks and
-  signatures, so response thinking blocks are dropped and history is replayed without them. Models
-  that always think (Opus 5.5, Sonnet 5.5: `thinking:{type:"disabled"}` is a 400) still run adaptive
-  thinking server-side when the parameter is omitted, and bill for it in `output_tokens`. Forced
-  `tool_choice` (`required`, named) is a 400 on those same models; with fallbacks configured the
-  request is served by the next route.
+- Thinking is never replayed: OpenAI-format clients cannot round-trip thinking blocks and
+  signatures, so history is sent without them. Models that always think (Opus 5.5/5, Sonnet 5.5/5,
+  Haiku 5.5, Fable 5.1/5; `thinking:{type:"disabled"}` is a 400) get
+  `thinking:{type:"adaptive",display:"summarized"}`, which changes nothing but visibility: the
+  summary streams as `delta.reasoning_content` (the field the AI Gateway plugin reads) instead of
+  minutes of silence, and thinking is billed in `output_tokens` either way. Other models get no
+  `thinking` field, since it would switch optional thinking on. Forced `tool_choice` (`required`,
+  named) is a 400 on those models, so it is sent as `auto`.
+- Keepalive: when an upstream stream is silent for 15 s (`keepaliveMs`; signature deltas, pings,
+  empty thinking), a `reasoning_content` delta of one zero-width space is sent. Clients such as Max
+  give up when no event arrives within their answer budget (120 s), and an empty delta is dropped by
+  their parser, so the keepalive carries one character.
 - Response: text and `tool_use` become a `chat.completion`; `end_turn`/`stop_sequence`/`pause_turn`
   map to `stop`, `max_tokens` to `length`, `tool_use` to `tool_calls`, `refusal` to
   `content_filter`. Streams translate the Anthropic SSE events to `chat.completion.chunk`s
@@ -494,13 +500,16 @@ reasoning. This conservative bound works across upstream tokenizers and inline i
 trusting client token estimates. It means a request needs that much remaining capacity even if its
 eventual usage is small. Set context limits and allowances together. Actual provider-reported input
 plus output tokens replace the reservation on settlement; reasoning is already included in output
-and is not counted twice. Unknown or interrupted outcomes retain the full charge. A rejected
-pre-inference request releases it. Known validation, authentication and billing rejections
-(including OpenRouter 402) are refunded. Fetch rejection, timeout, 408/409 and upstream 5xx remain
-unknown: response headers arriving is not evidence of when inference began, and a proxy can fail
-after forwarding work. Refunding these automatically would allow cancelled requests to evade quotas.
-This intentionally favors a strict spend bound over automatic outage refunds. Operators can inspect
-the request ledger for an audited correction; clients cannot refund themselves.
+and is not counted twice. Unknown outcomes retain the full charge; a stream cut before its usage
+arrived (client cancel, truncation) settles an estimate instead: the prompt tokens reported at the
+start of the stream (Anthropic `message_start`, else request size / 3) plus streamed output / 3, at
+most the reservation, audited as `usage_estimated_after_cancel`. A rejected pre-inference request
+releases it. Known validation, authentication and billing rejections (including OpenRouter 402) are
+refunded. Fetch rejection, timeout, 408/409 and upstream 5xx remain unknown: response headers
+arriving is not evidence of when inference began, and a proxy can fail after forwarding work.
+Refunding these automatically would allow cancelled requests to evade quotas. This intentionally
+favors a strict spend bound over automatic outage refunds. Operators can inspect the request ledger
+for an audited correction; clients cannot refund themselves.
 
 Missing usage emits `usage_unknown_reservation_retained`; it is never silently treated as zero.
 Published connections must pass both streaming and non-streaming usage checks before rollout. An
@@ -537,7 +546,7 @@ broker scope as `/v1/models`.
 | Wrong audience, expired or forged AI credential    | No catalog or inference access                             |
 | Permission revoked, user banned, model unpublished | New inference returns 403                                  |
 | Multiple active requests                           | Atomic per-user/model reservation prevents double spending |
-| Client disconnected / worker interrupted           | Full reservation retained                                  |
+| Client disconnected / worker interrupted           | Estimate from prompt + streamed output, never zero         |
 | Successful result with usage                       | Charge input plus output once                              |
 | Retried settlement                                 | First settlement wins                                      |
 | Role allowance reduced                             | Existing usage survives; further requests may be refused   |
