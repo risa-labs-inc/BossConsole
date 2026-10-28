@@ -1,4 +1,10 @@
 import { HttpError } from "./auth.ts"
+import {
+  ANTHROPIC_VERSION,
+  anthropicCompletion,
+  anthropicRequest,
+  AnthropicStream,
+} from "./anthropic.ts"
 
 const MAX_TOOL_CALLS_PER_MESSAGE = 128
 const MAX_TOOL_DESCRIPTION_LENGTH = 4_096
@@ -30,11 +36,24 @@ export interface Model {
   max_output_tokens: number
   /** Operator-set upstream routing (OpenRouter `provider`); never caller-supplied. */
   provider_routing?: unknown
+  connection_id?: string
 }
 export interface Connection {
+  id?: string
   base_url: string
-  api_type: "openai_chat" | "openai_responses"
+  api_type: "openai_chat" | "openai_responses" | "anthropic_messages"
   api_key_secret: string
+}
+/** A resolved model.fallbacks entry: the alternate route and its connection row. */
+export interface Fallback {
+  connection_id: string
+  upstream_model: string
+  provider_routing?: unknown
+  usd_per_mtok_input?: number | null
+  usd_per_mtok_output?: number | null
+  usd_per_mtok_cache_read?: number | null
+  usd_per_mtok_cache_write?: number | null
+  connection: Connection
 }
 export function object(value: unknown): Obj {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid()
@@ -110,7 +129,13 @@ export async function readJson(
   }
 }
 
-function baseUrl(connection: Connection): string {
+/** Hosts a local stack may reach over plain http (BOSS_AI_ALLOW_LOCAL_AGENT=1 only). */
+export const LOCAL_HOSTS = ["127.0.0.1", "localhost", "host.docker.internal"]
+export const urlAllowed = (url: URL, allowLocal: boolean) =>
+  url.protocol === "https:" ||
+  (allowLocal && url.protocol === "http:" && LOCAL_HOSTS.includes(url.hostname))
+
+function baseUrl(connection: Connection, allowLocal = false): string {
   if (
     !/^BOSS_AI_[A-Z0-9_]+$/.test(connection.api_key_secret) ||
     connection.api_key_secret === "BOSS_AI_SIGNING_SECRET"
@@ -118,20 +143,43 @@ function baseUrl(connection: Connection): string {
     throw new HttpError(503, "configuration", "BOSS AI is temporarily unavailable.")
   }
   const url = new URL(connection.base_url)
-  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
+  if (!urlAllowed(url, allowLocal) || url.username || url.password || url.search || url.hash) {
     throw new HttpError(503, "configuration", "BOSS AI is temporarily unavailable.")
   }
   return url.toString().replace(/\/$/, "")
 }
 
-export function endpoint(connection: Connection): string {
-  return baseUrl(connection) +
-    (connection.api_type === "openai_chat" ? "/chat/completions" : "/responses")
+const CHAT_PATHS = {
+  openai_chat: "/chat/completions",
+  openai_responses: "/responses",
+  anthropic_messages: "/messages",
+}
+export function endpoint(connection: Connection, allowLocal = false): string {
+  return baseUrl(connection, allowLocal) + CHAT_PATHS[connection.api_type]
+}
+
+/** Anthropic authenticates with x-api-key, never Bearer; audio routes are always Bearer. */
+export function upstreamHeaders(
+  connection: Connection,
+  key: string,
+  chat = true,
+): Record<string, string> {
+  return chat && connection.api_type === "anthropic_messages"
+    ? {
+      "x-api-key": key,
+      "anthropic-version": ANTHROPIC_VERSION,
+      "Content-Type": "application/json",
+    }
+    : { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }
 }
 
 /** Audio routes ignore api_type: every connection serves them under its base URL. */
-export function audioEndpoint(connection: Connection, route: "transcriptions" | "speech"): string {
-  return `${baseUrl(connection)}/audio/${route}`
+export function audioEndpoint(
+  connection: Connection,
+  route: "transcriptions" | "speech",
+  allowLocal = false,
+): string {
+  return `${baseUrl(connection, allowLocal)}/audio/${route}`
 }
 
 /** Validate at the secret lookup itself, independent of endpoint call ordering. */
@@ -303,7 +351,8 @@ export function requestBody(
   for (const key of ["temperature", "top_p"]) {
     if (input[key] !== undefined) {
       if (typeof input[key] !== "number" || !Number.isFinite(input[key])) throw invalid()
-      common[key] = input[key]
+      // Current Claude models reject non-default sampling parameters: validated, never forwarded.
+      if (type !== "anthropic_messages") common[key] = input[key]
     }
   }
   let tools: Obj[] | undefined
@@ -367,12 +416,25 @@ export function requestBody(
       ) throw invalid()
       boundedToolSchema(schema.schema)
     }
-    if (type === "openai_chat") common.response_format = format
-    else {common.text = {
+    if (type === "openai_responses") {
+      common.text = {
         format: format.type === "json_schema"
           ? { ...object(format.json_schema), type: "json_schema" }
           : format,
-      }}
+      }
+    } else common.response_format = format
+  }
+  if (type === "anthropic_messages") {
+    return anthropicRequest({
+      upstream: model.upstream_model,
+      stream: common.stream === true,
+      max: Number(max),
+      messages,
+      tools,
+      toolChoice: common.tool_choice,
+      parallel: common.parallel_tool_calls,
+      format: common.response_format as Obj | undefined,
+    })
   }
   if (type === "openai_chat") {
     if (tools) common.tools = tools
@@ -419,7 +481,7 @@ export function requestBody(
 // every other upstream caches automatically or not at all and gets the request unchanged. Gemini is never
 // marked: it caches implicitly, and an explicit cache cost +1.4-3.2 s to the first token without paying back
 // on reuse (measured on flash-lite, short and 23k-char prompts).
-function takesCacheControl(upstreamModel: string, baseUrl: string): boolean {
+export function takesCacheControl(upstreamModel: string, baseUrl: string): boolean {
   return isOpenRouter(baseUrl) && upstreamModel.toLowerCase().startsWith("anthropic/")
 }
 
@@ -513,6 +575,7 @@ function decodeCompletion(
   if (value.error) {
     throw new HttpError(502, "upstream_error", "The model could not complete this request.")
   }
+  if (type === "anthropic_messages") return anthropicCompletion(value, model, id)
   if (type === "openai_chat") {
     if (!Array.isArray(value.choices) || value.choices.length !== 1) {
       throw new HttpError(502, "upstream_error", "The model returned an invalid response.")
@@ -604,9 +667,14 @@ export async function* events(
 export class StreamAdapter {
   finished = false
   tokens: number | null = null
+  /** Last usage frame seen, for diagnostics. */
+  usage: Obj | null = null
   private toolIndexes = new Map<number, number>()
   private created = Math.floor(Date.now() / 1000)
-  constructor(private model: string, private type: Connection["api_type"], private id: string) {}
+  private anthropic: AnthropicStream
+  constructor(private model: string, private type: Connection["api_type"], private id: string) {
+    this.anthropic = new AnthropicStream(model, id, this.created)
+  }
   private chunk(delta: Obj, finish: string | null = null): Obj {
     return {
       id: this.id,
@@ -616,7 +684,39 @@ export class StreamAdapter {
       choices: [{ index: 0, delta: { role: "assistant", ...delta }, finish_reason: finish }],
     }
   }
+  /** Characters of model output (text, reasoning, tool names and arguments) streamed so far. */
+  streamedChars = 0
+  /** The assistant text streamed so far, capped, for the local route trace only. */
+  replyText = ""
+  /** Prompt tokens the upstream reported before the end of the stream, when it did. */
+  get promptTokens(): number | null {
+    return this.anthropic.promptTokens
+  }
+  /** A reasoning delta the client counts as an event while the upstream is silent. */
+  keepalive(): Obj {
+    return this.chunk({ reasoning_content: "\u200b" })
+  }
   accept(data: string): Obj[] {
+    const out = this.acceptEvent(data)
+    for (const chunk of out) {
+      for (const choice of (chunk.choices as Obj[] | undefined) ?? []) {
+        const d = choice.delta as Obj | undefined
+        if (!d) continue
+        for (const k of ["content", "reasoning_content", "reasoning"]) {
+          if (typeof d[k] === "string") this.streamedChars += (d[k] as string).length
+        }
+        if (typeof d.content === "string" && this.replyText.length < 2000) {
+          this.replyText = (this.replyText + d.content).slice(0, 2000)
+        }
+        for (const call of (d.tool_calls as Obj[] | undefined) ?? []) {
+          const f = (call.function ?? {}) as Obj
+          this.streamedChars += String(f.arguments ?? "").length + String(f.name ?? "").length
+        }
+      }
+    }
+    return out
+  }
+  private acceptEvent(data: string): Obj[] {
     if (data === "[DONE]") {
       if (this.type === "openai_chat") this.finished = true
       return []
@@ -625,9 +725,19 @@ export class StreamAdapter {
     if (e.error || ["error", "response.failed"].includes(String(e.type))) {
       throw new Error("Upstream error")
     }
+    if (this.type === "anthropic_messages") {
+      const out = this.anthropic.accept(e)
+      this.finished = this.anthropic.finished
+      this.tokens = this.anthropic.tokens
+      this.usage = this.anthropic.usage
+      return out
+    }
     if (this.type === "openai_chat") {
       const u = usage(e.usage)
-      if (u) this.tokens = Number(u.total_tokens)
+      if (u) {
+        this.tokens = Number(u.total_tokens)
+        this.usage = u
+      }
       return [{
         id: this.id,
         object: "chat.completion.chunk",
@@ -662,7 +772,10 @@ export class StreamAdapter {
     }
     if (["response.completed", "response.incomplete"].includes(String(e.type))) {
       const response = object(e.response), u = usage(response.usage, true)
-      if (u) this.tokens = Number(u.total_tokens)
+      if (u) {
+        this.tokens = Number(u.total_tokens)
+        this.usage = u
+      }
       this.finished = true
       return [
         this.chunk(

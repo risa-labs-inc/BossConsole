@@ -22,16 +22,38 @@ import {
   wrongKind,
 } from "./audio.ts"
 import {
+  applyBudget,
+  budgetExhausted,
+  costUsd,
+  decide,
+  decideSystemOne,
+  Decision,
+  estimateUsd,
+  formatState,
+  hardStopped,
+  isContinuation,
+  optionalKey,
+  pricesOf,
+  RouteContext,
+  stateFields,
+  stickyKey,
+  Tier,
+  TIERS,
+} from "./router.ts"
+import {
   audioEndpoint,
   completion,
   Connection,
   endpoint,
   events,
+  Fallback,
   Model,
   Obj,
   readJson,
   requestBody,
   StreamAdapter,
+  takesCacheControl,
+  upstreamHeaders,
   upstreamKey,
 } from "./wire.ts"
 
@@ -50,6 +72,13 @@ export interface Dependencies {
   upstreamTimeoutMs?: number
   settlementTimeoutMs?: number
   audit?: (event: string, requestId: string) => void
+  /** Sink for per-attempt upstream error lines; defaults to console.warn(JSON). */
+  log?: (entry: Obj) => void
+  /** First-response deadline for every route but the last; the overall deadline still applies. */
+  attemptTimeoutMs?: number
+  now?: () => number
+  /** Silence on a stream before a keepalive reasoning delta is sent (default 15 s). */
+  keepaliveMs?: number
   /** LiveKit clients for /v1/voice/live; tests inject fakes. */
   livekit?: (config: LiveKitConfig) => LiveKit
 }
@@ -91,11 +120,15 @@ function validAgentUrl(value: unknown, deps: Dependencies): value is string {
     return false
   }
 }
-function configuredHttps(value: string, protocols = ["https:"]): string {
+function configuredHttps(value: string, protocols = ["https:"], allowLocal = false): string {
   try {
     const url = new URL(value)
+    // Loopback http only for local development (BOSS_AI_ALLOW_LOCAL_AGENT=1), any port.
+    const local = allowLocal && url.protocol === "http:" &&
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost")
     if (
-      !protocols.includes(url.protocol) || url.username || url.password || url.search || url.hash
+      !(local || protocols.includes(url.protocol)) || url.username || url.password || url.search ||
+      url.hash
     ) throw new Error()
     return value.replace(/\/+$/, "")
   } catch {
@@ -114,8 +147,11 @@ interface Prepared {
   seconds?: number
 }
 const headers = { "Content-Type": "application/json", "Cache-Control": "no-store" }
-const json = (body: unknown, status = 200, requestId = "") =>
-  new Response(JSON.stringify(body), { status, headers: { ...headers, "X-Request-ID": requestId } })
+const json = (body: unknown, status = 200, requestId = "", extra: Record<string, string> = {}) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { ...headers, "X-Request-ID": requestId, ...extra },
+  })
 function failure(error: unknown, requestId: string): Response {
   const e = error instanceof HttpError
     ? error
@@ -158,6 +194,7 @@ async function settleReservation(
   requestId: string,
   tokens: number | null,
   audit: (event: string) => void,
+  extra: Obj = {},
 ): Promise<boolean> {
   // boss_ai_settle updates only WHERE NOT settled. Retrying the same request ID is safe
   // even if a timed-out first attempt commits late. Two bounded attempts cost at most
@@ -166,7 +203,7 @@ async function settleReservation(
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
       await Promise.race([
-        deps.rpc("boss_ai_settle", { p_request_id: requestId, p_tokens: tokens }),
+        deps.rpc("boss_ai_settle", { p_request_id: requestId, p_tokens: tokens, ...extra }),
         new Promise<never>((_, reject) => {
           timer = setTimeout(
             () => reject(new SettlementTimeoutError()),
@@ -195,14 +232,149 @@ async function settleReservation(
  * an internal host. BOSS_AI_PUBLIC_URL (e.g. https://api.risaboss.com/functions/v1/boss-ai) wins, else SUPABASE_URL.
  */
 function publicBase(deps: Dependencies): string {
+  const local = deps.secret("BOSS_AI_ALLOW_LOCAL_AGENT") === "1"
   const explicit = deps.secret("BOSS_AI_PUBLIC_URL")?.replace(/\/+$/, "")
-  if (explicit) return configuredHttps(explicit)
+  if (explicit) return configuredHttps(explicit, ["https:"], local)
   const supabase = deps.secret("SUPABASE_URL")?.replace(/\/+$/, "")
   if (!supabase) throw new HttpError(503, "voice_unavailable", "Voice calls are not configured.")
-  return `${configuredHttps(supabase)}/functions/v1/boss-ai`
+  return `${configuredHttps(supabase, ["https:"], local)}/functions/v1/boss-ai`
+}
+
+interface Routing {
+  served: string
+  tier: Tier
+  source: "decider" | "sticky" | "default" | "budget"
+  estimate: number
+  decision?: Decision
+  state: string
+  ctx: RouteContext
+}
+interface Route {
+  key: string
+  model: Model
+  connection: Connection
+}
+const PRICE_KEYS = [
+  "usd_per_mtok_input",
+  "usd_per_mtok_output",
+  "usd_per_mtok_cache_read",
+  "usd_per_mtok_cache_write",
+] as const
+const COOLDOWN_MS = 60_000
+const routeKey = (connection: string | undefined, upstream: string) =>
+  `${connection ?? "?"}|${upstream}`
+
+/** Primary first, then the model's resolved fallbacks, each with its own upstream model and routing. */
+function routesOf(
+  result: { model: Model; connection: Connection; fallbacks?: Fallback[] },
+): Route[] {
+  const { model, connection } = result
+  return [
+    {
+      key: routeKey(connection.id ?? model.connection_id, model.upstream_model),
+      model,
+      connection,
+    },
+    ...(Array.isArray(result.fallbacks) ? result.fallbacks.slice(0, 4) : []).map((f) => ({
+      key: routeKey(f.connection_id, f.upstream_model),
+      model: {
+        ...model,
+        upstream_model: f.upstream_model,
+        provider_routing: f.provider_routing ?? null,
+        // A fallback with its own prices is billed at them, not at the tier model's.
+        ...(PRICE_KEYS.some((k) => f[k] !== undefined)
+          ? Object.fromEntries(PRICE_KEYS.map((k) => [k, f[k] ?? null]))
+          : {}),
+      },
+      connection: f.connection,
+    })),
+  ]
+}
+
+// Failures that predict the next request failing too: auth, billing, throttling, outages, and a
+// 400 that names a usage/spend/credit limit (the 2026-10-27 incident). Other 400s are per request.
+const LIMIT_WORDING =
+  /(usage|spend(ing)?|credit|billing|quota|balance).{0,40}(limit|cap|exceed|exhaust|reach)|(limit|cap|exceed|reach).{0,40}(usage|spend|credit|quota|billing)|credit balance|insufficient (funds|credit)/i
+export const trips = (status: number, message: string) =>
+  [401, 402, 403, 429].includes(status) || status >= 500 ||
+  (status === 400 && LIMIT_WORDING.test(message))
+
+// The prompt does not fit the context window. Clients compact on this wording, so it reaches them
+// as a 400 instead of a retryable 502, and no fallback is tried (every route has the same window).
+const CONTEXT_WORDING =
+  /prompt is too long|context (length|window)|maximum context|input tokens exceed|too many (input )?tokens/i
+export const contextOverflow = (status: number, message: string) =>
+  [400, 413].includes(status) && CONTEXT_WORDING.test(message)
+
+/** A connect refusal or DNS failure: the request provably never reached the upstream. Deno's fetch
+ * throws TypeError("fetch failed") whose cause chain carries the text; resets and timeouts differ. */
+export function neverReached(error: unknown): boolean {
+  for (let e = error, depth = 0; e && depth < 5; depth++) {
+    const m = String((e as Error).message ?? "")
+    if (
+      /connection refused|\bECONNREFUSED\b|dns error|failed to lookup address|ENOTFOUND/i.test(m)
+    ) {
+      return true
+    }
+    e = (e as Error).cause
+  }
+  return false
+}
+
+/** At most 4 KB of an upstream error body; only error.type/code/message are kept, never content. */
+async function errorInfo(response: Response): Promise<{ type: string | null; message: string }> {
+  const none = { type: null, message: "" }
+  const reader = response.body?.getReader()
+  if (!reader) return none
+  try {
+    const chunks: Uint8Array[] = []
+    let size = 0
+    while (size < 4096) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(value)
+      size += value.length
+    }
+    const bytes = new Uint8Array(size)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.length
+    }
+    const error = (JSON.parse(new TextDecoder().decode(bytes.subarray(0, 4096))) as Obj).error
+    if (!error || typeof error !== "object") return none
+    const e = error as Obj
+    const type = typeof e.type === "string"
+      ? e.type
+      : typeof e.code === "string" || typeof e.code === "number"
+      ? String(e.code)
+      : null
+    return {
+      type: type && type.slice(0, 64),
+      message: typeof e.message === "string" ? e.message.slice(0, 300) : "",
+    }
+  } catch {
+    return none
+  } finally {
+    await reader.cancel().catch(() => {})
+  }
+}
+
+// Routes where a large uncached prompt means caching silently regressed.
+const expectsCache = (r: Route) =>
+  r.connection.api_type === "anthropic_messages" ||
+  (r.connection.api_type === "openai_chat" &&
+    takesCacheControl(r.model.upstream_model, r.connection.base_url))
+const cacheMissLarge = (value: unknown) => {
+  if (!value || typeof value !== "object") return false
+  const u = value as Obj, d = (u.prompt_tokens_details ?? {}) as Obj
+  return Number(u.prompt_tokens) > 8000 && !Number(d.cached_tokens) && !Number(d.cache_write_tokens)
 }
 
 export function createHandler(deps: Dependencies): (request: Request) => Promise<Response> {
+  const cooldown = new Map<string, number>()
+  const allowLocal = deps.secret("BOSS_AI_ALLOW_LOCAL_AGENT") === "1"
+  const now = deps.now ?? Date.now
   const startLiveCall = async (
     request: Request,
     user: string,
@@ -329,9 +501,116 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         else console.warn(JSON.stringify({ event, request_id: requestId }))
       } catch { /* Observability must not change accounting or response cleanup. */ }
     }
+    const logLine = (entry: Obj) => {
+      try {
+        if (deps.log) deps.log(entry)
+        else console.warn(JSON.stringify(entry))
+      } catch { /* Observability must not change accounting or response cleanup. */ }
+    }
+    const upstreamError = (
+      route: Route,
+      status: number | null,
+      type: string | null,
+      message = "",
+    ) => {
+      logLine({
+        event: "upstream_error",
+        request_id: requestId,
+        route: route.key,
+        status,
+        type,
+        message,
+      })
+    }
+    // Choose the tier (decider, sticky within a tool loop, or the default), then apply the monthly
+    // budget. A decider failure never fails the request: it falls back to the default tier.
+    const route = async (ctx: RouteContext, body: Obj, user: string): Promise<Routing> => {
+      const cfg = ctx.router
+      // A malformed context must never route to a model named "undefined".
+      for (const k of ["fast", "standard", "strong", "exhausted"] as const) {
+        if (typeof ctx.models?.[k]?.id !== "string") {
+          throw new HttpError(503, "configuration", "BOSS AI is temporarily unavailable.")
+        }
+      }
+      if (hardStopped(ctx)) throw budgetExhausted(ctx.budget)
+      const messages = body.messages as Obj[]
+      const toolsOffered = Array.isArray(body.tools) && body.tools.length > 0
+      const fields = stateFields(messages, toolsOffered, cfg.state_char_budget)
+      const state = cfg.decider_api === "systemone"
+        ? JSON.stringify(fields)
+        : formatState(fields, cfg.state_char_budget)
+      const key = await stickyKey(user, String(body.model), messages)
+      let tier: Tier = cfg.default_tier
+      let source: Routing["source"] = "default"
+      let decision: Decision | undefined
+      let sticky: unknown = null
+      if (cfg.sticky_within_turn && isContinuation(messages)) {
+        sticky = await deps.rpc("boss_ai_route_get", { p_key: key }).catch(() => null)
+      }
+      if (TIERS.includes(sticky as Tier)) {
+        tier = sticky as Tier
+        source = "sticky"
+      } else {
+        try {
+          decision = cfg.decider_api === "systemone"
+            ? await decideSystemOne(
+              deps.fetch,
+              ctx.decider_connection,
+              optionalKey(ctx.decider_connection, deps.secret),
+              cfg,
+              fields,
+              allowLocal,
+            )
+            : await decide(
+              deps.fetch,
+              ctx.decider_connection,
+              upstreamKey(ctx.decider_connection, deps.secret),
+              cfg,
+              state,
+              allowLocal,
+            )
+          if (decision.confidence >= cfg.min_confidence) {
+            tier = decision.tier
+            source = "decider"
+          } else audit("route_low_confidence")
+        } catch {
+          audit("route_decider_failed")
+        }
+        if (cfg.sticky_within_turn) {
+          await deps.rpc("boss_ai_route_put", {
+            p_key: key,
+            p_user_id: user,
+            p_model_id: body.model,
+            p_tier: tier,
+          }).catch(() => {})
+        }
+      }
+      const promptTokens = Math.ceil(JSON.stringify(body).length / 3)
+      const maxTokens = Number(body.max_completion_tokens ?? body.max_tokens ?? 2000)
+      const estimateFor = (model: Obj) => {
+        const e = estimateUsd(pricesOf(model), promptTokens, maxTokens)
+        if (e.missing) audit("price_missing")
+        return e.cost ?? 0
+      }
+      const budget = applyBudget(tier, ctx, (t) => estimateFor(ctx.models[t]))
+      if (budget.changed || budget.exhausted) source = "budget"
+      return {
+        served: budget.exhausted
+          ? String(ctx.models.exhausted.id)
+          : String(ctx.models[budget.tier].id),
+        tier: budget.tier,
+        source,
+        estimate: estimateFor(budget.exhausted ? ctx.models.exhausted : ctx.models[budget.tier]),
+        decision,
+        state,
+        ctx,
+      }
+    }
     let reservation: string | undefined
     let dispatched = false
     let measuredTokens: number | null = null
+    // Every route failed with an unknown outcome: settle on a prompt estimate, not the reservation.
+    let failedEstimate: { tokens: number; extra: Obj } | undefined
     let phase = "authentication"
     try {
       const path = new URL(request.url).pathname.replace(/^\/functions\/v1/, "").replace(
@@ -378,7 +657,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
             schema: "boss-managed-provider-v1",
             name: "BOSS AI",
             brokerId: "boss-ai",
-            baseUrl: "https://api.risaboss.com/functions/v1/boss-ai/v1",
+            baseUrl: `${publicBase(deps)}/v1`,
             defaultForNewUsers: true,
           },
           200,
@@ -391,9 +670,18 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         return json(
           {
             object: "list",
-            data: path === "/v1/models"
-              ? data
-              : (data as Obj[]).map((model) => ({ model: model.id, allowance: model.allowance })),
+            data: path === "/v1/models" ? data : (data as Obj[]).map((model) => ({
+              model: model.id,
+              allowance: model.allowance,
+              ...("budget" in model ? { budget: model.budget } : {}),
+              ...("over_allowance_model_id" in model
+                ? {
+                  over_allowance_model_id: model.over_allowance_model_id,
+                  downgraded: model.downgraded === true,
+                  downgrade_resets_at: model.downgrade_resets_at ?? null,
+                }
+                : {}),
+            })),
           },
           200,
           requestId,
@@ -471,7 +759,12 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       const lookup = await deps.rpc("boss_ai_lookup", {
         p_user_id: user,
         p_model_id: input.model,
-      }) as { error?: string; model: Model; connection: Connection } | null
+      }) as {
+        error?: string
+        model: Model
+        connection: Connection
+        router?: RouteContext | null
+      } | null
       if (!lookup) {
         throw new HttpError(403, "forbidden", "This model is not available for your account.")
       }
@@ -483,20 +776,58 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         )
       }
       if (lookup.model.kind !== kind) throw wrongKind()
-      const prepare = (model: Model, connection: Connection): Prepared =>
+      const prepare = (model: Model, connection: Connection, source: Obj = input): Prepared =>
         kind === "transcription"
-          ? transcriptionBody(input, model)
+          ? transcriptionBody(source, model)
           : kind === "speech"
-          ? speechBody(input, model)
-          : { body: requestBody(input, model, connection.api_type, connection.base_url) }
+          ? speechBody(source, model)
+          : { body: requestBody(source, model, connection.api_type, connection.base_url) }
       prepare(lookup.model, lookup.connection)
+      // A router model is served per call by one of its tier models, chosen before the reservation.
+      let routing: Routing | undefined
+      if (kind === "chat" && lookup.router) {
+        phase = "routing"
+        routing = await route(lookup.router, input, user)
+      }
       phase = "reservation"
-      const result = await deps.rpc("boss_ai_reserve", {
-        p_user_id: user,
-        p_model_id: input.model,
-        p_request_id: requestId,
-      }) as { error?: string; usage?: unknown; model: Model; connection: Connection }
+      const result = await deps.rpc(
+        routing ? "boss_ai_reserve_routed" : "boss_ai_reserve",
+        routing
+          ? {
+            p_user_id: user,
+            p_model_id: input.model,
+            p_served_model_id: routing.served,
+            p_request_id: requestId,
+            p_tier: routing.tier,
+            p_route_source: routing.source,
+            p_est_cost: routing.estimate,
+          }
+          : { p_user_id: user, p_model_id: input.model, p_request_id: requestId },
+      ) as {
+        error?: string
+        usage?: unknown
+        budget?: Obj
+        model: Model
+        connection: Connection
+        fallbacks?: Fallback[]
+        downgraded_from?: string
+        routed_from?: string
+        tier?: string
+        route_source?: string
+        budget_exhausted?: boolean
+      }
       if (result.error) {
+        if (result.error === "budget_exhausted") {
+          throw new HttpError(
+            429,
+            "budget_exhausted",
+            "Your monthly AI budget is used up. It resets at the start of next month.",
+            { budget: result.budget },
+          )
+        }
+        if (result.error === "unavailable") {
+          throw new HttpError(503, "unavailable", "BOSS AI is temporarily unavailable.")
+        }
         if (result.error === "duplicate") {
           throw new HttpError(409, "duplicate", "This request has already been admitted.")
         }
@@ -515,12 +846,43 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       }
       reservation = requestId
       if (result.model.kind !== kind) throw wrongKind()
-      const prepared = prepare(result.model, result.connection)
-      const body = prepared.body
-      const url = kind === "chat"
-        ? endpoint(result.connection)
-        : audioEndpoint(result.connection, kind === "speech" ? "speech" : "transcriptions")
-      const apiKey = upstreamKey(result.connection, deps.secret)
+      // Over allowance the reservation was admitted against a cheaper model: serve from it, keep
+      // the requested id in responses so clients do not break, and say so in headers.
+      const downgrade: Record<string, string> = {
+        ...(result.downgraded_from
+          ? {
+            "X-BOSS-AI-Downgraded-From": result.downgraded_from,
+            "X-BOSS-AI-Served-Model": result.model.id,
+          }
+          : {}),
+        ...(result.routed_from
+          ? {
+            "X-BOSS-AI-Tier": String(result.tier),
+            "X-BOSS-AI-Served-Model": result.model.id,
+            "X-BOSS-AI-Route-Source": String(result.route_source),
+            ...(result.budget_exhausted ? { "X-BOSS-AI-Budget": "exhausted" } : {}),
+          }
+          : {}),
+      }
+      if (result.budget_exhausted) audit("budget_exhausted_served_fast")
+      if (result.downgraded_from) audit("allowance_downgrade")
+      // The user did not choose the target, so a limit only it has must not fail their request.
+      const sent: Obj = (result.downgraded_from || result.routed_from) && kind === "chat"
+        ? Object.fromEntries(
+          Object.entries(input).map(([k, v]) => [
+            k,
+            ["max_tokens", "max_completion_tokens"].includes(k) && Number.isSafeInteger(v) &&
+              Number(v) > result.model.max_output_tokens
+              ? result.model.max_output_tokens
+              : v,
+          ]),
+        )
+        : input
+      const routes = routesOf(result)
+      const live = routes.filter((r) => (cooldown.get(r.key) ?? 0) <= now())
+      // A route that failed in a way that predicts the next request failing is skipped for a while;
+      // when every route is cooling, all of them are tried.
+      const order = live.length ? live : routes
       // Never follow redirects with an upstream credential. Only configured servers
       // receive it; request-supplied routing and provider overrides are rejected.
       const abort = new AbortController()
@@ -532,40 +894,200 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         clearTimeout(timeout)
         request.signal.removeEventListener("abort", cancel)
       }
-      let upstream: Response
-      try {
+      let won:
+        | { route: Route; prepared: Prepared; upstream: Response; bytes: number }
+        | undefined
+      let failed: unknown
+      // An earlier attempt may have run inference: a later refundable status cannot refund it.
+      let unknownOutcome = false
+      // Request size of the latest attempt that may have run.
+      let lastBytes = 0
+      for (let i = 0; i < order.length && !won; i++) {
+        const route = order[i]
         if (abort.signal.aborted) {
-          throw new HttpError(499, "cancelled", "The AI request was cancelled.")
+          failed ??= new HttpError(499, "cancelled", "The AI request was cancelled.")
+          break
         }
-        phase = "upstream_dispatch"
-        dispatched = true
-        upstream = await deps.fetch(url, {
-          method: "POST",
-          redirect: "error",
-          signal: abort.signal,
-          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify(body),
+        let prepared: Prepared, url: string, apiKey: string
+        try {
+          prepared = prepare(route.model, route.connection, sent)
+          url = kind === "chat" ? endpoint(route.connection, allowLocal) : audioEndpoint(
+            route.connection,
+            kind === "speech" ? "speech" : "transcriptions",
+            allowLocal,
+          )
+          apiKey = upstreamKey(route.connection, deps.secret)
+        } catch (e) {
+          audit("route_unusable")
+          failed = e
+          continue
+        }
+        // Non-final routes get a first-response deadline so a hung route leaves time for the next.
+        const attempt = new AbortController()
+        const link = () => attempt.abort()
+        abort.signal.addEventListener("abort", link, { once: true })
+        // Streams answer with headers at once; a non-stream upstream only after generation ends, so
+        // it gets the overall deadline alone (a short one would re-run a long answer twice).
+        const timer = i < order.length - 1 && input.stream === true
+          ? setTimeout(link, deps.attemptTimeoutMs ?? 90_000)
+          : undefined
+        const release = () => {
+          clearTimeout(timer)
+          abort.signal.removeEventListener("abort", link)
+        }
+        let upstream: Response
+        let payload = ""
+        try {
+          phase = "upstream_dispatch"
+          dispatched = true
+          payload = JSON.stringify(prepared.body)
+          upstream = await deps.fetch(url, {
+            method: "POST",
+            redirect: "error",
+            signal: attempt.signal,
+            headers: upstreamHeaders(route.connection, apiKey, kind === "chat"),
+            body: payload,
+          })
+        } catch (e) {
+          release()
+          // Only a refused connection or a failed DNS lookup proves nothing reached the upstream.
+          if (neverReached(e)) dispatched = unknownOutcome
+          else {
+            unknownOutcome = true
+            lastBytes = payload.length
+          }
+          failed = e
+          upstreamError(
+            route,
+            null,
+            abort.signal.aborted || attempt.signal.aborted ? "timeout" : "fetch_error",
+          )
+          // A client cancel or the overall deadline ends the request; only a failed route falls back.
+          if (abort.signal.aborted) break
+          continue
+        }
+        clearTimeout(timer)
+        if (!upstream.ok) {
+          const info = await errorInfo(upstream)
+          release()
+          upstreamError(route, upstream.status, info.type, info.message)
+          // Known validation/auth/billing rejections can be refunded. A timeout or 5xx
+          // does not prove inference did not run (a proxy can fail after forwarding).
+          if ([400, 401, 402, 403, 404, 405, 406, 413, 415, 422, 429].includes(upstream.status)) {
+            dispatched = unknownOutcome
+          } else {
+            unknownOutcome = true
+            lastBytes = payload.length
+          }
+          if (trips(upstream.status, info.message)) cooldown.set(route.key, now() + COOLDOWN_MS)
+          audit(`upstream_status_${upstream.status}`)
+          if (kind === "chat" && contextOverflow(upstream.status, info.message)) {
+            failed = new HttpError(
+              400,
+              "context_length_exceeded",
+              "The prompt is too long for this model's context window (prompt is too long). Compact or shorten the conversation.",
+            )
+            break
+          }
+          failed = new HttpError(
+            upstream.status === 429 ? 503 : 502,
+            "upstream_error",
+            "The model is temporarily unavailable. Please try again.",
+          )
+          continue
+        }
+        cooldown.delete(route.key)
+        won = { route, prepared, upstream, bytes: payload.length }
+      }
+      if (!won) {
+        cleanup()
+        if (kind === "chat" && dispatched) {
+          const prompt = Math.ceil(lastBytes / 3)
+          const { cost } = costUsd(pricesOf(routes[0].model as unknown as Obj), {
+            input: prompt,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+          })
+          failedEstimate = {
+            tokens: Math.max(1, Math.min(prompt, result.model.context_length)),
+            extra: {
+              p_input: prompt,
+              p_output: 0,
+              p_cache_read: 0,
+              p_cache_write: 0,
+              ...(cost === null ? {} : { p_cost_usd: cost }),
+            },
+          }
+        }
+        throw failed ?? new HttpError(503, "unavailable", "BOSS AI is temporarily unavailable.")
+      }
+      const { route: served, prepared, upstream, bytes } = won
+      if (served !== routes[0]) audit("upstream_fallback")
+      const cacheMiss = (u: unknown) => {
+        if (kind === "chat" && expectsCache(served) && cacheMissLarge(u)) {
+          audit("cache_miss_large_prompt")
+        }
+      }
+      let lastUsage: Obj | null = null
+      let lastCost: number | null = null
+      // Usage breakdown and USD cost for the served model; the cancel estimate has no cache split.
+      const settleExtra = (
+        usage: Obj | null,
+        est?: { input: number; output: number },
+      ): Obj => {
+        let u: { input: number; output: number; cacheRead: number; cacheWrite: number }
+        if (usage) {
+          const d = (usage.prompt_tokens_details ?? {}) as Obj
+          const cacheRead = Number(d.cached_tokens) || 0
+          const cacheWrite = Number(d.cache_write_tokens) || 0
+          u = {
+            input: Math.max(0, Number(usage.prompt_tokens) - cacheRead - cacheWrite),
+            output: Number(usage.completion_tokens),
+            cacheRead,
+            cacheWrite,
+          }
+        } else if (est) u = { ...est, cacheRead: 0, cacheWrite: 0 }
+        else return {}
+        lastUsage = usage
+        const { cost, missing } = costUsd(pricesOf(served.model as unknown as Obj), u)
+        if (missing && routing) audit("price_missing")
+        lastCost = cost
+        return {
+          p_input: u.input,
+          p_output: u.output,
+          p_cache_read: u.cacheRead,
+          p_cache_write: u.cacheWrite,
+          ...(cost === null ? {} : { p_cost_usd: cost }),
+        }
+      }
+      // Local debugging only (BOSS_AI_ROUTE_TRACE=1): never set in production, it logs content.
+      const trace = (reply: string) => {
+        if (!routing || deps.secret("BOSS_AI_ROUTE_TRACE") !== "1") return
+        const u = (lastUsage ?? {}) as Obj, d = (u.prompt_tokens_details ?? {}) as Obj
+        logLine({
+          event: "route_trace",
+          request_id: requestId,
+          user,
+          requested_model: input.model,
+          route_source: result.route_source,
+          tier: result.tier,
+          probabilities: routing.decision?.probabilities ?? null,
+          confidence: routing.decision?.confidence ?? null,
+          decider_latency_ms: routing.decision?.latency_ms ?? null,
+          served_model: result.model.id,
+          served_route: served.key,
+          input_tokens: u.prompt_tokens ?? null,
+          output_tokens: u.completion_tokens ?? null,
+          cache_read_tokens: d.cached_tokens ?? 0,
+          cache_write_tokens: d.cache_write_tokens ?? 0,
+          cost_usd: lastCost,
+          month_spend_usd: routing.ctx.budget.spent_usd + (lastCost ?? 0),
+          decider_state: routing.state,
+          reply: reply.slice(0, 2000),
         })
-      } catch (e) {
-        cleanup()
-        throw e
       }
-      if (!upstream.ok) {
-        await upstream.body?.cancel()
-        cleanup()
-        // Known validation/auth/billing rejections can be refunded. A timeout or 5xx
-        // does not prove inference did not run (a proxy can fail after forwarding).
-        if ([400, 401, 402, 403, 404, 405, 406, 413, 415, 422, 429].includes(upstream.status)) {
-          dispatched = false
-        }
-        audit(`upstream_status_${upstream.status}`)
-        throw new HttpError(
-          upstream.status === 429 ? 503 : 502,
-          "upstream_error",
-          "The model is temporarily unavailable. Please try again.",
-        )
-      }
-      const settleWithRetry = async (tokens: number | null) => {
+      const settleWithRetry = async (tokens: number | null, extra: Obj = {}) => {
         if (tokens === null) audit("usage_unknown_reservation_retained")
         const reserved = kind === "chat"
           ? result.model.context_length
@@ -574,7 +1096,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           audit(kind === "chat" ? "usage_exceeds_configured_context" : "usage_exceeds_reservation")
         }
         phase = "settlement"
-        await settleReservation(deps, requestId, tokens, audit)
+        await settleReservation(deps, requestId, tokens, audit, extra)
       }
       if (kind === "transcription") {
         try {
@@ -596,6 +1118,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
             { text: payload.text, usage: { seconds, billed_seconds: billed, ...quota } },
             200,
             requestId,
+            downgrade,
           )
         } finally {
           cleanup()
@@ -625,6 +1148,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
               "Content-Type": "audio/mpeg",
               "Cache-Control": "no-store",
               "X-Request-ID": requestId,
+              ...downgrade,
               "X-Billed-Seconds": String(measuredTokens),
             },
           })
@@ -647,14 +1171,19 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           const output = completion(
             payload,
             input.model,
-            result.connection.api_type,
+            served.connection.api_type,
             requestId,
           )
+          cacheMiss(output.usage)
           const tokens = (output.usage as Obj | null)?.total_tokens
           measuredTokens = typeof tokens === "number" ? tokens : null
-          await settleWithRetry(measuredTokens)
+          await settleWithRetry(
+            measuredTokens,
+            measuredTokens === null ? {} : settleExtra(output.usage as Obj),
+          )
+          trace(String(((output.choices as Obj[])[0].message as Obj)?.content ?? ""))
           reservation = undefined
-          return json(output, 200, requestId)
+          return json(output, 200, requestId, downgrade)
         } finally {
           cleanup()
         }
@@ -663,7 +1192,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         cleanup()
         throw new Error("Missing stream")
       }
-      const adapter = new StreamAdapter(input.model, result.connection.api_type, requestId)
+      const adapter = new StreamAdapter(input.model, served.connection.api_type, requestId)
       const iterator = events(upstream.body, abort.signal)[Symbol.asyncIterator]()
       const encoder = new TextEncoder()
       const frame = (data: unknown) =>
@@ -676,27 +1205,71 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         abort.abort()
         cleanup()
         await iterator.return?.(undefined).catch(() => {})
+        if (adapter.finished) cacheMiss(adapter.usage)
+        // A stream cut before its usage arrived is settled on an estimate, never refunded to zero
+        // and no longer the whole context reservation: prompt tokens as reported at the start (else
+        // the request size / 3) plus the output streamed so far / 3, at most the reservation. A
+        // completed stream that never reported usage keeps the full reservation.
+        let settled = tokens
+        let extra: Obj = tokens === null ? {} : settleExtra(adapter.usage)
+        if (settled === null && !adapter.finished) {
+          const prompt = adapter.promptTokens ?? Math.ceil(bytes / 3)
+          const output = Math.ceil(adapter.streamedChars / 3)
+          settled = Math.max(1, Math.min(prompt + output, result.model.context_length))
+          extra = settleExtra(null, { input: prompt, output })
+          audit("usage_estimated_after_cancel")
+          logLine({
+            event: "usage_estimated_after_cancel",
+            request_id: requestId,
+            estimate: settled,
+            prompt,
+            output,
+          })
+        }
         // If settlement fails the full reservation remains charged. Never refund
         // an unknown outcome merely because a worker or a client disconnected.
-        await settleWithRetry(tokens)
+        await settleWithRetry(settled, extra)
+        trace(adapter.replyText)
       }
+      // While the model thinks the upstream can be silent for minutes and the client gives up on a
+      // stream with no event: send a reasoning delta whenever nothing arrived for a while.
+      let pending: ReturnType<typeof iterator.next> | undefined
+      const silence = deps.keepaliveMs ?? 15_000
       reservation = undefined // The stream now owns cleanup and settlement.
       const stream = new ReadableStream<Uint8Array>({
         async pull(controller) {
           try {
-            const next = await iterator.next()
-            if (next.done) {
-              if (!adapter.finished) throw new Error("Truncated stream")
-              await finish(adapter.tokens)
-              controller.enqueue(frame("[DONE]"))
-              controller.close()
-              return
-            }
-            for (const chunk of adapter.accept(next.value)) controller.enqueue(frame(chunk))
-            if (adapter.finished) {
-              await finish(adapter.tokens)
-              controller.enqueue(frame("[DONE]"))
-              controller.close()
+            // A pull that enqueues nothing is never called again: keep reading until a frame is out.
+            while (true) {
+              pending ??= iterator.next()
+              let timer: ReturnType<typeof setTimeout> | undefined
+              const next = await Promise.race([
+                pending,
+                new Promise<"silent">((resolve) => {
+                  timer = setTimeout(() => resolve("silent"), silence)
+                }),
+              ]).finally(() => clearTimeout(timer))
+              if (next === "silent") {
+                controller.enqueue(frame(adapter.keepalive()))
+                return
+              }
+              pending = undefined
+              if (next.done) {
+                if (!adapter.finished) throw new Error("Truncated stream")
+                await finish(adapter.tokens)
+                controller.enqueue(frame("[DONE]"))
+                controller.close()
+                return
+              }
+              const chunks = adapter.accept(next.value)
+              for (const chunk of chunks) controller.enqueue(frame(chunk))
+              if (adapter.finished) {
+                await finish(adapter.tokens)
+                controller.enqueue(frame("[DONE]"))
+                controller.close()
+                return
+              }
+              if (chunks.length) return
             }
           } catch {
             audit("stream_failed")
@@ -723,13 +1296,32 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-store",
           "X-Request-ID": requestId,
+          ...downgrade,
         },
       })
     } catch (error) {
       if (!(error instanceof HttpError) || error.status >= 500) audit(`${phase}_failed`)
       if (reservation) {
-        if (dispatched && measuredTokens === null) audit("usage_unknown_reservation_retained")
-        await settleReservation(deps, reservation, dispatched ? measuredTokens : 0, audit)
+        if (failedEstimate) {
+          audit("usage_unknown_estimate_charged")
+          await settleReservation(
+            deps,
+            reservation,
+            failedEstimate.tokens,
+            audit,
+            failedEstimate.extra,
+          )
+        } else {
+          if (dispatched && measuredTokens === null) audit("usage_unknown_reservation_retained")
+          // A refund also zeroes cost, or the budget keeps counting the pre-dispatch estimate.
+          await settleReservation(
+            deps,
+            reservation,
+            dispatched ? measuredTokens : 0,
+            audit,
+            dispatched ? {} : { p_cost_usd: 0 },
+          )
+        }
       }
       return failure(error, requestId)
     }

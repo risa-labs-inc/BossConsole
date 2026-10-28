@@ -62,15 +62,22 @@ internal object CredentialBrokers {
     /** Overrides RISA's token endpoint, for pointing a dev build at a staging gateway. */
     private const val RISA_TOKEN_URL_ENV = "RISA_LLM_TOKEN_URL"
 
+    private const val BOSS_AI_BASE = "https://api.risaboss.com/functions/v1/boss-ai"
+    private const val BOSS_AI_HOST = "risaboss.com"
+
+    /** Overrides the BOSS AI function base, for pointing a debug build at a local gateway. */
+    private const val BOSS_AI_BASE_URL_ENV = "BOSS_AI_BASE_URL"
+
     private val logger = BossLogger.forComponent("CredentialBroker")
 
-    fun all(): List<CredentialBroker> =
-        listOf(
+    fun all(): List<CredentialBroker> {
+        val bossAiBase = resolveBossAiBase(System.getenv(BOSS_AI_BASE_URL_ENV))
+        return listOf(
             CredentialBroker(
                 id = BOSS_AI,
                 displayName = "BOSS AI",
-                tokenUrl = "https://api.risaboss.com/functions/v1/boss-ai/auth/token",
-                scopedTo = "https://api.risaboss.com/functions/v1/boss-ai/v1",
+                tokenUrl = "$bossAiBase/auth/token",
+                scopedTo = "$bossAiBase/v1",
             ),
             CredentialBroker(
                 id = RISA_GLM,
@@ -79,8 +86,40 @@ internal object CredentialBrokers {
                 scopedTo = RISA_API_BASE,
             ),
         )
+    }
 
     fun find(id: String): CredentialBroker? = all().firstOrNull { it.id == id }
+
+    /**
+     * The BOSS AI function base, honoring [BOSS_AI_BASE_URL_ENV].
+     *
+     * The session bearer goes to whatever this returns, so the override is accepted only
+     * as https on a `risaboss.com` host, or plain http to a loopback host (a local gateway).
+     * Anything else falls back to the built-in base.
+     */
+    internal fun resolveBossAiBase(override: String?): String {
+        val trimmed = override?.trim()?.trimEnd('/').orEmpty()
+        val uri = runCatching { URI(trimmed) }.getOrNull()
+        val scheme = uri?.scheme?.lowercase()
+        val host = uri?.host?.lowercase()?.removeSuffix(".")
+        val ok =
+            host != null &&
+                uri.userInfo == null &&
+                when (scheme) {
+                    "https" -> host == BOSS_AI_HOST || host.endsWith(".$BOSS_AI_HOST")
+                    "http" -> host == "127.0.0.1" || host == "localhost"
+                    else -> false
+                }
+        if (ok) return trimmed
+        if (trimmed.isNotEmpty()) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "$BOSS_AI_BASE_URL_ENV override rejected - using the built-in endpoint",
+                mapOf("override" to LogSanitizer.describeUri(trimmed)),
+            )
+        }
+        return BOSS_AI_BASE
+    }
 
     /**
      * The one place the override is honored: `all()` calls it, and any future caller should

@@ -48,7 +48,12 @@ async function fixture(options: {
     upstreamTimeoutMs: 20,
     settlementTimeoutMs: 5,
     sessionUser: async (t) => t === "boss-session" ? "00000000-0000-0000-0000-000000000001" : null,
-    secret: (name) => name === "BOSS_AI_SIGNING_SECRET" ? secret : "upstream-secret",
+    secret: (name) =>
+      name === "BOSS_AI_SIGNING_SECRET"
+        ? secret
+        : name === "BOSS_AI_PUBLIC_URL"
+        ? "https://api.risaboss.com/functions/v1/boss-ai"
+        : "upstream-secret",
     async rpc(name, params) {
       calls.push({ name, params })
       if (name === "boss_ai_settle") settlements++
@@ -337,13 +342,15 @@ Deno.test("duplicate admission is a conflict and pre-dispatch abort refunds with
   assertEquals(f.requests.length, 0)
 })
 
-Deno.test("truncated streams report failure and retain reserved usage", async () => {
+Deno.test("truncated streams report failure and settle an estimate, not the reservation", async () => {
   const f = await fixture({ stream: 'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n' })
   const response = await f.handler(f.request({ ...body, stream: true }))
   const output = await response.text()
   assert(output.includes("stream_failed"))
   assert(!output.includes("[DONE]"))
-  assertEquals(f.calls.at(-1)?.params.p_tokens, null)
+  const settled = f.calls.at(-1)?.params.p_tokens as number
+  assert(Number.isInteger(settled) && settled >= 1 && settled < 4096)
+  assert(f.audits.includes("usage_estimated_after_cancel"))
 })
 
 Deno.test("a stalled SSE body times out and settles without hanging the client", async () => {
@@ -354,7 +361,9 @@ Deno.test("a stalled SSE body times out and settles without hanging the client",
   assert(output.includes("stream_failed"))
   assert(!output.includes("[DONE]"))
   assertEquals(f.calls.filter((call) => call.name === "boss_ai_settle").length, 1)
-  assertEquals(f.calls.at(-1)?.params.p_tokens, null)
+  const settled = f.calls.at(-1)?.params.p_tokens as number
+  assert(Number.isInteger(settled) && settled >= 1 && settled < 4096)
+  assert(f.audits.includes("usage_estimated_after_cancel"))
 })
 
 Deno.test("late stream truncation preserves already reported usage", async () => {
@@ -396,7 +405,9 @@ Deno.test("explicit upstream rejections refund while ambiguous server faults rem
     const f = await fixture({ upstreamStatus: status })
     const response = await f.handler(f.request(body))
     assertEquals(response.status, status === 429 ? 503 : 502)
-    assertEquals(f.calls.at(-1)?.params.p_tokens, status < 500 && status !== 408 ? 0 : null)
+    const charged = f.calls.at(-1)?.params.p_tokens
+    if (status < 500 && status !== 408) assertEquals(charged, 0)
+    else assert(typeof charged === "number" && charged > 0 && charged < 1024) // estimate, not the reservation
     assert(f.audits.includes(`upstream_status_${status}`))
   }
 })
@@ -406,8 +417,9 @@ Deno.test("failed dispatch and timeout are observable unknown outcomes not infer
     const f = await fixture(options)
     const response = await f.handler(f.request(body))
     assertEquals(response.status, 503)
-    assertEquals(f.calls.at(-1)?.params.p_tokens, null)
-    assert(f.audits.includes("usage_unknown_reservation_retained"))
+    const charged = f.calls.at(-1)?.params.p_tokens
+    assert(typeof charged === "number" && charged > 0 && charged < 1024)
+    assert(f.audits.includes("usage_unknown_estimate_charged"))
     assert(!(await response.text()).includes("private"))
   }
 })
@@ -491,14 +503,16 @@ Deno.test("Responses endpoint round trip exposes only the published model", asyn
   assertEquals(f.calls.at(-1)?.params.p_tokens, 5)
 })
 
-Deno.test("stream cancellation retains usage and does not attempt to write to a closed client", async () => {
+Deno.test("stream cancellation settles an estimate and does not attempt to write to a closed client", async () => {
   const f = await fixture({ stream: 'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n' })
   const response = await f.handler(f.request({ ...body, stream: true }))
   const reader = response.body!.getReader()
   await reader.read()
   await reader.cancel()
   assertEquals(f.calls.filter((call) => call.name === "boss_ai_settle").length, 1)
-  assertEquals(f.calls.at(-1)?.params.p_tokens, null)
+  const settled = f.calls.at(-1)?.params.p_tokens as number
+  assert(Number.isInteger(settled) && settled >= 1 && settled < 4096)
+  assert(f.audits.includes("usage_estimated_after_cancel"))
 })
 
 Deno.test("provider publishes discovery metadata without vault or upstream access", async () => {
@@ -529,7 +543,8 @@ Deno.test("RPC tickets exchange for AI tokens without a BOSS session", async () 
     sessionUser: () => {
       throw new Error("Must not access BOSS session")
     },
-    secret: () => secret,
+    secret: (name) =>
+      name === "BOSS_AI_PUBLIC_URL" ? "https://api.risaboss.com/functions/v1/boss-ai" : secret,
     fetch: () => {
       throw new Error("Must not call upstream")
     },
@@ -1216,4 +1231,51 @@ Deno.test("WAV metadata after audio is not billed as speech", () => {
   tail.set(new TextEncoder().encode("LIST"))
   new DataView(tail.buffer).setUint32(4, 32000, true)
   assertEquals(wavSeconds(btoa(audio + String.fromCharCode(...tail))), 1)
+})
+
+Deno.test("/v1/provider accepts a loopback http base only with BOSS_AI_ALLOW_LOCAL_AGENT=1", async () => {
+  const token = (await mintToken("00000000-0000-0000-0000-000000000001", signingKey(secret)))
+    .access_token
+  const provider = async (env: Record<string, string>) => {
+    const handler = createHandler({
+      sessionUser: () => Promise.resolve(null),
+      secret: (name) => name === "BOSS_AI_SIGNING_SECRET" ? secret : env[name],
+      rpc: () => Promise.resolve(null),
+      fetch: () => {
+        throw new Error("Must not call upstream")
+      },
+    })
+    return await handler(
+      new Request("https://api.example/functions/v1/boss-ai/v1/provider", {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+    )
+  }
+  const local = { BOSS_AI_PUBLIC_URL: "http://127.0.0.1:54321/functions/v1/boss-ai" }
+  const ok = await provider({ ...local, BOSS_AI_ALLOW_LOCAL_AGENT: "1" })
+  assertEquals(ok.status, 200)
+  assertEquals((await ok.json()).baseUrl, "http://127.0.0.1:54321/functions/v1/boss-ai/v1")
+  const localhost = await provider({
+    BOSS_AI_PUBLIC_URL: "http://localhost:8000/functions/v1/boss-ai",
+    BOSS_AI_ALLOW_LOCAL_AGENT: "1",
+  })
+  assertEquals((await localhost.json()).baseUrl, "http://localhost:8000/functions/v1/boss-ai/v1")
+  // SUPABASE_URL is accepted the same way.
+  const viaSupabase = await provider({
+    SUPABASE_URL: "http://127.0.0.1:54321",
+    BOSS_AI_ALLOW_LOCAL_AGENT: "1",
+  })
+  assertEquals((await viaSupabase.json()).baseUrl, "http://127.0.0.1:54321/functions/v1/boss-ai/v1")
+  // Without the flag, or for a non-loopback http host, production behaviour is unchanged.
+  assertEquals((await provider(local)).status, 503)
+  for (const url of ["http://example.com/functions/v1/boss-ai", "http://10.0.0.5/x"]) {
+    assertEquals(
+      (await provider({ BOSS_AI_PUBLIC_URL: url, BOSS_AI_ALLOW_LOCAL_AGENT: "1" })).status,
+      503,
+    )
+  }
+  const prod = await provider({
+    BOSS_AI_PUBLIC_URL: "https://api.risaboss.com/functions/v1/boss-ai",
+  })
+  assertEquals((await prod.json()).baseUrl, "https://api.risaboss.com/functions/v1/boss-ai/v1")
 })
