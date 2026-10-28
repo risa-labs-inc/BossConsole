@@ -1,7 +1,7 @@
 -- Marketplace: validation shared with agent drafts, review before listing, re-review of every version, publisher-only
 -- edits, admin-only moderation, public reads of live listings only, install counts.
 begin;
-select plan(45);
+select plan(46);
 
 -- p1 publisher, p2 another person, c1 platform admin.
 insert into auth.users (id, email, email_confirmed_at) values
@@ -48,6 +48,8 @@ select throws_ok($$ select public.marketplace_submit('skill', 'evolve', 'Evolve'
     '22023', 'reserved_skill', 'built-in skill names are reserved');
 select throws_ok($$ select public.marketplace_submit('skill', 'empty', 'Empty', 'Sum', '', 'Risa', pg_temp.skill('   ')) $$,
     '22023', 'invalid_content', 'empty skill');
+select throws_ok($$ select public.marketplace_submit('skill', 'inject', E'Name\nowner: true', 'Sum', '', 'Risa', pg_temp.skill('x')) $$,
+    '22023', 'invalid_name', 'no control characters in a name');
 select throws_ok($$ select public.marketplace_submit('skill', 'two-line', 'Two', E'a\nb', '', 'Risa', pg_temp.skill('x')) $$,
     '22023', 'invalid_summary', 'summary is one line');
 select throws_ok($$ select public.marketplace_submit('connector', 'local-mcp', 'Local', 'Sum', '', 'Risa',

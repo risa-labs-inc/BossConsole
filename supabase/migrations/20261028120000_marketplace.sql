@@ -78,16 +78,17 @@ BEGIN
     IF p_slug IN ('publish', 'mine') THEN
         RAISE EXCEPTION 'reserved_slug' USING ERRCODE = '22023';
     END IF;
-    IF p_name IS NULL OR pg_catalog.btrim(p_name) <> p_name OR pg_catalog.char_length(p_name) NOT BETWEEN 2 AND 40 THEN
+    IF p_name IS NULL OR pg_catalog.btrim(p_name) <> p_name OR pg_catalog.char_length(p_name) NOT BETWEEN 2 AND 40 OR p_name ~ '[[:cntrl:]]' THEN
         RAISE EXCEPTION 'invalid_name' USING ERRCODE = '22023';
     END IF;
-    IF p_summary IS NULL OR pg_catalog.btrim(p_summary) = '' OR pg_catalog.char_length(p_summary) > 200 OR p_summary ~ '[\r\n]' THEN
+    IF p_summary IS NULL OR pg_catalog.btrim(p_summary) = '' OR pg_catalog.char_length(p_summary) > 200 OR p_summary ~ '[[:cntrl:]]' THEN
         RAISE EXCEPTION 'invalid_summary' USING ERRCODE = '22023';
     END IF;
     IF pg_catalog.char_length(COALESCE(p_description, '')) > 4000 THEN
         RAISE EXCEPTION 'invalid_description' USING ERRCODE = '22023';
     END IF;
-    IF p_publisher_name IS NULL OR pg_catalog.btrim(p_publisher_name) = '' OR pg_catalog.char_length(p_publisher_name) > 60 THEN
+    IF p_publisher_name IS NULL OR pg_catalog.btrim(p_publisher_name) = '' OR pg_catalog.char_length(p_publisher_name) > 60
+       OR p_publisher_name ~ '[[:cntrl:]]' THEN
         RAISE EXCEPTION 'invalid_publisher_name' USING ERRCODE = '22023';
     END IF;
     IF pg_catalog.jsonb_typeof(p_content) IS DISTINCT FROM 'object' THEN
