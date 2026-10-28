@@ -95,9 +95,9 @@ select is(
     (select count(*) from public.role_permissions rp
        join public.permissions p on p.id = rp.permission_id
       where p.name = 'organisation.request_read'
-        and rp.role_id <> (select id from public.roles where name = 'pgtap_req_reader')),
+        and rp.role_id not in (select id from public.roles where name in ('pgtap_req_reader', 'platform_viewer'))),
     0::bigint,
-    'the migration grants organisation.request_read to no role (only this test fixture holds it)'
+    'only platform_viewer (20261028120000) and this test fixture hold organisation.request_read'
 );
 
 -- The name has to survive the RBAC name check, which allows exactly one dot.
