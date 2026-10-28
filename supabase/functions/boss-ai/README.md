@@ -562,8 +562,9 @@ one user.
   the latest user message, the previous assistant text, tool rounds in this turn, whether images are
   attached, the estimated prompt size and whether tools are offered.
 - **Sticky**: a call whose last message is a tool result reuses the tier stored for the turn (key =
-  sha256 of user, router and the messages up to the last user message; 30 minutes) because prompt
-  caching is per model. Without a stored decision the decider is asked.
+  sha256 of user, router and the messages before the last user message, which clients such as Max
+  rewrite on every tool round; 30 minutes) because prompt caching is per model. Without a stored
+  decision the decider is asked.
 - **Budget**: spend is `cost_usd` summed over the user's requests served through the router this UTC
   month, counting the reserved estimate of requests still in flight. At 60% strong calls are served
   by standard, at 85% everything by fast; a call whose estimate (prompt at the input price plus

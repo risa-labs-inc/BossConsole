@@ -276,6 +276,17 @@ Deno.test("sticky key: same turn => same key, new user message => new key, per u
   assert(await stickyKey("u2", "optimist", base) !== a)
   assert(await stickyKey("u1", "other", base) !== a)
   assert(await stickyKey("u1", "optimist", [...loop, { role: "user", content: "next" }]) !== a)
+  // Max rewrites the turn's user message each tool round; the key must not change with it.
+  const history: Obj[] = [{ role: "system", content: "s" }, { role: "user", content: "earlier" }, {
+    role: "assistant",
+    content: "answer",
+  }]
+  const round1 = [...history, { role: "user", content: "q\n\n[now] Local time: 10:00" }]
+  const round2 = [...history, {
+    role: "user",
+    content: "q\n\n[Arrived after your tool round 1:]\n[now] Local time: 10:01",
+  }, ...loop.slice(1)]
+  assertEquals(await stickyKey("u1", "optimist", round2), await stickyKey("u1", "optimist", round1))
 })
 
 const ctx = (spent: number, extra: Partial<RouterConfig> = {}): RouteContext => ({

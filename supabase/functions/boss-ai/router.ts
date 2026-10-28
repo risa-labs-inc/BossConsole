@@ -334,10 +334,12 @@ export async function decideSystemOne(
   }
 }
 
+/** The history before the turn's user message: clients such as Max rewrite that message on every
+ * tool round (round label, clock), so it cannot be part of a key that must hold for the turn. */
 export async function stickyKey(userId: string, modelId: string, messages: Obj[]): Promise<string> {
   const last = lastUserIndex(messages)
   const bytes = new TextEncoder().encode(
-    JSON.stringify([userId, modelId, messages.slice(0, last + 1)]),
+    JSON.stringify([userId, modelId, messages.slice(0, Math.max(last, 0))]),
   )
   const digest = await crypto.subtle.digest("SHA-256", bytes)
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("")
