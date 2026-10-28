@@ -221,6 +221,10 @@ whenever a fallback is a cheaper model than the tier.
   request never left) also refunds. When every route failed and a chat call may have run, the
   request is charged an estimate (request bytes / 3 tokens, input price) and audits
   `usage_unknown_estimate_charged`, never the whole context reservation.
+- A 400/413 whose message says the prompt does not fit the context window ends the request at once
+  (every route has the same window): the client gets a 400 `context_length_exceeded` whose message
+  contains "prompt is too long", the wording clients such as Max compact on, instead of the
+  retryable 502.
 - Per-isolate circuit breaker: a route (`connection_id|upstream_model`) that failed with
   401/402/403/429/5xx, or with a 400 whose message names a usage/spend/credit/quota/balance limit,
   is skipped for 60 s. When every route is cooling all of them are tried. Other 400s do not trip it.
@@ -584,7 +588,8 @@ Operator data (applied by hand, not a migration). Prices are per million tokens:
 ```sql
 INSERT INTO boss_ai_models (id, display_name, connection_id, upstream_model, capabilities, context_length, max_output_tokens, published, fallbacks,
   usd_per_mtok_input, usd_per_mtok_output, usd_per_mtok_cache_read, usd_per_mtok_cache_write) VALUES
- ('optimist-fast','Optimist Fast','openrouter-optimist','anthropic/claude-haiku-5.5',ARRAY['text','tools','vision'],1000000,128000,false,'[]',
+ ('optimist-fast','Optimist Fast','anthropic','claude-haiku-5-5',ARRAY['text','tools','vision'],1000000,128000,false,
+  '[{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-haiku-5.5","usd_per_mtok_input":0.10,"usd_per_mtok_output":0.50,"usd_per_mtok_cache_read":0.01,"usd_per_mtok_cache_write":0.125}]',
   0.10,0.50,0.01,0.125),
  ('optimist-standard','Optimist Standard','anthropic','claude-sonnet-5-5',ARRAY['text','tools','vision'],1000000,128000,false,
   '[{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-sonnet-5.5","usd_per_mtok_input":2.00,"usd_per_mtok_output":10.00,"usd_per_mtok_cache_read":0.20,"usd_per_mtok_cache_write":2.50},{"connection_id":"openrouter-optimist","upstream_model":"anthropic/claude-haiku-5.5","usd_per_mtok_input":0.10,"usd_per_mtok_output":0.50,"usd_per_mtok_cache_read":0.01,"usd_per_mtok_cache_write":0.125}]',

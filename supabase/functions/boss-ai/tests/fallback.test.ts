@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "@std/assert"
-import { createHandler, trips } from "../app.ts"
+import { contextOverflow, createHandler, trips } from "../app.ts"
 import { mintToken, signingKey } from "../auth.ts"
 import { Connection, Obj } from "../wire.ts"
 
@@ -429,6 +429,28 @@ Deno.test("circuit breaker: a limit-style failure skips the route for 60 s, then
   await f.send()
   assertEquals(f.fetched.at(-1)!.url, "https://api.anthropic.com/v1/messages")
   assertEquals(f.fetched.length, 4)
+})
+
+Deno.test("context overflow: a 400 the client can compact on, no fallback tried, refunded", async () => {
+  assert(contextOverflow(400, "prompt is too long: 1055058 tokens > 1000000 maximum"))
+  assert(contextOverflow(413, "This model's maximum context length is 200000 tokens"))
+  assert(!contextOverflow(400, "messages.3: tool_use ids must be unique"))
+  assert(!contextOverflow(502, "prompt is too long"))
+  const f = await fixture([
+    () =>
+      fail(400, {
+        type: "invalid_request_error",
+        message: "prompt is too long: 1055058 tokens > 1000000 maximum",
+      }),
+    () => chat(),
+  ])
+  const response = await f.send()
+  assertEquals(f.fetched.length, 1)
+  assertEquals(response.status, 400)
+  const error = (await response.json()).error
+  assertEquals(error.code, "context_length_exceeded")
+  assert(error.message.includes("prompt is too long"))
+  assertEquals(f.settled(), [0])
 })
 
 Deno.test("circuit breaker: only predictive failures trip it; all routes cooling still tries them", async () => {

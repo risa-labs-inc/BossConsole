@@ -299,6 +299,13 @@ export const trips = (status: number, message: string) =>
   [401, 402, 403, 429].includes(status) || status >= 500 ||
   (status === 400 && LIMIT_WORDING.test(message))
 
+// The prompt does not fit the context window. Clients compact on this wording, so it reaches them
+// as a 400 instead of a retryable 502, and no fallback is tried (every route has the same window).
+const CONTEXT_WORDING =
+  /prompt is too long|context (length|window)|maximum context|input tokens exceed|too many (input )?tokens/i
+export const contextOverflow = (status: number, message: string) =>
+  [400, 413].includes(status) && CONTEXT_WORDING.test(message)
+
 /** A connect refusal or DNS failure: the request provably never reached the upstream. Deno's fetch
  * throws TypeError("fetch failed") whose cause chain carries the text; resets and timeouts differ. */
 export function neverReached(error: unknown): boolean {
@@ -974,6 +981,14 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           }
           if (trips(upstream.status, info.message)) cooldown.set(route.key, now() + COOLDOWN_MS)
           audit(`upstream_status_${upstream.status}`)
+          if (kind === "chat" && contextOverflow(upstream.status, info.message)) {
+            failed = new HttpError(
+              400,
+              "context_length_exceeded",
+              "The prompt is too long for this model's context window (prompt is too long). Compact or shorten the conversation.",
+            )
+            break
+          }
           failed = new HttpError(
             upstream.status === 429 ? 503 : 502,
             "upstream_error",
