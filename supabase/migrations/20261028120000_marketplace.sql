@@ -74,6 +74,10 @@ BEGIN
     IF p_slug IS NULL OR p_slug !~ '^[a-z0-9][a-z0-9-]{1,46}$' THEN
         RAISE EXCEPTION 'invalid_slug' USING ERRCODE = '22023';
     END IF;
+    -- The console's own pages under /marketplace/.
+    IF p_slug IN ('publish', 'mine') THEN
+        RAISE EXCEPTION 'reserved_slug' USING ERRCODE = '22023';
+    END IF;
     IF p_name IS NULL OR pg_catalog.btrim(p_name) <> p_name OR pg_catalog.char_length(p_name) NOT BETWEEN 2 AND 40 THEN
         RAISE EXCEPTION 'invalid_name' USING ERRCODE = '22023';
     END IF;

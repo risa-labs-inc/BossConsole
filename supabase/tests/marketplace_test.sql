@@ -1,7 +1,7 @@
 -- Marketplace: validation shared with agent drafts, review before listing, re-review of every version, publisher-only
 -- edits, admin-only moderation, public reads of live listings only, install counts.
 begin;
-select plan(44);
+select plan(45);
 
 -- p1 publisher, p2 another person, c1 platform admin.
 insert into auth.users (id, email, email_confirmed_at) values
@@ -42,6 +42,8 @@ select pg_temp.as_user('a1');
 -- Validation: the agent draft rules, plus the listing's fields.
 select throws_ok($$ select public.marketplace_submit('skill', 'Bad_Slug', 'Name', 'Sum', '', 'Risa', pg_temp.skill('x')) $$,
     '22023', 'invalid_slug', 'slug format');
+select throws_ok($$ select public.marketplace_submit('skill', 'publish', 'Publish', 'Sum', '', 'Risa', pg_temp.skill('x')) $$,
+    '22023', 'reserved_slug', 'console page names are reserved');
 select throws_ok($$ select public.marketplace_submit('skill', 'evolve', 'Evolve', 'Sum', '', 'Risa', pg_temp.skill('x')) $$,
     '22023', 'reserved_skill', 'built-in skill names are reserved');
 select throws_ok($$ select public.marketplace_submit('skill', 'empty', 'Empty', 'Sum', '', 'Risa', pg_temp.skill('   ')) $$,
