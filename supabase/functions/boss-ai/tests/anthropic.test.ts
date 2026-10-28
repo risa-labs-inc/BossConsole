@@ -405,6 +405,19 @@ Deno.test("anthropic: stream events become chunks with stable tool indexes and a
         index: 3,
         delta: { type: "input_json_delta", partial_json: "{}" },
       },
+      { type: "content_block_stop", index: 3 },
+      // A tool without parameters: an empty delta, or none at all, must still end as "{}".
+      {
+        type: "content_block_start",
+        index: 4,
+        content_block: { type: "tool_use", id: "toolu_c", name: "ls", input: {} },
+      },
+      {
+        type: "content_block_delta",
+        index: 4,
+        delta: { type: "input_json_delta", partial_json: "" },
+      },
+      { type: "content_block_stop", index: 4 },
       { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 42 } },
       { type: "message_stop" },
     ])
@@ -430,6 +443,8 @@ Deno.test("anthropic: stream events become chunks with stable tool indexes and a
     { index: 0, function: { arguments: '"A"}' } },
     { index: 1, id: "toolu_b", type: "function", function: { name: "w", arguments: "" } },
     { index: 1, function: { arguments: "{}" } },
+    { index: 2, id: "toolu_c", type: "function", function: { name: "ls", arguments: "" } },
+    { index: 2, function: { arguments: "{}" } },
   ])
   // Thinking text streams as reasoning deltas (the field the AI Gateway plugin reads); the finish
   // chunk precedes the usage chunk.

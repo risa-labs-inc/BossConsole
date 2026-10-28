@@ -291,6 +291,8 @@ export class AnthropicStream {
   private start: Obj = {}
   private stop: unknown
   private tools = new Map<number, number>()
+  // Tool blocks that streamed argument text; one with none gets "{}" at its stop.
+  private argued = new Set<number>()
   constructor(
     private model: string,
     private id: string,
@@ -335,9 +337,17 @@ export class AnthropicStream {
         if (d.type !== "input_json_delta") return []
         const index = this.tools.get(Number(e.index))
         if (index === undefined) throw new Error("Unknown tool")
-        return [this.chunk({
-          tool_calls: [{ index, function: { arguments: String(d.partial_json ?? "") } }],
-        })]
+        const text = String(d.partial_json ?? "")
+        if (!text) return []
+        this.argued.add(index)
+        return [this.chunk({ tool_calls: [{ index, function: { arguments: text } }] })]
+      }
+      case "content_block_stop": {
+        // A tool without parameters streams no JSON; "" is not valid arguments for OpenAI clients.
+        const index = this.tools.get(Number(e.index))
+        if (index === undefined || this.argued.has(index)) return []
+        this.argued.add(index)
+        return [this.chunk({ tool_calls: [{ index, function: { arguments: "{}" } }] })]
       }
       case "message_delta": {
         this.stop = object(e.delta).stop_reason
