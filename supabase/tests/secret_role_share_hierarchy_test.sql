@@ -62,7 +62,7 @@ select is(
 select set_eq(
     $$ select name from public.roles
         where id in (select public.effective_share_role_ids('60000000-0000-0000-0000-000000000001')) $$,
-    $$ values ('admin'),('boss_admin'),('boss_plugin_admin'),('finance_admin'),('platform_viewer'),('user') $$,
+    $$ values ('admin'),('boss_admin'),('boss_plugin_admin'),('finance_admin'),('platform_chat_viewer'),('platform_viewer'),('user') $$,
     'effective_share_role_ids(admin) is the full descendant closure'
 );
 select set_eq(
