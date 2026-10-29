@@ -73,15 +73,15 @@ select throws_ok($q$ select public.platform_set_viewer('d6000000-0000-4000-8000-
 select throws_ok($q$ select public.suspend_agent((select agent from ids), 'x') $q$, '42501', null, 'no suspend');
 select throws_ok($q$ select public.review_agent((select agent from ids), true, null) $q$, '42501', null, 'no review decision');
 update public.platform_flags set value = to_jsonb(not coalesce((value)::text::boolean, false)) where key = 'agent_creation_open';
-select lives_ok($q$ select public.platform_record_access('Plain@Viewer.test', 'optimist.conversation') $q$, 'a reader records a conversation view');
+select throws_ok($q$ select public.platform_record_access('Plain@Viewer.test', 'optimist.conversation') $q$, '42501', 'no_chat_access', 'a viewer cannot open people''s chats (that needs platform_chat_viewer)');
 select throws_ok($q$ select public.platform_record_access('plain@viewer.test', 'something.else') $q$, '22023', 'bad_what', 'only known views are recorded');
 reset role;
 select is((select value from public.platform_flags where key = 'agent_creation_open'), (select flag from ids), 'no platform flag writes');
 select ok(public.user_can_view_plugin('d6000000-0000-4000-8000-00000000000b', (select plugin from ids)),
           'the viewer can read an organisation''s agent plugin (review page)');
 select ok(not public.user_can_view_plugin('d6000000-0000-4000-8000-00000000000c', (select plugin from ids)), 'a plain user still cannot');
-select is((select row(actor, target_user, detail->>'role')::text from public.platform_audit_log where action = 'view.optimist.conversation' order by id desc limit 1),
-          '(d6000000-0000-4000-8000-00000000000b,d6000000-0000-4000-8000-00000000000c,viewer)', 'the view is audited with actor, target and role');
+select is((select count(*)::int from public.platform_audit_log where action = 'view.optimist.conversation' and actor = 'd6000000-0000-4000-8000-00000000000b'), 0,
+          'the refused chat view leaves no read behind');
 
 -- --- a plain user reads nothing -----------------------------------------------------------------
 set local role authenticated;
