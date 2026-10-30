@@ -1,18 +1,22 @@
 -- Marketplace trust and defaults: publishing without review (trusted publishers and admins), unreviewed live versions,
 -- mark-reviewed, trust administration, per-agent default skills and their runtime read.
 begin;
-select plan(96);
+select plan(107);
 
--- a1 untrusted publisher, a2 trusted publisher, a3 installed person, a4 agent org owner, a5 outsider, c1 platform admin.
+-- a1 untrusted publisher, a2 trusted publisher, a3 installed person, a4 agent org owner, a5 outsider, c1 platform admin,
+-- c2 platform viewer.
 insert into auth.users (id, email, email_confirmed_at) values
     ('c6000000-0000-4000-8000-0000000000a1', 'untrusted@trust.test', now()),
     ('c6000000-0000-4000-8000-0000000000a2', 'Trusted@trust.test', now()),
     ('c6000000-0000-4000-8000-0000000000a3', 'installed@trust.test', now()),
     ('c6000000-0000-4000-8000-0000000000a4', 'owner@trust.test', now()),
     ('c6000000-0000-4000-8000-0000000000a5', 'outsider@trust.test', now()),
-    ('c6000000-0000-4000-8000-0000000000c1', 'platform@trust.test', now());
+    ('c6000000-0000-4000-8000-0000000000c1', 'platform@trust.test', now()),
+    ('c6000000-0000-4000-8000-0000000000c2', 'viewer@trust.test', now());
 insert into public.user_roles (user_id, role_id)
     select 'c6000000-0000-4000-8000-0000000000c1', id from public.roles where name = 'admin';
+insert into public.user_roles (user_id, role_id)
+    select 'c6000000-0000-4000-8000-0000000000c2', id from public.roles where name = 'platform_viewer';
 
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 select public.create_organisation_internal(p_slug => 'trustorg', p_name => 'Trust Org', p_description => null,
@@ -242,6 +246,20 @@ select throws_ok($$ select public.marketplace_agent_default_set((select id from 
 select is(jsonb_array_length(public.marketplace_agent_default_set((select id from ids where k = 'agent'), 'fast-skill', false)), 49, 'but a default can still be removed');
 select is(jsonb_array_length(public.marketplace_agent_default_set((select id from ids where k = 'agent'), 'fast-skill', false)), 49, 'removing twice is a no-op');
 select is(pg_temp.cnt('public.agent_audit_log where action = ''agent.marketplace_default_removed'''), 1, 'removal audited once');
+
+-- ---- a platform viewer reads every review surface and changes nothing ----
+select pg_temp.as_user('c2');
+select lives_ok($$ select public.marketplace_pending() $$, 'viewer reads the review queue');
+select lives_ok($$ select public.marketplace_unreviewed() $$, 'viewer reads unreviewed versions');
+select lives_ok($$ select public.marketplace_trusted_list() $$, 'viewer reads trusted publishers');
+select is(jsonb_array_length(public.marketplace_agent_defaults((select id from ids where k = 'agent'))), 49, 'viewer reads an agent''s defaults');
+select lives_ok($$ select public.marketplace_listing_agents('fast-skill') $$, 'viewer reads which agents have a skill');
+select is(public.marketplace_can_skip_review(), false, 'viewer cannot skip review');
+select throws_ok($$ select public.marketplace_review(gen_random_uuid(), true, null) $$, '42501', null, 'viewer cannot review');
+select throws_ok($$ select public.marketplace_mark_reviewed('fast-skill') $$, '42501', null, 'viewer cannot mark reviewed');
+select throws_ok($$ select public.marketplace_trust_set('untrusted@trust.test', true, null) $$, '42501', null, 'viewer cannot trust');
+select throws_ok($$ select public.marketplace_agent_default_set((select id from ids where k = 'agent'), 'fast-skill', false) $$, '42501', null, 'viewer cannot change defaults');
+select throws_ok($$ select public.marketplace_suspend('fast-skill', false, null) $$, '42501', null, 'viewer cannot suspend');
 
 select * from finish();
 rollback;

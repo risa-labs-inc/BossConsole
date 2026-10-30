@@ -78,7 +78,7 @@ DECLARE
     owner_view boolean;
 BEGIN
     SELECT * INTO l FROM public.marketplace_listings WHERE slug = p_slug;
-    owner_view := FOUND AND auth.uid() IS NOT NULL AND (l.publisher_id = auth.uid() OR public.is_user_admin(auth.uid()));
+    owner_view := FOUND AND auth.uid() IS NOT NULL AND (l.publisher_id = auth.uid() OR public.is_platform_reader(auth.uid()));
     IF NOT FOUND OR (l.status <> 'live' AND NOT owner_view) THEN
         RETURN NULL;
     END IF;
@@ -148,7 +148,7 @@ $$;
 CREATE OR REPLACE FUNCTION public.marketplace_pending()
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
-    IF auth.uid() IS NULL OR NOT public.is_user_admin(auth.uid()) THEN
+    IF auth.uid() IS NULL OR NOT public.is_platform_reader(auth.uid()) THEN
         RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
     END IF;
     RETURN COALESCE((
@@ -241,7 +241,7 @@ GRANT EXECUTE ON FUNCTION public.marketplace_submit(public.marketplace_kind, tex
 CREATE FUNCTION public.marketplace_unreviewed()
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
-    IF auth.uid() IS NULL OR NOT public.is_user_admin(auth.uid()) THEN
+    IF auth.uid() IS NULL OR NOT public.is_platform_reader(auth.uid()) THEN
         RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
     END IF;
     RETURN COALESCE((
@@ -320,7 +320,7 @@ GRANT EXECUTE ON FUNCTION public.marketplace_trust_set(text, boolean, text) TO a
 CREATE FUNCTION public.marketplace_trusted_list()
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
-    IF auth.uid() IS NULL OR NOT public.is_user_admin(auth.uid()) THEN
+    IF auth.uid() IS NULL OR NOT public.is_platform_reader(auth.uid()) THEN
         RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
     END IF;
     RETURN COALESCE((
@@ -341,7 +341,7 @@ GRANT EXECUTE ON FUNCTION public.marketplace_trusted_list() TO authenticated, se
 CREATE FUNCTION public.marketplace_agent_defaults(p_agent_id uuid)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
-    IF auth.uid() IS NULL OR NOT public.is_user_admin(auth.uid()) THEN
+    IF auth.uid() IS NULL OR NOT public.is_platform_reader(auth.uid()) THEN
         RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
     END IF;
     RETURN COALESCE((
@@ -409,7 +409,7 @@ GRANT EXECUTE ON FUNCTION public.marketplace_agent_default_set(uuid, text, boole
 CREATE FUNCTION public.marketplace_listing_agents(p_slug text)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
-    IF auth.uid() IS NULL OR NOT public.is_user_admin(auth.uid()) THEN
+    IF auth.uid() IS NULL OR NOT public.is_platform_reader(auth.uid()) THEN
         RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
     END IF;
     RETURN COALESCE((

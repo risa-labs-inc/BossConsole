@@ -170,7 +170,7 @@ DECLARE
     owner_view boolean;
 BEGIN
     SELECT * INTO l FROM public.marketplace_listings WHERE slug = p_slug;
-    owner_view := FOUND AND auth.uid() IS NOT NULL AND (l.publisher_id = auth.uid() OR public.is_user_admin(auth.uid()));
+    owner_view := FOUND AND auth.uid() IS NOT NULL AND (l.publisher_id = auth.uid() OR public.is_platform_reader(auth.uid()));
     IF NOT FOUND OR (l.status <> 'live' AND NOT owner_view) THEN
         RETURN NULL;
     END IF;
@@ -321,12 +321,12 @@ REVOKE ALL ON FUNCTION public.marketplace_record_install(text) FROM PUBLIC, anon
 GRANT EXECUTE ON FUNCTION public.marketplace_record_install(text) TO authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
--- Platform review (is_user_admin only).
+-- Platform review: platform readers see the queue; only is_user_admin decides.
 -- ----------------------------------------------------------------------------
 CREATE FUNCTION public.marketplace_pending()
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
-    IF auth.uid() IS NULL OR NOT public.is_user_admin(auth.uid()) THEN
+    IF auth.uid() IS NULL OR NOT public.is_platform_reader(auth.uid()) THEN
         RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
     END IF;
     RETURN COALESCE((
