@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -43,8 +44,10 @@ class MasteryExecutorPreflightTest {
     ): MasteryProgress.Failed {
         val executor = MasteryExecutor(resolver)
         val events = executor.execute(mastery, mapOf("url" to "https://example.com")).toList()
-        assertEquals(1, events.size, "expected a single Failed verdict, got: $events")
-        return assertIs<MasteryProgress.Failed>(events.single())
+        assertEquals(2, events.size, "expected a Started event then a Failed verdict, got: $events")
+        val started = assertIs<MasteryProgress.Started>(events[0])
+        assertEquals(mastery.id, started.masteryId)
+        return assertIs<MasteryProgress.Failed>(events[1])
     }
 
     @Test
@@ -65,7 +68,7 @@ class MasteryExecutorPreflightTest {
                 )
             val failed = refuse(resolver, mastery)
             assertTrue("Cycle" in failed.error, "expected a cycle diagnosis, was: ${failed.error}")
-            assertEquals("cycle-mastery", failed.failedNodeId)
+            assertNull(failed.failedNodeId, "a definition-level refusal names no node")
             assertTrue(resolver.invocations.isEmpty())
         }
 
