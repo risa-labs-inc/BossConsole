@@ -56,7 +56,7 @@ select ok(not has_table_privilege('authenticated', 'public.marketplace_trusted_p
       and not has_table_privilege('authenticated', 'public.marketplace_agent_defaults', 'select'), 'new tables closed to clients');
 select ok(not has_function_privilege('anon', 'public.marketplace_agent_skills(text)', 'EXECUTE')
       and not has_function_privilege('anon', 'public.marketplace_can_skip_review()', 'EXECUTE')
-      and not has_function_privilege('anon', 'public.marketplace_submit(public.marketplace_kind,text,text,text,text,text,jsonb,boolean)', 'EXECUTE'),
+      and not has_function_privilege('anon', 'public.marketplace_submit(public.marketplace_kind,text,text,text,text,text,jsonb,boolean,text,text[])', 'EXECUTE'),
     'not anon-callable');
 select ok(not exists (select 1 from pg_proc where proname = 'marketplace_submit' and pronargs = 7), 'the 7-argument submit is gone');
 
