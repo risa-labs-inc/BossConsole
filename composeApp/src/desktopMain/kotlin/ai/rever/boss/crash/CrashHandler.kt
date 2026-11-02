@@ -208,28 +208,29 @@ object CrashHandler {
      * dependency on ktor/coroutines here.
      */
     internal fun isIgnorable(throwable: Throwable): Boolean =
-        throwable.chainOfCauses().any { t ->
-            val name = t.javaClass.name
-            val msg = t.message ?: ""
-            val benign =
-                name.endsWith("ClosedWriteChannelException") ||
-                    name.endsWith("ClosedReceiveChannelException") ||
-                    name.endsWith("ClosedChannelException") ||
-                    name.endsWith("CancellationException") ||
-                    name == "io.github.jan.supabase.auth.exception.TokenExpiredException" ||
-                    isStaleRealtimeRejoin(t) ||
-                    isRealtimeHeartbeatRace(t) ||
-                    (
-                        t is java.io.IOException && (
-                            msg.contains("Broken pipe", ignoreCase = true) ||
-                                msg.contains("Connection reset", ignoreCase = true) ||
-                                msg.contains("Socket closed", ignoreCase = true) ||
-                                msg.contains("Stream closed", ignoreCase = true) ||
-                                msg.contains("Connection refused", ignoreCase = true)
+        isDisposedComposeWindowResize(throwable) ||
+            throwable.chainOfCauses().any { t ->
+                val name = t.javaClass.name
+                val msg = t.message ?: ""
+                val benign =
+                    name.endsWith("ClosedWriteChannelException") ||
+                        name.endsWith("ClosedReceiveChannelException") ||
+                        name.endsWith("ClosedChannelException") ||
+                        name.endsWith("CancellationException") ||
+                        name == "io.github.jan.supabase.auth.exception.TokenExpiredException" ||
+                        isStaleRealtimeRejoin(t) ||
+                        isRealtimeHeartbeatRace(t) ||
+                        (
+                            t is java.io.IOException && (
+                                msg.contains("Broken pipe", ignoreCase = true) ||
+                                    msg.contains("Connection reset", ignoreCase = true) ||
+                                    msg.contains("Socket closed", ignoreCase = true) ||
+                                    msg.contains("Stream closed", ignoreCase = true) ||
+                                    msg.contains("Connection refused", ignoreCase = true)
+                            )
                         )
-                    )
-            benign
-        }
+                benign
+            }
 
     /**
      * Record a crash report for something already contained and recovered from.
