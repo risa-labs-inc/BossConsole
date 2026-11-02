@@ -629,6 +629,30 @@ one `route_trace` JSON line (request, user, route source, tier, probabilities, c
 latency, served model, token counts, cost, month spend) plus the decider state text and the first
 2,000 characters of the reply. It logs content: never set it in production.
 
+## Timing log
+
+Every `/v1/chat/completions` request, routed or plain, logs one `timing` line when it ends (stream:
+when the stream ends). It is always on and content-free: ids, flags and numbers only, never
+messages, replies, decider state or keys. Durations are milliseconds from `performance.now()`,
+`null` when the stage did not run on that path.
+
+`{event:"timing", request_id, user, requested_model, served_model, tier, route_source, stream,
+auth_ms, route_context_ms, route_ms, sticky_get_ms, decider_ms, reserve_ms, upstream_headers_ms,
+first_token_ms, upstream_total_ms, settle_ms, total_ms, attempts, status, input_tokens,
+output_tokens, cache_read_tokens, cache_write_tokens}`
+
+- `auth_ms` token verification; `route_context_ms` the `boss_ai_lookup` RPC (carries the router
+  context); `route_ms` the whole tier choice, of which `sticky_get_ms` is the sticky RPC and
+  `decider_ms` the decider call; `reserve_ms` the reservation/budget RPC; `settle_ms` settlement.
+- `upstream_headers_ms`, `first_token_ms` (first streamed content or tool-call delta; reasoning does
+  not count; `null` when not streaming) and `upstream_total_ms` are measured from the start of the
+  attempt that served, so time lost on failed fallback attempts shows up only in `total_ms`.
+  `attempts` counts upstream requests sent.
+- `status` is the HTTP status (a stream ends 200, 499 when the client cancelled, 502 when cut).
+  Token counts are the settled breakdown (`input_tokens` excludes cache reads and writes) and `null`
+  when usage was not reported. Requests refused before the model is known (bad token, bad body) log
+  no timing line.
+
 ## Allowance semantics
 
 Request validation uses a read-only, permission-filtered preflight before inserting any ledger row.

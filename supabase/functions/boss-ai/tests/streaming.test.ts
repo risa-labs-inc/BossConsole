@@ -160,9 +160,9 @@ Deno.test("cancel mid-stream settles message_start prompt tokens plus streamed o
   await reader.cancel()
   assertEquals(f.settles(), [5007 + 100])
   assert(f.audits.includes("usage_estimated_after_cancel"))
-  assertEquals(f.logs.at(-1), {
+  assertEquals(f.logs.find((l) => l.event === "usage_estimated_after_cancel"), {
     event: "usage_estimated_after_cancel",
-    request_id: f.logs.at(-1)!.request_id,
+    request_id: f.logs[0].request_id,
     estimate: 5107,
     prompt: 5007,
     output: 100,
