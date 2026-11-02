@@ -212,7 +212,7 @@ Deno.test("broker accepts a BOSS session but not an AI token", async () => {
   assertEquals((await f.handler(req(f.token))).status, 401)
   const response = await f.handler(req("boss-session"))
   assertEquals(response.status, 200)
-  assertEquals((await response.json()).refresh_after_seconds, 180)
+  assertEquals((await response.json()).refresh_after_seconds, 3000)
 })
 
 Deno.test("/auth/token refuses sessions that /auth/exchange would also refuse", async () => {

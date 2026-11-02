@@ -699,7 +699,7 @@ broker scope as `/v1/models`.
 | Retried settlement                                 | First settlement wins                                      |
 | Role allowance reduced                             | Existing usage survives; further requests may be refused   |
 
-AI credentials last five minutes and renew automatically. BOSS sign-out clears the client cache. A
+AI credentials last an hour and renew after 50 minutes. BOSS sign-out clears the client cache. A
 copied token may remain usable until expiry; this mechanism authenticates a BOSS-issued session, not
 the executable making the request. Live permissions and bans are checked on catalog/inference
 requests. App attestation and device-bound signing are not implemented.

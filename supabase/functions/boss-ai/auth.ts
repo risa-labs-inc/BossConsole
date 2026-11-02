@@ -2,7 +2,9 @@ import { jwtVerify, SignJWT } from "jose"
 
 const issuer = "boss-ai"
 const audience = "boss-ai-inference"
-const lifetime = 300
+const lifetime = 3600
+// Renew well before expiry so a failed exchange can be retried on a still-valid token.
+const refreshAfter = lifetime - 600
 
 export class HttpError extends Error {
   constructor(
@@ -45,7 +47,7 @@ export async function mintToken(userId: string, key: Uint8Array) {
       .setIssuer(issuer).setAudience(audience).setSubject(userId).setIssuedAt(now)
       .setExpirationTime(now + lifetime).setJti(crypto.randomUUID()).sign(key),
     expires_at: new Date((now + lifetime) * 1000).toISOString(),
-    refresh_after_seconds: 180,
+    refresh_after_seconds: refreshAfter,
   }
 }
 

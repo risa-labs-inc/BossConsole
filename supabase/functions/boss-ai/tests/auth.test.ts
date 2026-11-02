@@ -11,7 +11,7 @@ Deno.test("AI credentials require the correct audience issuer scope lifetime and
     aud: "boss-ai-inference",
     scope: "inference",
     iat: now,
-    exp: now + 300,
+    exp: now + 3600,
     jti: "request",
   }
   const signed = (payload: Record<string, unknown>) =>
@@ -23,7 +23,7 @@ Deno.test("AI credentials require the correct audience issuer scope lifetime and
       { ...claims, iss: "another-issuer" },
       { ...claims, scope: "admin" },
       { ...claims, exp: now - 1 },
-      { ...claims, iat: now - 301 },
+      { ...claims, iat: now - 3601 },
       Object.fromEntries(Object.entries(claims).filter(([k]) => k !== "exp")),
       Object.fromEntries(Object.entries(claims).filter(([k]) => k !== "jti")),
     ]
