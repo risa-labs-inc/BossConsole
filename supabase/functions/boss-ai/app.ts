@@ -1036,7 +1036,13 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         usage: Obj | null,
         est?: { input: number; output: number },
       ): Obj => {
-        let u: { input: number; output: number; cacheRead: number; cacheWrite: number }
+        let u: {
+          input: number
+          output: number
+          cacheRead: number
+          cacheWrite: number
+          cacheWrite1h?: number
+        }
         if (usage) {
           const d = (usage.prompt_tokens_details ?? {}) as Obj
           const cacheRead = Number(d.cached_tokens) || 0
@@ -1046,6 +1052,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
             output: Number(usage.completion_tokens),
             cacheRead,
             cacheWrite,
+            cacheWrite1h: Number(d.cache_write_1h_tokens) || 0,
           }
         } else if (est) u = { ...est, cacheRead: 0, cacheWrite: 0 }
         else return {}
