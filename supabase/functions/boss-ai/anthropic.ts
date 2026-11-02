@@ -20,6 +20,8 @@ const ALWAYS_THINKS = new Set([
   "claude-fable-5",
 ])
 const EPHEMERAL = { type: "ephemeral" }
+// Anthropic's ephemeral cache lives this long after its last use. Sticky routing must not outlive it.
+export const CACHE_TTL_SECONDS = 300
 const CACHEABLE = ["text", "image", "tool_use", "tool_result"]
 
 // Anthropic ids allow [a-zA-Z0-9_-] only; the same mapping applies to tool_use and tool_result.

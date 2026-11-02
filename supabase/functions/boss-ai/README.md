@@ -514,7 +514,7 @@ Everything below is a row you can edit; nothing is hardcoded.
 | `default_tier`                                          | standard                                       | Also used when the decider fails or times out                                                                                      |
 | `fast_model_id`, `standard_model_id`, `strong_model_id` | required                                       | Tier models; may be `published=false`                                                                                              |
 | `exhausted_model_id`                                    | NULL (= fast)                                  | Served when the budget is used up                                                                                                  |
-| `sticky_within_turn`                                    | true                                           | A tool loop keeps the tier decided for its turn                                                                                    |
+| `sticky_within_turn`                                    | true                                           | A tool loop keeps the tier decided for its turn, while its prompt cache could be warm (5 min since last use)                       |
 | `monthly_usd_limit`                                     | 100                                            | Per user, UTC calendar month                                                                                                       |
 | `strong_cap_at` / `fast_only_at`                        | 0.60 / 0.85                                    | Spend ratios: strong becomes standard, then everything becomes fast                                                                |
 | `hard_stop_at`                                          | NULL                                           | Ratio of the limit at which calls are refused (429 `budget_exhausted`); NULL = never refuse                                        |
@@ -563,8 +563,10 @@ one user.
   attached, the estimated prompt size and whether tools are offered.
 - **Sticky**: a call whose last message is a tool result reuses the tier stored for the turn (key =
   sha256 of user, router and the messages before the last user message, which clients such as Max
-  rewrite on every tool round; 30 minutes) because prompt caching is per model. Without a stored
-  decision the decider is asked.
+  rewrite on every tool round) because prompt caching is per model. A stored decision is valid only
+  while its last use is within the prompt-cache TTL (`CACHE_TTL_SECONDS` = 300, Anthropic's
+  ephemeral cache); each sticky hit renews it. After that, or with no stored decision, the decider
+  is asked and its answer stored.
 - **Budget**: spend is `cost_usd` summed over the user's requests served through the router this UTC
   month, counting the reserved estimate of requests still in flight. At 60% strong calls are served
   by standard, at 85% everything by fast; a call whose estimate (prompt at the input price plus

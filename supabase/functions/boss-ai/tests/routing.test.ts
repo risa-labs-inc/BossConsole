@@ -1,4 +1,5 @@
 import { assert, assertEquals } from "@std/assert"
+import { CACHE_TTL_SECONDS } from "../anthropic.ts"
 import { createHandler } from "../app.ts"
 import { mintToken, signingKey } from "../auth.ts"
 import { Connection, Obj } from "../wire.ts"
@@ -312,7 +313,8 @@ Deno.test("router: a tool loop continuation reuses the turn's tier without askin
   assertEquals(f.deciderCalls().length, 0)
   const get = f.calls.find((c) => c.name === "boss_ai_route_get")!.params
   assert(/^[0-9a-f]{64}$/.test(String(get.p_key)))
-  // Not remembered yet (e.g. a new isolate or an expired entry): the decider is asked after all.
+  assertEquals(get.p_ttl_seconds, CACHE_TTL_SECONDS)
+  // Not remembered (never stored, or idle past the cache TTL, which the RPC reports as null): the decider is asked after all.
   const cold = await fixture({ sticky: null, scores: FAST })
   assertEquals(headersOf(await cold.send({ messages: loop })).source, "decider")
   assertEquals(cold.deciderCalls().length, 1)

@@ -8,6 +8,7 @@ import {
   signingKey,
   verifyClaims,
 } from "./auth.ts"
+import { CACHE_TTL_SECONDS } from "./anthropic.ts"
 import { LiveKit, liveKitClients, LiveKitConfig } from "./livekit.ts"
 import {
   capped,
@@ -603,7 +604,10 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       let sticky: unknown = null
       if (cfg.sticky_within_turn && isContinuation(messages)) {
         const started = performance.now()
-        sticky = await deps.rpc("boss_ai_route_get", { p_key: key }).catch(() => null)
+        sticky = await deps.rpc("boss_ai_route_get", {
+          p_key: key,
+          p_ttl_seconds: CACHE_TTL_SECONDS,
+        }).catch(() => null)
         stage.sticky_get_ms = lap(started)
       }
       if (TIERS.includes(sticky as Tier)) {
