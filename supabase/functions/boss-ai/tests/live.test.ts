@@ -270,7 +270,7 @@ Deno.test("voice tokens work on audio routes only", async () => {
   assertEquals(f.calls.length, 0)
 })
 
-Deno.test("voice token lifetime is exp - iat, capped at 1 h 5 min; inference stays at 300 s", async () => {
+Deno.test("voice token lifetime is exp - iat, capped at 1 h 5 min; inference stays at 1 h", async () => {
   const key = signingKey(secret)
   const { SignJWT } = await import("jose")
   const sign = (scope: string, iatAgo: number, lifetime: number) => {
@@ -285,7 +285,7 @@ Deno.test("voice token lifetime is exp - iat, capped at 1 h 5 min; inference sta
   assertEquals(await status(await sign("voice", 3000, 3900)), 400)
   assertEquals(await status(await sign("voice", 3800, 40_000)), 400)
   assertEquals(await status(await sign("voice", 4000, 40_000)), 401)
-  assertEquals(await status(await sign("inference", 400, 3600)), 401)
+  assertEquals(await status(await sign("inference", 3700, 7200)), 401)
   assertEquals(await status(await sign("inference", 100, 3600)), 400)
   assertEquals(await status(await sign("other", 1, 3600)), 401)
   assertEquals(await status(await sign("voice", -3600, 3900)), 401)
