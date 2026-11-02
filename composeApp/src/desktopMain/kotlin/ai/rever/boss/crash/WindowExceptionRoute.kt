@@ -13,6 +13,9 @@ import ai.rever.boss.plugin.sandbox.ui.isUncontainable
  * argued for.
  */
 enum class WindowExceptionRoute {
+    /** Queued AWT resize on an already disposed panel; no live scene to recover. */
+    IgnoreDisposedWindow,
+
     /** Attributable to a plugin; the crash interceptor owns it. */
     PluginHandled,
 
@@ -71,6 +74,7 @@ fun decideWindowExceptionRoute(
     blamedPluginId: String? = null,
 ): WindowExceptionRoute =
     when {
+        isDisposedComposeWindowResize(throwable) -> WindowExceptionRoute.IgnoreDisposedWindow
         attributedPluginId != null -> WindowExceptionRoute.PluginHandled
         throwable.hasFatalCause() -> WindowExceptionRoute.Escalate
         blamedPluginId != null -> WindowExceptionRoute.QuarantinePlugin

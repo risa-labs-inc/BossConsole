@@ -19,6 +19,7 @@ import ai.rever.boss.crash.decideWindowExceptionRoute
 import ai.rever.boss.crash.displayPluginId
 import ai.rever.boss.crash.hasFatalCause
 import ai.rever.boss.crash.hostPluginIdResolver
+import ai.rever.boss.crash.isDisposedComposeWindowResize
 import ai.rever.boss.crash.noteRecoveryOutcome
 import ai.rever.boss.logging.GlobalLogCapture
 import ai.rever.boss.performance.MemoryPressureWatchdog
@@ -521,6 +522,10 @@ fun main(rawArgs: Array<String>) {
                         override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler {
                             val defaultHandler = defaultExceptionHandlerFactory.exceptionHandler(window)
                             return WindowExceptionHandler { throwable ->
+                                if (isDisposedComposeWindowResize(throwable)) {
+                                    logger.debug(LogCategory.UI, "Ignoring queued resize of a disposed Compose window")
+                                    return@WindowExceptionHandler
+                                }
                                 val pluginId =
                                     PluginCrashInterceptor.attributeToPlugin(throwable)
                                 // Not computed under an OOM. Blame walks the stack and
@@ -541,6 +546,10 @@ fun main(rawArgs: Array<String>) {
                                         blamedPluginId,
                                     )
                                 when (route) {
+                                    WindowExceptionRoute.IgnoreDisposedWindow -> {
+                                        Unit
+                                    }
+
                                     WindowExceptionRoute.PluginHandled -> {
                                         logger.warn(
                                             LogCategory.SYSTEM,
