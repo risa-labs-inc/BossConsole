@@ -1301,6 +1301,9 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       })
     } catch (error) {
       if (!(error instanceof HttpError) || error.status >= 500) audit(`${phase}_failed`)
+      else if (error.code === "invalid_request" && typeof error.extra.reason === "string") {
+        audit(`invalid_request_${error.extra.reason}`)
+      }
       if (reservation) {
         if (failedEstimate) {
           audit("usage_unknown_estimate_charged")

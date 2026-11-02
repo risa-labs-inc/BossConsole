@@ -318,6 +318,19 @@ Deno.test("invalid inputs never create accounting reservations", async () => {
   assertEquals(f.requests.length, 0)
 })
 
+Deno.test("a refused request keeps the 400 envelope and names the failed check", async () => {
+  const f = await fixture()
+  const response = await f.handler(
+    f.request({ ...body, messages: Array.from({ length: 513 }, () => body.messages[0]) }),
+  )
+  assertEquals(response.status, 400)
+  const { error } = await response.json()
+  assertEquals([error.code, error.reason], ["invalid_request", "too_many_messages"])
+  assert(error.message.includes("513 messages, at most 512"), error.message)
+  assert(f.audits.includes("invalid_request_too_many_messages"))
+  assertEquals(f.requests.length, 0)
+})
+
 Deno.test("admission revalidates changed model capabilities and refunds without dispatch", async () => {
   const f = await fixture({ removeToolsAfterPreflight: true })
   const response = await f.handler(

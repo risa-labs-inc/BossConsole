@@ -6,6 +6,8 @@ import {
   AnthropicStream,
 } from "./anthropic.ts"
 
+const MAX_MESSAGES = 512
+const MAX_TOOLS = 128
 const MAX_TOOL_CALLS_PER_MESSAGE = 128
 const MAX_TOOL_DESCRIPTION_LENGTH = 4_096
 const MAX_TOOL_SCHEMA_LENGTH = 65_536
@@ -15,14 +17,16 @@ function boundedToolSchema(value: unknown): void {
   let visited = 0
   while (pending.length) {
     const next = pending.pop()!
-    if (++visited > 8_192 || next.depth > 32) throw invalid()
+    if (++visited > 8_192 || next.depth > 32) throw invalid("schema_too_large")
     if (next.value && typeof next.value === "object") {
       const children = Object.values(next.value)
-      if (children.length + pending.length + visited > 8_192) throw invalid()
+      if (children.length + pending.length + visited > 8_192) throw invalid("schema_too_large")
       for (const child of children) pending.push({ value: child, depth: next.depth + 1 })
     }
   }
-  if (JSON.stringify(value).length > MAX_TOOL_SCHEMA_LENGTH) throw invalid()
+  if (JSON.stringify(value).length > MAX_TOOL_SCHEMA_LENGTH) {
+    throw invalid("schema_too_large", `at most ${MAX_TOOL_SCHEMA_LENGTH} characters`)
+  }
 }
 
 export type Obj = Record<string, unknown>
@@ -55,30 +59,69 @@ export interface Fallback {
   usd_per_mtok_cache_write?: number | null
   connection: Connection
 }
-export function object(value: unknown): Obj {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid()
+export function object(value: unknown, reason: InvalidReason = "malformed_request"): Obj {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid(reason)
   return value as Obj
 }
-export function invalid(): HttpError {
+
+/**
+ * Which validation check refused a request: a stable code, sent as `error.reason` and named in the
+ * message. Neither ever quotes the request; [invalid]'s `detail` carries only counts and limits.
+ */
+export const INVALID_REASONS = {
+  malformed_request: "the request is not well-formed JSON of the expected shape",
+  unknown_field: "the request has a field this endpoint does not accept",
+  invalid_parameter: "a request parameter has an unsupported value",
+  no_messages: "the request has no messages",
+  too_many_messages: "the request has too many messages",
+  invalid_message: "a message is not well-formed",
+  invalid_role: "a message has an unsupported role",
+  unsupported_content: "a message has a content part this endpoint does not accept",
+  image_unsupported: "the selected model does not accept images",
+  gif_unsupported: "GIF images are not supported; send PNG, JPEG or WebP",
+  image_format_unsupported: "images must be inline PNG, JPEG or WebP data URLs",
+  tools_unsupported: "the selected model does not accept tools",
+  invalid_tool_message: "a tool message is not well-formed",
+  invalid_tool_call: "a tool call is not well-formed",
+  too_many_tool_calls: "a message has too many tool calls",
+  tool_args_not_object: "tool call arguments must be a JSON object",
+  invalid_tools: "the tool list is not well-formed",
+  too_many_tools: "the request has too many tools",
+  invalid_tool_name: "a tool name is not 1 to 64 letters, digits, _ or -",
+  tool_description_too_long: "a tool description is too long",
+  schema_too_large: "a tool or response schema is too large or too deep",
+  invalid_tool_choice: "tool_choice is not supported for this request",
+  invalid_max_tokens: "max_tokens must be a positive integer",
+  max_tokens_too_large: "max_tokens exceeds the selected model's output limit",
+  structured_output_unsupported: "the selected model does not accept response_format",
+  invalid_response_format: "response_format is not well-formed",
+} as const
+export type InvalidReason = keyof typeof INVALID_REASONS
+
+/** A 400 naming the failed check: `error.code` stays `invalid_request`, `error.reason` is [reason]. */
+export function invalid(reason: InvalidReason = "malformed_request", detail?: string): HttpError {
   return new HttpError(
     400,
     "invalid_request",
-    "This request is not supported by the selected BOSS model.",
+    `This request is not supported by the selected BOSS model (${reason}: ${
+      INVALID_REASONS[reason]
+    }${detail ? `; ${detail}` : ""}).`,
+    { reason },
   )
 }
 
 function onlyKeys(value: Obj, keys: string[]) {
-  if (Object.keys(value).some((key) => !keys.includes(key))) throw invalid()
+  if (Object.keys(value).some((key) => !keys.includes(key))) throw invalid("unknown_field")
 }
 
 function functionCall(value: unknown): Obj {
-  const call = object(value), f = object(call.function)
+  const call = object(value, "invalid_tool_call"), f = object(call.function, "invalid_tool_call")
   onlyKeys(call, ["id", "type", "function"])
   onlyKeys(f, ["name", "arguments"])
   if (
     call.type !== "function" || typeof call.id !== "string" ||
     typeof f.name !== "string" || typeof f.arguments !== "string"
-  ) throw invalid()
+  ) throw invalid("invalid_tool_call")
   // BossConsole#1251: tool-call `arguments` must be an object or the empty
   // string that some upstreams return for a no-argument call. Other strings
   // are malformed requests that the upstream
@@ -88,7 +131,7 @@ function functionCall(value: unknown): Obj {
   try {
     if (f.arguments !== "") object(JSON.parse(f.arguments))
   } catch {
-    throw invalid()
+    throw invalid("tool_args_not_object")
   }
   return call
 }
@@ -260,19 +303,24 @@ export function requestBody(
     "parallel_tool_calls",
     "response_format",
   ])
-  if (Object.keys(input).some((key) => !allowed.has(key))) throw invalid()
-  if (!Array.isArray(input.messages) || !input.messages.length || input.messages.length > 512) {
-    throw invalid()
+  if (Object.keys(input).some((key) => !allowed.has(key))) throw invalid("unknown_field")
+  if (!Array.isArray(input.messages) || !input.messages.length) throw invalid("no_messages")
+  if (input.messages.length > MAX_MESSAGES) {
+    throw invalid("too_many_messages", `${input.messages.length} messages, at most ${MAX_MESSAGES}`)
   }
-  if (input.stream !== undefined && typeof input.stream !== "boolean") throw invalid()
+  if (input.stream !== undefined && typeof input.stream !== "boolean") {
+    throw invalid("invalid_parameter", "stream")
+  }
   if (input.stream_options !== undefined) {
-    const options = object(input.stream_options)
+    const options = object(input.stream_options, "invalid_parameter")
     onlyKeys(options, ["include_usage"])
     // Accounting requires usage. Gateway requests true; explicitly declining it is unsupported.
-    if (options.include_usage !== undefined && options.include_usage !== true) throw invalid()
+    if (options.include_usage !== undefined && options.include_usage !== true) {
+      throw invalid("invalid_parameter", "stream_options.include_usage")
+    }
   }
   const messages = input.messages.map((value) => {
-    const original = object(value)
+    const original = object(value, "invalid_message")
     const m = original.role === "assistant" && original.content === undefined &&
         Array.isArray(original.tool_calls) && original.tool_calls.length > 0
       ? { ...original, content: null }
@@ -280,47 +328,55 @@ export function requestBody(
     if (
       m.name !== undefined && (typeof m.name !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(m.name))
     ) {
-      throw invalid()
+      throw invalid("invalid_message", "name")
     }
     if (!["system", "developer", "user", "assistant", "tool"].includes(String(m.role))) {
-      throw invalid()
+      throw invalid("invalid_role")
     }
     if (
       Object.keys(m).some((k) =>
         !["role", "content", "tool_calls", "tool_call_id", "name"].includes(k)
       )
-    ) throw invalid()
+    ) throw invalid("unknown_field")
     if (m.content !== null && typeof m.content !== "string") {
-      if (!Array.isArray(m.content)) throw invalid()
+      if (!Array.isArray(m.content)) throw invalid("invalid_message", "content")
       for (const part of m.content) {
-        const p = object(part)
+        const p = object(part, "invalid_message")
         if (p.type === "text" && typeof p.text === "string") {
           onlyKeys(p, ["type", "text"])
           continue
         }
-        if (p.type === "image_url" && model.capabilities.includes("vision")) {
-          onlyKeys(p, ["type", "image_url"])
-          const image = object(p.image_url)
-          onlyKeys(image, ["url", "detail"])
-          if (
-            image.detail !== undefined && !["auto", "low", "high"].includes(String(image.detail))
-          ) throw invalid()
-          if (
-            typeof image.url === "string" &&
-            /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(image.url)
-          ) continue
+        if (p.type === "text") throw invalid("invalid_message", "text")
+        if (p.type !== "image_url") throw invalid("unsupported_content")
+        if (!model.capabilities.includes("vision")) throw invalid("image_unsupported")
+        onlyKeys(p, ["type", "image_url"])
+        const image = object(p.image_url, "image_format_unsupported")
+        onlyKeys(image, ["url", "detail"])
+        if (
+          image.detail !== undefined && !["auto", "low", "high"].includes(String(image.detail))
+        ) throw invalid("invalid_parameter", "image_url.detail")
+        if (
+          typeof image.url === "string" &&
+          /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(image.url)
+        ) continue
+        if (typeof image.url === "string" && /^data:image\/gif[;,]/i.test(image.url)) {
+          throw invalid("gif_unsupported")
         }
-        throw invalid()
+        throw invalid("image_format_unsupported")
       }
     }
-    if (
-      m.role === "tool" &&
-      (typeof m.tool_call_id !== "string" || !model.capabilities.includes("tools"))
-    ) throw invalid()
-    if (
-      m.tool_calls !== undefined &&
-      (!Array.isArray(m.tool_calls) || !model.capabilities.includes("tools"))
-    ) throw invalid()
+    if (m.role === "tool" && !model.capabilities.includes("tools")) {
+      throw invalid("tools_unsupported")
+    }
+    if (m.role === "tool" && typeof m.tool_call_id !== "string") {
+      throw invalid("invalid_tool_message", "tool_call_id")
+    }
+    if (m.tool_calls !== undefined && !model.capabilities.includes("tools")) {
+      throw invalid("tools_unsupported")
+    }
+    if (m.tool_calls !== undefined && !Array.isArray(m.tool_calls)) {
+      throw invalid("invalid_tool_call")
+    }
     // BossConsole#1251: cap tool_calls per message. A single message
     // with thousands of tool_calls multiplies the JSON.parse cost
     // in `functionCall` (now mandatory) and produces a request the
@@ -330,90 +386,114 @@ export function requestBody(
     if (
       Array.isArray(m.tool_calls) &&
       m.tool_calls.length > MAX_TOOL_CALLS_PER_MESSAGE
-    ) throw invalid()
+    ) {
+      throw invalid(
+        "too_many_tool_calls",
+        `${m.tool_calls.length} tool calls, at most ${MAX_TOOL_CALLS_PER_MESSAGE}`,
+      )
+    }
     if (Array.isArray(m.tool_calls)) m.tool_calls.forEach(functionCall)
     if (
       m.role === "tool" && (m.content === null ||
         (Array.isArray(m.content) && m.content.some((part) => object(part).type !== "text")))
     ) {
-      throw invalid()
+      throw invalid("invalid_tool_message", "content must be text")
     }
     return m
   })
   const max = input.max_completion_tokens ?? input.max_tokens ??
     Math.min(2000, model.max_output_tokens)
-  if (!Number.isSafeInteger(max) || Number(max) < 1 || Number(max) > model.max_output_tokens) {
-    throw invalid()
+  if (!Number.isSafeInteger(max) || Number(max) < 1) throw invalid("invalid_max_tokens")
+  if (Number(max) > model.max_output_tokens) {
+    throw invalid(
+      "max_tokens_too_large",
+      `max_tokens ${max} exceeds this model's ${model.max_output_tokens}`,
+    )
   }
   const common: Obj = { model: model.upstream_model, stream: input.stream === true, store: false }
   const provider = providerRouting(model.provider_routing, baseUrl)
   if (provider) common.provider = provider
   for (const key of ["temperature", "top_p"]) {
     if (input[key] !== undefined) {
-      if (typeof input[key] !== "number" || !Number.isFinite(input[key])) throw invalid()
+      if (typeof input[key] !== "number" || !Number.isFinite(input[key])) {
+        throw invalid("invalid_parameter", key)
+      }
       // Current Claude models reject non-default sampling parameters: validated, never forwarded.
       if (type !== "anthropic_messages") common[key] = input[key]
     }
   }
   let tools: Obj[] | undefined
   if (input.tools !== undefined) {
-    if (
-      !model.capabilities.includes("tools") || !Array.isArray(input.tools) ||
-      input.tools.length > 128
-    ) throw invalid()
+    if (!model.capabilities.includes("tools")) throw invalid("tools_unsupported")
+    if (!Array.isArray(input.tools)) throw invalid("invalid_tools")
+    if (input.tools.length > MAX_TOOLS) {
+      throw invalid("too_many_tools", `${input.tools.length} tools, at most ${MAX_TOOLS}`)
+    }
     tools = input.tools.map((value) => {
-      const t = object(value)
-      const f = object(t.function)
+      const t = object(value, "invalid_tools")
+      const f = object(t.function, "invalid_tools")
       onlyKeys(t, ["type", "function"])
       onlyKeys(f, ["name", "description", "parameters", "strict"])
       // Host policy bounds each description/schema as well as the 128-tool list.
       // The overall 4 MiB request-body cap remains the aggregate bound.
       if (f.description !== undefined) {
-        if (
-          typeof f.description !== "string" ||
-          f.description.length > MAX_TOOL_DESCRIPTION_LENGTH
-        ) throw invalid()
+        if (typeof f.description !== "string") throw invalid("invalid_tools", "description")
+        if (f.description.length > MAX_TOOL_DESCRIPTION_LENGTH) {
+          throw invalid(
+            "tool_description_too_long",
+            `at most ${MAX_TOOL_DESCRIPTION_LENGTH} characters`,
+          )
+        }
       }
-      if (f.strict !== undefined && typeof f.strict !== "boolean") throw invalid()
+      if (f.strict !== undefined && typeof f.strict !== "boolean") {
+        throw invalid("invalid_tools", "strict")
+      }
       if (f.parameters !== undefined) boundedToolSchema(f.parameters)
-      if (
-        t.type !== "function" || typeof f.name !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(f.name)
-      ) throw invalid()
+      if (t.type !== "function") throw invalid("invalid_tools", "type")
+      if (typeof f.name !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(f.name)) {
+        throw invalid("invalid_tool_name")
+      }
       return { type: "function", function: f }
     })
     if (!tools.length) tools = undefined
   }
   if (input.tool_choice !== undefined) {
-    if (!tools) throw invalid()
+    if (!tools) throw invalid("invalid_tool_choice", "no tools")
     const choice = input.tool_choice
     if (typeof choice === "string") {
-      if (!["auto", "none", "required"].includes(choice)) throw invalid()
+      if (!["auto", "none", "required"].includes(choice)) throw invalid("invalid_tool_choice")
       common.tool_choice = choice
     } else {
-      const c = object(choice), f = object(c.function)
+      const c = object(choice, "invalid_tool_choice"), f = object(c.function, "invalid_tool_choice")
       onlyKeys(c, ["type", "function"])
       onlyKeys(f, ["name"])
-      if (c.type !== "function" || typeof f.name !== "string") throw invalid()
+      if (c.type !== "function" || typeof f.name !== "string") throw invalid("invalid_tool_choice")
       common.tool_choice = type === "openai_chat" ? c : { type: "function", name: f.name }
     }
   }
   if (input.parallel_tool_calls !== undefined) {
-    if (!tools || typeof input.parallel_tool_calls !== "boolean") throw invalid()
+    if (!tools || typeof input.parallel_tool_calls !== "boolean") {
+      throw invalid("invalid_parameter", "parallel_tool_calls")
+    }
     common.parallel_tool_calls = input.parallel_tool_calls
   }
   if (input.response_format !== undefined) {
-    if (!model.capabilities.includes("structured_output")) throw invalid()
-    const format = object(input.response_format)
+    if (!model.capabilities.includes("structured_output")) {
+      throw invalid("structured_output_unsupported")
+    }
+    const format = object(input.response_format, "invalid_response_format")
     onlyKeys(format, ["type", "json_schema"])
-    if (!["json_schema", "json_object", "text"].includes(String(format.type))) throw invalid()
+    if (!["json_schema", "json_object", "text"].includes(String(format.type))) {
+      throw invalid("invalid_response_format")
+    }
     if (format.type === "json_schema") {
-      const schema = object(format.json_schema)
+      const schema = object(format.json_schema, "invalid_response_format")
       onlyKeys(schema, ["name", "description", "schema", "strict"])
       if (
         typeof schema.name !== "string" ||
         (schema.description !== undefined && typeof schema.description !== "string") ||
         (schema.strict !== undefined && typeof schema.strict !== "boolean")
-      ) throw invalid()
+      ) throw invalid("invalid_response_format")
       boundedToolSchema(schema.schema)
     }
     if (type === "openai_responses") {
@@ -592,14 +672,14 @@ function decodeCompletion(
   if (!["completed", "incomplete"].includes(String(value.status))) {
     throw new HttpError(502, "upstream_error", "The model could not complete this request.")
   }
-  const output = Array.isArray(value.output) ? value.output.map(object) : []
+  const output = Array.isArray(value.output) ? value.output.map((value) => object(value)) : []
   const calls = output.filter((x) => x.type === "function_call").map((x) => ({
     id: x.call_id,
     type: "function",
     function: { name: x.name, arguments: x.arguments },
   }))
   const text = output.filter((x) => x.type === "message").flatMap((x) =>
-    Array.isArray(x.content) ? x.content.map(object) : []
+    Array.isArray(x.content) ? x.content.map((value) => object(value)) : []
   )
     .map((x) => x.type === "output_text" ? x.text : x.type === "refusal" ? x.refusal : "").join("")
   return {
