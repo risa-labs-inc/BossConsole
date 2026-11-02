@@ -165,6 +165,12 @@ Neither field quotes the request. Each refusal is audited as `invalid_request_<r
 | `invalid_max_tokens`, `max_tokens_too_large`               | not a positive integer; over the model's `max_output_tokens`                                      |
 | `structured_output_unsupported`, `invalid_response_format` | `response_format` for a model without `structured_output`; a malformed one                        |
 
+A path the function does not serve is a 404 with `error.code: "not_found"` and
+`error.reason: "unknown_endpoint"`. Retrying it never succeeds. An upstream 404 (a route's model not
+found at its provider) is not passed through: like other upstream refusals it moves to the next
+route, and when no route serves it the client gets the usual 502 `upstream_error`, since it is an
+operator configuration fault the client cannot fix.
+
 ## Native Anthropic (`anthropic_messages`)
 
 Clients still speak Chat Completions. For a connection with `api_type='anthropic_messages'` the

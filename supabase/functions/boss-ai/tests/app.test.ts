@@ -193,6 +193,8 @@ Deno.test("invalid routes and oversized requests fail before database access", a
     )
     assertEquals(response.status, 404)
     assert(response.headers.get("x-request-id"))
+    const { error } = await response.json()
+    assertEquals([error.code, error.reason], ["not_found", "unknown_endpoint"])
   }
   const response = await f.handler(
     f.request({ ...body, messages: [{ role: "user", content: "x".repeat(5 * 1024 * 1024) }] }),
