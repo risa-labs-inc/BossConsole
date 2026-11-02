@@ -435,6 +435,7 @@ Deno.test("user quotas: overrides replace limits, downgrade chain serves the tar
         "20261027130000_boss_ai_user_quota_downgrade.sql",
         "20261027140000_boss_ai_router_budget.sql",
         "20261027150000_boss_ai_decider_api.sql",
+        "20261102100000_boss_ai_sticky_cache_ttl.sql",
       ]
     ) {
       await db.exec(
@@ -726,6 +727,7 @@ Deno.test("user quotas: downgrade serves from the target's own pool", async () =
         "20261027130000_boss_ai_user_quota_downgrade.sql",
         "20261027140000_boss_ai_router_budget.sql",
         "20261027150000_boss_ai_decider_api.sql",
+        "20261102100000_boss_ai_sticky_cache_ttl.sql",
       ]
     ) {
       await db.exec(
@@ -804,6 +806,7 @@ Deno.test("router: config, budget state, routed reservation, settlement and stic
         "20261027130000_boss_ai_user_quota_downgrade.sql",
         "20261027140000_boss_ai_router_budget.sql",
         "20261027150000_boss_ai_decider_api.sql",
+        "20261102100000_boss_ai_sticky_cache_ttl.sql",
       ]
     ) {
       await db.exec(
@@ -1047,17 +1050,41 @@ Deno.test("router: config, budget state, routed reservation, settlement and stic
       "DELETE FROM public.boss_ai_requests; DELETE FROM public.boss_ai_allowances WHERE model_id='optimist-strong'; UPDATE public.boss_ai_models SET published=false WHERE id='optimist-strong'",
     )
 
-    // Sticky decisions: stored per key, expire after the TTL, scoped by key.
+    // Sticky decisions: valid while the last use is within the TTL, each hit renews it, scoped by key.
+    const get = (key: string, ttl = 300) =>
+      scalar(`SELECT public.boss_ai_route_get('${key}', ${ttl}) AS value`)
+    const age = (seconds: number) =>
+      db.exec(
+        `UPDATE public.boss_ai_route_decisions SET created_at = now() - interval '${seconds} seconds', last_used_at = now() - interval '${seconds} seconds'`,
+      )
     await db.query("SELECT public.boss_ai_route_put('k1',$1,'optimist','strong')", [u1])
-    assertEquals(await scalar("SELECT public.boss_ai_route_get('k1') AS value"), "strong")
-    assertEquals(await scalar("SELECT public.boss_ai_route_get('k2') AS value"), null)
+    assertEquals(await get("k1"), "strong")
+    assertEquals(await get("k2"), null)
     await db.query("SELECT public.boss_ai_route_put('k1',$1,'optimist','fast')", [u1])
-    assertEquals(await scalar("SELECT public.boss_ai_route_get('k1') AS value"), "fast")
+    assertEquals(await get("k1"), "fast")
+    // Created long ago but used recently is valid; the hit renews the last use.
     await db.exec(
-      "UPDATE public.boss_ai_route_decisions SET created_at = now() - interval '31 minutes'",
+      "UPDATE public.boss_ai_route_decisions SET created_at = now() - interval '900 seconds', last_used_at = now() - interval '200 seconds'",
     )
-    assertEquals(await scalar("SELECT public.boss_ai_route_get('k1') AS value"), null)
-    assertEquals(await scalar("SELECT public.boss_ai_route_get('k1', 60) AS value"), "fast")
+    assertEquals(await get("k1"), "fast")
+    await db.exec(
+      "UPDATE public.boss_ai_route_decisions SET last_used_at = last_used_at - interval '150 seconds'",
+    )
+    assertEquals(await get("k1"), "fast") // 150 s since the renewing hit, not 350 s since the first use
+    // Idle past the TTL: gone, and a miss does not renew it.
+    await age(301)
+    assertEquals(await get("k1"), null)
+    assertEquals(await get("k1"), null)
+    assertEquals(await get("k1", 600), "fast")
+    // A new decision for the key starts a fresh window.
+    await db.query("SELECT public.boss_ai_route_put('k1',$1,'optimist','strong')", [u1])
+    assertEquals(await get("k1"), "strong")
+    assertEquals(
+      await scalar(
+        "SELECT has_function_privilege('authenticated','public.boss_ai_route_get(text,integer)','EXECUTE') AS value",
+      ),
+      false,
+    )
 
     // Validation and access.
     const bad = (sql: string) => assertRejects(() => db.exec(sql))
