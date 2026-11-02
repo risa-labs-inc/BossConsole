@@ -77,7 +77,7 @@ Deno.test("anthropic: system, developer, images and max_tokens translate", () =>
   // Always-thinking models stream a summarized display; unknown models get no thinking field.
   assertEquals(out.thinking, { type: "adaptive", display: "summarized" })
   for (
-    const id of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"]
+    const id of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"]
   ) {
     assertEquals(
       body({ messages: [{ role: "user", content: "x" }] }, { ...model, upstream_model: id })
@@ -88,6 +88,21 @@ Deno.test("anthropic: system, developer, images and max_tokens translate", () =>
       },
     )
   }
+  // The fast tier answers without thinking, except for a json_schema request.
+  const haiku = { ...model, upstream_model: "claude-haiku-5-5" }
+  assertEquals(body({ messages: [{ role: "user", content: "x" }] }, haiku).thinking, {
+    type: "disabled",
+  })
+  assertEquals(
+    body({
+      messages: [{ role: "user", content: "x" }],
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "s", schema: { type: "object" } },
+      },
+    }, haiku).thinking,
+    { type: "adaptive", display: "summarized" },
+  )
   for (const id of ["claude-opus-4-8", "claude-sonnet-4-6", "claude-future-9", "private"]) {
     assert(
       !("thinking" in

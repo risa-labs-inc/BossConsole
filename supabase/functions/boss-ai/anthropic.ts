@@ -19,6 +19,17 @@ const ALWAYS_THINKS = new Set([
   "claude-fable-5-1",
   "claude-fable-5",
 ])
+// The fast tier answers without thinking: first visible token ~0.7 s vs ~1.3 s adaptive, same
+// accuracy on a 300-call warm-cache probe (2026-11-02). A json_schema request keeps adaptive.
+const THINKING_OFF = new Set(["claude-haiku-5-5"])
+
+function thinkingFor(upstream: string, format?: Obj): Obj {
+  if (!ALWAYS_THINKS.has(upstream)) return {}
+  if (THINKING_OFF.has(upstream) && format?.type !== "json_schema") {
+    return { thinking: { type: "disabled" } }
+  }
+  return { thinking: { type: "adaptive", display: "summarized" } }
+}
 const EPHEMERAL = { type: "ephemeral" }
 // Anthropic's ephemeral cache lives this long after its last use. Sticky routing must not outlive it.
 export const CACHE_TTL_SECONDS = 300
@@ -203,9 +214,7 @@ export function anthropicRequest(a: {
     model: a.upstream,
     max_tokens: a.max,
     stream: a.stream,
-    ...(ALWAYS_THINKS.has(a.upstream)
-      ? { thinking: { type: "adaptive", display: "summarized" } }
-      : {}),
+    ...thinkingFor(a.upstream, a.format),
     ...(cached.system.length ? { system: cached.system } : {}),
     messages: cached.messages,
     ...(cached.tools ? { tools: cached.tools } : {}),
