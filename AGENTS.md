@@ -838,6 +838,14 @@ Auth -> Email Templates -> Magic Link, paste `supabase/templates/email/magic-lin
 Tests: `supabase/tests/fluck_web_instances_test.sql` (pgTAP, `supabase test db`) and
 `cd supabase/functions/fluck-web && deno test --allow-all`.
 
+**`max-web` is a one-route alias of `fluck-web`.** The Max plugin (boss-plugin-max) posts its
+push ping to `/functions/v1/max-web/api/push/notify`, and released Max builds carry that URL.
+`supabase/functions/max-web` forwards exactly `POST /api/push/notify` to fluck-web's handler
+(path rewritten to `/fluck-web/...`, same import map, same project secrets) and answers 404 for
+everything else, so it adds no page, cookie or session surface. Its tests live in
+`fluck-web/tests/max-web-alias.test.ts` so the fluck-web CI job runs them. Deploy:
+`supabase functions deploy max-web --project-ref pcnwqamqdnsadranufjv --no-verify-jwt`.
+
 ### Decoding Supabase payloads
 
 Two rules in `ai.rever.boss.services.supabase`, both enforced by `SupabaseWiringTest`:

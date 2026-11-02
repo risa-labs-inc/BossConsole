@@ -451,6 +451,13 @@ verify_jwt = false
 import_map = "./functions/fluck-web/deno.json"
 entrypoint = "./functions/fluck-web/index.ts"
 
+[functions.max-web]
+# Narrow alias of fluck-web: forwards only POST /api/push/notify, the Max plugin's ticket-only push
+# ping (released Max builds post to max-web). No page, cookie or session route; see max-web/app.ts.
+verify_jwt = false
+import_map = "./functions/fluck-web/deno.json"
+entrypoint = "./functions/max-web/index.ts"
+
 [functions.fluck-ai]
 # Same portal and authentication rules, isolated to the new public origin.
 verify_jwt = false
