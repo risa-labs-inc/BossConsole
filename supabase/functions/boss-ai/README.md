@@ -141,6 +141,38 @@ extensions are forwarded. Vision accepts inline PNG/JPEG/WebP images, not remote
 endpoint must enforce the configured context limit; this is part of the upstream contract, not an
 assertion inferred from a model name.
 
+**Request validation.** A chat request the function will not forward is a 400 with
+`error.code: "invalid_request"` and `error.reason` naming the check that failed. The message keeps
+its old opening and adds the reason, a short explanation and, where one applies, a count and limit
+(`... BOSS model (too_many_messages: the request has too many messages; 600 messages, at most 512).`).
+Neither field quotes the request. Each refusal is audited as `invalid_request_<reason>`. Reasons:
+
+| Reason                                                     | Check                                                                                             |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `malformed_request`                                        | body is not a JSON object of the expected shape                                                   |
+| `unknown_field`                                            | a field outside the accepted set, at any level                                                    |
+| `invalid_parameter`                                        | `stream`, `stream_options`, `temperature`, `top_p`, `parallel_tool_calls` or image `detail` value |
+| `no_messages`, `too_many_messages`                         | `messages` empty or not an array; more than 512                                                   |
+| `invalid_message`, `invalid_role`                          | a message's shape or `name`; a role outside system/developer/user/assistant/tool                  |
+| `unsupported_content`                                      | a content part other than `text` or `image_url`                                                   |
+| `image_unsupported`                                        | an image for a model without `vision`                                                             |
+| `gif_unsupported`, `image_format_unsupported`              | a GIF; anything but an inline PNG/JPEG/WebP data URL                                              |
+| `tools_unsupported`                                        | tools, tool calls or tool messages for a model without `tools`                                    |
+| `invalid_tool_message`                                     | a tool message without `tool_call_id` or with non-text content                                    |
+| `invalid_tool_call`, `too_many_tool_calls`                 | a malformed tool call; more than 128 in one message                                               |
+| `tool_args_not_object`                                     | tool call `arguments` that are not a JSON object (or empty)                                       |
+| `invalid_tools`, `too_many_tools`, `invalid_tool_name`     | a malformed tool; more than 128 tools; a name outside `[a-zA-Z0-9_-]{1,64}`                       |
+| `tool_description_too_long`, `schema_too_large`            | a description over 4096 characters; a schema over 65536 characters, 8192 nodes or depth 32        |
+| `invalid_tool_choice`                                      | `tool_choice` without tools, or not `auto`/`none`/`required`/a named function                     |
+| `invalid_max_tokens`, `max_tokens_too_large`               | not a positive integer; over the model's `max_output_tokens`                                      |
+| `structured_output_unsupported`, `invalid_response_format` | `response_format` for a model without `structured_output`; a malformed one                        |
+
+A path the function does not serve is a 404 with `error.code: "not_found"` and
+`error.reason: "unknown_endpoint"`. Retrying it never succeeds. An upstream 404 (a route's model not
+found at its provider) is not passed through: like other upstream refusals it moves to the next
+route, and when no route serves it the client gets the usual 502 `upstream_error`, since it is an
+operator configuration fault the client cannot fix.
+
 ## Native Anthropic (`anthropic_messages`)
 
 Clients still speak Chat Completions. For a connection with `api_type='anthropic_messages'` the

@@ -193,6 +193,8 @@ Deno.test("invalid routes and oversized requests fail before database access", a
     )
     assertEquals(response.status, 404)
     assert(response.headers.get("x-request-id"))
+    const { error } = await response.json()
+    assertEquals([error.code, error.reason], ["not_found", "unknown_endpoint"])
   }
   const response = await f.handler(
     f.request({ ...body, messages: [{ role: "user", content: "x".repeat(5 * 1024 * 1024) }] }),
@@ -315,6 +317,19 @@ Deno.test("invalid inputs never create accounting reservations", async () => {
     assertEquals((await f.handler(f.request(invalid))).status, 400)
   }
   assert(f.calls.every((call) => call.name === "boss_ai_lookup"))
+  assertEquals(f.requests.length, 0)
+})
+
+Deno.test("a refused request keeps the 400 envelope and names the failed check", async () => {
+  const f = await fixture()
+  const response = await f.handler(
+    f.request({ ...body, messages: Array.from({ length: 513 }, () => body.messages[0]) }),
+  )
+  assertEquals(response.status, 400)
+  const { error } = await response.json()
+  assertEquals([error.code, error.reason], ["invalid_request", "too_many_messages"])
+  assert(error.message.includes("513 messages, at most 512"), error.message)
+  assert(f.audits.includes("invalid_request_too_many_messages"))
   assertEquals(f.requests.length, 0)
 })
 

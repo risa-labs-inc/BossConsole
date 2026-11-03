@@ -62,7 +62,7 @@ function userBlocks(content: unknown): Obj[] {
     const m = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/.exec(
       String(object(p.image_url).url),
     )
-    if (!m) throw invalid()
+    if (!m) throw invalid("image_format_unsupported")
     out.push({ type: "image", source: { type: "base64", media_type: m[1], data: m[2] } })
   }
   return out
@@ -118,7 +118,7 @@ export function anthropicMessages(input: Obj[]): { system: Obj[]; messages: Obj[
         try {
           if (f.arguments !== "") args = object(JSON.parse(String(f.arguments)))
         } catch {
-          throw invalid()
+          throw invalid("tool_args_not_object")
         }
         blocks.push({
           type: "tool_use",
@@ -137,7 +137,7 @@ export function anthropicMessages(input: Obj[]): { system: Obj[]; messages: Obj[
       }])
     }
   }
-  if (!messages.length) throw invalid()
+  if (!messages.length) throw invalid("no_messages")
   return { system, messages }
 }
 
@@ -281,7 +281,7 @@ export function anthropicCompletion(value: Obj, model: string, id: string): Obj 
   if (value.type === "error" || value.error || value.type !== "message") {
     throw new HttpError(502, "upstream_error", "The model could not complete this request.")
   }
-  const blocks = Array.isArray(value.content) ? value.content.map(object) : []
+  const blocks = Array.isArray(value.content) ? value.content.map((value) => object(value)) : []
   const text = blocks.filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("")
   const calls = blocks.filter((b) => b.type === "tool_use").map((b) => ({
     id: b.id,

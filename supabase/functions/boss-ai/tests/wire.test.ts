@@ -701,3 +701,77 @@ Deno.test("usage passes the cache and reasoning breakdowns through", () => {
     { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
   )
 })
+
+Deno.test("each refused check names a stable reason and never quotes the request", () => {
+  const secret = "PATIENT-JANE-DOE"
+  const vision: Model = { ...model, capabilities: [...model.capabilities, "vision"] }
+  const say = (role: string, content: unknown = secret) => ({ role, content })
+  const picture = (url: string) => say("user", [{ type: "image_url", image_url: { url } }])
+  const tool = (name: string, description = "d") => ({
+    type: "function",
+    function: { name, description },
+  })
+  const call = (args: string) => ({
+    role: "assistant",
+    content: null,
+    tool_calls: [{ id: "c1", type: "function", function: { name: "t", arguments: args } }],
+  })
+  const cases: [string, Record<string, unknown>, Model, string?][] = [
+    ["unknown_field", { messages: [say("user")], [secret]: 1 }, model],
+    ["no_messages", { messages: [] }, model],
+    [
+      "too_many_messages",
+      { messages: Array.from({ length: 600 }, () => say("user")) },
+      model,
+      "600 messages, at most 512",
+    ],
+    ["invalid_role", { messages: [say(secret)] }, model],
+    ["image_unsupported", { messages: [picture("data:image/png;base64,YQ==")] }, model],
+    ["gif_unsupported", { messages: [picture("data:image/gif;base64,R0lG")] }, vision],
+    ["image_format_unsupported", { messages: [picture(`https://x.test/${secret}`)] }, vision],
+    ["unsupported_content", { messages: [say("user", [{ type: "file", file: secret }])] }, vision],
+    ["tool_args_not_object", { messages: [say("user"), call(JSON.stringify(secret))] }, model],
+    ["invalid_tool_call", { messages: [{ ...call("{}"), tool_calls: [{ id: 1 }] }] }, model],
+    [
+      "max_tokens_too_large",
+      { messages: [say("user")], max_tokens: 9000 },
+      model,
+      "max_tokens 9000 exceeds this model's 512",
+    ],
+    ["invalid_max_tokens", { messages: [say("user")], max_tokens: 0 }, model],
+    [
+      "too_many_tools",
+      { messages: [say("user")], tools: Array.from({ length: 129 }, (_, i) => tool(`t${i}`)) },
+      model,
+      "129 tools, at most 128",
+    ],
+    ["invalid_tool_name", { messages: [say("user")], tools: [tool(`${secret}!`)] }, model],
+    [
+      "tool_description_too_long",
+      { messages: [say("user")], tools: [tool("t", secret.repeat(400))] },
+      model,
+    ],
+    [
+      "tools_unsupported",
+      { messages: [say("user")], tools: [tool("t")] },
+      { ...model, capabilities: ["text"] },
+    ],
+    ["invalid_tool_choice", { messages: [say("user")], tool_choice: "auto" }, model],
+    [
+      "structured_output_unsupported",
+      { messages: [say("user")], response_format: { type: "text" } },
+      { ...model, capabilities: ["text"] },
+    ],
+    ["invalid_parameter", { messages: [say("user")], temperature: secret }, model],
+  ]
+  for (const [reason, input, served, detail] of cases) {
+    for (const type of ["openai_chat", "anthropic_messages"] as const) {
+      const error = assertThrows(() => requestBody(input, served, type, OR), HttpError)
+      assertEquals([error.status, error.code, error.extra.reason], [400, "invalid_request", reason])
+      assert(error.message.startsWith("This request is not supported by the selected BOSS model"))
+      assert(error.message.includes(`(${reason}: `), error.message)
+      if (detail) assert(error.message.includes(detail), error.message)
+      assert(!error.message.includes(secret), error.message)
+    }
+  }
+})

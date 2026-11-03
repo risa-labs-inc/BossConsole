@@ -804,7 +804,11 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       const kind = request.method === "POST" && Object.hasOwn(ROUTES, path)
         ? ROUTES[path]
         : undefined
-      if (!kind) throw new HttpError(404, "not_found", "Unknown BOSS AI endpoint.")
+      if (!kind) {
+        throw new HttpError(404, "not_found", "Unknown BOSS AI endpoint.", {
+          reason: "unknown_endpoint",
+        })
+      }
       const input = kind === "transcription" && isMultipart(request)
         ? await multipartTranscription(request)
         : await readJson(request.body)
@@ -1408,6 +1412,9 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       })
     } catch (error) {
       if (!(error instanceof HttpError) || error.status >= 500) audit(`${phase}_failed`)
+      else if (error.code === "invalid_request" && typeof error.extra.reason === "string") {
+        audit(`invalid_request_${error.extra.reason}`)
+      }
       if (reservation) {
         if (failedEstimate) {
           audit("usage_unknown_estimate_charged")
