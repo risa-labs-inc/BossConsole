@@ -86,7 +86,8 @@ const TICKET_RE = /^[A-Za-z0-9_-]{43}$/
 const MESSAGE_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const VAPID_PUBLIC_RE = /^[A-Za-z0-9_-]{87}$/
-const PORTAL_ORIGINS = new Set(["https://fluck.risaboss.com", "https://fluck.ai"])
+// Portals that own Web Push subscriptions (keep aligned with the portal_origin CHECK on fluck_web_push_subscriptions).
+const PORTAL_ORIGINS = new Set(["https://fluck.risaboss.com", "https://fluck.ai", "https://evolvemax.com"])
 const PUSH_TIMEOUT_MS = 8000
 const NOTIFY_MAX_BODY = 131072
 const UPSTREAM_TIMEOUT_MS = 5000
