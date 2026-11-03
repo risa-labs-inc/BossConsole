@@ -659,6 +659,8 @@ const TIMING_FIELDS = [
   "output_tokens",
   "cache_read_tokens",
   "cache_write_tokens",
+  "thinking_replayed",
+  "thinking_dropped",
 ]
 
 Deno.test("timing: one content-free line per routed chat request", async () => {

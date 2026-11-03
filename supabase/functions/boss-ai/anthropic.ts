@@ -2,8 +2,10 @@ import { HttpError } from "./auth.ts"
 import { invalid, Obj, object } from "./wire.ts"
 
 // Native Anthropic Messages translation. Clients stay on OpenAI Chat Completions.
-// Thinking text is streamed to clients as reasoning deltas, but never replayed: OpenAI-format
-// clients cannot round-trip thinking blocks/signatures, so history is sent without them.
+// Thinking text streams to clients as reasoning deltas. A reply with signed thinking also carries
+// its whole content as one opaque `reasoning_details` entry; a client that hands it back unchanged
+// on that assistant message gets the content replayed verbatim, so the next tool round reuses the
+// model's reasoning instead of re-deriving it.
 
 export const ANTHROPIC_VERSION = "2023-06-01"
 // Models that always think: requesting a summarized display only makes the thinking visible (it is
@@ -39,6 +41,54 @@ const EPHEMERAL_1H = { type: "ephemeral", ttl: "1h" }
 export const CACHE_TTL_SECONDS = 300
 const CACHEABLE = ["text", "image", "tool_use", "tool_result"]
 
+export const CARRY_FORMAT = "boss-ai.anthropic.v1"
+// Lets a replay whose history was edited drop the stale thinking instead of failing (400).
+export const THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01"
+const THINKING = ["thinking", "redacted_thinking"]
+const CARRIED = ["text", "tool_use", ...THINKING]
+
+/** The `reasoning_details` that carry [blocks], or undefined when no signed thinking is in it. */
+export function encodeCarry(blocks: Obj[]): Obj[] | undefined {
+  const kept = blocks.filter((b) =>
+    CARRIED.includes(String(b.type)) && (b.type !== "thinking" || !!b.signature)
+  )
+  // Only a tool round is replayed (a final answer is not), so only it carries.
+  if (!kept.some((b) => b.type === "tool_use")) return undefined
+  if (!kept.some((b) => THINKING.includes(String(b.type)))) return undefined
+  return [{
+    type: "reasoning.encrypted",
+    format: CARRY_FORMAT,
+    index: 0,
+    data: JSON.stringify(kept),
+  }]
+}
+
+// The carried content, only when it still matches what the client sent: same text, same tool
+// calls in the same order. Anything else is ignored and the turn is rebuilt without thinking.
+function carried(m: Obj, text: string, calls: Obj[]): Obj[] | undefined {
+  if (!Array.isArray(m.reasoning_details)) return undefined
+  const entry = (m.reasoning_details as unknown[]).map((d) => object(d)).find((d) =>
+    d.format === CARRY_FORMAT && typeof d.data === "string"
+  )
+  if (!entry) return undefined
+  let blocks: unknown
+  try {
+    blocks = JSON.parse(String(entry.data))
+  } catch {
+    return undefined
+  }
+  if (!Array.isArray(blocks) || !blocks.every((b) => CARRIED.includes(String(object(b).type)))) {
+    return undefined
+  }
+  const content = blocks as Obj[]
+  const uses = content.filter((b) => b.type === "tool_use")
+  const sameText = content.filter((b) => b.type === "text").map((b) => String(b.text ?? ""))
+    .join("") === text
+  const sameCalls = uses.length === calls.length &&
+    uses.every((b, i) => b.id === calls[i].id && b.name === calls[i].name)
+  return sameText && sameCalls ? content : undefined
+}
+
 // Anthropic ids allow [a-zA-Z0-9_-] only; the same mapping applies to tool_use and tool_result.
 const safeId = (id: unknown) => String(id).replace(/[^a-zA-Z0-9_-]/g, "_")
 
@@ -68,7 +118,11 @@ function userBlocks(content: unknown): Obj[] {
   return out
 }
 
-export function anthropicMessages(input: Obj[]): { system: Obj[]; messages: Obj[] } {
+export function anthropicMessages(
+  input: Obj[],
+  replay = false,
+): { system: Obj[]; messages: Obj[]; replayed: number } {
+  let replayed = 0
   const system: Obj[] = []
   const messages: Obj[] = []
   const push = (role: string, blocks: Obj[]) => {
@@ -127,7 +181,12 @@ export function anthropicMessages(input: Obj[]): { system: Obj[]; messages: Obj[
           input: args,
         })
       }
-      push("assistant", blocks)
+      const text = blocks.filter((b) => b.type === "text").map((b) => b.text).join("")
+      const verbatim = replay
+        ? carried(m, text, blocks.filter((b) => b.type === "tool_use"))
+        : undefined
+      if (verbatim) replayed += verbatim.filter((b) => THINKING.includes(String(b.type))).length
+      push("assistant", verbatim ?? blocks)
     } else {
       const text = texts(m.content).map((b) => b.text).join("")
       push("user", [{
@@ -138,7 +197,7 @@ export function anthropicMessages(input: Obj[]): { system: Obj[]; messages: Obj[
     }
   }
   if (!messages.length) throw invalid("no_messages")
-  return { system, messages }
+  return { system, messages, replayed }
 }
 
 // Content blocks that cannot carry cache_control (thinking, unknown types) are left unmarked.
@@ -203,7 +262,9 @@ export function anthropicRequest(a: {
       "response_format json_object is not supported by this model; use json_schema.",
     )
   }
-  const converted = anthropicMessages(a.messages)
+  const thinking = thinkingFor(a.upstream, a.format)
+  const on = object(thinking.thinking ?? {}).type === "adaptive"
+  const converted = anthropicMessages(a.messages, on)
   const tools = a.tools?.map((t) => {
     const f = object(t.function)
     return {
@@ -218,7 +279,14 @@ export function anthropicRequest(a: {
     model: a.upstream,
     max_tokens: a.max,
     stream: a.stream,
-    ...thinkingFor(a.upstream, a.format),
+    ...(converted.replayed
+      ? {
+        thinking: {
+          ...object(thinking.thinking),
+          block_binding: { prefix_mismatch_behavior: "drop_block" },
+        },
+      }
+      : thinking),
     ...(cached.system.length ? { system: cached.system } : {}),
     messages: cached.messages,
     ...(cached.tools ? { tools: cached.tools } : {}),
@@ -239,7 +307,13 @@ function count(value: unknown): number | null {
 }
 
 // prompt = input + cache reads + cache writes, so settlement keeps charging every token processed.
-export function anthropicUsage(value: unknown): Obj | null {
+/** Replayed thinking blocks the API dropped (history edited or another model's), when reported. */
+export function thinkingDropped(message: Obj): number {
+  const t = message.input_transformations
+  return Array.isArray(t) ? t.filter((x) => object(x).type === "thinking_dropped").length : 0
+}
+
+export function anthropicUsage(value: unknown, dropped = 0): Obj | null {
   if (!value || typeof value !== "object") return null
   const u = value as Obj
   const input = count(u.input_tokens), output = count(u.output_tokens)
@@ -263,6 +337,7 @@ export function anthropicUsage(value: unknown): Obj | null {
       cached_tokens: read,
       cache_write_tokens: write,
       ...(hour ? { cache_write_1h_tokens: Math.min(hour, write) } : {}),
+      ...(dropped ? { thinking_dropped: dropped } : {}),
     },
   }
 }
@@ -283,6 +358,7 @@ export function anthropicCompletion(value: Obj, model: string, id: string): Obj 
   }
   const blocks = Array.isArray(value.content) ? value.content.map((value) => object(value)) : []
   const text = blocks.filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("")
+  const carry = encodeCarry(blocks)
   const calls = blocks.filter((b) => b.type === "tool_use").map((b) => ({
     id: b.id,
     type: "function",
@@ -299,10 +375,11 @@ export function anthropicCompletion(value: Obj, model: string, id: string): Obj 
         role: "assistant",
         content: text || null,
         ...(calls.length ? { tool_calls: calls } : {}),
+        ...(carry ? { reasoning_details: carry } : {}),
       },
       finish_reason: finishReason(value.stop_reason),
     }],
-    usage: anthropicUsage(value.usage),
+    usage: anthropicUsage(value.usage, thinkingDropped(value)),
   }
 }
 
@@ -315,6 +392,10 @@ export class AnthropicStream {
   private start: Obj = {}
   private stop: unknown
   private tools = new Map<number, number>()
+  private dropped = 0
+  // Every content block as it arrives, rebuilt for the carry; tool input JSON accumulates as text.
+  private blocks = new Map<number, Obj>()
+  private inputs = new Map<number, string>()
   // Tool blocks that streamed argument text; one with none gets "{}" at its stop.
   private argued = new Set<number>()
   constructor(
@@ -331,15 +412,28 @@ export class AnthropicStream {
       choices: [{ index: 0, delta: { role: "assistant", ...delta }, finish_reason: finish }],
     }
   }
+  private content(): Obj[] {
+    return [...this.blocks.entries()].sort(([a], [b]) => a - b).map(([i, b]) => {
+      if (b.type !== "tool_use") return b
+      const raw = this.inputs.get(i) ?? ""
+      try {
+        return { ...b, input: raw ? JSON.parse(raw) : {} }
+      } catch {
+        return { ...b, type: "unparsed" } // never carried
+      }
+    })
+  }
   accept(e: Obj): Obj[] {
     switch (e.type) {
       case "message_start":
+        this.dropped = thinkingDropped(object(e.message))
         this.start = object(object(e.message).usage ?? {})
         this.promptTokens = Number(anthropicUsage(this.start)?.prompt_tokens ?? NaN)
         if (!Number.isFinite(this.promptTokens)) this.promptTokens = null
         return [this.chunk({ content: "" })]
       case "content_block_start": {
         const block = object(e.content_block)
+        this.blocks.set(Number(e.index), { ...block })
         if (block.type !== "tool_use") return []
         const index = this.tools.size
         this.tools.set(Number(e.index), index)
@@ -354,6 +448,18 @@ export class AnthropicStream {
       }
       case "content_block_delta": {
         const d = object(e.delta)
+        const block = this.blocks.get(Number(e.index))
+        if (block && d.type === "text_delta") block.text = String(block.text ?? "") + (d.text ?? "")
+        if (block && d.type === "thinking_delta") {
+          block.thinking = String(block.thinking ?? "") + (d.thinking ?? "")
+        }
+        if (block && d.type === "signature_delta") {
+          block.signature = String(block.signature ?? "") + (d.signature ?? "")
+        }
+        if (d.type === "input_json_delta") {
+          const at = Number(e.index)
+          this.inputs.set(at, (this.inputs.get(at) ?? "") + String(d.partial_json ?? ""))
+        }
         if (d.type === "text_delta") return [this.chunk({ content: String(d.text ?? "") })]
         if (d.type === "thinking_delta") {
           return d.thinking ? [this.chunk({ reasoning_content: String(d.thinking) })] : []
@@ -376,13 +482,15 @@ export class AnthropicStream {
       case "message_delta": {
         this.stop = object(e.delta).stop_reason
         // Cumulative: fields reported here replace those from message_start.
-        this.usage = anthropicUsage({ ...this.start, ...object(e.usage ?? {}) })
+        this.usage = anthropicUsage({ ...this.start, ...object(e.usage ?? {}) }, this.dropped)
         if (this.usage) this.tokens = Number(this.usage.total_tokens)
         return []
       }
       case "message_stop": {
         this.finished = true
+        const carry = encodeCarry(this.content())
         return [
+          ...(carry ? [this.chunk({ reasoning_details: carry })] : []),
           this.chunk({}, finishReason(this.stop)),
           ...(this.usage
             ? [{
