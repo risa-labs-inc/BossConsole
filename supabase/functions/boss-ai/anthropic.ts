@@ -19,11 +19,24 @@ const ALWAYS_THINKS = new Set([
   "claude-fable-5-1",
   "claude-fable-5",
 ])
+// The fast tier answers without thinking: first visible token ~0.7 s vs ~1.3 s adaptive, same
+// accuracy on a 300-call warm-cache probe (2026-11-02). A json_schema request keeps adaptive.
+const THINKING_OFF = new Set(["claude-haiku-5-5"])
+
+function thinkingFor(upstream: string, format?: Obj): Obj {
+  if (!ALWAYS_THINKS.has(upstream)) return {}
+  if (THINKING_OFF.has(upstream) && format?.type !== "json_schema") {
+    return { thinking: { type: "disabled" } }
+  }
+  return { thinking: { type: "adaptive", display: "summarized" } }
+}
 const EPHEMERAL = { type: "ephemeral" }
 // Tools and system change only with a release or persona, so they outlive a 5-minute gap between
 // turns: 2x write once an hour beats 1.25x after every pause. Longer TTLs must precede shorter ones,
 // which the tools -> system -> messages order guarantees.
 const EPHEMERAL_1H = { type: "ephemeral", ttl: "1h" }
+// Anthropic's ephemeral cache lives this long after its last use. Sticky routing must not outlive it.
+export const CACHE_TTL_SECONDS = 300
 const CACHEABLE = ["text", "image", "tool_use", "tool_result"]
 
 // Anthropic ids allow [a-zA-Z0-9_-] only; the same mapping applies to tool_use and tool_result.
@@ -205,9 +218,7 @@ export function anthropicRequest(a: {
     model: a.upstream,
     max_tokens: a.max,
     stream: a.stream,
-    ...(ALWAYS_THINKS.has(a.upstream)
-      ? { thinking: { type: "adaptive", display: "summarized" } }
-      : {}),
+    ...thinkingFor(a.upstream, a.format),
     ...(cached.system.length ? { system: cached.system } : {}),
     messages: cached.messages,
     ...(cached.tools ? { tools: cached.tools } : {}),

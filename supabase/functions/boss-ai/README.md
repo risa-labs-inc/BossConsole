@@ -520,7 +520,7 @@ Everything below is a row you can edit; nothing is hardcoded.
 | `default_tier`                                          | standard                                       | Also used when the decider fails or times out                                                                                      |
 | `fast_model_id`, `standard_model_id`, `strong_model_id` | required                                       | Tier models; may be `published=false`                                                                                              |
 | `exhausted_model_id`                                    | NULL (= fast)                                  | Served when the budget is used up                                                                                                  |
-| `sticky_within_turn`                                    | true                                           | A tool loop keeps the tier decided for its turn                                                                                    |
+| `sticky_within_turn`                                    | true                                           | A tool loop keeps the tier decided for its turn, while its prompt cache could be warm (5 min since last use)                       |
 | `monthly_usd_limit`                                     | 100                                            | Per user, UTC calendar month                                                                                                       |
 | `strong_cap_at` / `fast_only_at`                        | 0.60 / 0.85                                    | Spend ratios: strong becomes standard, then everything becomes fast                                                                |
 | `hard_stop_at`                                          | NULL                                           | Ratio of the limit at which calls are refused (429 `budget_exhausted`); NULL = never refuse                                        |
@@ -569,8 +569,10 @@ one user.
   attached, the estimated prompt size and whether tools are offered.
 - **Sticky**: a call whose last message is a tool result reuses the tier stored for the turn (key =
   sha256 of user, router and the messages before the last user message, which clients such as Max
-  rewrite on every tool round; 30 minutes) because prompt caching is per model. Without a stored
-  decision the decider is asked.
+  rewrite on every tool round) because prompt caching is per model. A stored decision is valid only
+  while its last use is within the prompt-cache TTL (`CACHE_TTL_SECONDS` = 300, Anthropic's
+  ephemeral cache); each sticky hit renews it. After that, or with no stored decision, the decider
+  is asked and its answer stored.
 - **Budget**: spend is `cost_usd` summed over the user's requests served through the router this UTC
   month, counting the reserved estimate of requests still in flight. At 60% strong calls are served
   by standard, at 85% everything by fast; a call whose estimate (prompt at the input price plus
@@ -632,6 +634,30 @@ Local debugging only: with the environment variable `BOSS_AI_ROUTE_TRACE=1` each
 one `route_trace` JSON line (request, user, route source, tier, probabilities, confidence, decider
 latency, served model, token counts, cost, month spend) plus the decider state text and the first
 2,000 characters of the reply. It logs content: never set it in production.
+
+## Timing log
+
+Every `/v1/chat/completions` request, routed or plain, logs one `timing` line when it ends (stream:
+when the stream ends). It is always on and content-free: ids, flags and numbers only, never
+messages, replies, decider state or keys. Durations are milliseconds from `performance.now()`,
+`null` when the stage did not run on that path.
+
+`{event:"timing", request_id, user, requested_model, served_model, tier, route_source, stream,
+auth_ms, route_context_ms, route_ms, sticky_get_ms, decider_ms, reserve_ms, upstream_headers_ms,
+first_token_ms, upstream_total_ms, settle_ms, total_ms, attempts, status, input_tokens,
+output_tokens, cache_read_tokens, cache_write_tokens}`
+
+- `auth_ms` token verification; `route_context_ms` the `boss_ai_lookup` RPC (carries the router
+  context); `route_ms` the whole tier choice, of which `sticky_get_ms` is the sticky RPC and
+  `decider_ms` the decider call; `reserve_ms` the reservation/budget RPC; `settle_ms` settlement.
+- `upstream_headers_ms`, `first_token_ms` (first streamed content or tool-call delta; reasoning does
+  not count; `null` when not streaming) and `upstream_total_ms` are measured from the start of the
+  attempt that served, so time lost on failed fallback attempts shows up only in `total_ms`.
+  `attempts` counts upstream requests sent.
+- `status` is the HTTP status (a stream ends 200, 499 when the client cancelled, 502 when cut).
+  Token counts are the settled breakdown (`input_tokens` excludes cache reads and writes) and `null`
+  when usage was not reported. Requests refused before the model is known (bad token, bad body) log
+  no timing line.
 
 ## Allowance semantics
 

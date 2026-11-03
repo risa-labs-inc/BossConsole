@@ -1,4 +1,5 @@
 import { assert, assertEquals } from "@std/assert"
+import { CACHE_TTL_SECONDS } from "../anthropic.ts"
 import { createHandler } from "../app.ts"
 import { mintToken, signingKey } from "../auth.ts"
 import { Connection, Obj } from "../wire.ts"
@@ -312,7 +313,8 @@ Deno.test("router: a tool loop continuation reuses the turn's tier without askin
   assertEquals(f.deciderCalls().length, 0)
   const get = f.calls.find((c) => c.name === "boss_ai_route_get")!.params
   assert(/^[0-9a-f]{64}$/.test(String(get.p_key)))
-  // Not remembered yet (e.g. a new isolate or an expired entry): the decider is asked after all.
+  assertEquals(get.p_ttl_seconds, CACHE_TTL_SECONDS)
+  // Not remembered (never stored, or idle past the cache TTL, which the RPC reports as null): the decider is asked after all.
   const cold = await fixture({ sticky: null, scores: FAST })
   assertEquals(headersOf(await cold.send({ messages: loop })).source, "decider")
   assertEquals(cold.deciderCalls().length, 1)
@@ -629,4 +631,81 @@ Deno.test("regular upstream connections may use local http only with BOSS_AI_ALL
   const off = await fixture({ localUpstream: true })
   assertEquals((await off.send()).status, 503)
   assertEquals(off.fetched.some((x) => x.url.startsWith("http://127.0.0.1")), false)
+})
+
+const TIMING_FIELDS = [
+  "event",
+  "request_id",
+  "user",
+  "requested_model",
+  "served_model",
+  "tier",
+  "route_source",
+  "stream",
+  "auth_ms",
+  "route_context_ms",
+  "route_ms",
+  "sticky_get_ms",
+  "decider_ms",
+  "reserve_ms",
+  "upstream_headers_ms",
+  "first_token_ms",
+  "upstream_total_ms",
+  "settle_ms",
+  "total_ms",
+  "attempts",
+  "status",
+  "input_tokens",
+  "output_tokens",
+  "cache_read_tokens",
+  "cache_write_tokens",
+]
+
+Deno.test("timing: one content-free line per routed chat request", async () => {
+  const f = await fixture({ spent: 12.5 })
+  const response = await f.send({ messages: [{ role: "user", content: "SECRET-PROMPT-TEXT" }] })
+  await response.text()
+  const lines = f.logs.filter((l) => l.event === "timing")
+  assertEquals(lines.length, 1)
+  const t = lines[0]
+  assertEquals(Object.keys(t).sort(), [...TIMING_FIELDS].sort())
+  assertEquals(
+    [t.user, t.requested_model, t.served_model, t.tier, t.route_source, t.stream, t.status],
+    [user, "optimist", "optimist-strong", "strong", "decider", false, 200],
+  )
+  assertEquals([t.attempts, t.input_tokens, t.output_tokens], [1, 100, 50])
+  for (const k of ["auth_ms", "route_context_ms", "route_ms", "decider_ms", "reserve_ms"]) {
+    assert(typeof t[k] === "number", k)
+  }
+  for (const k of ["upstream_headers_ms", "upstream_total_ms", "settle_ms", "total_ms"]) {
+    assert(typeof t[k] === "number", k)
+  }
+  assertEquals([t.first_token_ms, t.sticky_get_ms], [null, null])
+  const text = JSON.stringify(t)
+  for (const secret of ["SECRET-PROMPT-TEXT", "the answer", "Bearer", f.token]) {
+    assert(!text.includes(secret), secret)
+  }
+})
+
+Deno.test("timing: a streamed request reports time to first token, and a refused one still logs", async () => {
+  const sse = [
+    { type: "message_start", message: { usage: { input_tokens: 10, output_tokens: 1 } } },
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hello" } },
+    { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } },
+    { type: "message_stop" },
+  ].map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("")
+  const f = await fixture({ stream: sse })
+  await (await f.send({ stream: true })).text()
+  const t = f.logs.find((l) => l.event === "timing")!
+  assertEquals([t.stream, t.status, t.attempts], [true, 200, 1])
+  assert(typeof t.first_token_ms === "number" && typeof t.upstream_total_ms === "number")
+  assert(Number(t.first_token_ms) <= Number(t.upstream_total_ms))
+  assertEquals(t.output_tokens, 5)
+
+  const refused = await fixture({ reserveError: { error: "budget_exhausted", budget: {} } })
+  assertEquals((await refused.send()).status, 429)
+  const r = refused.logs.find((l) => l.event === "timing")!
+  assertEquals([r.status, r.attempts, r.upstream_headers_ms, r.served_model], [429, 0, null, null])
 })

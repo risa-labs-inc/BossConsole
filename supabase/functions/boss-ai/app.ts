@@ -8,6 +8,7 @@ import {
   signingKey,
   verifyClaims,
 } from "./auth.ts"
+import { CACHE_TTL_SECONDS } from "./anthropic.ts"
 import { LiveKit, liveKitClients, LiveKitConfig } from "./livekit.ts"
 import {
   capped,
@@ -322,6 +323,15 @@ export function neverReached(error: unknown): boolean {
 }
 
 /** At most 4 KB of an upstream error body; only error.type/code/message are kept, never content. */
+// A streamed chunk carrying answer text or a tool call (reasoning and keepalives do not count).
+function hasContentDelta(chunk: Obj): boolean {
+  return ((chunk.choices as Obj[] | undefined) ?? []).some((c) => {
+    const d = c.delta as Obj | undefined
+    return !!d && ((typeof d.content === "string" && d.content !== "") ||
+      (Array.isArray(d.tool_calls) && d.tool_calls.length > 0))
+  })
+}
+
 async function errorInfo(response: Response): Promise<{ type: string | null; message: string }> {
   const none = { type: null, message: "" }
   const reader = response.body?.getReader()
@@ -507,6 +517,54 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         else console.warn(JSON.stringify(entry))
       } catch { /* Observability must not change accounting or response cleanup. */ }
     }
+    // One content-free `timing` line per chat request: ids, flags and numbers only.
+    const t0 = performance.now()
+    const lap = (from: number) => Math.round((performance.now() - from) * 10) / 10
+    const timing: Obj = { user: null, requested_model: null, stream: null }
+    const stage: Record<string, number | null> = {}
+    let isChat = false
+    let attempts = 0
+    let attemptStart = 0
+    let headersAt = 0
+    let firstTokenAt: number | null = null
+    let tokenBreakdown: Obj = {}
+    let servedModel: string | null = null
+    let timingTier: unknown = null
+    let timingSource: unknown = null
+    let timingEmitted = false
+    const emitTiming = (status: number) => {
+      if (!isChat || timingEmitted) return
+      timingEmitted = true
+      logLine({
+        event: "timing",
+        request_id: requestId,
+        user: timing.user,
+        requested_model: timing.requested_model,
+        served_model: servedModel,
+        tier: timingTier,
+        route_source: timingSource,
+        stream: timing.stream,
+        auth_ms: stage.auth_ms ?? null,
+        route_context_ms: stage.route_context_ms ?? null,
+        route_ms: stage.route_ms ?? null,
+        sticky_get_ms: stage.sticky_get_ms ?? null,
+        decider_ms: stage.decider_ms ?? null,
+        reserve_ms: stage.reserve_ms ?? null,
+        upstream_headers_ms: stage.upstream_headers_ms ?? null,
+        first_token_ms: firstTokenAt === null
+          ? null
+          : Math.round((firstTokenAt - attemptStart) * 10) / 10,
+        upstream_total_ms: stage.upstream_total_ms ?? null,
+        settle_ms: stage.settle_ms ?? null,
+        total_ms: lap(t0),
+        attempts,
+        status,
+        input_tokens: tokenBreakdown.input ?? null,
+        output_tokens: tokenBreakdown.output ?? null,
+        cache_read_tokens: tokenBreakdown.cacheRead ?? null,
+        cache_write_tokens: tokenBreakdown.cacheWrite ?? null,
+      })
+    }
     const upstreamError = (
       route: Route,
       status: number | null,
@@ -545,7 +603,12 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       let decision: Decision | undefined
       let sticky: unknown = null
       if (cfg.sticky_within_turn && isContinuation(messages)) {
-        sticky = await deps.rpc("boss_ai_route_get", { p_key: key }).catch(() => null)
+        const started = performance.now()
+        sticky = await deps.rpc("boss_ai_route_get", {
+          p_key: key,
+          p_ttl_seconds: CACHE_TTL_SECONDS,
+        }).catch(() => null)
+        stage.sticky_get_ms = lap(started)
       }
       if (TIERS.includes(sticky as Tier)) {
         tier = sticky as Tier
@@ -650,7 +713,9 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         : AUDIO_PATHS.includes(path)
         ? ["inference", "voice"]
         : ["inference"]
+      const authStart = performance.now()
       const { user, scope } = await verifyClaims(token, key, scopes)
+      stage.auth_ms = lap(authStart)
       if (request.method === "GET" && path === "/v1/provider") {
         return json(
           {
@@ -755,11 +820,16 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           "This token is restricted to the call's voice models.",
         )
       }
+      isChat = kind === "chat"
+      timing.user = user
+      timing.requested_model = input.model
+      timing.stream = input.stream === true
       phase = "validation"
+      const lookupStart = performance.now()
       const lookup = await deps.rpc("boss_ai_lookup", {
         p_user_id: user,
         p_model_id: input.model,
-      }) as {
+      }).finally(() => stage.route_context_ms = lap(lookupStart)) as {
         error?: string
         model: Model
         connection: Connection
@@ -787,9 +857,13 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       let routing: Routing | undefined
       if (kind === "chat" && lookup.router) {
         phase = "routing"
+        const routeStart = performance.now()
         routing = await route(lookup.router, input, user)
+        stage.route_ms = lap(routeStart)
+        stage.decider_ms = routing.decision?.latency_ms ?? null
       }
       phase = "reservation"
+      const reserveStart = performance.now()
       const result = await deps.rpc(
         routing ? "boss_ai_reserve_routed" : "boss_ai_reserve",
         routing
@@ -803,7 +877,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
             p_est_cost: routing.estimate,
           }
           : { p_user_id: user, p_model_id: input.model, p_request_id: requestId },
-      ) as {
+      ).finally(() => stage.reserve_ms = lap(reserveStart)) as {
         error?: string
         usage?: unknown
         budget?: Obj
@@ -845,6 +919,9 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         throw new HttpError(429, "busy", "Too many requests for this model. Try again shortly.")
       }
       reservation = requestId
+      servedModel = result.model.id
+      timingTier = result.tier ?? null
+      timingSource = result.route_source ?? null
       if (result.model.kind !== kind) throw wrongKind()
       // Over allowance the reservation was admitted against a cheaper model: serve from it, keep
       // the requested id in responses so clients do not break, and say so in headers.
@@ -940,7 +1017,9 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         try {
           phase = "upstream_dispatch"
           dispatched = true
+          attempts++
           payload = JSON.stringify(prepared.body)
+          attemptStart = performance.now()
           upstream = await deps.fetch(url, {
             method: "POST",
             redirect: "error",
@@ -967,6 +1046,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           continue
         }
         clearTimeout(timer)
+        headersAt = performance.now()
         if (!upstream.ok) {
           const info = await errorInfo(upstream)
           release()
@@ -997,6 +1077,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           continue
         }
         cooldown.delete(route.key)
+        stage.upstream_headers_ms = Math.round((headersAt - attemptStart) * 10) / 10
         won = { route, prepared, upstream, bytes: payload.length }
       }
       if (!won) {
@@ -1057,6 +1138,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         } else if (est) u = { ...est, cacheRead: 0, cacheWrite: 0 }
         else return {}
         lastUsage = usage
+        tokenBreakdown = u
         const { cost, missing } = costUsd(pricesOf(served.model as unknown as Obj), u)
         if (missing && routing) audit("price_missing")
         lastCost = cost
@@ -1103,7 +1185,12 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           audit(kind === "chat" ? "usage_exceeds_configured_context" : "usage_exceeds_reservation")
         }
         phase = "settlement"
-        await settleReservation(deps, requestId, tokens, audit, extra)
+        const settleStart = performance.now()
+        try {
+          await settleReservation(deps, requestId, tokens, audit, extra)
+        } finally {
+          stage.settle_ms = lap(settleStart)
+        }
       }
       if (kind === "transcription") {
         try {
@@ -1175,6 +1262,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           const payload = await readJson(upstream.body, 16 * 1024 * 1024).catch(() => {
             throw new HttpError(502, "upstream_error", "The model returned an invalid response.")
           })
+          stage.upstream_total_ms = lap(attemptStart)
           const output = completion(
             payload,
             input.model,
@@ -1190,6 +1278,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           )
           trace(String(((output.choices as Obj[])[0].message as Obj)?.content ?? ""))
           reservation = undefined
+          emitTiming(200)
           return json(output, 200, requestId, downgrade)
         } finally {
           cleanup()
@@ -1206,9 +1295,11 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         encoder.encode(`data: ${typeof data === "string" ? data : JSON.stringify(data)}\n\n`)
       let closed = false
       let clientCancelled = false
+      let streamStatus = 200
       const finish = async (tokens: number | null) => {
         if (closed) return
         closed = true
+        stage.upstream_total_ms = lap(attemptStart)
         abort.abort()
         cleanup()
         await iterator.return?.(undefined).catch(() => {})
@@ -1235,7 +1326,11 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         }
         // If settlement fails the full reservation remains charged. Never refund
         // an unknown outcome merely because a worker or a client disconnected.
-        await settleWithRetry(settled, extra)
+        try {
+          await settleWithRetry(settled, extra)
+        } finally {
+          emitTiming(streamStatus)
+        }
         trace(adapter.replyText)
       }
       // While the model thinks the upstream can be silent for minutes and the client gives up on a
@@ -1269,6 +1364,9 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
                 return
               }
               const chunks = adapter.accept(next.value)
+              if (firstTokenAt === null && chunks.some(hasContentDelta)) {
+                firstTokenAt = performance.now()
+              }
               for (const chunk of chunks) controller.enqueue(frame(chunk))
               if (adapter.finished) {
                 await finish(adapter.tokens)
@@ -1280,6 +1378,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
             }
           } catch {
             audit("stream_failed")
+            streamStatus = clientCancelled ? 499 : 502
             await finish(adapter.tokens)
             if (clientCancelled) return
             controller.enqueue(
@@ -1295,6 +1394,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         },
         async cancel() {
           clientCancelled = true
+          streamStatus = 499
           await finish(adapter.tokens)
         },
       })
@@ -1330,6 +1430,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           )
         }
       }
+      emitTiming(error instanceof HttpError ? error.status : 500)
       return failure(error, requestId)
     }
   }

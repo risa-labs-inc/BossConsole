@@ -444,6 +444,30 @@ Deno.test("POST /api/push/notify prunes subscriptions the push service reports g
   }
 }))
 
+Deno.test("POST /api/push/notify sends to an evolvemax.com subscription and links back to that portal, and skips an unknown origin", withEnv(async () => {
+  const pushed: Call[] = []
+  const stub = stubFetch((call) => {
+    if (call.url.endsWith("/rpc/fluck_web_push_redeem")) {
+      return json(redeemed([
+        { id: SUB_ID, endpoint: FCM, origin: "https://evolvemax.com" },
+        { id: SUB_ID_2, endpoint: APPLE, origin: "https://not-a-portal.example" },
+      ]))
+    }
+    pushed.push(call)
+    return new Response(null, { status: 201 })
+  })
+  try {
+    const res = await notify({ ticket: TICKET, message_id: "m1" })
+    assertEquals(res.status, 202)
+    assertEquals(await res.json(), { sent: 1, pruned: 0 })
+    assertEquals(pushed.map((c) => c.url), [FCM])
+    const payload = JSON.parse(await decrypt(new Uint8Array(pushed[0].init!.body as Uint8Array)))
+    assertEquals(payload.url, "https://evolvemax.com/?instance=inst-a")
+  } finally {
+    stub.restore()
+  }
+}))
+
 Deno.test("POST /api/push/notify does not prune on a transient failure, a throw, or a refused subscription", withEnv(async () => {
   const stub = stubFetch((call) => {
     if (call.url.endsWith("/rpc/fluck_web_push_redeem")) {
