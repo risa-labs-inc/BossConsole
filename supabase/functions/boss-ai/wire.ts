@@ -4,6 +4,7 @@ import {
   anthropicCompletion,
   anthropicRequest,
   AnthropicStream,
+  THINKING_BINDING_BETA,
 } from "./anthropic.ts"
 
 const MAX_MESSAGES = 512
@@ -11,6 +12,9 @@ const MAX_TOOLS = 128
 const MAX_TOOL_CALLS_PER_MESSAGE = 128
 const MAX_TOOL_DESCRIPTION_LENGTH = 4_096
 const MAX_TOOL_SCHEMA_LENGTH = 65_536
+// The client's copy of a turn's reasoning: at most a few entries, bounded like the gateway plugin's.
+const MAX_REASONING_DETAILS = 16
+const MAX_REASONING_CHARS = 512 * 1024
 
 function boundedToolSchema(value: unknown): void {
   const pending: { value: unknown; depth: number }[] = [{ value: object(value), depth: 0 }]
@@ -206,11 +210,16 @@ export function upstreamHeaders(
   connection: Connection,
   key: string,
   chat = true,
+  body?: Obj,
 ): Record<string, string> {
+  // Replayed thinking asks for drop-instead-of-400 (block_binding), which needs the beta header.
+  const thinking = body?.thinking
+  const binding = !!thinking && typeof thinking === "object" && "block_binding" in thinking
   return chat && connection.api_type === "anthropic_messages"
     ? {
       "x-api-key": key,
       "anthropic-version": ANTHROPIC_VERSION,
+      ...(binding ? { "anthropic-beta": THINKING_BINDING_BETA } : {}),
       "Content-Type": "application/json",
     }
     : { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }
@@ -335,9 +344,18 @@ export function requestBody(
     }
     if (
       Object.keys(m).some((k) =>
-        !["role", "content", "tool_calls", "tool_call_id", "name"].includes(k)
+        !["role", "content", "tool_calls", "tool_call_id", "name", "reasoning_details"].includes(k)
       )
     ) throw invalid("unknown_field")
+    if (m.reasoning_details !== undefined) {
+      const details = m.reasoning_details
+      if (
+        m.role !== "assistant" || !Array.isArray(details) ||
+        details.length > MAX_REASONING_DETAILS ||
+        !details.every((d) => d && typeof d === "object" && !Array.isArray(d)) ||
+        JSON.stringify(details).length > MAX_REASONING_CHARS
+      ) throw invalid("invalid_message", "reasoning_details")
+    }
     if (m.content !== null && typeof m.content !== "string") {
       if (!Array.isArray(m.content)) throw invalid("invalid_message", "content")
       for (const part of m.content) {
@@ -398,6 +416,11 @@ export function requestBody(
         (Array.isArray(m.content) && m.content.some((part) => object(part).type !== "text")))
     ) {
       throw invalid("invalid_tool_message", "content must be text")
+    }
+    // Only the native Anthropic route reads reasoning back; other upstreams never see it.
+    if (m.reasoning_details !== undefined && type !== "anthropic_messages") {
+      const { reasoning_details: _, ...rest } = m
+      return rest
     }
     return m
   })

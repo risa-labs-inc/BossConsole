@@ -58,6 +58,19 @@ import {
   upstreamKey,
 } from "./wire.ts"
 
+/** Thinking blocks a native Anthropic request replays, or null for other upstreams. */
+function replayedThinking(body: Obj): number | null {
+  if (!body.thinking || !Array.isArray(body.messages)) return null
+  let n = 0
+  for (const m of body.messages as Obj[]) {
+    if (!Array.isArray(m.content)) continue
+    for (const b of m.content as Obj[]) {
+      if (b.type === "thinking" || b.type === "redacted_thinking") n++
+    }
+  }
+  return n
+}
+
 class SettlementTimeoutError extends Error {
   constructor() {
     super("settlement_timeout")
@@ -528,6 +541,11 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
     let headersAt = 0
     let firstTokenAt: number | null = null
     let tokenBreakdown: Obj = {}
+    // Thinking blocks sent back to the model, and how many of those it dropped (history edited).
+    const thinking: { replayed: number | null; dropped: number | null } = {
+      replayed: null,
+      dropped: null,
+    }
     let servedModel: string | null = null
     let timingTier: unknown = null
     let timingSource: unknown = null
@@ -563,6 +581,8 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         output_tokens: tokenBreakdown.output ?? null,
         cache_read_tokens: tokenBreakdown.cacheRead ?? null,
         cache_write_tokens: tokenBreakdown.cacheWrite ?? null,
+        thinking_replayed: thinking.replayed,
+        thinking_dropped: thinking.dropped,
       })
     }
     const upstreamError = (
@@ -992,6 +1012,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         let prepared: Prepared, url: string, apiKey: string
         try {
           prepared = prepare(route.model, route.connection, sent)
+          thinking.replayed = replayedThinking(prepared.body)
           url = kind === "chat" ? endpoint(route.connection, allowLocal) : audioEndpoint(
             route.connection,
             kind === "speech" ? "speech" : "transcriptions",
@@ -1028,7 +1049,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
             method: "POST",
             redirect: "error",
             signal: attempt.signal,
-            headers: upstreamHeaders(route.connection, apiKey, kind === "chat"),
+            headers: upstreamHeaders(route.connection, apiKey, kind === "chat", prepared.body),
             body: payload,
           })
         } catch (e) {
@@ -1132,6 +1153,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           const d = (usage.prompt_tokens_details ?? {}) as Obj
           const cacheRead = Number(d.cached_tokens) || 0
           const cacheWrite = Number(d.cache_write_tokens) || 0
+          if (thinking.replayed !== null) thinking.dropped = Number(d.thinking_dropped) || 0
           u = {
             input: Math.max(0, Number(usage.prompt_tokens) - cacheRead - cacheWrite),
             output: Number(usage.completion_tokens),
