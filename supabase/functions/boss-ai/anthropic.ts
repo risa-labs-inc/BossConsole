@@ -63,8 +63,11 @@ export function encodeCarry(blocks: Obj[]): Obj[] | undefined {
   }]
 }
 
-// The carried content, only when it still matches what the client sent: same text, same tool
-// calls in the same order. Anything else is ignored and the turn is rebuilt without thinking.
+// The carried content, only when it still matches what the client sent: the same text (outer
+// whitespace aside) and the same tool names in the same order. Clients may renumber tool call
+// ids (Max does), so each tool_use takes the client's id, which its tool_result names. The
+// thinking stays valid: a block's signature covers what precedes it, not the calls after it.
+// Anything else is ignored and the turn is rebuilt without thinking.
 function carried(m: Obj, text: string, calls: Obj[]): Obj[] | undefined {
   if (!Array.isArray(m.reasoning_details)) return undefined
   const entry = (m.reasoning_details as unknown[]).map((d) => object(d)).find((d) =>
@@ -83,10 +86,12 @@ function carried(m: Obj, text: string, calls: Obj[]): Obj[] | undefined {
   const content = blocks as Obj[]
   const uses = content.filter((b) => b.type === "tool_use")
   const sameText = content.filter((b) => b.type === "text").map((b) => String(b.text ?? ""))
-    .join("") === text
+    .join("").trim() === text.trim()
   const sameCalls = uses.length === calls.length &&
-    uses.every((b, i) => b.id === calls[i].id && b.name === calls[i].name)
-  return sameText && sameCalls ? content : undefined
+    uses.every((b, i) => b.name === calls[i].name)
+  if (!sameText || !sameCalls) return undefined
+  let call = 0
+  return content.map((b) => b.type === "tool_use" ? { ...b, id: calls[call++].id } : b)
 }
 
 // Anthropic ids allow [a-zA-Z0-9_-] only; the same mapping applies to tool_use and tool_result.
