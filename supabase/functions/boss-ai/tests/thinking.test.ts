@@ -154,11 +154,11 @@ Deno.test("thinking: a carry that no longer matches the turn is ignored", () => 
     { type: "text", text: "Looking." },
     { type: "tool_use", id: "toolu_1", name: "look", input: { at: "top" } },
   ]
-  // Edited text, another tool id, a missing call, junk data, an unknown block type, another format.
+  // Edited text, another tool name, a missing call, junk data, an unknown block type, another format.
   for (
     const details of [
       carry([ROUND[0], { type: "text", text: "Looking!" }, ROUND[2]]),
-      carry([ROUND[0], ROUND[1], { ...ROUND[2], id: "toolu_9" }]),
+      carry([ROUND[0], ROUND[1], { ...ROUND[2], name: "peek" }]),
       carry([ROUND[0], ROUND[1]]),
       [{ ...carry()[0], data: "{not json" }],
       carry([...ROUND, { type: "server_tool_use", id: "x" }]),
@@ -169,6 +169,32 @@ Deno.test("thinking: a carry that no longer matches the turn is ignored", () => 
     assertEquals(plain(assistantTurn(out)), rebuilt)
     assert(!("block_binding" in (out.thinking as Obj)))
   }
+})
+
+Deno.test("thinking: a client that renumbers tool ids still gets its thinking back", () => {
+  // Max replaces provider tool ids with its own and sends no text for a whitespace-only reply.
+  const round = [ROUND[0], { type: "text", text: "\n\n" }, ROUND[2]]
+  const out = body({
+    tools: [tool],
+    messages: [
+      { role: "user", content: "what is on top?" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: "a1b2c3d4-0",
+          type: "function",
+          function: { name: "look", arguments: '{"at":"top"}' },
+        }],
+        reasoning_details: carry(round),
+      },
+      { role: "tool", tool_call_id: "a1b2c3d4-0", content: "a title bar" },
+    ],
+  })
+  // The saved content comes back as the model wrote it, its call under the client's id.
+  assertEquals(plain(assistantTurn(out)), [ROUND[0], round[1], { ...ROUND[2], id: "a1b2c3d4-0" }])
+  assertEquals(((out.messages as Obj[])[2].content as Obj[])[0].tool_use_id, "a1b2c3d4-0")
+  assert("block_binding" in (out.thinking as Obj))
 })
 
 Deno.test("thinking: no replay where thinking is off, and other upstreams never see it", () => {
