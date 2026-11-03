@@ -625,12 +625,8 @@ Deno.test("anthropic and gemini upstreams on OpenRouter get prompt-cache breakpo
     unknown
   >[]
   const mark = { type: "ephemeral" }
-  // The system prefix lives an hour; it precedes every 5-minute mark, as Anthropic requires.
-  assertEquals(messages[0].content, [{
-    type: "text",
-    text: "rules",
-    cache_control: { type: "ephemeral", ttl: "1h" },
-  }])
+  // 5 minutes, not an hour: OpenRouter usage can't tell 1-hour writes apart to bill them.
+  assertEquals(messages[0].content, [{ type: "text", text: "rules", cache_control: mark }])
   assertEquals(messages[1].content, "first", "only the newest user message is marked")
   assertEquals(messages[3].content, [{ type: "text", text: "second", cache_control: mark }])
   // In a tool loop the newest result is marked too, so the next round reads every round before it.

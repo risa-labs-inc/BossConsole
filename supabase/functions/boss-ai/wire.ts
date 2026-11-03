@@ -486,12 +486,12 @@ export function takesCacheControl(upstreamModel: string, baseUrl: string): boole
 }
 
 const EPHEMERAL = { type: "ephemeral" }
-const EPHEMERAL_1H = { type: "ephemeral", ttl: "1h" }
 
-// Three breakpoints: the first system message for an hour (with the tools ahead of it, the stable
+// Three 5-minute breakpoints: the first system message (with the tools ahead of it, the stable
 // prefix every turn repeats), the newest user message, and in a tool loop the newest tool result,
-// so each round reads the rounds before it. Messages are copied, never edited in place, and only
-// text parts carry the mark.
+// so each round reads the rounds before it. No 1-hour mark: OpenRouter usage does not split 1-hour
+// writes out, so they would be billed at the 5-minute rate. Messages are copied, never edited in
+// place, and only text parts carry the mark.
 export function withPromptCache(messages: Obj[]): Obj[] {
   const system = messages.findIndex((m) => m.role === "system" || m.role === "developer")
   let user = -1
@@ -500,15 +500,13 @@ export function withPromptCache(messages: Obj[]): Obj[] {
   })
   const last = messages.length - 1
   const tail = last > user && messages[last]?.role === "tool" ? last : -1
-  return messages.map((m, i) =>
-    i === system ? markLastText(m, EPHEMERAL_1H) : (i === user || i === tail) ? markLastText(m) : m
-  )
+  return messages.map((m, i) => (i === system || i === user || i === tail) ? markLastText(m) : m)
 }
 
-function markLastText(m: Obj, mark: Obj = EPHEMERAL): Obj {
+function markLastText(m: Obj): Obj {
   if (typeof m.content === "string") {
     if (!m.content) return m
-    return { ...m, content: [{ type: "text", text: m.content, cache_control: mark }] }
+    return { ...m, content: [{ type: "text", text: m.content, cache_control: EPHEMERAL }] }
   }
   if (!Array.isArray(m.content)) return m
   const parts = m.content as Obj[]
@@ -517,7 +515,7 @@ function markLastText(m: Obj, mark: Obj = EPHEMERAL): Obj {
     if (p.type === "text" && typeof p.text === "string" && p.text) last = i
   })
   if (last < 0) return m
-  return { ...m, content: parts.map((p, i) => i === last ? { ...p, cache_control: mark } : p) }
+  return { ...m, content: parts.map((p, i) => i === last ? { ...p, cache_control: EPHEMERAL } : p) }
 }
 
 // The cache and reasoning breakdowns the gateway prices with, passed through when the upstream

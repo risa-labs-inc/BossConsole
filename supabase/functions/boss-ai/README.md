@@ -127,9 +127,10 @@ WHERE id = 'optimist';
 
 **Prompt caching.** For an OpenRouter connection whose upstream is `anthropic/*` or `google/gemini*`
 (the upstreams that cache only where the request marks it), the function marks up to three
-`cache_control` breakpoints itself: the first system message for 1 hour (`ttl: "1h"`), which caches
-the tools and system prompt, the newest user message, and in a tool loop the newest tool result (5
-minutes). Other upstreams get the request unchanged. Usage passes the upstream's
+`cache_control` breakpoints itself, all 5 minutes: the first system message, which caches the tools
+and system prompt, the newest user message, and in a tool loop the newest tool result. No 1 hour
+mark here: OpenRouter usage does not report 1 hour writes separately, so they could not be billed
+at the 1 hour rate. Other upstreams get the request unchanged. Usage passes the upstream's
 `prompt_tokens_details` (`cached_tokens`, `cache_write_tokens`) and `completion_tokens_details`
 (`reasoning_tokens`) through; `total_tokens` and accounting are unchanged.
 
