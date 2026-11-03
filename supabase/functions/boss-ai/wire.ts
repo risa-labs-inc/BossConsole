@@ -487,16 +487,20 @@ export function takesCacheControl(upstreamModel: string, baseUrl: string): boole
 
 const EPHEMERAL = { type: "ephemeral" }
 
-// Two breakpoints: the first system message (with the tools ahead of it, the stable prefix every
-// turn repeats) and the newest user message (the conversation so far). Messages are copied, never
-// edited in place, and only text parts carry the mark.
+// Three 5-minute breakpoints: the first system message (with the tools ahead of it, the stable
+// prefix every turn repeats), the newest user message, and in a tool loop the newest tool result,
+// so each round reads the rounds before it. No 1-hour mark: OpenRouter usage does not split 1-hour
+// writes out, so they would be billed at the 5-minute rate. Messages are copied, never edited in
+// place, and only text parts carry the mark.
 export function withPromptCache(messages: Obj[]): Obj[] {
   const system = messages.findIndex((m) => m.role === "system" || m.role === "developer")
   let user = -1
   messages.forEach((m, i) => {
     if (m.role === "user") user = i
   })
-  return messages.map((m, i) => (i === system || i === user) ? markLastText(m) : m)
+  const last = messages.length - 1
+  const tail = last > user && messages[last]?.role === "tool" ? last : -1
+  return messages.map((m, i) => (i === system || i === user || i === tail) ? markLastText(m) : m)
 }
 
 function markLastText(m: Obj): Obj {

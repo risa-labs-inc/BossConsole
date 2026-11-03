@@ -263,6 +263,41 @@ Deno.test("anthropic: four cache breakpoints, always, on tools, system and the t
   assertEquals(toolLoop[3], { role: "tool", tool_call_id: "t1", content: "r1" })
 })
 
+Deno.test("anthropic: tools and system cache for an hour, messages for five minutes, in that order", () => {
+  const out = body({ messages: toolLoop, tools: [tool("a"), tool("b")] })
+  const hour = { type: "ephemeral", ttl: "1h" }
+  assertEquals((out.tools as Obj[])[1].cache_control, hour)
+  assertEquals((out.system as Obj[])[0].cache_control, hour)
+  const m = out.messages as Obj[]
+  assertEquals((m[1].content as Obj[])[0].cache_control, EPH)
+  assertEquals((m[2].content as Obj[])[0].cache_control, EPH)
+  // Every 1h mark comes before every 5m mark in prefix order (tools, system, messages).
+  const ttls: string[] = []
+  const visit = (v: unknown) => {
+    if (Array.isArray(v)) v.forEach(visit)
+    else if (v && typeof v === "object") {
+      const mark = (v as Obj).cache_control as Obj | undefined
+      if (mark) ttls.push(String(mark.ttl ?? "5m"))
+      for (const [k, x] of Object.entries(v)) if (k !== "cache_control") visit(x)
+    }
+  }
+  for (const k of ["tools", "system", "messages"]) visit(out[k])
+  assertEquals(ttls, ["1h", "1h", "5m", "5m"])
+})
+
+Deno.test("anthropic: usage reports the 1-hour part of cache writes", () => {
+  assertEquals(
+    anthropicUsage({
+      input_tokens: 10,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 300,
+      cache_creation: { ephemeral_5m_input_tokens: 100, ephemeral_1h_input_tokens: 200 },
+      output_tokens: 5,
+    })?.prompt_tokens_details,
+    { cached_tokens: 0, cache_write_tokens: 300, cache_write_1h_tokens: 200 },
+  )
+})
+
 Deno.test("anthropic: breakpoints dedupe and skip what is absent", () => {
   // One user message: no tools, no earlier turn -> system and the final block only.
   assertEquals(

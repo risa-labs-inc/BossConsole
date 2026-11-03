@@ -126,9 +126,11 @@ WHERE id = 'optimist';
 ```
 
 **Prompt caching.** For an OpenRouter connection whose upstream is `anthropic/*` or `google/gemini*`
-(the upstreams that cache only where the request marks it), the function marks two `cache_control`
-breakpoints itself: the first system message, which caches the tools and system prompt, and the
-newest user message. Other upstreams get the request unchanged. Usage passes the upstream's
+(the upstreams that cache only where the request marks it), the function marks up to three
+`cache_control` breakpoints itself, all 5 minutes: the first system message, which caches the tools
+and system prompt, the newest user message, and in a tool loop the newest tool result. No 1 hour
+mark here: OpenRouter usage does not report 1 hour writes separately, so they could not be billed at
+the 1 hour rate. Other upstreams get the request unchanged. Usage passes the upstream's
 `prompt_tokens_details` (`cached_tokens`, `cache_write_tokens`) and `completion_tokens_details`
 (`reasoning_tokens`) through; `total_tokens` and accounting are unchanged.
 
@@ -182,13 +184,17 @@ for agentic traffic.
   cache_creation}`.
   Accounting is unchanged in meaning: every processed token is charged, cached or not.
 
-**Caching is always on for this api_type.** `cache_control: ephemeral` (5 minute TTL) is set on the
-last tool, the last system block, the last content block of the final message and the last content
-block of the message before the most recent user turn: at most 4 breakpoints, coinciding targets
-collapse, blocks that cannot carry the mark are skipped. The last one is the previous request's
-write point, which keeps reads inside Anthropic's 20-block lookback during long tool loops. Prefixes
-under the model's minimum cacheable length (512 to 4096 tokens by model) silently do not cache. The
-OpenRouter `anthropic/*` marking above is unchanged.
+**Caching is always on for this api_type.** The last tool and the last system block are marked
+`cache_control: {type: ephemeral, ttl: 1h}`, so the stable prefix survives gaps between turns; the
+last content block of the final message and of the message before the most recent user turn are
+marked with the 5 minute TTL. Anthropic requires longer TTLs before shorter ones, which the tools,
+system, messages order guarantees. A 1 hour write costs 2x input (5 minute: 1.25x); usage reports
+the 1 hour part as `prompt_tokens_details.cache_write_1h_tokens` and settlement prices it at 1.6x
+the cache-write price. At most 4 breakpoints, coinciding targets collapse, blocks that cannot carry
+the mark are skipped. The last one is the previous request's write point, which keeps reads inside
+Anthropic's 20-block lookback during long tool loops. Prefixes under the model's minimum cacheable
+length (512 to 4096 tokens by model) silently do not cache. The OpenRouter `anthropic/*` marking
+above is unchanged.
 
 `cache_miss_large_prompt` is audited when a native or OpenRouter `anthropic/*` response reports more
 than 8000 prompt tokens with zero cache reads and zero cache writes, so a silent caching regression
