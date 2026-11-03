@@ -126,9 +126,11 @@ WHERE id = 'optimist';
 ```
 
 **Prompt caching.** For an OpenRouter connection whose upstream is `anthropic/*` or `google/gemini*`
-(the upstreams that cache only where the request marks it), the function marks two `cache_control`
-breakpoints itself: the first system message, which caches the tools and system prompt, and the
-newest user message. Other upstreams get the request unchanged. Usage passes the upstream's
+(the upstreams that cache only where the request marks it), the function marks up to three
+`cache_control` breakpoints itself, all 5 minutes: the first system message, which caches the tools
+and system prompt, the newest user message, and in a tool loop the newest tool result. No 1 hour
+mark here: OpenRouter usage does not report 1 hour writes separately, so they could not be billed at
+the 1 hour rate. Other upstreams get the request unchanged. Usage passes the upstream's
 `prompt_tokens_details` (`cached_tokens`, `cache_write_tokens`) and `completion_tokens_details`
 (`reasoning_tokens`) through; `total_tokens` and accounting are unchanged.
 
@@ -214,13 +216,17 @@ for agentic traffic.
   cache_creation}`.
   Accounting is unchanged in meaning: every processed token is charged, cached or not.
 
-**Caching is always on for this api_type.** `cache_control: ephemeral` (5 minute TTL) is set on the
-last tool, the last system block, the last content block of the final message and the last content
-block of the message before the most recent user turn: at most 4 breakpoints, coinciding targets
-collapse, blocks that cannot carry the mark are skipped. The last one is the previous request's
-write point, which keeps reads inside Anthropic's 20-block lookback during long tool loops. Prefixes
-under the model's minimum cacheable length (512 to 4096 tokens by model) silently do not cache. The
-OpenRouter `anthropic/*` marking above is unchanged.
+**Caching is always on for this api_type.** The last tool and the last system block are marked
+`cache_control: {type: ephemeral, ttl: 1h}`, so the stable prefix survives gaps between turns; the
+last content block of the final message and of the message before the most recent user turn are
+marked with the 5 minute TTL. Anthropic requires longer TTLs before shorter ones, which the tools,
+system, messages order guarantees. A 1 hour write costs 2x input (5 minute: 1.25x); usage reports
+the 1 hour part as `prompt_tokens_details.cache_write_1h_tokens` and settlement prices it at 1.6x
+the cache-write price. At most 4 breakpoints, coinciding targets collapse, blocks that cannot carry
+the mark are skipped. The last one is the previous request's write point, which keeps reads inside
+Anthropic's 20-block lookback during long tool loops. Prefixes under the model's minimum cacheable
+length (512 to 4096 tokens by model) silently do not cache. The OpenRouter `anthropic/*` marking
+above is unchanged.
 
 `cache_miss_large_prompt` is audited when a native or OpenRouter `anthropic/*` response reports more
 than 8000 prompt tokens with zero cache reads and zero cache writes, so a silent caching regression
@@ -546,7 +552,7 @@ Everything below is a row you can edit; nothing is hardcoded.
 | `default_tier`                                          | standard                                       | Also used when the decider fails or times out                                                                                      |
 | `fast_model_id`, `standard_model_id`, `strong_model_id` | required                                       | Tier models; may be `published=false`                                                                                              |
 | `exhausted_model_id`                                    | NULL (= fast)                                  | Served when the budget is used up                                                                                                  |
-| `sticky_within_turn`                                    | true                                           | A tool loop keeps the tier decided for its turn                                                                                    |
+| `sticky_within_turn`                                    | true                                           | A tool loop keeps the tier decided for its turn, while its prompt cache could be warm (5 min since last use)                       |
 | `monthly_usd_limit`                                     | 100                                            | Per user, UTC calendar month                                                                                                       |
 | `strong_cap_at` / `fast_only_at`                        | 0.60 / 0.85                                    | Spend ratios: strong becomes standard, then everything becomes fast                                                                |
 | `hard_stop_at`                                          | NULL                                           | Ratio of the limit at which calls are refused (429 `budget_exhausted`); NULL = never refuse                                        |
@@ -595,8 +601,10 @@ one user.
   attached, the estimated prompt size and whether tools are offered.
 - **Sticky**: a call whose last message is a tool result reuses the tier stored for the turn (key =
   sha256 of user, router and the messages before the last user message, which clients such as Max
-  rewrite on every tool round; 30 minutes) because prompt caching is per model. Without a stored
-  decision the decider is asked.
+  rewrite on every tool round) because prompt caching is per model. A stored decision is valid only
+  while its last use is within the prompt-cache TTL (`CACHE_TTL_SECONDS` = 300, Anthropic's
+  ephemeral cache); each sticky hit renews it. After that, or with no stored decision, the decider
+  is asked and its answer stored.
 - **Budget**: spend is `cost_usd` summed over the user's requests served through the router this UTC
   month, counting the reserved estimate of requests still in flight. At 60% strong calls are served
   by standard, at 85% everything by fast; a call whose estimate (prompt at the input price plus
@@ -658,6 +666,30 @@ Local debugging only: with the environment variable `BOSS_AI_ROUTE_TRACE=1` each
 one `route_trace` JSON line (request, user, route source, tier, probabilities, confidence, decider
 latency, served model, token counts, cost, month spend) plus the decider state text and the first
 2,000 characters of the reply. It logs content: never set it in production.
+
+## Timing log
+
+Every `/v1/chat/completions` request, routed or plain, logs one `timing` line when it ends (stream:
+when the stream ends). It is always on and content-free: ids, flags and numbers only, never
+messages, replies, decider state or keys. Durations are milliseconds from `performance.now()`,
+`null` when the stage did not run on that path.
+
+`{event:"timing", request_id, user, requested_model, served_model, tier, route_source, stream,
+auth_ms, route_context_ms, route_ms, sticky_get_ms, decider_ms, reserve_ms, upstream_headers_ms,
+first_token_ms, upstream_total_ms, settle_ms, total_ms, attempts, status, input_tokens,
+output_tokens, cache_read_tokens, cache_write_tokens}`
+
+- `auth_ms` token verification; `route_context_ms` the `boss_ai_lookup` RPC (carries the router
+  context); `route_ms` the whole tier choice, of which `sticky_get_ms` is the sticky RPC and
+  `decider_ms` the decider call; `reserve_ms` the reservation/budget RPC; `settle_ms` settlement.
+- `upstream_headers_ms`, `first_token_ms` (first streamed content or tool-call delta; reasoning does
+  not count; `null` when not streaming) and `upstream_total_ms` are measured from the start of the
+  attempt that served, so time lost on failed fallback attempts shows up only in `total_ms`.
+  `attempts` counts upstream requests sent.
+- `status` is the HTTP status (a stream ends 200, 499 when the client cancelled, 502 when cut).
+  Token counts are the settled breakdown (`input_tokens` excludes cache reads and writes) and `null`
+  when usage was not reported. Requests refused before the model is known (bad token, bad body) log
+  no timing line.
 
 ## Allowance semantics
 

@@ -366,12 +366,21 @@ function num(v: unknown): number | null {
  * input price the cost is unknown (null) and `missing` is set. */
 export function costUsd(
   p: Prices,
-  u: { input: number; output: number; cacheRead: number; cacheWrite: number },
+  u: {
+    input: number
+    output: number
+    cacheRead: number
+    cacheWrite: number
+    cacheWrite1h?: number
+  },
 ): { cost: number | null; missing: boolean } {
   if (p.input === null) return { cost: null, missing: true }
   const missing = p.output === null || p.cache_read === null || p.cache_write === null
+  const write = p.cache_write ?? p.input
+  // cache_write is the 5-minute rate (1.25x input); a 1-hour write is 2x, i.e. 1.6x that rate.
+  const hour = Math.min(u.cacheWrite1h ?? 0, u.cacheWrite)
   const cost = (u.input * p.input + u.output * (p.output ?? p.input) +
-    u.cacheRead * (p.cache_read ?? p.input) + u.cacheWrite * (p.cache_write ?? p.input)) / 1e6
+    u.cacheRead * (p.cache_read ?? p.input) + u.cacheWrite * write + hour * write * 0.6) / 1e6
   return { cost, missing }
 }
 

@@ -384,6 +384,16 @@ Deno.test("cost: cache tokens at their own prices, unknown prices fall back or a
   })
   assert(Math.abs(c.cost! - (4 + 2 + 2 + 1)) < 1e-9)
   assertEquals(c.missing, false)
+  // A 1-hour write costs 2x input, 1.6x the 5-minute write price: 200k at $5 -> $1, of which
+  // 100k are 1-hour -> +$0.30.
+  const hour = costUsd(p, {
+    input: 1_000_000,
+    output: 100_000,
+    cacheRead: 10_000_000,
+    cacheWrite: 200_000,
+    cacheWrite1h: 100_000,
+  })
+  assert(Math.abs(hour.cost! - (4 + 2 + 2 + 1 + 0.3)) < 1e-9)
   // Missing component prices use the input price and are reported.
   const partial = costUsd({ input: 2, output: null, cache_read: null, cache_write: null }, {
     input: 1_000_000,

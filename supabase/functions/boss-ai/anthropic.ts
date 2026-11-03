@@ -19,7 +19,24 @@ const ALWAYS_THINKS = new Set([
   "claude-fable-5-1",
   "claude-fable-5",
 ])
+// The fast tier answers without thinking: first visible token ~0.7 s vs ~1.3 s adaptive, same
+// accuracy on a 300-call warm-cache probe (2026-11-02). A json_schema request keeps adaptive.
+const THINKING_OFF = new Set(["claude-haiku-5-5"])
+
+function thinkingFor(upstream: string, format?: Obj): Obj {
+  if (!ALWAYS_THINKS.has(upstream)) return {}
+  if (THINKING_OFF.has(upstream) && format?.type !== "json_schema") {
+    return { thinking: { type: "disabled" } }
+  }
+  return { thinking: { type: "adaptive", display: "summarized" } }
+}
 const EPHEMERAL = { type: "ephemeral" }
+// Tools and system change only with a release or persona, so they outlive a 5-minute gap between
+// turns: 2x write once an hour beats 1.25x after every pause. Longer TTLs must precede shorter ones,
+// which the tools -> system -> messages order guarantees.
+const EPHEMERAL_1H = { type: "ephemeral", ttl: "1h" }
+// Anthropic's ephemeral cache lives this long after its last use. Sticky routing must not outlive it.
+export const CACHE_TTL_SECONDS = 300
 const CACHEABLE = ["text", "image", "tool_use", "tool_result"]
 
 // Anthropic ids allow [a-zA-Z0-9_-] only; the same mapping applies to tool_use and tool_result.
@@ -126,15 +143,15 @@ export function anthropicMessages(input: Obj[]): { system: Obj[]; messages: Obj[
 
 // Content blocks that cannot carry cache_control (thinking, unknown types) are left unmarked.
 // Tool definitions have no `type` and always can.
-function markLast<T extends Obj>(blocks: T[], any = false): T[] {
+function markLast<T extends Obj>(blocks: T[], any = false, mark: Obj = EPHEMERAL): T[] {
   const last = blocks.length - 1
   if (last < 0 || !(any || CACHEABLE.includes(String(blocks[last].type)))) return blocks
-  return blocks.map((b, i) => i === last ? { ...b, cache_control: EPHEMERAL } : b)
+  return blocks.map((b, i) => i === last ? { ...b, cache_control: mark } : b)
 }
 
-// At most four breakpoints, always: last tool, last system block, the final message and the one
-// before the most recent user turn (the previous request's write point, kept inside the 20-block
-// lookback). Coinciding targets collapse; copies only, never in-place edits.
+// At most four breakpoints, always: last tool and last system block (1 hour), the final message and
+// the one before the most recent user turn (5 minutes; the previous request's write point, kept
+// inside the 20-block lookback). Coinciding targets collapse; copies only, never in-place edits.
 export function withAnthropicCache(
   tools: Obj[] | undefined,
   system: Obj[],
@@ -151,8 +168,8 @@ export function withAnthropicCache(
   }
   const targets = new Set([real(messages.length - 1), real(user - 1)].filter((i) => i >= 0))
   return {
-    ...(tools ? { tools: markLast(tools, true) } : {}),
-    system: markLast(system),
+    ...(tools ? { tools: markLast(tools, true, EPHEMERAL_1H) } : {}),
+    system: markLast(system, false, EPHEMERAL_1H),
     messages: messages.map((m, i) =>
       targets.has(i) ? { ...m, content: markLast(m.content as Obj[]) } : m
     ),
@@ -201,9 +218,7 @@ export function anthropicRequest(a: {
     model: a.upstream,
     max_tokens: a.max,
     stream: a.stream,
-    ...(ALWAYS_THINKS.has(a.upstream)
-      ? { thinking: { type: "adaptive", display: "summarized" } }
-      : {}),
+    ...thinkingFor(a.upstream, a.format),
     ...(cached.system.length ? { system: cached.system } : {}),
     messages: cached.messages,
     ...(cached.tools ? { tools: cached.tools } : {}),
@@ -229,8 +244,13 @@ export function anthropicUsage(value: unknown): Obj | null {
   const u = value as Obj
   const input = count(u.input_tokens), output = count(u.output_tokens)
   const read = count(u.cache_read_input_tokens), write = count(u.cache_creation_input_tokens)
+  // The 1-hour part of the writes, priced higher (see costUsd).
+  const creation = u.cache_creation && typeof u.cache_creation === "object"
+    ? u.cache_creation as Obj
+    : {}
+  const hour = count(creation.ephemeral_1h_input_tokens)
   if (
-    input === null || output === null || read === null || write === null ||
+    input === null || output === null || read === null || write === null || hour === null ||
     u.input_tokens === undefined || u.output_tokens === undefined
   ) return null
   const prompt = input + read + write
@@ -239,7 +259,11 @@ export function anthropicUsage(value: unknown): Obj | null {
     prompt_tokens: prompt,
     completion_tokens: output,
     total_tokens: prompt + output,
-    prompt_tokens_details: { cached_tokens: read, cache_write_tokens: write },
+    prompt_tokens_details: {
+      cached_tokens: read,
+      cache_write_tokens: write,
+      ...(hour ? { cache_write_1h_tokens: Math.min(hour, write) } : {}),
+    },
   }
 }
 

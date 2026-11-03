@@ -77,7 +77,7 @@ Deno.test("anthropic: system, developer, images and max_tokens translate", () =>
   // Always-thinking models stream a summarized display; unknown models get no thinking field.
   assertEquals(out.thinking, { type: "adaptive", display: "summarized" })
   for (
-    const id of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"]
+    const id of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"]
   ) {
     assertEquals(
       body({ messages: [{ role: "user", content: "x" }] }, { ...model, upstream_model: id })
@@ -88,6 +88,21 @@ Deno.test("anthropic: system, developer, images and max_tokens translate", () =>
       },
     )
   }
+  // The fast tier answers without thinking, except for a json_schema request.
+  const haiku = { ...model, upstream_model: "claude-haiku-5-5" }
+  assertEquals(body({ messages: [{ role: "user", content: "x" }] }, haiku).thinking, {
+    type: "disabled",
+  })
+  assertEquals(
+    body({
+      messages: [{ role: "user", content: "x" }],
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "s", schema: { type: "object" } },
+      },
+    }, haiku).thinking,
+    { type: "adaptive", display: "summarized" },
+  )
   for (const id of ["claude-opus-4-8", "claude-sonnet-4-6", "claude-future-9", "private"]) {
     assert(
       !("thinking" in
@@ -246,6 +261,41 @@ Deno.test("anthropic: four cache breakpoints, always, on tools, system and the t
   // Earlier turns stay untouched, and the caller's input is not mutated.
   assert(!JSON.stringify((out.messages as Obj[])[0]).includes("cache_control"))
   assertEquals(toolLoop[3], { role: "tool", tool_call_id: "t1", content: "r1" })
+})
+
+Deno.test("anthropic: tools and system cache for an hour, messages for five minutes, in that order", () => {
+  const out = body({ messages: toolLoop, tools: [tool("a"), tool("b")] })
+  const hour = { type: "ephemeral", ttl: "1h" }
+  assertEquals((out.tools as Obj[])[1].cache_control, hour)
+  assertEquals((out.system as Obj[])[0].cache_control, hour)
+  const m = out.messages as Obj[]
+  assertEquals((m[1].content as Obj[])[0].cache_control, EPH)
+  assertEquals((m[2].content as Obj[])[0].cache_control, EPH)
+  // Every 1h mark comes before every 5m mark in prefix order (tools, system, messages).
+  const ttls: string[] = []
+  const visit = (v: unknown) => {
+    if (Array.isArray(v)) v.forEach(visit)
+    else if (v && typeof v === "object") {
+      const mark = (v as Obj).cache_control as Obj | undefined
+      if (mark) ttls.push(String(mark.ttl ?? "5m"))
+      for (const [k, x] of Object.entries(v)) if (k !== "cache_control") visit(x)
+    }
+  }
+  for (const k of ["tools", "system", "messages"]) visit(out[k])
+  assertEquals(ttls, ["1h", "1h", "5m", "5m"])
+})
+
+Deno.test("anthropic: usage reports the 1-hour part of cache writes", () => {
+  assertEquals(
+    anthropicUsage({
+      input_tokens: 10,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 300,
+      cache_creation: { ephemeral_5m_input_tokens: 100, ephemeral_1h_input_tokens: 200 },
+      output_tokens: 5,
+    })?.prompt_tokens_details,
+    { cached_tokens: 0, cache_write_tokens: 300, cache_write_1h_tokens: 200 },
+  )
 })
 
 Deno.test("anthropic: breakpoints dedupe and skip what is absent", () => {

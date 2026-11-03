@@ -493,7 +493,7 @@ Deno.test("upstream errors log type and a bounded message, never request content
     () => chat(),
   ])
   await f.send()
-  assertEquals(f.logs.length, 2)
+  assertEquals(f.logs.filter((l) => l.event !== "timing").length, 2)
   assertEquals(f.logs[0], {
     event: "upstream_error",
     request_id: f.logs[0].request_id,

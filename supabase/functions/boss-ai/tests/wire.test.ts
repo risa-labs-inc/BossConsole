@@ -625,10 +625,19 @@ Deno.test("anthropic and gemini upstreams on OpenRouter get prompt-cache breakpo
     unknown
   >[]
   const mark = { type: "ephemeral" }
+  // 5 minutes, not an hour: OpenRouter usage can't tell 1-hour writes apart to bill them.
   assertEquals(messages[0].content, [{ type: "text", text: "rules", cache_control: mark }])
   assertEquals(messages[1].content, "first", "only the newest user message is marked")
   assertEquals(messages[3].content, [{ type: "text", text: "second", cache_control: mark }])
-  assertEquals(messages[5].content, "done", "tool results are never marked")
+  // In a tool loop the newest result is marked too, so the next round reads every round before it.
+  assertEquals(messages[5].content, [{ type: "text", text: "done", cache_control: mark }])
+  const answered = requestBody(
+    { ...input, messages: [...input.messages, { role: "user", content: "thanks" }] },
+    anthropic,
+    "openai_chat",
+    OR,
+  ).messages as Record<string, unknown>[]
+  assertEquals(answered[5].content, "done", "a tool result before the newest user message is not")
   assertEquals(input.messages[0].content, "rules", "the caller's request is not edited in place")
 
   // Gemini caches implicitly; explicit marks only slow it down, at any size.
