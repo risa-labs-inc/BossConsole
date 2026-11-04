@@ -4,7 +4,7 @@
 -- Weighted towards what must be REFUSED: an org grant that leaks across products, past an
 -- opt-out, past a block, after leaving, through the system org, or with the policy off.
 BEGIN;
-SELECT plan(102);
+SELECT plan(108);
 
 INSERT INTO auth.users (id, email, email_confirmed_at) VALUES
  ('a0a00000-0000-4000-8000-00000000000a', 'org-alice@acme.test', now()),
@@ -347,6 +347,16 @@ SELECT lives_ok($q$ SELECT public.fluck_peer_respond((SELECT id FROM public.fluc
     WHERE least(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000a'::uuid AND greatest(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000b'::uuid), true) $q$,
     'bob accepts');
 SELECT is((SELECT source FROM public.fluck_peer_list('b-max') WHERE instance_id = 'a-max'), 'link', 'and they are linked');
+
+-- ---- both sides block: neither can lift it alone ----
+SELECT lives_ok($q$ SELECT public.fluck_peer_revoke('a0a00000-0000-4000-8000-00000000000a') $q$, 'bob revokes the link');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
+SELECT lives_ok($q$ SELECT public.fluck_peer_revoke('a0a00000-0000-4000-8000-00000000000b') $q$, 'alice blocks bob too');
+SELECT lives_ok($q$ SELECT public.fluck_peer_unblock('a0a00000-0000-4000-8000-00000000000b') $q$, 'alice lifts her block');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
+SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('b-max') WHERE instance_id = 'a-max'), 0, 'bob''s block still stands');
+SELECT lives_ok($q$ SELECT public.fluck_peer_unblock('a0a00000-0000-4000-8000-00000000000a') $q$, 'bob lifts his');
+SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('b-max') WHERE instance_id = 'a-max'), 0, 'a block by both sides needs a request and an accept, not one unblock');
 
 SELECT * FROM finish();
 ROLLBACK;

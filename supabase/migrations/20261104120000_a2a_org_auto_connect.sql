@@ -386,6 +386,20 @@ BEGIN
           AND greatest(l.requester_id, l.recipient_id) = greatest(actor, p_peer_id)
           AND l.status IN ('pending', 'accepted')
         RETURNING l.id INTO touched;
+    -- Already blocked or declined: keep it the caller's own block when it already was, otherwise it is now a
+    -- block by both sides (revoked_by NULL), which neither can lift alone (only a request and an accept do).
+    IF touched IS NULL THEN
+        UPDATE public.fluck_peer_links l
+            SET status = 'revoked', responded_at = now(),
+                revoked_by = CASE
+                    WHEN l.status = 'revoked' AND l.revoked_by = actor THEN actor
+                    WHEN l.status = 'declined' AND l.recipient_id = actor THEN actor
+                    ELSE NULL END
+            WHERE least(l.requester_id, l.recipient_id) = least(actor, p_peer_id)
+              AND greatest(l.requester_id, l.recipient_id) = greatest(actor, p_peer_id)
+              AND l.status IN ('declined', 'revoked')
+            RETURNING l.id INTO touched;
+    END IF;
     -- No link row yet: block an org colleague (someone who shares an org with auto-connect on).
     -- Anyone else is a silent no-op, so this cannot probe accounts.
     IF touched IS NULL AND EXISTS (
@@ -406,9 +420,9 @@ END;
 $$;
 
 -- Lift a block the caller made, so the org grant applies again. A block made by the other side
--- stays. Declines (written by fluck_peer_respond, without revoked_by) are the recipient's to lift. A
--- revoke from before this migration has no known author, so it is not lifted here (fails closed); the
--- pair can still connect again through fluck_peer_request and an accept.
+-- stays. A decline is its recipient's to lift. A revoke with no known author (from before this migration,
+-- or blocked by both sides) is not lifted here (fails closed); the pair can still connect again through
+-- fluck_peer_request and an accept.
 CREATE OR REPLACE FUNCTION public.fluck_peer_unblock(p_peer_id uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -425,7 +439,7 @@ BEGIN
           AND greatest(l.requester_id, l.recipient_id) = greatest(actor, p_peer_id)
           AND (
               (l.status = 'revoked' AND l.revoked_by = actor)
-              OR (l.status = 'declined' AND l.revoked_by IS NULL AND l.recipient_id = actor)
+              OR (l.status = 'declined' AND l.recipient_id = actor)
           );
 END;
 $$;
