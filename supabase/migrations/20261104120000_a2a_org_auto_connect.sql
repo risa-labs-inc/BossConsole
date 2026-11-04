@@ -179,8 +179,10 @@ BEGIN
     ) ON CONFLICT (user_id, instance_id) DO UPDATE SET
         label = EXCLUDED.label, agent_name = EXCLUDED.agent_name,
         endpoint_url = EXCLUDED.endpoint_url, app_version = EXCLUDED.app_version,
-        -- An older client heartbeats without a kind; keep the one a newer client recorded.
-        agent_kind = COALESCE(EXCLUDED.agent_kind, i.agent_kind);
+        -- A heartbeat without a kind clears it, on purpose. A client from before org auto-connect ignores
+        -- consume's source and would run a colleague as a full link, so a downgraded instance must stop
+        -- receiving org tickets at once rather than keep the kind a newer build recorded (fails closed).
+        agent_kind = EXCLUDED.agent_kind;
 EXCEPTION WHEN data_exception OR integrity_constraint_violation THEN
     -- Keep the failing row out of the client-visible DETAIL.
     RAISE EXCEPTION 'Invalid Fluck web instance' USING ERRCODE = '22023';

@@ -4,7 +4,7 @@
 -- Weighted towards what must be REFUSED: an org grant that leaks across products, past an
 -- opt-out, past a block, after leaving, through the system org, or with the policy off.
 BEGIN;
-SELECT plan(79);
+SELECT plan(80);
 
 INSERT INTO auth.users (id, email, email_confirmed_at) VALUES
  ('a0a00000-0000-4000-8000-00000000000a', 'org-alice@acme.test', now()),
@@ -97,9 +97,12 @@ SELECT is((SELECT array_agg(instance_id ORDER BY instance_id) FROM public.fluck_
     ARRAY['a-fl'], 'bob''s Fluck lists only the colleagues'' Fluck instances');
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list() WHERE NOT same_user), 0, 'without the calling instance no colleagues are listed');
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('b-old') WHERE NOT same_user), 0, 'an instance with no kind gets no colleagues');
-SELECT public.fluck_web_upsert_instance('b-max', 'Bob Max', 'Max', 'https://b-max.example.test', NULL);
-SELECT is((SELECT agent_kind FROM public.fluck_web_instances WHERE instance_id = 'b-max'), 'max',
-    'an older client''s kindless heartbeat keeps the kind a newer client recorded');
+SELECT public.fluck_web_upsert_instance('b-max', 'Bob Mac', 'Max', 'https://b-max.example.test', NULL);
+SELECT is((SELECT agent_kind FROM public.fluck_web_instances WHERE instance_id = 'b-max'), NULL,
+    'a kindless heartbeat (a downgraded client) clears the kind, so it gets no org tickets');
+SELECT throws_ok($q$ SELECT public.fluck_a2a_mint_ticket('b-max', 'a0a00000-0000-4000-8000-00000000000a', 'a-max') $q$,
+    'P0001', 'peer_unavailable', 'and cannot mint one');
+SELECT public.fluck_web_upsert_instance('b-max', 'Bob Mac', 'Max', 'https://b-max.example.test', NULL, 'max');
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('a-max') WHERE NOT same_user), 0, 'someone else''s instance name selects no colleagues');
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('b-max') WHERE instance_id IN ('d-max','e-max')), 0, 'non-members are not listed');
 
