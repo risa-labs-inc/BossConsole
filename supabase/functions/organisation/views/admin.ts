@@ -75,7 +75,7 @@ function a2aCard(action: string, csrf: string, policy: OrgA2aPolicy): string {
   const opted = policy.opted_out ?? []
   const optedOut = opted.length === 0
     ? `<p class="hint">Nobody has opted out.</p>`
-    : `<p class="hint">${opted.length} of ${Number(policy.members) || 0} members opted out${
+    : `<p class="hint">${opted.length} of ${Math.max(Number(policy.members) || 0, opted.length)} members opted out${
       policy.auto_connect ? "" : " (their choice still applies when this is turned back on)"
     }:</p>
   <ul>${

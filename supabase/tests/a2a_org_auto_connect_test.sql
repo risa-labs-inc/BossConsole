@@ -4,7 +4,7 @@
 -- Weighted towards what must be REFUSED: an org grant that leaks across products, past an
 -- opt-out, past a block, after leaving, through the system org, or with the policy off.
 BEGIN;
-SELECT plan(91);
+SELECT plan(97);
 
 INSERT INTO auth.users (id, email, email_confirmed_at) VALUES
  ('a0a00000-0000-4000-8000-00000000000a', 'org-alice@acme.test', now()),
@@ -310,6 +310,34 @@ SET LOCAL ROLE authenticated;
 SELECT is((public.org_set_a2a_auto_connect((SELECT org FROM ids), true)) ->> 'success', 'true', 'the admin turns it back on');
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
 SELECT is(public.fluck_a2a_claim_org_notice((SELECT org FROM ids)), true, 'bob is told again after it was turned back on');
+
+-- ---- a heartbeat through the rewritten upsert keeps an instance live (the touch trigger stamps last_seen_at) ----
+RESET ROLE;
+ALTER TABLE public.fluck_web_instances DISABLE TRIGGER fluck_web_instances_touch_on_write;
+UPDATE public.fluck_web_instances SET last_seen_at = now() - interval '10 minutes' WHERE instance_id = 'a-max';
+ALTER TABLE public.fluck_web_instances ENABLE TRIGGER fluck_web_instances_touch_on_write;
+SET LOCAL ROLE authenticated;
+SELECT throws_ok($q$ SELECT public.fluck_a2a_mint_ticket('b-max', 'a0a00000-0000-4000-8000-00000000000a', 'a-max') $q$,
+    'P0001', 'peer_unavailable', 'an instance that stopped heartbeating cannot be reached');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
+SELECT public.fluck_web_upsert_instance('a-max', 'Alice Mac', 'Max', 'https://a-max.example.test', NULL, 'max');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
+SELECT lives_ok($q$ SELECT public.fluck_a2a_mint_ticket('b-max', 'a0a00000-0000-4000-8000-00000000000a', 'a-max') $q$,
+    'a heartbeat on an existing row makes it reachable again');
+
+-- ---- a colleague block does not stop a later explicit link (the request flow's cool-down applies) ----
+SELECT lives_ok($q$ SELECT public.fluck_peer_revoke('a0a00000-0000-4000-8000-00000000000a') $q$, 'bob blocks alice');
+RESET ROLE;
+UPDATE public.fluck_peer_links SET responded_at = now() - interval '2 days'
+    WHERE least(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000a'::uuid AND greatest(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000b'::uuid;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
+SELECT lives_ok($q$ SELECT public.fluck_peer_request('org-bob@acme.test') $q$, 'alice asks bob for a link after the cool-down');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
+SELECT lives_ok($q$ SELECT public.fluck_peer_respond((SELECT id FROM public.fluck_peer_links
+    WHERE least(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000a'::uuid AND greatest(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000b'::uuid), true) $q$,
+    'bob accepts');
+SELECT is((SELECT source FROM public.fluck_peer_list('b-max') WHERE instance_id = 'a-max'), 'link', 'and they are linked');
 
 SELECT * FROM finish();
 ROLLBACK;
