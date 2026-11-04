@@ -1150,3 +1150,98 @@ Deno.test("an invalid nonce is refused on every fetch-mode branch", async () => 
     restore()
   }
 })
+
+// ---------------------------------------------------------------------------
+// Agent connections (A2A auto-connect)
+// ---------------------------------------------------------------------------
+
+function a2aPolicy(overrides: Record<string, unknown> = {}) {
+  return {
+    success: true,
+    auto_connect: true,
+    enabled_at: "2026-11-04T00:00:00Z",
+    available: true,
+    members: 3,
+    opted_out: [{ user_id: "u-carol", email: "carol@acme.test", opted_out_at: "2026-11-04T01:00:00Z" }],
+    ...overrides,
+  }
+}
+
+Deno.test("the agent connections card shows the policy and who opted out", async () => {
+  const { stub, restore } = setup()
+  try {
+    stub.responses.set("org_a2a_policy", a2aPolicy())
+    const response = await app.request(`${BASE}/o/${FIXTURE.slug}/admin`, {
+      headers: { cookie: await sessionCookie() },
+    })
+    const body = await response.text()
+    assert(body.includes("Agent connections"))
+    assert(body.includes(`name="auto_connect" value="1" checked`))
+    assert(body.includes("carol@acme.test"))
+    assertEquals(stub.calls.find((c) => c.fn === "org_a2a_policy")?.params.p_actor_id, FIXTURE.userId)
+  } finally {
+    restore()
+  }
+})
+
+Deno.test("the agent connections card is hidden for the system org and when the policy cannot be read", async () => {
+  const { stub, restore } = setup()
+  try {
+    stub.responses.set("org_a2a_policy", a2aPolicy({ available: false }))
+    let body = await (await app.request(`${BASE}/o/${FIXTURE.slug}/admin`, {
+      headers: { cookie: await sessionCookie() },
+    })).text()
+    assert(!body.includes("Agent connections"), "shown for the system org")
+
+    stub.responses.set("org_a2a_policy", { success: false, error: "Permission denied" })
+    body = await (await app.request(`${BASE}/o/${FIXTURE.slug}/admin`, {
+      headers: { cookie: await sessionCookie() },
+    })).text()
+    assert(!body.includes("Agent connections"), "shown without a policy")
+  } finally {
+    restore()
+  }
+})
+
+Deno.test("saving agent connections sends the checkbox as the new state, as the session subject", async () => {
+  const { stub, restore } = setup()
+  try {
+    stub.responses.set("org_set_a2a_auto_connect", { success: true, auto_connect: true })
+    const on = await app.request(`${BASE}/o/${FIXTURE.slug}/admin/a2a`, {
+      method: "POST",
+      headers: formHeaders(await sessionCookie()),
+      body: new URLSearchParams({ [CSRF_FIELD]: CSRF, auto_connect: "1" }),
+    })
+    assertEquals(on.status, 303)
+    assertEquals(on.headers.get("location"), "/functions/v1/organisation/o/acme/admin?ok=a2a_saved")
+    let call = stub.calls.findLast((c) => c.fn === "org_set_a2a_auto_connect")
+    assertEquals(call?.params.p_enabled, true)
+    assertEquals(call?.params.p_actor_id, FIXTURE.userId)
+    assertEquals(call?.params.p_org_id, FIXTURE.orgId)
+
+    await app.request(`${BASE}/o/${FIXTURE.slug}/admin/a2a`, {
+      method: "POST",
+      headers: formHeaders(await sessionCookie()),
+      body: new URLSearchParams({ [CSRF_FIELD]: CSRF }),
+    })
+    call = stub.calls.findLast((c) => c.fn === "org_set_a2a_auto_connect")
+    assertEquals(call?.params.p_enabled, false, "an unchecked box turns it off")
+  } finally {
+    restore()
+  }
+})
+
+Deno.test("a refused agent connections change says so", async () => {
+  const { stub, restore } = setup()
+  try {
+    stub.responses.set("org_set_a2a_auto_connect", { success: false, error: "Permission denied" })
+    const response = await app.request(`${BASE}/o/${FIXTURE.slug}/admin/a2a`, {
+      method: "POST",
+      headers: formHeaders(await sessionCookie()),
+      body: new URLSearchParams({ [CSRF_FIELD]: CSRF, auto_connect: "1" }),
+    })
+    assertEquals(response.headers.get("location"), "/functions/v1/organisation/o/acme/admin?err=rejected")
+  } finally {
+    restore()
+  }
+})
