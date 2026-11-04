@@ -57,7 +57,7 @@ ${tabs(basePath, org.slug, "admin", true)}
 
 ${options.newInviteUrl ? newInviteCard(options.newInviteUrl) : ""}
 ${settingsCard(action, csrf, org, roles)}
-${options.a2a === "unreadable" ? a2aUnreadableCard() : options.a2a && options.a2a.available ? a2aCard(action, csrf, options.a2a) : ""}
+${options.a2a === "unreadable" ? a2aUnreadableCard() : options.a2a && options.a2a.available !== false ? a2aCard(action, csrf, options.a2a) : ""}
 ${pending.length > 0 ? pendingCard(action, csrf, pending) : ""}
 ${membersCard(action, csrf, org, active, roles)}
 ${rolesCard(action, csrf, org, roles)}
@@ -75,7 +75,9 @@ function a2aCard(action: string, csrf: string, policy: OrgA2aPolicy): string {
   const opted = policy.opted_out ?? []
   const optedOut = opted.length === 0
     ? `<p class="hint">Nobody has opted out.</p>`
-    : `<p class="hint">${opted.length} of ${Math.max(Number(policy.members) || 0, opted.length)} members opted out${
+    : `<p class="hint">${opted.length}${
+      typeof policy.members === "number" ? ` of ${Math.max(policy.members, opted.length)}` : ""
+    } members opted out${
       policy.auto_connect ? "" : " (their choice still applies when this is turned back on)"
     }:</p>
   <ul>${

@@ -8,8 +8,10 @@
 --   * without a link request, but
 --   * only between instances of the SAME product (agent_kind: Max talks to Max, Optimist to
 --     Optimist), and
---   * never for a member who opted out of that org, nor for a pair where either side declined or
---     revoked (a per-colleague block).
+--   * never for a member who opted out of that org, nor for a pair with any link row that is not
+--     accepted: a decline or revoke is a per-colleague block, and a pending request (including one
+--     re-sent over a block after the cool-down) suspends the org grant until it is answered, so a
+--     request can never lift a block by itself.
 --
 -- Nothing is materialized: colleagues are computed at list / mint / consume time from
 -- organisation_members, so joining, leaving, opting out and turning the policy off take effect
@@ -141,10 +143,10 @@ BEGIN
        OR p_a_kind IS NULL OR p_b_kind IS NULL OR p_a_kind <> p_b_kind THEN
         RETURN NULL;
     END IF;
-    -- A decline or revoke between the two blocks the org grant for that pair.
+    -- Any link row that is not accepted (declined, revoked, or a pending request) suspends the org grant.
     IF EXISTS (
         SELECT 1 FROM public.fluck_peer_links l
-        WHERE l.status IN ('declined', 'revoked')
+        WHERE l.status <> 'accepted'
           AND least(l.requester_id, l.recipient_id) = least(p_a, p_b)
           AND greatest(l.requester_id, l.recipient_id) = greatest(p_a, p_b)
     ) THEN
@@ -239,7 +241,7 @@ BEGIN
               AND NOT EXISTS (SELECT 1 FROM public.organisation_a2a_opt_outs x
                               WHERE x.org_id = o.id AND x.user_id IN (actor, mb.user_id))
               AND NOT EXISTS (SELECT 1 FROM public.fluck_peer_links l
-                              WHERE l.status IN ('declined', 'revoked')
+                              WHERE l.status <> 'accepted'
                                 AND least(l.requester_id, l.recipient_id) = least(actor, mb.user_id)
                                 AND greatest(l.requester_id, l.recipient_id) = greatest(actor, mb.user_id))
             GROUP BY mb.user_id

@@ -4,7 +4,7 @@
 -- Weighted towards what must be REFUSED: an org grant that leaks across products, past an
 -- opt-out, past a block, after leaving, through the system org, or with the policy off.
 BEGIN;
-SELECT plan(100);
+SELECT plan(102);
 
 INSERT INTO auth.users (id, email, email_confirmed_at) VALUES
  ('a0a00000-0000-4000-8000-00000000000a', 'org-alice@acme.test', now()),
@@ -339,7 +339,10 @@ UPDATE public.fluck_peer_links SET responded_at = now() - interval '2 days'
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
 SELECT lives_ok($q$ SELECT public.fluck_peer_request('org-bob@acme.test') $q$, 'alice asks bob for a link after the cool-down');
+SELECT throws_ok($q$ SELECT public.fluck_a2a_mint_ticket('a-max', 'a0a00000-0000-4000-8000-00000000000b', 'b-max') $q$,
+    'P0001', 'peer_unavailable', 'a pending request does not lift the block: no org ticket while it waits');
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
+SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('b-max') WHERE instance_id = 'a-max'), 0, 'nor is alice listed to bob until he answers');
 SELECT lives_ok($q$ SELECT public.fluck_peer_respond((SELECT id FROM public.fluck_peer_links
     WHERE least(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000a'::uuid AND greatest(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000b'::uuid), true) $q$,
     'bob accepts');
