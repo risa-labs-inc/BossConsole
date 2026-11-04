@@ -430,6 +430,31 @@ $$;
 REVOKE ALL ON FUNCTION public.fluck_peer_unblock(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.fluck_peer_unblock(uuid) TO authenticated;
 
+-- A block is the blocker's own business: the link list no longer shows the other side's revoke (an org
+-- colleague block is a row the blocked person never had a link for, and listing it would tell them).
+CREATE OR REPLACE FUNCTION public.fluck_peer_links()
+RETURNS TABLE (peer_id uuid, peer_email text, status text, outgoing boolean)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+#variable_conflict use_column
+DECLARE
+    actor uuid := auth.uid();
+BEGIN
+    IF actor IS NULL THEN
+        RAISE EXCEPTION 'Not signed in' USING ERRCODE = '42501';
+    END IF;
+    RETURN QUERY
+        SELECT u.id, u.email::text, l.status, (l.requester_id = actor)
+        FROM public.fluck_peer_links l
+        JOIN auth.users u
+          ON u.id = CASE WHEN l.requester_id = actor THEN l.recipient_id ELSE l.requester_id END
+        WHERE (l.requester_id = actor OR l.recipient_id = actor)
+          AND NOT (l.status = 'revoked' AND l.revoked_by IS NOT NULL AND l.revoked_by <> actor)
+        ORDER BY l.requested_at DESC;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.fluck_peer_links() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.fluck_peer_links() TO authenticated;
+
 -- ----------------------------------------------------------------------------
 -- 8. Member side: my orgs' policy, opt out / back in, the one-time notice
 -- ----------------------------------------------------------------------------

@@ -4,7 +4,7 @@
 -- Weighted towards what must be REFUSED: an org grant that leaks across products, past an
 -- opt-out, past a block, after leaving, through the system org, or with the policy off.
 BEGIN;
-SELECT plan(97);
+SELECT plan(100);
 
 INSERT INTO auth.users (id, email, email_confirmed_at) VALUES
  ('a0a00000-0000-4000-8000-00000000000a', 'org-alice@acme.test', now()),
@@ -97,6 +97,8 @@ SELECT is((SELECT array_agg(instance_id ORDER BY instance_id) FROM public.fluck_
     ARRAY['a-fl'], 'bob''s Fluck lists only the colleagues'' Fluck instances');
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list() WHERE NOT same_user), 0, 'without the calling instance no colleagues are listed');
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('b-old') WHERE NOT same_user), 0, 'an instance with no kind gets no colleagues');
+SELECT lives_ok($q$ SELECT public.fluck_a2a_mint_ticket('b-old', 'a0a00000-0000-4000-8000-00000000000b', 'b-max') $q$,
+    'an instance with no kind still reaches its owner''s own instances');
 SELECT public.fluck_web_upsert_instance('b-max', 'Bob Mac', 'Max', 'https://b-max.example.test', NULL);
 SELECT is((SELECT agent_kind FROM public.fluck_web_instances WHERE instance_id = 'b-max'), NULL,
     'a kindless heartbeat (a downgraded client) clears the kind, so it gets no org tickets');
@@ -164,6 +166,10 @@ SET LOCAL ROLE authenticated;
 -- ---- blocking one colleague ----
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
 SELECT lives_ok($q$ SELECT public.fluck_peer_revoke('a0a00000-0000-4000-8000-00000000000a') $q$, 'bob blocks alice, with no link row between them');
+SELECT is((SELECT status FROM public.fluck_peer_links() WHERE peer_id = 'a0a00000-0000-4000-8000-00000000000a'), 'revoked', 'bob sees his own block');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
+SELECT is((SELECT count(*)::int FROM public.fluck_peer_links() WHERE peer_id = 'a0a00000-0000-4000-8000-00000000000b'), 0, 'alice is not shown that bob blocked her');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
 SELECT lives_ok($q$ SELECT public.fluck_peer_revoke('a0a00000-0000-4000-8000-00000000000a') $q$, 'bob blocks alice again');
 RESET ROLE;
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_links WHERE least(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000a'::uuid

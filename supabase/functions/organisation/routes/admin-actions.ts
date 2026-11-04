@@ -392,6 +392,7 @@ adminActionRoutes.post("/o/:slug/admin/invites/create", async (ctx) => {
       roles: data.roles,
       domains: data.domains,
       invites: data.invites,
+      a2a: data.a2a,
       newInviteUrl: inviteUrl,
     }), { headers: { "Set-Cookie": rotatedCookie } })
 })

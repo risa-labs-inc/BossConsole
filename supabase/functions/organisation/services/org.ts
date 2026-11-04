@@ -98,8 +98,9 @@ export interface OrgA2aPolicy {
   available: boolean
   /** False while the platform kill switch has org auto-connect off everywhere. */
   platform_enabled?: boolean
-  members: number
-  opted_out: { user_id: string; email: string | null; opted_out_at: string }[]
+  /** Always returned by org_a2a_policy; optional so the view stays safe against a partial answer. */
+  members?: number
+  opted_out?: { user_id: string; email: string | null; opted_out_at: string }[]
 }
 
 export function getOrgDetail(actorId: string, orgId: string) {
