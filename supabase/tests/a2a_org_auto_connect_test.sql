@@ -4,7 +4,7 @@
 -- Weighted towards what must be REFUSED: an org grant that leaks across products, past an
 -- opt-out, past a block, after leaving, through the system org, or with the policy off.
 BEGIN;
-SELECT plan(62);
+SELECT plan(79);
 
 INSERT INTO auth.users (id, email, email_confirmed_at) VALUES
  ('a0a00000-0000-4000-8000-00000000000a', 'org-alice@acme.test', now()),
@@ -97,6 +97,9 @@ SELECT is((SELECT array_agg(instance_id ORDER BY instance_id) FROM public.fluck_
     ARRAY['a-fl'], 'bob''s Fluck lists only the colleagues'' Fluck instances');
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list() WHERE NOT same_user), 0, 'without the calling instance no colleagues are listed');
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('b-old') WHERE NOT same_user), 0, 'an instance with no kind gets no colleagues');
+SELECT public.fluck_web_upsert_instance('b-max', 'Bob Max', 'Max', 'https://b-max.example.test', NULL);
+SELECT is((SELECT agent_kind FROM public.fluck_web_instances WHERE instance_id = 'b-max'), 'max',
+    'an older client''s kindless heartbeat keeps the kind a newer client recorded');
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('a-max') WHERE NOT same_user), 0, 'someone else''s instance name selects no colleagues');
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('b-max') WHERE instance_id IN ('d-max','e-max')), 0, 'non-members are not listed');
 
@@ -145,6 +148,10 @@ SELECT is((public.org_a2a_policy((SELECT org FROM ids)) -> 'opted_out' -> 0 ->> 
 SELECT is((public.org_a2a_policy((SELECT org FROM ids)) ->> 'members')::int, 3, 'and the member count');
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
 SELECT is((public.org_a2a_policy((SELECT org FROM ids)) ->> 'error'), 'Permission denied', 'a member cannot read the opt-out list');
+SELECT is((public.org_a2a_policy((SELECT org FROM ids), 'a0a00000-0000-4000-8000-00000000000a') ->> 'error'), 'Permission denied',
+    'nor by naming an admin as the actor');
+SELECT is((public.org_set_a2a_auto_connect((SELECT org FROM ids), false, 'a0a00000-0000-4000-8000-00000000000a') ->> 'error'), 'Permission denied',
+    'nor change the policy that way');
 RESET ROLE;
 SELECT is((SELECT array_agg(action ORDER BY id) FROM public.agent_audit_log WHERE org_id = (SELECT org FROM ids) AND action LIKE 'org.a2a_opt%'),
     ARRAY['org.a2a_opt_out'], 'the opt-out is audited');
@@ -153,6 +160,12 @@ SET LOCAL ROLE authenticated;
 -- ---- blocking one colleague ----
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
 SELECT lives_ok($q$ SELECT public.fluck_peer_revoke('a0a00000-0000-4000-8000-00000000000a') $q$, 'bob blocks alice, with no link row between them');
+SELECT lives_ok($q$ SELECT public.fluck_peer_revoke('a0a00000-0000-4000-8000-00000000000a') $q$, 'bob blocks alice again');
+RESET ROLE;
+SELECT is((SELECT count(*)::int FROM public.fluck_peer_links WHERE least(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000a'::uuid
+           AND greatest(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000b'::uuid), 1, 'a repeated block writes no second row');
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('b-max') WHERE NOT same_user), 0, 'bob no longer lists alice');
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('a-max') WHERE NOT same_user), 0, 'and alice no longer lists bob');
@@ -162,6 +175,24 @@ SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b
 SELECT lives_ok($q$ SELECT public.fluck_peer_unblock('a0a00000-0000-4000-8000-00000000000a') $q$, 'bob lifts his block');
 SELECT is((SELECT array_agg(instance_id ORDER BY instance_id) FROM public.fluck_peer_list('b-max') WHERE NOT same_user),
     ARRAY['a-max'], 'alice is a colleague again');
+RESET ROLE;
+INSERT INTO public.fluck_peer_links (requester_id, recipient_id, status, responded_at)
+    VALUES ('a0a00000-0000-4000-8000-00000000000a', 'a0a00000-0000-4000-8000-00000000000b', 'revoked', now());
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
+SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('a-max') WHERE NOT same_user), 0, 'a revoke from before this migration blocks');
+SELECT lives_ok($q$ SELECT public.fluck_peer_unblock('a0a00000-0000-4000-8000-00000000000b') $q$, 'either side can lift a revoke whose author is unknown');
+SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('a-max') WHERE NOT same_user), 1, 'and bob is a colleague again');
+RESET ROLE;
+INSERT INTO public.fluck_peer_links (requester_id, recipient_id, status, responded_at)
+    VALUES ('a0a00000-0000-4000-8000-00000000000a', 'a0a00000-0000-4000-8000-00000000000b', 'declined', now());
+SET LOCAL ROLE authenticated;
+SELECT lives_ok($q$ SELECT public.fluck_peer_unblock('a0a00000-0000-4000-8000-00000000000b') $q$, 'alice tries to lift bob''s decline of her request');
+SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('a-max') WHERE NOT same_user), 0, 'a decline is not the requester''s to lift');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
+SELECT lives_ok($q$ SELECT public.fluck_peer_unblock('a0a00000-0000-4000-8000-00000000000a') $q$, 'bob lifts his decline');
+SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('b-max') WHERE NOT same_user), 1, 'and alice is a colleague again');
+SELECT lives_ok($q$ SELECT public.fluck_peer_unblock(NULL) $q$, 'unblocking nobody is a no-op');
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000d', true);
 SELECT lives_ok($q$ SELECT public.fluck_peer_revoke('a0a00000-0000-4000-8000-00000000000a') $q$, 'revoking a stranger is a silent no-op');
 RESET ROLE;
@@ -195,6 +226,9 @@ SELECT is((SELECT row(org_name, colleagues)::text FROM public.fluck_a2a_org_noti
 SELECT is(public.fluck_a2a_claim_org_notice((SELECT org FROM ids)), true, 'one of bob''s agents claims it');
 SELECT is(public.fluck_a2a_claim_org_notice((SELECT org FROM ids)), false, 'no other agent can');
 SELECT is((SELECT count(*)::int FROM public.fluck_a2a_org_notices()), 0, 'the notice is gone');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000d', true);
+SELECT is(public.fluck_a2a_claim_org_notice((SELECT org FROM ids)), false, 'a non-member claims nothing');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
 
 -- ---- an accepted link outranks the org grant, in the list and at redemption ----
 RESET ROLE;
@@ -217,6 +251,17 @@ RESET ROLE;
 UPDATE public.platform_flags SET value = 'false'::jsonb WHERE key = 'a2a_org_auto_connect';
 SET LOCAL ROLE authenticated;
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('b-max') WHERE NOT same_user), 0, 'the platform kill switch ends every org grant');
+SELECT is((SELECT auto_connect FROM public.fluck_a2a_orgs() WHERE org_id = (SELECT org FROM ids)), false,
+    'and members are told it is off');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
+SELECT is((public.org_a2a_policy((SELECT org FROM ids)) ->> 'platform_enabled'), 'false', 'and so is the admin');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
+RESET ROLE;
+DELETE FROM public.platform_flags WHERE key = 'a2a_org_auto_connect';
+SET LOCAL ROLE authenticated;
+SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('b-max') WHERE NOT same_user), 0, 'a missing kill-switch row fails closed');
+RESET ROLE;
+INSERT INTO public.platform_flags (key, value) VALUES ('a2a_org_auto_connect', 'false'::jsonb);
 RESET ROLE;
 UPDATE public.platform_flags SET value = 'true'::jsonb WHERE key = 'a2a_org_auto_connect';
 UPDATE public.organisation_members SET status = 'pending' WHERE user_id = 'a0a00000-0000-4000-8000-00000000000b' AND org_id = (SELECT org FROM ids);

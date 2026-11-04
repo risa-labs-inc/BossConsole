@@ -23,6 +23,7 @@
 -- every org and is deliberately not used here.
 --
 -- Kill switch: platform_flags 'a2a_org_auto_connect' = false disables every org grant at once.
+-- It fails closed: with the flag row missing, org grants are off (this migration inserts it as true).
 -- Explicit links and a user's own instances are unchanged by this migration.
 -- ============================================================================
 
@@ -94,7 +95,7 @@ GRANT ALL ON public.organisation_a2a_notices TO service_role;
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.fluck_a2a_org_enabled() RETURNS boolean
     LANGUAGE sql STABLE SET search_path = '' AS $$
-    SELECT COALESCE((SELECT f.value = 'true'::jsonb FROM public.platform_flags f WHERE f.key = 'a2a_org_auto_connect'), true);
+    SELECT COALESCE((SELECT f.value = 'true'::jsonb FROM public.platform_flags f WHERE f.key = 'a2a_org_auto_connect'), false);
 $$;
 
 -- Whether A and B share an org with auto-connect on, both active, neither opted out.
@@ -178,7 +179,8 @@ BEGIN
     ) ON CONFLICT (user_id, instance_id) DO UPDATE SET
         label = EXCLUDED.label, agent_name = EXCLUDED.agent_name,
         endpoint_url = EXCLUDED.endpoint_url, app_version = EXCLUDED.app_version,
-        agent_kind = EXCLUDED.agent_kind;
+        -- An older client heartbeats without a kind; keep the one a newer client recorded.
+        agent_kind = COALESCE(EXCLUDED.agent_kind, i.agent_kind);
 EXCEPTION WHEN data_exception OR integrity_constraint_violation THEN
     -- Keep the failing row out of the client-visible DETAIL.
     RAISE EXCEPTION 'Invalid Fluck web instance' USING ERRCODE = '22023';
@@ -385,7 +387,7 @@ BEGIN
     ) THEN
         INSERT INTO public.fluck_peer_links (requester_id, recipient_id, status, responded_at, revoked_by)
             VALUES (actor, p_peer_id, 'revoked', now(), actor)
-            ON CONFLICT DO NOTHING;
+            ON CONFLICT ((least(requester_id, recipient_id)), (greatest(requester_id, recipient_id))) DO NOTHING;
     END IF;
     DELETE FROM public.fluck_a2a_tickets t
         WHERE (t.issuer_id = actor AND t.target_user = p_peer_id)
@@ -393,8 +395,10 @@ BEGIN
 END;
 $$;
 
--- Lift a block the caller made, so the org grant applies again. A block made by the other side,
--- or a decline, stays.
+-- Lift a block the caller made, so the org grant applies again. A block made by the other side
+-- stays. Rows written before this migration (and declines, which fluck_peer_respond writes) carry
+-- no revoked_by: a decline is the recipient's to lift, and a legacy revoke, whose author is
+-- unknown, either party's.
 CREATE OR REPLACE FUNCTION public.fluck_peer_unblock(p_peer_id uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -403,10 +407,16 @@ BEGIN
     IF actor IS NULL THEN
         RAISE EXCEPTION 'Not signed in' USING ERRCODE = '42501';
     END IF;
+    IF p_peer_id IS NULL OR p_peer_id = actor THEN
+        RETURN;
+    END IF;
     DELETE FROM public.fluck_peer_links l
         WHERE least(l.requester_id, l.recipient_id) = least(actor, p_peer_id)
           AND greatest(l.requester_id, l.recipient_id) = greatest(actor, p_peer_id)
-          AND l.status = 'revoked' AND l.revoked_by = actor;
+          AND (
+              (l.status = 'revoked' AND (l.revoked_by = actor OR l.revoked_by IS NULL))
+              OR (l.status = 'declined' AND l.revoked_by IS NULL AND l.recipient_id = actor)
+          );
 END;
 $$;
 REVOKE ALL ON FUNCTION public.fluck_peer_unblock(uuid) FROM PUBLIC, anon;
@@ -427,7 +437,8 @@ BEGIN
         RAISE EXCEPTION 'Not signed in' USING ERRCODE = '42501';
     END IF;
     RETURN QUERY
-        SELECT o.id, o.name, o.a2a_auto_connect,
+        -- auto_connect reports what is in force, so the platform kill switch reads as off.
+        SELECT o.id, o.name, o.a2a_auto_connect AND public.fluck_a2a_org_enabled(),
                EXISTS (SELECT 1 FROM public.organisation_a2a_opt_outs x WHERE x.org_id = o.id AND x.user_id = actor),
                (SELECT count(*)::integer FROM public.organisation_members m
                 WHERE m.org_id = o.id AND m.status = 'active' AND m.user_id <> actor
@@ -552,6 +563,7 @@ BEGIN
         'auto_connect', o.a2a_auto_connect,
         'enabled_at', o.a2a_auto_connect_at,
         'available', NOT o.is_system,
+        'platform_enabled', public.fluck_a2a_org_enabled(),
         'members', (SELECT count(*) FROM public.organisation_members m WHERE m.org_id = p_org_id AND m.status = 'active'),
         'opted_out', COALESCE((
             SELECT jsonb_agg(jsonb_build_object('user_id', x.user_id, 'email', u.email, 'opted_out_at', x.opted_out_at)
