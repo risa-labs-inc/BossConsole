@@ -4,7 +4,7 @@
 -- Weighted towards what must be REFUSED: an org grant that leaks across products, past an
 -- opt-out, past a block, after leaving, through the system org, or with the policy off.
 BEGIN;
-SELECT plan(108);
+SELECT plan(112);
 
 INSERT INTO auth.users (id, email, email_confirmed_at) VALUES
  ('a0a00000-0000-4000-8000-00000000000a', 'org-alice@acme.test', now()),
@@ -142,6 +142,10 @@ SELECT throws_ok($q$ SELECT * FROM public.fluck_a2a_consume_ticket((SELECT token
     'P0001', 'ticket_invalid', 'a ticket minted before the opt-out is refused');
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('c-max') WHERE NOT same_user), 0, 'an opted-out member lists no colleagues');
 SELECT is(public.fluck_a2a_claim_org_notice((SELECT org FROM ids)), false, 'an opted-out member cannot burn the notice');
+SELECT is((SELECT count(*)::int FROM public.organisation_a2a_opt_outs), 1, 'carol reads her own opt-out');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
+SELECT is((SELECT count(*)::int FROM public.organisation_a2a_opt_outs), 0, 'a colleague cannot read it');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000c', true);
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
 SELECT is((SELECT array_agg(instance_id ORDER BY instance_id) FROM public.fluck_peer_list('b-max') WHERE NOT same_user),
     ARRAY['a-max'], 'and colleagues no longer list her');
@@ -336,6 +340,13 @@ SELECT lives_ok($q$ SELECT public.fluck_peer_revoke('a0a00000-0000-4000-8000-000
 RESET ROLE;
 UPDATE public.fluck_peer_links SET responded_at = now() - interval '2 days'
     WHERE least(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000a'::uuid AND greatest(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000b'::uuid;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
+SELECT lives_ok($q$ SELECT public.fluck_peer_revoke('a0a00000-0000-4000-8000-00000000000a') $q$, 'bob repeats the block');
+RESET ROLE;
+SELECT ok((SELECT responded_at < now() - interval '1 day' FROM public.fluck_peer_links
+           WHERE least(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000a'::uuid AND greatest(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000b'::uuid),
+    'repeating a block does not restart the request cool-down');
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
 SELECT lives_ok($q$ SELECT public.fluck_peer_request('org-bob@acme.test') $q$, 'alice asks bob for a link after the cool-down');

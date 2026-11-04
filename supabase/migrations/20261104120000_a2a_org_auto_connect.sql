@@ -162,12 +162,13 @@ $$;
 REVOKE ALL ON FUNCTION public.fluck_a2a_org_enabled() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.fluck_a2a_shared_org(uuid, uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.fluck_a2a_relation(uuid, uuid, text, text) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.fluck_a2a_relation(uuid, uuid, text, text) TO service_role;
+-- No client grant at all: only the SECURITY DEFINER RPCs below call it (as the owner).
 
 -- ----------------------------------------------------------------------------
 -- 4. Heartbeat carries the product (an extra trailing parameter; older 5-argument calls still work)
 -- ----------------------------------------------------------------------------
 DROP FUNCTION IF EXISTS public.fluck_web_upsert_instance(text, text, text, text, text);
+DROP FUNCTION IF EXISTS public.fluck_web_upsert_instance(text, text, text, text, text, text); -- re-runnable
 CREATE FUNCTION public.fluck_web_upsert_instance(
     p_instance_id text, p_label text, p_agent_name text, p_endpoint_url text, p_app_version text,
     p_agent_kind text DEFAULT NULL
@@ -203,6 +204,7 @@ GRANT EXECUTE ON FUNCTION public.fluck_web_upsert_instance(text, text, text, tex
 -- p_from_instance: the CALLING instance (one of the caller's own). Its agent_kind selects which
 -- colleagues' instances are listed; without it (older clients) no colleagues are listed.
 DROP FUNCTION IF EXISTS public.fluck_peer_list();
+DROP FUNCTION IF EXISTS public.fluck_peer_list(text); -- re-runnable
 CREATE FUNCTION public.fluck_peer_list(p_from_instance text DEFAULT NULL)
 RETURNS TABLE (
     user_id uuid, email text, same_user boolean, instance_id text, label text, agent_name text,
@@ -389,8 +391,9 @@ BEGIN
     -- Already blocked or declined: keep it the caller's own block when it already was, otherwise it is now a
     -- block by both sides (revoked_by NULL), which neither can lift alone (only a request and an accept do).
     IF touched IS NULL THEN
+        -- responded_at is left alone: repeating a block must not restart the other side's request cool-down.
         UPDATE public.fluck_peer_links l
-            SET status = 'revoked', responded_at = now(),
+            SET status = 'revoked',
                 revoked_by = CASE
                     WHEN l.status = 'revoked' AND l.revoked_by = actor THEN actor
                     WHEN l.status = 'declined' AND l.recipient_id = actor THEN actor

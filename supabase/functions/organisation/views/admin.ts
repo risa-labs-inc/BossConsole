@@ -72,7 +72,7 @@ ${domainsCard(action, csrf, domains, org.slug)}`,
  * admin sees who did.
  */
 function a2aCard(action: string, csrf: string, policy: OrgA2aPolicy): string {
-  const opted = policy.opted_out ?? []
+  const opted = Array.isArray(policy.opted_out) ? policy.opted_out : []
   const optedOut = opted.length === 0
     ? `<p class="hint">Nobody has opted out.</p>`
     : `<p class="hint">${opted.length}${
