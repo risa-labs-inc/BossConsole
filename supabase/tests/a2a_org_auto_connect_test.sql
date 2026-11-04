@@ -4,7 +4,7 @@
 -- Weighted towards what must be REFUSED: an org grant that leaks across products, past an
 -- opt-out, past a block, after leaving, through the system org, or with the policy off.
 BEGIN;
-SELECT plan(59);
+SELECT plan(62);
 
 INSERT INTO auth.users (id, email, email_confirmed_at) VALUES
  ('a0a00000-0000-4000-8000-00000000000a', 'org-alice@acme.test', now()),
@@ -105,6 +105,10 @@ SELECT throws_ok($q$ SELECT public.fluck_a2a_mint_ticket('b-max', 'a0a00000-0000
     'P0001', 'peer_unavailable', 'no ticket from a Max to a colleague''s Fluck');
 SELECT throws_ok($q$ SELECT public.fluck_a2a_mint_ticket('b-old', 'a0a00000-0000-4000-8000-00000000000a', 'a-max') $q$,
     'P0001', 'peer_unavailable', 'no ticket from an instance with no kind');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
+SELECT throws_ok($q$ SELECT public.fluck_a2a_mint_ticket('a-max', 'a0a00000-0000-4000-8000-00000000000b', 'b-old') $q$,
+    'P0001', 'peer_unavailable', 'and never to one: an older build is never the target of an org ticket');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
 SELECT throws_ok($q$ SELECT public.fluck_a2a_mint_ticket('a-max', 'a0a00000-0000-4000-8000-00000000000a', 'a-max') $q$,
     'P0001', 'peer_unavailable', 'a calling instance that is not the caller''s gets no kind and no org ticket');
 SELECT lives_ok($q$ SELECT public.fluck_a2a_mint_ticket('b-fl', 'a0a00000-0000-4000-8000-00000000000a', 'a-fl') $q$,
@@ -191,6 +195,22 @@ SELECT is((SELECT row(org_name, colleagues)::text FROM public.fluck_a2a_org_noti
 SELECT is(public.fluck_a2a_claim_org_notice((SELECT org FROM ids)), true, 'one of bob''s agents claims it');
 SELECT is(public.fluck_a2a_claim_org_notice((SELECT org FROM ids)), false, 'no other agent can');
 SELECT is((SELECT count(*)::int FROM public.fluck_a2a_org_notices()), 0, 'the notice is gone');
+
+-- ---- an accepted link outranks the org grant, in the list and at redemption ----
+RESET ROLE;
+INSERT INTO public.fluck_peer_links (requester_id, recipient_id, status, responded_at)
+    VALUES ('a0a00000-0000-4000-8000-00000000000b', 'a0a00000-0000-4000-8000-00000000000a', 'accepted', now());
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
+SELECT is((SELECT source FROM public.fluck_peer_list('b-max') WHERE instance_id = 'a-max'), 'link', 'a linked colleague is listed as a link');
+INSERT INTO t SELECT 'bob-alice-link', public.fluck_a2a_mint_ticket('b-max', 'a0a00000-0000-4000-8000-00000000000a', 'a-max');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
+SELECT is((SELECT source FROM public.fluck_a2a_consume_ticket((SELECT token FROM t WHERE name = 'bob-alice-link'), 'a-max')), 'link',
+    'and redeemed as a link, so the receiver does not run it read-only');
+RESET ROLE;
+DELETE FROM public.fluck_peer_links WHERE requester_id = 'a0a00000-0000-4000-8000-00000000000b' AND recipient_id = 'a0a00000-0000-4000-8000-00000000000a';
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
 
 -- ---- kill switch, leaving, policy off ----
 RESET ROLE;
