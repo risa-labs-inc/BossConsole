@@ -7,31 +7,24 @@
  * regardless of what was rendered.
  */
 
-import { esc, scrollable } from "../utils/html.ts";
-import { COPY_BEHAVIOUR, csrfField, layout, tabs } from "./layout.ts";
-import { formatDate } from "./org.ts";
-import { CSRF_FIELD } from "../utils/csrf.ts";
-import type {
-  OrgA2aPolicy,
-  OrgDetail,
-  OrgDomain,
-  OrgInvite,
-  OrgMember,
-  OrgRole,
-} from "../services/org.ts";
+import { esc, scrollable } from "../utils/html.ts"
+import { COPY_BEHAVIOUR, csrfField, layout, tabs } from "./layout.ts"
+import { formatDate } from "./org.ts"
+import { CSRF_FIELD } from "../utils/csrf.ts"
+import type { OrgA2aPolicy, OrgDetail, OrgDomain, OrgInvite, OrgMember, OrgRole } from "../services/org.ts"
 
 export interface AdminPageOptions {
-  nonce: string;
-  basePath: string;
-  csrf: string;
-  org: OrgDetail;
-  members: OrgMember[];
-  roles: OrgRole[];
-  domains: OrgDomain[];
-  invites: OrgInvite[];
-  /** Null (older database, failed read) or unavailable (the system org) hides the card. */
-  a2a?: OrgA2aPolicy | "unreadable" | null;
-  banner?: { kind: "ok" | "error"; message: string } | null;
+  nonce: string
+  basePath: string
+  csrf: string
+  org: OrgDetail
+  members: OrgMember[]
+  roles: OrgRole[]
+  domains: OrgDomain[]
+  invites: OrgInvite[]
+  /** "unreadable" (a failed read) shows a notice card; unavailable (the system org) or absent hides the card. */
+  a2a?: OrgA2aPolicy | "unreadable" | null
+  banner?: { kind: "ok" | "error"; message: string } | null
   /**
    * A just-created invite URL, shown once.
    *
@@ -39,24 +32,14 @@ export interface AdminPageOptions {
    * exists in readable form. It is why the create-invite action renders the
    * page directly instead of answering 303 like every other action.
    */
-  newInviteUrl?: string | null;
+  newInviteUrl?: string | null
 }
 
 export function adminPage(options: AdminPageOptions): string {
-  const {
-    nonce,
-    basePath,
-    csrf,
-    org,
-    members,
-    roles,
-    domains,
-    invites,
-    banner,
-  } = options;
-  const action = `${basePath}/o/${encodeURIComponent(org.slug)}/admin`;
-  const pending = members.filter((m) => m.status === "pending");
-  const active = members.filter((m) => m.status === "active");
+  const { nonce, basePath, csrf, org, members, roles, domains, invites, banner } = options
+  const action = `${basePath}/o/${encodeURIComponent(org.slug)}/admin`
+  const pending = members.filter((m) => m.status === "pending")
+  const active = members.filter((m) => m.status === "active")
 
   return layout({
     title: `${org.name} configuration - BOSS`,
@@ -74,19 +57,13 @@ ${tabs(basePath, org.slug, "admin", true)}
 
 ${options.newInviteUrl ? newInviteCard(options.newInviteUrl) : ""}
 ${settingsCard(action, csrf, org, roles)}
-${
-      options.a2a === "unreadable"
-        ? a2aUnreadableCard()
-        : options.a2a && options.a2a.available
-        ? a2aCard(action, csrf, options.a2a)
-        : ""
-    }
+${options.a2a === "unreadable" ? a2aUnreadableCard() : options.a2a && options.a2a.available ? a2aCard(action, csrf, options.a2a) : ""}
 ${pending.length > 0 ? pendingCard(action, csrf, pending) : ""}
 ${membersCard(action, csrf, org, active, roles)}
 ${rolesCard(action, csrf, org, roles)}
 ${invitesCard(action, csrf, invites, roles)}
 ${domainsCard(action, csrf, domains, org.slug)}`,
-  });
+  })
 }
 
 /**
@@ -95,22 +72,17 @@ ${domainsCard(action, csrf, domains, org.slug)}`,
  * admin sees who did.
  */
 function a2aCard(action: string, csrf: string, policy: OrgA2aPolicy): string {
-  const optedOut = policy.opted_out.length === 0
+  const opted = policy.opted_out ?? []
+  const optedOut = opted.length === 0
     ? `<p class="hint">Nobody has opted out.</p>`
-    : `<p class="hint">${policy.opted_out.length} of ${policy.members} members opted out${
-      policy.auto_connect
-        ? ""
-        : " (their choice still applies when this is turned back on)"
+    : `<p class="hint">${opted.length} of ${Number(policy.members) || 0} members opted out${
+      policy.auto_connect ? "" : " (their choice still applies when this is turned back on)"
     }:</p>
   <ul>${
-      policy.opted_out
-        .map((m) =>
-          `<li>${esc(m.email ?? m.user_id)} <span class="hint">since ${
-            esc(formatDate(m.opted_out_at))
-          }</span></li>`
-        )
+      opted
+        .map((m) => `<li>${esc(m.email ?? m.user_id)} <span class="hint">since ${esc(formatDate(m.opted_out_at))}</span></li>`)
         .join("")
-    }</ul>`;
+    }</ul>`
   return `
 <section class="card">
   <h2>Agent connections</h2>
@@ -118,28 +90,27 @@ function a2aCard(action: string, csrf: string, policy: OrgA2aPolicy): string {
   <form method="post" action="${esc(action)}/a2a">
     ${csrfField(CSRF_FIELD, csrf)}
     <div class="checkline">
-      <input type="checkbox" id="a2a_auto_connect" name="auto_connect" value="1"${
-    policy.auto_connect ? " checked" : ""
-  }>
+      <input type="checkbox" id="a2a_auto_connect" name="auto_connect" value="1"${policy.auto_connect ? " checked" : ""}>
       <label for="a2a_auto_connect">Connect all members' agents automatically</label>
     </div>
     <button type="submit">Save agent connections</button>
   </form>
   ${
-    policy.platform_enabled === false
-      ? `<p class="hint">Automatic connections are currently paused for every organisation by the platform, so this setting has no effect until they are resumed.</p>`
-      : ""
-  }
+  policy.platform_enabled === false
+    ? `<p class="hint">Automatic connections are currently paused for every organisation by the platform, so this setting has no effect until they are resumed.</p>`
+    : ""
+}
   ${optedOut}
-</section>`;
+</section>`
 }
 
+/** Shown when the policy could not be read, so the card does not silently vanish. */
 function a2aUnreadableCard(): string {
   return `
 <section class="card">
   <h2>Agent connections</h2>
   <p class="hint">The agent connections setting could not be read just now. Reload the page to try again.</p>
-</section>`;
+</section>`
 }
 
 /**
@@ -164,26 +135,19 @@ function newInviteCard(url: string): string {
 <section class="card highlight">
   <h2>Invite link created</h2>
   <p class="hint">This is the only time the link is shown. Only its hash is stored, so it cannot be recovered later.</p>
-  <input type="text" class="mono" readonly value="${
-    esc(url)
-  }" aria-label="Invite link">
-</section>`;
+  <input type="text" class="mono" readonly value="${esc(url)}" aria-label="Invite link">
+</section>`
 }
 
-function settingsCard(
-  action: string,
-  csrf: string,
-  org: OrgDetail,
-  roles: OrgRole[],
-): string {
-  const publishPolicy = org.publish_policy ?? "owner_only";
+function settingsCard(action: string, csrf: string, org: OrgDetail, roles: OrgRole[]): string {
+  const publishPolicy = org.publish_policy ?? "owner_only"
   const roleOptions = roles
     .map((role) =>
       `<option value="${esc(role.role_id)}"${
         org.publish_role_id === role.role_id ? " selected" : ""
       }>${esc(role.role_name)}</option>`
     )
-    .join("");
+    .join("")
 
   return `
 <section class="card">
@@ -196,19 +160,13 @@ function settingsCard(
     <div class="row">
       <div>
         <label for="name">Name</label>
-        <input type="text" id="name" name="name" maxlength="120" value="${
-    esc(org.name)
-  }" required>
+        <input type="text" id="name" name="name" maxlength="120" value="${esc(org.name)}" required>
       </div>
       <div>
         <label for="visibility">Visibility</label>
         <select id="visibility" name="visibility">
-          ${
-    selectOption("private", "Private (hidden from search)", org.visibility)
-  }
-          ${
-    selectOption("public", "Public (appears in discovery)", org.visibility)
-  }
+          ${selectOption("private", "Private (hidden from search)", org.visibility)}
+          ${selectOption("public", "Public (appears in discovery)", org.visibility)}
         </select>
       </div>
     </div>
@@ -232,9 +190,7 @@ function settingsCard(
         <label for="join_policy">Who can join</label>
         <select id="join_policy" name="join_policy">
           ${selectOption("invite_only", "Invite only", org.join_policy)}
-          ${
-    selectOption("request_to_join", "Anyone may request", org.join_policy)
-  }
+          ${selectOption("request_to_join", "Anyone may request", org.join_policy)}
           ${selectOption("open", "Anyone may join directly", org.join_policy)}
         </select>
       </div>
@@ -264,54 +220,40 @@ function settingsCard(
     </div>
     <button type="submit">Save settings</button>
   </form>
-</section>`;
+</section>`
 }
 
-function pendingCard(
-  action: string,
-  csrf: string,
-  pending: OrgMember[],
-): string {
+function pendingCard(action: string, csrf: string, pending: OrgMember[]): string {
   const rows = pending.map((member) => `
     <tr>
       <td>${esc(member.email ?? "unknown")}</td>
       <td>${esc(member.request_message ?? "")}</td>
       <td>${esc(formatDate(member.requested_at))}</td>
       <td>
-        <form class="inline" method="post" action="${
-    esc(action)
-  }/members/approve">
+        <form class="inline" method="post" action="${esc(action)}/members/approve">
           ${csrfField(CSRF_FIELD, csrf)}
           <input type="hidden" name="user_id" value="${esc(member.user_id)}">
           <button type="submit">Approve</button>
         </form>
-        <form class="inline" method="post" action="${
-    esc(action)
-  }/members/reject">
+        <form class="inline" method="post" action="${esc(action)}/members/reject">
           ${csrfField(CSRF_FIELD, csrf)}
           <input type="hidden" name="user_id" value="${esc(member.user_id)}">
           <button type="submit" class="danger">Reject</button>
         </form>
       </td>
-    </tr>`).join("");
+    </tr>`).join("")
 
   return `
 <section class="card">
   <h2>Join requests (${pending.length})</h2>
   <p class="hint">People who asked to join and are waiting on a decision.</p>
-  ${
-    scrollable(
-      "Join requests",
-      `
+  ${scrollable("Join requests", `
   <table>
     <thead><tr><th>Email</th><th>Message</th><th>Requested</th><th>Decision</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
-  `,
-      false,
-    )
-  }
-</section>`;
+  `, false)}
+</section>`
 }
 
 function membersCard(
@@ -321,21 +263,18 @@ function membersCard(
   members: OrgMember[],
   roles: OrgRole[],
 ): string {
-  if (members.length === 0) return "";
+  if (members.length === 0) return ""
 
   const roleOptions = roles
-    .map((role) =>
-      `<option value="${esc(role.role_id)}">${esc(role.role_name)}</option>`
-    )
-    .join("");
+    .map((role) => `<option value="${esc(role.role_id)}">${esc(role.role_name)}</option>`)
+    .join("")
 
   const rows = members.map((member) => `
     <tr>
       <td>${esc(member.email ?? "unknown")}
         ${member.is_owner ? '<span class="pill admin">owner</span>' : ""}</td>
       <td>${
-    (member.roles ?? []).map((r) => `<span class="pill mono">${esc(r)}</span>`)
-      .join("") ||
+    (member.roles ?? []).map((r) => `<span class="pill mono">${esc(r)}</span>`).join("") ||
     '<span class="empty">none</span>'
   }</td>
       <td>
@@ -353,70 +292,52 @@ function membersCard(
     // The owner cannot be removed here. The database refuses it too; this is
     // just not offering a button that always fails.
     member.is_owner ? "" : `
-        <form class="inline" method="post" action="${
-      esc(action)
-    }/members/remove">
+        <form class="inline" method="post" action="${esc(action)}/members/remove">
           ${csrfField(CSRF_FIELD, csrf)}
           <input type="hidden" name="user_id" value="${esc(member.user_id)}">
           <button type="submit" class="danger">Remove</button>
-        </form>`}</td>
-    </tr>`).join("");
+        </form>`
+  }</td>
+    </tr>`).join("")
 
   return `
 <section class="card">
   <h2>Members (${esc(org.member_count)})</h2>
   <p class="hint">Removing a member also ends any web session they have open.</p>
-  ${
-    scrollable(
-      "Members",
-      `
+  ${scrollable("Members", `
   <table>
     <thead><tr><th>Email</th><th>Roles</th><th>Assign</th><th></th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
-  `,
-      false,
-    )
-  }
-</section>`;
+  `, false)}
+</section>`
 }
 
-function rolesCard(
-  action: string,
-  csrf: string,
-  org: OrgDetail,
-  roles: OrgRole[],
-): string {
-  const customCount = org.custom_role_count ?? 0;
+function rolesCard(action: string, csrf: string, org: OrgDetail, roles: OrgRole[]): string {
+  const customCount = org.custom_role_count ?? 0
   // 25 matches create_organisation_role COALESCE(v_max, 25); the column is NOT NULL
   // DEFAULT 25, so this only fires if the field is absent from the projection.
-  const maxCustom = org.max_custom_roles ?? 25;
-  const atCap = maxCustom > 0 && customCount >= maxCustom;
+  const maxCustom = org.max_custom_roles ?? 25
+  const atCap = maxCustom > 0 && customCount >= maxCustom
 
   const rows = roles.map((role) => `
     <tr>
       <td class="mono">${esc(role.role_name)}</td>
-      <td><span class="pill${role.kind === "admin" ? " admin" : ""}">${
-    esc(role.kind)
-  }</span></td>
+      <td><span class="pill${role.kind === "admin" ? " admin" : ""}">${esc(role.kind)}</span></td>
       <td>${esc(role.member_count)}</td>
       <td>${
     role.kind === "custom"
-      ? `<form class="inline" method="post" action="${
-        esc(action)
-      }/roles/delete">
+      ? `<form class="inline" method="post" action="${esc(action)}/roles/delete">
           ${csrfField(CSRF_FIELD, csrf)}
           <input type="hidden" name="role_id" value="${esc(role.role_id)}">
           <button type="submit" class="danger">Delete</button>
         </form>`
       : '<span class="empty">built in</span>'
   }</td>
-    </tr>`).join("");
+    </tr>`).join("")
 
   const createForm = atCap
-    ? `<p class="empty">This organisation is at its limit of ${
-      esc(maxCustom)
-    } custom roles.</p>`
+    ? `<p class="empty">This organisation is at its limit of ${esc(maxCustom)} custom roles.</p>`
     : `
     <form method="post" action="${esc(action)}/roles/create">
       ${csrfField(CSRF_FIELD, csrf)}
@@ -435,28 +356,20 @@ function rolesCard(
       esc(org.slug)
     }_&lt;name&gt;</span>, ranked below the administrator role.</p>
       <button type="submit">Create role</button>
-    </form>`;
+    </form>`
 
   return `
 <section class="card">
   <h2>Roles</h2>
-  <p class="hint">${esc(customCount)} of ${
-    esc(maxCustom)
-  } custom roles used.</p>
-  ${
-    scrollable(
-      "Roles",
-      `
+  <p class="hint">${esc(customCount)} of ${esc(maxCustom)} custom roles used.</p>
+  ${scrollable("Roles", `
   <table>
     <thead><tr><th>Role</th><th>Kind</th><th>Members</th><th></th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
-  `,
-      false,
-    )
-  }
+  `, false)}
   <div class="spaced">${createForm}</div>
-</section>`;
+</section>`
 }
 
 function invitesCard(
@@ -469,10 +382,8 @@ function invitesCard(
   // organisation takeover. The database refuses it; this does not offer it.
   const roleOptions = roles
     .filter((role) => role.kind !== "admin")
-    .map((role) =>
-      `<option value="${esc(role.role_id)}">${esc(role.role_name)}</option>`
-    )
-    .join("");
+    .map((role) => `<option value="${esc(role.role_id)}">${esc(role.role_name)}</option>`)
+    .join("")
 
   const rows = invites.length === 0
     ? '<tr><td colspan="5" class="empty">No invite links yet.</td></tr>'
@@ -481,9 +392,7 @@ function invitesCard(
       <td>${esc(invite.label ?? "Invite")}
         <span class="mono">${esc(invite.token_prefix)}...</span></td>
       <td>${esc(invite.role_name ?? "default role")}</td>
-      <td>${esc(invite.uses)}${
-      invite.max_uses ? ` / ${esc(invite.max_uses)}` : ""
-    }</td>
+      <td>${esc(invite.uses)}${invite.max_uses ? ` / ${esc(invite.max_uses)}` : ""}</td>
       <td>${
       invite.is_live
         ? '<span class="pill ok">live</span>'
@@ -491,35 +400,25 @@ function invitesCard(
     } ${esc(formatDate(invite.expires_at))}</td>
       <td>${
       invite.is_live
-        ? `<form class="inline" method="post" action="${
-          esc(action)
-        }/invites/revoke">
+        ? `<form class="inline" method="post" action="${esc(action)}/invites/revoke">
             ${csrfField(CSRF_FIELD, csrf)}
-            <input type="hidden" name="invite_id" value="${
-          esc(invite.invite_id)
-        }">
+            <input type="hidden" name="invite_id" value="${esc(invite.invite_id)}">
             <button type="submit" class="danger">Revoke</button>
           </form>`
         : ""
     }</td>
-    </tr>`).join("");
+    </tr>`).join("")
 
   return `
 <section class="card">
   <h2>Invite links</h2>
   <p class="hint">A new link is shown once, at creation. Only its prefix is stored, so it cannot be recovered later.</p>
-  ${
-    scrollable(
-      "Invite links",
-      `
+  ${scrollable("Invite links", `
   <table>
     <thead><tr><th>Label</th><th>Grants</th><th>Uses</th><th>Expires</th><th></th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
-  `,
-      false,
-    )
-  }
+  `, false)}
   <div class="spaced">
     <form method="post" action="${esc(action)}/invites/create">
       ${csrfField(CSRF_FIELD, csrf)}
@@ -548,7 +447,7 @@ function invitesCard(
       <button type="submit">Create invite link</button>
     </form>
   </div>
-</section>`;
+</section>`
 }
 
 /**
@@ -582,7 +481,7 @@ function dnsRecord(domain: OrgDomain): string {
           <span class="pill mono">${esc(domain.dns_record_value)}</span>
           ${copyButton(domain.dns_record_value, "value")}
         </div>
-      </div>`;
+      </div>`
 }
 
 /**
@@ -593,10 +492,8 @@ function dnsRecord(domain: OrgDomain): string {
  * domain. The aria-label distinguishes the two buttons in a row, which both read "Copy".
  */
 function copyButton(value: string, what: string): string {
-  return `<button type="button" class="secondary copy" data-copy="${
-    esc(value)
-  }"` +
-    ` aria-label="Copy the DNS record ${esc(what)}">Copy</button>`;
+  return `<button type="button" class="secondary copy" data-copy="${esc(value)}"` +
+    ` aria-label="Copy the DNS record ${esc(what)}">Copy</button>`
 }
 
 /**
@@ -623,23 +520,15 @@ function addUsersForm(action: string, csrf: string, domain: OrgDomain): string {
   // list_organisation_domains, and against the older database the field is absent. `undefined < 1`
   // is FALSE, so a naive guard would have rendered "Add undefined existing users" on every
   // verified domain in the window between the two deploys.
-  const count = typeof domain.addable_user_count === "number"
-    ? domain.addable_user_count
-    : 0;
-  if (!domain.verified || count < 1) return "";
-  const label = count === 1
-    ? "Add 1 existing user"
-    : `Add ${count} existing users`;
+  const count = typeof domain.addable_user_count === "number" ? domain.addable_user_count : 0
+  if (!domain.verified || count < 1) return ""
+  const label = count === 1 ? "Add 1 existing user" : `Add ${count} existing users`
   return `
-        <form class="inline" method="post" action="${
-    esc(action)
-  }/domains/add-users">
+        <form class="inline" method="post" action="${esc(action)}/domains/add-users">
           ${csrfField(CSRF_FIELD, csrf)}
-          <input type="hidden" name="domain_id" value="${
-    esc(domain.domain_id)
-  }">
+          <input type="hidden" name="domain_id" value="${esc(domain.domain_id)}">
           <button type="submit" class="secondary">${esc(label)}</button>
-        </form>`;
+        </form>`
 }
 
 function domainsCard(
@@ -664,41 +553,29 @@ function domainsCard(
       <td>
         ${
       domain.verified ? "" : `
-        <form class="inline" method="post" action="${
-        esc(action)
-      }/domains/verify">
+        <form class="inline" method="post" action="${esc(action)}/domains/verify">
           ${csrfField(CSRF_FIELD, csrf)}
-          <input type="hidden" name="domain_id" value="${
-        esc(domain.domain_id)
-      }">
+          <input type="hidden" name="domain_id" value="${esc(domain.domain_id)}">
           <button type="submit" class="secondary">Verify now</button>
         </form>`
     }
         ${
       domain.verified && !domain.is_primary
-        ? `<form class="inline" method="post" action="${
-          esc(action)
-        }/domains/primary">
+        ? `<form class="inline" method="post" action="${esc(action)}/domains/primary">
             ${csrfField(CSRF_FIELD, csrf)}
-            <input type="hidden" name="domain_id" value="${
-          esc(domain.domain_id)
-        }">
+            <input type="hidden" name="domain_id" value="${esc(domain.domain_id)}">
             <button type="submit" class="secondary">Make primary</button>
           </form>`
         : ""
     }
         ${addUsersForm(action, csrf, domain)}
-        <form class="inline" method="post" action="${
-      esc(action)
-    }/domains/remove">
+        <form class="inline" method="post" action="${esc(action)}/domains/remove">
           ${csrfField(CSRF_FIELD, csrf)}
-          <input type="hidden" name="domain_id" value="${
-      esc(domain.domain_id)
-    }">
+          <input type="hidden" name="domain_id" value="${esc(domain.domain_id)}">
           <button type="submit" class="danger">Remove</button>
         </form>
       </td>
-    </tr>`).join("");
+    </tr>`).join("")
 
   return `
 <section class="card">
@@ -707,18 +584,12 @@ function domainsCard(
   <p class="hint">Once a domain is verified you can also add the accounts that already use it. They become members immediately without being asked, and if new members are given the ${
     esc(orgSlug)
   }_user role automatically, anything shared with that role becomes readable by all of them.</p>
-  ${
-    scrollable(
-      "Domains",
-      `
+  ${scrollable("Domains", `
   <table>
     <thead><tr><th>Domain</th><th>Status</th><th>DNS record</th><th></th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
-  `,
-      false,
-    )
-  }
+  `, false)}
   <div class="spaced">
     <form method="post" action="${esc(action)}/domains/add">
       ${csrfField(CSRF_FIELD, csrf)}
@@ -731,13 +602,13 @@ function domainsCard(
       <button type="submit">Add domain</button>
     </form>
   </div>
-</section>`;
+</section>`
 }
 
 function selectOption(value: string, label: string, current: string): string {
   return `<option value="${esc(value)}"${
     current === value ? " selected" : ""
-  }>${esc(label)}</option>`;
+  }>${esc(label)}</option>`
 }
 
 /**
@@ -762,9 +633,7 @@ ${newInviteCard(inviteUrl)}
 <section class="card">
   <p class="hint">The rest of the configuration page could not be loaded just now. The invite
   above is live and is shown only once, so copy it before reloading.</p>
-  <a href="${esc(basePath)}/o/${
-      esc(encodeURIComponent(slug))
-    }/admin">Back to configuration</a>
+  <a href="${esc(basePath)}/o/${esc(encodeURIComponent(slug))}/admin">Back to configuration</a>
 </section>`,
-  });
+  })
 }

@@ -4,7 +4,7 @@
 -- Weighted towards what must be REFUSED: an org grant that leaks across products, past an
 -- opt-out, past a block, after leaving, through the system org, or with the policy off.
 BEGIN;
-SELECT plan(80);
+SELECT plan(83);
 
 INSERT INTO auth.users (id, email, email_confirmed_at) VALUES
  ('a0a00000-0000-4000-8000-00000000000a', 'org-alice@acme.test', now()),
@@ -276,6 +276,17 @@ SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
 SELECT is((public.org_set_a2a_auto_connect((SELECT org FROM ids), false)) ->> 'success', 'true', 'the admin turns it off');
 SELECT is((SELECT array_agg(source) FROM public.fluck_peer_list('a-max') WHERE NOT same_user), ARRAY['link'], 'only the explicit link remains');
+SELECT is((public.org_set_a2a_auto_connect((SELECT org FROM ids), NULL)) ->> 'error', 'enabled is required', 'the policy needs a value');
+
+-- ---- turned on again: every member is told again ----
+RESET ROLE;
+UPDATE public.organisation_a2a_notices SET notified_at = now() - interval '1 hour'
+    WHERE org_id = (SELECT org FROM ids) AND user_id = 'a0a00000-0000-4000-8000-00000000000b';
+UPDATE public.organisations SET a2a_auto_connect_at = now() - interval '2 hours' WHERE id = (SELECT org FROM ids);
+SET LOCAL ROLE authenticated;
+SELECT is((public.org_set_a2a_auto_connect((SELECT org FROM ids), true)) ->> 'success', 'true', 'the admin turns it back on');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
+SELECT is(public.fluck_a2a_claim_org_notice((SELECT org FROM ids)), true, 'bob is told again after it was turned back on');
 
 SELECT * FROM finish();
 ROLLBACK;
