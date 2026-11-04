@@ -18,8 +18,11 @@ import com.teamdev.jxbrowser.navigation.event.LoadFinished
 import com.teamdev.jxbrowser.navigation.event.LoadStarted
 import com.teamdev.jxbrowser.view.compose.BrowserView
 import com.teamdev.jxbrowser.view.compose.BrowserViewState
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.Frame
 import java.awt.Window
@@ -39,6 +42,15 @@ actual fun PasskeyBrowserView(
     var browser by remember { mutableStateOf<Browser?>(null) }
     var initError by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
+
+    // Isolate view failures from the load callback while retaining composition ownership.
+    val viewScope =
+        remember(coroutineScope) {
+            CoroutineScope(coroutineScope.coroutineContext + SupervisorJob(coroutineScope.coroutineContext[Job]))
+        }
+    DisposableEffect(viewScope) {
+        onDispose { viewScope.cancel() }
+    }
 
     // Initialize browser when composable enters composition
     DisposableEffect(url) {
@@ -65,7 +77,13 @@ actual fun PasskeyBrowserView(
             newBrowser.navigation().on(LoadFinished::class.java) {
                 logger.debug(LogCategory.BROWSER, "Page loaded successfully", mapOf("url" to newBrowser.url()))
                 coroutineScope.launch(Dispatchers.Main) {
-                    onLoadComplete()
+                    // Caught here because the supervisor only isolates one direction: a throw from this
+                    // plain child would cancel the composition's job and the view's scope with it.
+                    try {
+                        onLoadComplete()
+                    } catch (e: Exception) {
+                        logger.warn(LogCategory.BROWSER, "Passkey load callback failed", error = e)
+                    }
                 }
             }
 
@@ -114,10 +132,22 @@ actual fun PasskeyBrowserView(
             remember(localWindow) {
                 localWindow ?: Window.getWindows().firstOrNull() ?: Frame()
             }
+        // A supervised child of the composition, not a fresh `MainScope()` that nothing cancels, and the state closed
+        // when it is replaced or dropped - the pairing JxBrowser's own `rememberBrowserViewState` uses.
+        // Closing the browser on disposal does not cover a view re-attached to a different window.
         val browserViewState =
             remember(browser, window) {
-                BrowserViewState(browser!!, MainScope(), window)
+                BrowserViewState(browser!!, viewScope, window)
             }
+        DisposableEffect(browserViewState) {
+            onDispose {
+                try {
+                    browserViewState.close()
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.BROWSER, "Error closing browser view", error = e)
+                }
+            }
+        }
 
         BrowserView(
             state = browserViewState,
