@@ -4,7 +4,7 @@
 -- Weighted towards what must be REFUSED: an org grant that leaks across products, past an
 -- opt-out, past a block, after leaving, through the system org, or with the policy off.
 BEGIN;
-SELECT plan(55);
+SELECT plan(59);
 
 INSERT INTO auth.users (id, email, email_confirmed_at) VALUES
  ('a0a00000-0000-4000-8000-00000000000a', 'org-alice@acme.test', now()),
@@ -53,10 +53,13 @@ SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
 SELECT public.fluck_web_upsert_instance('a-max', 'Alice Mac', 'Max', 'https://a-max.example.test', NULL, 'max');
 SELECT public.fluck_web_upsert_instance('a-fl', 'Alice Fluck', 'Fluck', 'https://a-fl.example.test', NULL, 'fluck');
+SELECT public.fluck_web_upsert_instance('a-sup', 'Alice Support', 'Support', 'https://a-sup.example.test', NULL, 'agent:acme-support');
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
 SELECT public.fluck_web_upsert_instance('b-max', 'Bob Mac', 'Max', 'https://b-max.example.test', NULL, 'max');
 SELECT public.fluck_web_upsert_instance('b-fl', 'Bob Fluck', 'Fluck', 'https://b-fl.example.test', NULL, 'fluck');
 SELECT public.fluck_web_upsert_instance('b-old', 'Bob Old', 'Max', 'https://b-old.example.test', NULL);
+SELECT public.fluck_web_upsert_instance('b-sup', 'Bob Support', 'Support', 'https://b-sup.example.test', NULL, 'agent:acme-support');
+SELECT public.fluck_web_upsert_instance('b-hr', 'Bob HR', 'HR', 'https://b-hr.example.test', NULL, 'agent:acme-hr');
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000c', true);
 SELECT public.fluck_web_upsert_instance('c-max', 'Carol Mac', 'Max', 'https://c-max.example.test', NULL, 'max');
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000d', true);
@@ -65,11 +68,13 @@ SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000e
 SELECT public.fluck_web_upsert_instance('e-max', 'Erin Mac', 'Max', 'https://e-max.example.test', NULL, 'max');
 SELECT throws_ok($q$ SELECT public.fluck_web_upsert_instance('e-x', 'X', 'X', 'https://x.example.test', NULL, 'other') $q$,
     '22023', NULL, 'an unknown kind is refused');
+SELECT throws_ok($q$ SELECT public.fluck_web_upsert_instance('e-x', 'X', 'X', 'https://x.example.test', NULL, 'agent:Bad Slug') $q$,
+    '22023', NULL, 'a malformed managed-agent kind is refused');
 
 -- ---- policy off: colleagues are strangers ----
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
 SELECT is((SELECT array_agg(instance_id ORDER BY instance_id) FROM public.fluck_peer_list('b-max')),
-    ARRAY['b-fl','b-max','b-old'], 'policy off: bob lists only his own instances');
+    ARRAY['b-fl','b-hr','b-max','b-old','b-sup'], 'policy off: bob lists only his own instances');
 SELECT throws_ok($q$ SELECT public.fluck_a2a_mint_ticket('b-max', 'a0a00000-0000-4000-8000-00000000000a', 'a-max') $q$,
     'P0001', 'peer_unavailable', 'policy off: no ticket to a colleague');
 SELECT is((public.org_set_a2a_auto_connect((SELECT org FROM ids), true)) ->> 'error', 'Permission denied', 'a plain member cannot turn it on');
@@ -104,6 +109,12 @@ SELECT throws_ok($q$ SELECT public.fluck_a2a_mint_ticket('a-max', 'a0a00000-0000
     'P0001', 'peer_unavailable', 'a calling instance that is not the caller''s gets no kind and no org ticket');
 SELECT lives_ok($q$ SELECT public.fluck_a2a_mint_ticket('b-fl', 'a0a00000-0000-4000-8000-00000000000a', 'a-fl') $q$,
     'Fluck to a colleague''s Fluck is allowed');
+SELECT is((SELECT array_agg(instance_id ORDER BY instance_id) FROM public.fluck_peer_list('b-sup') WHERE NOT same_user),
+    ARRAY['a-sup'], 'a managed agent lists the same managed agent of colleagues only');
+SELECT lives_ok($q$ SELECT public.fluck_a2a_mint_ticket('b-sup', 'a0a00000-0000-4000-8000-00000000000a', 'a-sup') $q$,
+    'a managed agent reaches a colleague''s same managed agent');
+SELECT throws_ok($q$ SELECT public.fluck_a2a_mint_ticket('b-hr', 'a0a00000-0000-4000-8000-00000000000a', 'a-sup') $q$,
+    'P0001', 'peer_unavailable', 'but not another managed agent');
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
 SELECT is((SELECT row(user_id, instance_id, same_user, source)::text FROM public.fluck_a2a_consume_ticket((SELECT token FROM t WHERE name = 'bob-alice'), 'a-max')),
     '(a0a00000-0000-4000-8000-00000000000b,b-max,f,org)', 'alice redeems it and learns it is an org colleague');
@@ -158,7 +169,7 @@ INSERT INTO public.fluck_peer_links (requester_id, recipient_id, status, respond
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000d', true);
 SELECT is((SELECT array_agg(instance_id || ':' || source ORDER BY instance_id) FROM public.fluck_peer_list('d-max') WHERE NOT same_user),
-    ARRAY['a-fl:link','a-max:link'], 'a linked peer sees every product, as before');
+    ARRAY['a-fl:link','a-max:link','a-sup:link'], 'a linked peer sees every product, as before');
 
 -- ---- the system org never connects anyone ----
 RESET ROLE;

@@ -38,13 +38,15 @@ COMMENT ON COLUMN public.organisations.a2a_auto_connect IS
     'A2A org auto-connect: active members'' agents of the same product may talk without a link request. Off by default; org admins only (org_set_a2a_auto_connect).';
 
 -- Which product an instance is. NULL = an older client that does not say: such an instance is
--- never reached through an org grant (fails closed). Max fills it from its install identity.
+-- never reached through an org grant (fails closed). Max fills it from its install identity; a
+-- managed agent is 'agent:<slug>' (agents.slug is unique), so it only meets the same managed agent.
 ALTER TABLE public.fluck_web_instances
     ADD COLUMN IF NOT EXISTS agent_kind text;
 DO $$ BEGIN
     ALTER TABLE public.fluck_web_instances
         ADD CONSTRAINT fluck_web_instances_agent_kind_check
-        CHECK (agent_kind IS NULL OR agent_kind IN ('max', 'optimist', 'fluck'));
+        CHECK (agent_kind IS NULL OR agent_kind IN ('max', 'optimist', 'fluck')
+               OR agent_kind ~ '^agent:[a-z][a-z0-9-]{1,30}[a-z0-9]$');
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
