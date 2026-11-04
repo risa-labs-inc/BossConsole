@@ -38,6 +38,7 @@ const RESULT_MESSAGES: Record<string, string> = {
   domain_primary: "Primary domain updated.",
   domain_unverified: "The TXT record was not found. DNS changes can take a few minutes.",
   domain_users_added: "Members added. Everyone with an address at that domain is now in the organisation.",
+  a2a_saved: "Agent connections saved.",
 }
 
 // invite_created and dns_failed were removed as unreachable: the invite handler renders its
@@ -107,6 +108,7 @@ adminPageRoutes.get("/o/:slug/admin", async (ctx) => {
       roles: data.roles,
       domains: data.domains,
       invites: data.invites,
+      a2a: data.a2a,
       banner,
     })
   )

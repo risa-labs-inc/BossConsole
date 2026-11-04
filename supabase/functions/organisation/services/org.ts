@@ -90,6 +90,19 @@ export interface OrgInvite {
   is_live: boolean
 }
 
+/** The A2A auto-connect policy, as org_a2a_policy returns it (admins only). */
+export interface OrgA2aPolicy {
+  auto_connect: boolean
+  enabled_at: string | null
+  /** False for the system organisation, which can never turn this on. */
+  available: boolean
+  /** False while the platform kill switch has org auto-connect off everywhere. */
+  platform_enabled?: boolean
+  /** Always returned by org_a2a_policy; optional so the view stays safe against a partial answer. */
+  members?: number
+  opted_out?: { user_id: string; email: string | null; opted_out_at: string }[]
+}
+
 export function getOrgDetail(actorId: string, orgId: string) {
   return callForActor<OrgDetail>("get_organisation_detail", actorId, { p_org_id: orgId })
 }
@@ -110,6 +123,10 @@ export function listInvites(actorId: string, orgId: string) {
   return callForActor<OrgInvite[]>("list_organisation_invites", actorId, { p_org_id: orgId })
 }
 
+export function getA2aPolicy(actorId: string, orgId: string) {
+  return callForActor<OrgA2aPolicy>("org_a2a_policy", actorId, { p_org_id: orgId })
+}
+
 /**
  * Everything the admin page renders, fetched concurrently.
  *
@@ -119,18 +136,28 @@ export function listInvites(actorId: string, orgId: string) {
  * members and domains too.
  */
 export async function loadAdminPageData(actorId: string, orgId: string): Promise<
-  | { ok: true; org: OrgDetail; members: OrgMember[]; roles: OrgRole[]; domains: OrgDomain[]; invites: OrgInvite[] }
+  | {
+    ok: true
+    org: OrgDetail
+    members: OrgMember[]
+    roles: OrgRole[]
+    domains: OrgDomain[]
+    invites: OrgInvite[]
+    a2a: OrgA2aPolicy | "unreadable"
+  }
   | { ok: false; error: string }
 > {
-  const [detail, members, roles, domains, invites] = await Promise.all([
+  const [detail, members, roles, domains, invites, a2a] = await Promise.all([
     getOrgDetail(actorId, orgId),
     listMembers(actorId, orgId),
     listRoles(actorId, orgId),
     listDomains(actorId, orgId),
     listInvites(actorId, orgId),
+    getA2aPolicy(actorId, orgId),
   ])
 
   if (!detail.ok) return { ok: false, error: detail.error }
+  if (!a2a.ok) console.warn(`org_a2a_policy read failed for org ${orgId}:`, a2a.error)
 
   return {
     ok: true,
@@ -139,6 +166,9 @@ export async function loadAdminPageData(actorId: string, orgId: string): Promise
     roles: roles.ok ? roles.data : [],
     domains: domains.ok ? domains.data : [],
     invites: invites.ok ? invites.data : [],
+    // A failed read still renders the card, saying so, rather than looking like the feature is gone.
+    // Deploy the migration before this function: until then every read fails and the card says so.
+    a2a: a2a.ok ? a2a.data : "unreadable",
   }
 }
 

@@ -11,7 +11,7 @@ import { esc, scrollable } from "../utils/html.ts"
 import { COPY_BEHAVIOUR, csrfField, layout, tabs } from "./layout.ts"
 import { formatDate } from "./org.ts"
 import { CSRF_FIELD } from "../utils/csrf.ts"
-import type { OrgDetail, OrgDomain, OrgInvite, OrgMember, OrgRole } from "../services/org.ts"
+import type { OrgA2aPolicy, OrgDetail, OrgDomain, OrgInvite, OrgMember, OrgRole } from "../services/org.ts"
 
 export interface AdminPageOptions {
   nonce: string
@@ -22,6 +22,8 @@ export interface AdminPageOptions {
   roles: OrgRole[]
   domains: OrgDomain[]
   invites: OrgInvite[]
+  /** "unreadable" (a failed read) shows a notice card; unavailable (the system org) or absent hides the card. */
+  a2a?: OrgA2aPolicy | "unreadable" | null
   banner?: { kind: "ok" | "error"; message: string } | null
   /**
    * A just-created invite URL, shown once.
@@ -55,12 +57,62 @@ ${tabs(basePath, org.slug, "admin", true)}
 
 ${options.newInviteUrl ? newInviteCard(options.newInviteUrl) : ""}
 ${settingsCard(action, csrf, org, roles)}
+${options.a2a === "unreadable" ? a2aUnreadableCard() : options.a2a && options.a2a.available !== false ? a2aCard(action, csrf, options.a2a) : ""}
 ${pending.length > 0 ? pendingCard(action, csrf, pending) : ""}
 ${membersCard(action, csrf, org, active, roles)}
 ${rolesCard(action, csrf, org, roles)}
 ${invitesCard(action, csrf, invites, roles)}
 ${domainsCard(action, csrf, domains, org.slug)}`,
   })
+}
+
+/**
+ * A2A auto-connect: while on, every two active members' agents of the same product (Max with Max,
+ * Optimist with Optimist) can talk without a connection request. A member can opt out, and the
+ * admin sees who did.
+ */
+function a2aCard(action: string, csrf: string, policy: OrgA2aPolicy): string {
+  const opted = Array.isArray(policy.opted_out) ? policy.opted_out : []
+  const optedOut = opted.length === 0
+    ? `<p class="hint">Nobody has opted out.</p>`
+    : `<p class="hint">${opted.length}${
+      typeof policy.members === "number" ? ` of ${Math.max(policy.members, opted.length)}` : ""
+    } members opted out${
+      policy.auto_connect ? "" : " (their choice still applies when this is turned back on)"
+    }:</p>
+  <ul>${
+      opted
+        .map((m) => `<li>${esc(m.email ?? m.user_id)} <span class="hint">since ${esc(formatDate(m.opted_out_at))}</span></li>`)
+        .join("")
+    }</ul>`
+  return `
+<section class="card">
+  <h2>Agent connections</h2>
+  <p class="hint">When this is on, every member's agent can reach every other member's agent of the same kind (Max with Max, Optimist with Optimist) without a connection request. Each member's agent treats a colleague's agent as read-only and asks its owner before sharing anything sensitive; that is enforced by the agents, not by this setting. Each member can opt out, and administrators can see who did.</p>
+  <form method="post" action="${esc(action)}/a2a">
+    ${csrfField(CSRF_FIELD, csrf)}
+    <div class="checkline">
+      <input type="checkbox" id="a2a_auto_connect" name="auto_connect" value="1"${policy.auto_connect ? " checked" : ""}>
+      <label for="a2a_auto_connect">Connect all members' agents automatically</label>
+    </div>
+    <button type="submit">Save agent connections</button>
+  </form>
+  ${
+  policy.platform_enabled === false
+    ? `<p class="hint">Automatic connections are currently paused for every organisation by the platform, so this setting has no effect until they are resumed.</p>`
+    : ""
+}
+  ${optedOut}
+</section>`
+}
+
+/** Shown when the policy could not be read, so the card does not silently vanish. */
+function a2aUnreadableCard(): string {
+  return `
+<section class="card">
+  <h2>Agent connections</h2>
+  <p class="hint">The agent connections setting could not be read just now. Reload the page to try again.</p>
+</section>`
 }
 
 /**

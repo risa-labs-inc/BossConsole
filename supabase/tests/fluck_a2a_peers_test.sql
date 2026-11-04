@@ -8,18 +8,18 @@ INSERT INTO auth.users (id, email) VALUES
  ('a2a00000-0000-0000-0000-00000000000c', 'a2a-carol@example.test');
 
 -- ---- grants and function shape ----
-SELECT ok(NOT has_function_privilege('anon', 'public.fluck_peer_list()', 'EXECUTE')
+SELECT ok(NOT has_function_privilege('anon', 'public.fluck_peer_list(text)', 'EXECUTE')
       AND NOT has_function_privilege('anon', 'public.fluck_peer_request(text)', 'EXECUTE')
       AND NOT has_function_privilege('anon', 'public.fluck_a2a_mint_ticket(text,uuid,text)', 'EXECUTE')
       AND NOT has_function_privilege('anon', 'public.fluck_a2a_consume_ticket(text,text)', 'EXECUTE'), 'anon cannot call the RPCs');
-SELECT ok(has_function_privilege('authenticated', 'public.fluck_peer_list()', 'EXECUTE')
+SELECT ok(has_function_privilege('authenticated', 'public.fluck_peer_list(text)', 'EXECUTE')
       AND has_function_privilege('authenticated', 'public.fluck_a2a_consume_ticket(text,text)', 'EXECUTE'), 'authenticated can call the RPCs');
 SELECT ok(
     (SELECT bool_and(prosecdef AND 'search_path=""' = ANY(proconfig)) FROM pg_proc WHERE oid IN (
         'public.fluck_peer_request(text)'::regprocedure, 'public.fluck_peer_pending()'::regprocedure,
         'public.fluck_peer_claim_notice(uuid)'::regprocedure, 'public.fluck_peer_respond(uuid,boolean)'::regprocedure,
         'public.fluck_peer_revoke(uuid)'::regprocedure, 'public.fluck_peer_links()'::regprocedure,
-        'public.fluck_peer_list()'::regprocedure, 'public.fluck_a2a_mint_ticket(text,uuid,text)'::regprocedure,
+        'public.fluck_peer_list(text)'::regprocedure, 'public.fluck_a2a_mint_ticket(text,uuid,text)'::regprocedure,
         'public.fluck_a2a_consume_ticket(text,text)'::regprocedure)),
     'RPCs are security definer with an empty search_path');
 SELECT ok(NOT has_table_privilege('authenticated', 'public.fluck_a2a_tickets', 'SELECT')

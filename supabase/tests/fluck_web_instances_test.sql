@@ -7,7 +7,7 @@ INSERT INTO auth.users (id, email) VALUES
  ('f1c00000-0000-0000-0000-000000000002', 'fluck-web-two@example.test');
 
 -- ---- grants and function shape ----
-SELECT ok(NOT has_function_privilege('anon', 'public.fluck_web_upsert_instance(text,text,text,text,text)', 'EXECUTE'), 'anon cannot heartbeat');
+SELECT ok(NOT has_function_privilege('anon', 'public.fluck_web_upsert_instance(text,text,text,text,text,text)', 'EXECUTE'), 'anon cannot heartbeat');
 SELECT ok(NOT has_function_privilege('anon', 'public.fluck_web_delete_instance(text)', 'EXECUTE'), 'anon cannot delete');
 SELECT ok(NOT has_function_privilege('anon', 'public.fluck_web_list_instances()', 'EXECUTE'), 'anon cannot list');
 SELECT ok(NOT has_function_privilege('anon', 'public.fluck_web_mint_ticket(text)', 'EXECUTE'), 'anon cannot mint');
@@ -17,7 +17,7 @@ SELECT ok(has_function_privilege('authenticated', 'public.fluck_web_mint_ticket(
       AND has_function_privilege('authenticated', 'public.fluck_web_list_instances()', 'EXECUTE'), 'authenticated can call the RPCs');
 SELECT ok(
     (SELECT bool_and(NOT prosecdef AND 'search_path=""' = ANY(proconfig)) FROM pg_proc WHERE oid IN (
-        'public.fluck_web_upsert_instance(text,text,text,text,text)'::regprocedure,
+        'public.fluck_web_upsert_instance(text,text,text,text,text,text)'::regprocedure,
         'public.fluck_web_delete_instance(text)'::regprocedure,
         'public.fluck_web_list_instances()'::regprocedure)),
     'directory RPCs are security invoker with an empty search_path');

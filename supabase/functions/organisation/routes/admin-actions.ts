@@ -177,6 +177,28 @@ adminActionRoutes.post("/o/:slug/admin/settings", async (ctx) => {
 })
 
 // ---------------------------------------------------------------------------
+// Agent connections (A2A auto-connect)
+// ---------------------------------------------------------------------------
+
+/**
+ * Turns the organisation's A2A auto-connect on or off. The form carries one checkbox, so an
+ * absent field means off. The RPC re-checks admin rights, refuses the system organisation and
+ * writes the change to the org audit log.
+ */
+adminActionRoutes.post("/o/:slug/admin/a2a", async (ctx) => {
+  const prep = await prepare(ctx)
+  if (!prep.ok) return prep.response
+  const { session, facts, body } = prep.value
+
+  const result = await callForActor("org_set_a2a_auto_connect", session.sub, {
+    p_org_id: session.org,
+    p_enabled: checkbox(body, "auto_connect"),
+  })
+
+  return finish(facts, session.slug, result.ok, "a2a_saved")
+})
+
+// ---------------------------------------------------------------------------
 // Members
 // ---------------------------------------------------------------------------
 
@@ -370,6 +392,7 @@ adminActionRoutes.post("/o/:slug/admin/invites/create", async (ctx) => {
       roles: data.roles,
       domains: data.domains,
       invites: data.invites,
+      a2a: data.a2a,
       newInviteUrl: inviteUrl,
     }), { headers: { "Set-Cookie": rotatedCookie } })
 })
