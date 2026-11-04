@@ -4,7 +4,7 @@
 -- Weighted towards what must be REFUSED: an org grant that leaks across products, past an
 -- opt-out, past a block, after leaving, through the system org, or with the policy off.
 BEGIN;
-SELECT plan(83);
+SELECT plan(91);
 
 INSERT INTO auth.users (id, email, email_confirmed_at) VALUES
  ('a0a00000-0000-4000-8000-00000000000a', 'org-alice@acme.test', now()),
@@ -139,6 +139,7 @@ SELECT is((SELECT opted_out FROM public.fluck_a2a_orgs()), true, 'carol''s opt-o
 SELECT throws_ok($q$ SELECT * FROM public.fluck_a2a_consume_ticket((SELECT token FROM t WHERE name = 'bob-carol'), 'c-max') $q$,
     'P0001', 'ticket_invalid', 'a ticket minted before the opt-out is refused');
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('c-max') WHERE NOT same_user), 0, 'an opted-out member lists no colleagues');
+SELECT is(public.fluck_a2a_claim_org_notice((SELECT org FROM ids)), false, 'an opted-out member cannot burn the notice');
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
 SELECT is((SELECT array_agg(instance_id ORDER BY instance_id) FROM public.fluck_peer_list('b-max') WHERE NOT same_user),
     ARRAY['a-max'], 'and colleagues no longer list her');
@@ -184,9 +185,10 @@ INSERT INTO public.fluck_peer_links (requester_id, recipient_id, status, respond
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('a-max') WHERE NOT same_user), 0, 'a revoke from before this migration blocks');
-SELECT lives_ok($q$ SELECT public.fluck_peer_unblock('a0a00000-0000-4000-8000-00000000000b') $q$, 'either side can lift a revoke whose author is unknown');
-SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('a-max') WHERE NOT same_user), 1, 'and bob is a colleague again');
+SELECT lives_ok($q$ SELECT public.fluck_peer_unblock('a0a00000-0000-4000-8000-00000000000b') $q$, 'alice tries to lift a revoke whose author is unknown');
+SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('a-max') WHERE NOT same_user), 0, 'a legacy revoke is not lifted (fails closed)');
 RESET ROLE;
+DELETE FROM public.fluck_peer_links WHERE least(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000a'::uuid AND greatest(requester_id, recipient_id) = 'a0a00000-0000-4000-8000-00000000000b'::uuid;
 INSERT INTO public.fluck_peer_links (requester_id, recipient_id, status, responded_at)
     VALUES ('a0a00000-0000-4000-8000-00000000000a', 'a0a00000-0000-4000-8000-00000000000b', 'declined', now());
 SET LOCAL ROLE authenticated;
@@ -256,6 +258,7 @@ SET LOCAL ROLE authenticated;
 SELECT is((SELECT count(*)::int FROM public.fluck_peer_list('b-max') WHERE NOT same_user), 0, 'the platform kill switch ends every org grant');
 SELECT is((SELECT auto_connect FROM public.fluck_a2a_orgs() WHERE org_id = (SELECT org FROM ids)), false,
     'and members are told it is off');
+SELECT is(public.fluck_a2a_claim_org_notice((SELECT org FROM ids)), false, 'and no notice can be burned while it is paused');
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
 SELECT is((public.org_a2a_policy((SELECT org FROM ids)) ->> 'platform_enabled'), 'false', 'and so is the admin');
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
@@ -274,7 +277,27 @@ RESET ROLE;
 UPDATE public.organisation_members SET status = 'active' WHERE user_id = 'a0a00000-0000-4000-8000-00000000000b' AND org_id = (SELECT org FROM ids);
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
+INSERT INTO t SELECT 'alice-bob-off', public.fluck_a2a_mint_ticket('a-max', 'a0a00000-0000-4000-8000-00000000000b', 'b-max');
 SELECT is((public.org_set_a2a_auto_connect((SELECT org FROM ids), false)) ->> 'success', 'true', 'the admin turns it off');
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000b', true);
+SELECT throws_ok($q$ SELECT * FROM public.fluck_a2a_consume_ticket((SELECT token FROM t WHERE name = 'alice-bob-off'), 'b-max') $q$,
+    'P0001', 'ticket_invalid', 'a ticket minted before the policy was turned off is refused');
+SELECT lives_ok($q$ SELECT public.fluck_peer_revoke('a0a00000-0000-4000-8000-00000000000c') $q$, 'blocking a colleague while the policy is off');
+RESET ROLE;
+SELECT is((SELECT count(*)::int FROM public.fluck_peer_links WHERE requester_id = 'a0a00000-0000-4000-8000-00000000000b'::uuid
+           AND recipient_id = 'a0a00000-0000-4000-8000-00000000000c'), 0, 'writes nothing: there is no connection to block');
+SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
+SELECT set_config('request.jwt.claim.sub', '', true);
+SELECT is((public.org_a2a_policy((SELECT org FROM ids), 'a0a00000-0000-4000-8000-00000000000a') ->> 'success'), 'true', 'the service role reads the policy as the named admin (the BossConsole page)');
+SELECT set_config('request.jwt.claims', '', true);
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000c', true);
+SELECT lives_ok($q$ SELECT public.fluck_a2a_set_org_opt_out((SELECT org FROM ids), false) $q$, 'carol opts back in');
+RESET ROLE;
+SELECT is((SELECT array_agg(action ORDER BY id) FROM public.agent_audit_log WHERE org_id = (SELECT org FROM ids) AND action LIKE 'org.a2a_opt%'),
+    ARRAY['org.a2a_opt_out', 'org.a2a_opt_in'], 'opting back in is audited too');
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'a0a00000-0000-4000-8000-00000000000a', true);
 SELECT is((SELECT array_agg(source) FROM public.fluck_peer_list('a-max') WHERE NOT same_user), ARRAY['link'], 'only the explicit link remains');
 SELECT is((public.org_set_a2a_auto_connect((SELECT org FROM ids), NULL)) ->> 'error', 'enabled is required', 'the policy needs a value');
 

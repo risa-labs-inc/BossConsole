@@ -1161,6 +1161,7 @@ function a2aPolicy(overrides: Record<string, unknown> = {}) {
     auto_connect: true,
     enabled_at: "2026-11-04T00:00:00Z",
     available: true,
+    platform_enabled: true,
     members: 3,
     opted_out: [{ user_id: "u-carol", email: "carol@acme.test", opted_out_at: "2026-11-04T01:00:00Z" }],
     ...overrides,
@@ -1205,7 +1206,10 @@ Deno.test("a policy that cannot be read says so instead of hiding the card", asy
   try {
     for (const fail of ["refused", "transport"]) {
       if (fail === "refused") stub.responses.set("org_a2a_policy", { success: false, error: "connection reset" })
-      else stub.errors.set("org_a2a_policy", "connection reset")
+      else {
+        stub.responses.delete("org_a2a_policy")
+        stub.errors.set("org_a2a_policy", "connection reset")
+      }
       const response = await app.request(`${BASE}/o/${FIXTURE.slug}/admin`, {
         headers: { cookie: await sessionCookie() },
       })

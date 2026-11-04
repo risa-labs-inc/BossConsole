@@ -22,6 +22,10 @@
 -- from organisation_members directly: user_is_org_member() counts global admins as members of
 -- every org and is deliberately not used here.
 --
+-- agent_kind is what the instance reports about itself: it partitions colleagues by product so Max
+-- talks to Max, and is not an access control. Who may reach whom is the org membership, the policy and
+-- the opt-outs; a colleague is read-only on the receiving side whatever kind it claims.
+--
 -- Kill switch: platform_flags 'a2a_org_auto_connect' = false disables every org grant at once.
 -- It fails closed: with the flag row missing, org grants are off (this migration inserts it as true).
 -- Explicit links and a user's own instances are unchanged by this migration.
@@ -313,7 +317,9 @@ $$;
 
 -- Adds `source`: how the caller is related ('self' | 'link' | 'org'), decided here, at redemption,
 -- so the receiver picks its trust tier from Supabase and never from the caller. A grant that ended
--- since the mint (left the org, opted out, policy off, revoked) refuses the ticket.
+-- since the mint (left the org, opted out, policy off, revoked) refuses the ticket. A refusal rolls back
+-- the burn, so the ticket stays redeemable by its target until it expires (60 s) and keeps being refused
+-- unless the grant comes back in that window.
 DROP FUNCTION IF EXISTS public.fluck_a2a_consume_ticket(text, text);
 CREATE FUNCTION public.fluck_a2a_consume_ticket(p_ticket text, p_instance_id text)
 RETURNS TABLE (user_id uuid, email text, instance_id text, same_user boolean, source text)
@@ -378,14 +384,14 @@ BEGIN
           AND greatest(l.requester_id, l.recipient_id) = greatest(actor, p_peer_id)
           AND l.status IN ('pending', 'accepted')
         RETURNING l.id INTO touched;
-    -- No link row yet: block an org colleague (someone who shares an org with the caller).
+    -- No link row yet: block an org colleague (someone who shares an org with auto-connect on).
     -- Anyone else is a silent no-op, so this cannot probe accounts.
     IF touched IS NULL AND EXISTS (
         SELECT 1 FROM public.organisation_members ma
         JOIN public.organisation_members mb ON mb.org_id = ma.org_id
         JOIN public.organisations o ON o.id = ma.org_id
         WHERE ma.user_id = actor AND mb.user_id = p_peer_id
-          AND ma.status = 'active' AND mb.status = 'active' AND NOT o.is_system
+          AND ma.status = 'active' AND mb.status = 'active' AND NOT o.is_system AND o.a2a_auto_connect
     ) THEN
         INSERT INTO public.fluck_peer_links (requester_id, recipient_id, status, responded_at, revoked_by)
             VALUES (actor, p_peer_id, 'revoked', now(), actor)
@@ -398,9 +404,9 @@ END;
 $$;
 
 -- Lift a block the caller made, so the org grant applies again. A block made by the other side
--- stays. Rows written before this migration (and declines, which fluck_peer_respond writes) carry
--- no revoked_by: a decline is the recipient's to lift, and a legacy revoke, whose author is
--- unknown, either party's.
+-- stays. Declines (written by fluck_peer_respond, without revoked_by) are the recipient's to lift. A
+-- revoke from before this migration has no known author, so it is not lifted here (fails closed); the
+-- pair can still connect again through fluck_peer_request and an accept.
 CREATE OR REPLACE FUNCTION public.fluck_peer_unblock(p_peer_id uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -416,7 +422,7 @@ BEGIN
         WHERE least(l.requester_id, l.recipient_id) = least(actor, p_peer_id)
           AND greatest(l.requester_id, l.recipient_id) = greatest(actor, p_peer_id)
           AND (
-              (l.status = 'revoked' AND (l.revoked_by = actor OR l.revoked_by IS NULL))
+              (l.status = 'revoked' AND l.revoked_by = actor)
               OR (l.status = 'declined' AND l.revoked_by IS NULL AND l.recipient_id = actor)
           );
 END;
@@ -517,7 +523,10 @@ BEGIN
     SELECT COALESCE(o.a2a_auto_connect_at, '-infinity'::timestamptz) INTO since
         FROM public.organisations o
         JOIN public.organisation_members m ON m.org_id = o.id
-        WHERE o.id = p_org_id AND o.a2a_auto_connect AND m.user_id = actor AND m.status = 'active';
+        WHERE o.id = p_org_id AND o.a2a_auto_connect AND m.user_id = actor AND m.status = 'active'
+          AND NOT o.is_system AND public.fluck_a2a_org_enabled()
+          AND NOT EXISTS (SELECT 1 FROM public.organisation_a2a_opt_outs x WHERE x.org_id = o.id AND x.user_id = actor);
+    -- The same conditions as fluck_a2a_org_notices: a notice that would not be listed cannot be burned.
     IF since IS NULL THEN
         RETURN false;
     END IF;
