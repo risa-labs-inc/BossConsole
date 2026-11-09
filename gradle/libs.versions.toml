@@ -30,7 +30,7 @@ kotlinx-datetime = "0.8.0-0.6.x-compat"
 # of its own. A bump here is a cross-repo change; re-check the plugins riding on
 # it rather than trusting a comment. (History of the 1.9.0 -> 1.11.0 move and
 # how it was re-verified: PR #57.)
-kotlinx-serialization = "1.11.0"
+kotlinx-serialization = "1.12.0"
 # ktor is NOT shared with plugins (no io.ktor prefix in defaultSharedPackages),
 # so a plugin's bundled ktor is unaffected by this pin; it constrains the host's
 # own client stack only. The one mechanism that could change that is a plugin
