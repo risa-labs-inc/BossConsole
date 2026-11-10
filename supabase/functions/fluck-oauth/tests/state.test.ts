@@ -170,3 +170,40 @@ Deno.test("the optional connector claim round trips and is signed", async () => 
     .replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")
   assertEquals(await verify(swapped + "." + token.split(".")[1], now), false)
 })
+
+Deno.test("an and ru round trip, and are signed into the payload", async () => {
+  const claims: StateClaims = {
+    ...fixture.claims,
+    an: "Max",
+    ru: "https://app.example.com/chat",
+  }
+  const token = await mintState(privateKey, claims)
+  const parsed = parseState(token)
+  assert(parsed)
+  assertEquals(parsed.claims.an, "Max")
+  assertEquals(parsed.claims.ru, "https://app.example.com/chat")
+  assertEquals(parsed.ignored, [])
+  assert(await verifyState(publicKey, parsed, NOW))
+})
+
+Deno.test("unusable an and ru are dropped, not refused; unknown claims are ignored", async () => {
+  const payload = JSON.stringify({
+    ...JSON.parse(fixture.payload),
+    an: "x".repeat(41),
+    ru: "javascript:alert(1)",
+    somethingNew: { a: 1 },
+  })
+  const segment = btoa(payload).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")
+  const signature = await crypto.subtle.sign(
+    { name: "Ed25519" },
+    privateKey,
+    new TextEncoder().encode(STATE_SIGNING_PREFIX + segment) as BufferSource,
+  )
+  const sig = btoa(String.fromCharCode(...new Uint8Array(signature)))
+    .replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")
+  const parsed = parseState(segment + "." + sig)
+  assert(parsed)
+  assertEquals(parsed.claims, fixture.claims)
+  assertEquals(parsed.ignored, ["an", "ru"])
+  assert(await verifyState(publicKey, parsed, NOW))
+})

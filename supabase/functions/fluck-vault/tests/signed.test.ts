@@ -331,3 +331,68 @@ Deno.test("the audience is not taken from the project-wide base url", async () =
   assertEquals(response.status, 200)
   assert(!seen.includes("PUBLIC_BASE_URL"), "the function read the project-wide base url")
 })
+
+// ---------------------------------------------------------------------------------------------
+// agentName and returnUrl on POST /requests
+// ---------------------------------------------------------------------------------------------
+
+const VAULT_MINT = {
+  jti: JTI,
+  ws: WS,
+  purpose: "vault",
+  kind: "password",
+  expiresAt: NOW + 300,
+}
+
+Deno.test("agentName and returnUrl are passed to the row, validated", async () => {
+  const h = harness()
+  const response = await h.handler(
+    await signed("/requests", {
+      ...VAULT_MINT,
+      agentName: "  Max  ",
+      returnUrl: "https://app.example.com/chat?x=1",
+    }),
+  )
+  assertEquals(response.status, 201)
+  assertEquals(h.created[0].agentName, "Max")
+  assertEquals(h.created[0].returnUrl, "https://app.example.com/chat?x=1")
+})
+
+Deno.test("a loopback http return URL is accepted", async () => {
+  for (const url of ["http://localhost:8796/c", "http://127.0.0.1/x", "http://[::1]:9/x"]) {
+    const h = harness()
+    await h.handler(await signed("/requests", { ...VAULT_MINT, returnUrl: url }))
+    assertEquals(h.created[0].returnUrl, url)
+  }
+})
+
+Deno.test("an invalid agentName or returnUrl is dropped with one log line and the mint succeeds", async () => {
+  const bad: [string, unknown][] = [
+    ["agentName", ""],
+    ["agentName", "x".repeat(41)],
+    ["agentName", "Max\nAgent"],
+    ["agentName", 7],
+    ["returnUrl", "javascript:alert(1)"],
+    ["returnUrl", "http://example.com/x"],
+    ["returnUrl", "https://user:pw@example.com/"],
+    ["returnUrl", "https://example.com/" + "a".repeat(512)],
+    ["returnUrl", "not a url"],
+    ["returnUrl", 3],
+  ]
+  for (const [field, value] of bad) {
+    const h = harness()
+    const response = await h.handler(await signed("/requests", { ...VAULT_MINT, [field]: value }))
+    assertEquals(response.status, 201, `${field} ${String(value)}`)
+    assertEquals(h.created[0][field as "agentName" | "returnUrl"], null)
+    assertEquals(h.logs.filter((l) => l.includes("ignored invalid")).length, 1)
+  }
+})
+
+Deno.test("a mint without the fields, or with unknown ones, behaves as before", async () => {
+  const h = harness()
+  const response = await h.handler(await signed("/requests", { ...VAULT_MINT, somethingNew: 1 }))
+  assertEquals(response.status, 201)
+  assertEquals(h.created[0].agentName, null)
+  assertEquals(h.created[0].returnUrl, null)
+  assertEquals(h.logs.filter((l) => l.includes("ignored invalid")).length, 0)
+})
