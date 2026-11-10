@@ -249,12 +249,12 @@ Deno.test("a browser GET renders the card form and consumes nothing", async () =
   assert(!/virtual/i.test(html.replace(SCRIPT, "")))
   assertStringIncludes(
     html,
-    'name="f9" type="text" inputmode="decimal" autocomplete="off" required',
+    'name="f9" type="text" autocomplete="off" inputmode="decimal" required',
   )
   assertStringIncludes(html, 'name="f9"')
   assertStringIncludes(html, 'name="f10"')
   assertStringIncludes(html, 'name="f11"')
-  assertStringIncludes(html, "only your Fluck can read them")
+  assertStringIncludes(html, "only your agent can read them")
   assertEquals(described, [JTI])
   assertEquals(stored.length, 0)
 })
@@ -280,7 +280,7 @@ Deno.test("the cvv page says what it does and does not do", async () => {
   const html = await (await handler(get("/cvv", await cvvToken()))).text()
   // No charge, check the details, do not forward, and the code is staged encrypted.
   assertStringIncludes(html, "This does not charge your card.")
-  assertStringIncludes(html, "Only continue if these details match a purchase you asked Fluck")
+  assertStringIncludes(html, "Only continue if these details match a purchase you asked your agent")
   assertStringIncludes(html, "do not forward this link")
   assertStringIncludes(html, "held for up to ten minutes")
   for (const claim of ["Confirm payment", ">Pay<", "Pay now", "never stored", "Payment sent"]) {
@@ -750,4 +750,131 @@ Deno.test("a password page names the site it is saving a login for", async () =>
   const html = await response.text()
   assertStringIncludes(html, "Save your united.com login")
   assertStringIncludes(html, PAGES.passwordIntro)
+})
+
+// ---------------------------------------------------------------------------------------------
+// Agent name and "Back to chat"
+// ---------------------------------------------------------------------------------------------
+
+const BACK = "https://app.example.com/chat?a=1&b=2"
+
+async function render(row: VaultRequestRow): Promise<string> {
+  const { handler } = harness({ row })
+  return await (await handler(get("/vault", await token()))).text()
+}
+
+Deno.test("a form names the agent, offers Cancel, and says nothing about Fluck or Messages", async () => {
+  const html = (await render(vaultRow({ agentName: "Max", returnUrl: BACK }))).replace(SCRIPT, "")
+  assertStringIncludes(html, "Requested by Max")
+  assertStringIncludes(
+    html,
+    `<a class="cancel" href="https://app.example.com/chat?a=1&amp;b=2">Cancel</a>`,
+  )
+  assertStringIncludes(html, "only Max can read them")
+  assertStringIncludes(html, "Type it here so it never goes through the chat.")
+  assert(!/Fluck|Messages/.test(html))
+})
+
+Deno.test("a form with no agent or return URL falls back and has no Cancel", async () => {
+  const html = await render(vaultRow())
+  assertStringIncludes(html, "Requested by your agent")
+  assertStringIncludes(html, "Type it here so it never goes through the chat.")
+  assert(!html.includes("Cancel"))
+})
+
+Deno.test("the card form is grouped into Card, Billing address and Spending limit", async () => {
+  const html = await render(vaultRow())
+  for (const heading of ["Card", "Billing address", "Spending limit"]) {
+    assertStringIncludes(html, `<h2 class="sec">${heading}</h2>`)
+  }
+})
+
+Deno.test("an agent name and a return URL are escaped wherever they are printed", async () => {
+  const html = await render(
+    vaultRow({ agentName: `<img src=x onerror=alert(1)>`, returnUrl: `https://x.test/"><b>` }),
+  )
+  assert(!html.includes("<img src=x"))
+  assertStringIncludes(html, "&lt;img src=x onerror=alert(1)&gt;")
+  assert(!html.includes(`"><b>`))
+})
+
+Deno.test("a stored return URL that fails validation is never rendered", async () => {
+  const html = await render(vaultRow({ returnUrl: "javascript:alert(1)" }))
+  assert(!html.includes("javascript:"))
+  assert(!html.includes("Cancel"))
+})
+
+Deno.test("a saved page with a return URL redirects after two seconds and offers the button", async () => {
+  const h = harness({ row: vaultRow({ agentName: "Max", returnUrl: BACK }) })
+  const cookie = await opened(h)
+  const response = await h.handler(post("/vault", { j: JTI, c: blob() }, { cookie }))
+  assertEquals(response.status, 200)
+  const html = await response.text()
+  assertStringIncludes(
+    html,
+    `<meta http-equiv="refresh" content="2;url=https://app.example.com/chat?a=1&amp;b=2">`,
+  )
+  assertStringIncludes(
+    html,
+    `class="btn btn-primary" href="https://app.example.com/chat?a=1&amp;b=2">Back to chat</a>`,
+  )
+  assertStringIncludes(html, "Taking you back to the chat\u2026")
+  assert(!html.includes("<script"))
+  assertStringIncludes(response.headers.get("Content-Security-Policy") ?? "", "default-src 'none'")
+})
+
+Deno.test("a saved page with no return URL says to close it, with no button or redirect", async () => {
+  const h = harness()
+  const cookie = await opened(h)
+  const html = await (await h.handler(post("/vault", { j: JTI, c: blob() }, { cookie }))).text()
+  assertStringIncludes(html, "You can close this page.")
+  assert(!html.includes("Back to chat") && !html.includes("http-equiv"))
+})
+
+Deno.test("the cvv done page names the agent", async () => {
+  const h = harness({
+    row: cvvRow({ agentName: "Max", returnUrl: BACK }),
+    result: { outcome: "stored", kind: "cvv" },
+  })
+  const cookie = await opened(h, "/cvv", await cvvToken(), CVV_JTI)
+  const html = await (await h.handler(post("/cvv", { j: CVV_JTI, c: blob() }, { cookie }))).text()
+  assertStringIncludes(html, "Code sent to Max, encrypted. Your card has not been charged.")
+  assertStringIncludes(html, "http-equiv")
+})
+
+Deno.test("a refusal tied to the row offers Back to chat and never redirects", async () => {
+  const h = harness({
+    row: vaultRow({ agentName: "Max", returnUrl: BACK }),
+    result: { outcome: "unavailable", kind: null },
+  })
+  const cookie = await opened(h)
+  const response = await h.handler(post("/vault", { j: JTI, c: blob() }, { cookie }))
+  assertEquals(response.status, 503)
+  const html = await response.text()
+  assertStringIncludes(html, "Ask Max for a fresh link and try again.")
+  assertStringIncludes(html, `class="btn btn-secondary"`)
+  assertStringIncludes(html, "Back to chat")
+  assert(!html.includes("http-equiv"))
+})
+
+Deno.test("fixed pages never carry the row's agent or return URL", async () => {
+  const row = vaultRow({ agentName: "Max", returnUrl: BACK })
+  // A bad token on a GET.
+  const bad = await (await harness({ row }).handler(get("/vault", "not-a-token"))).text()
+  // A POST with no device cookie: the jti alone must not pull a return URL out of the endpoint.
+  const h = harness({ row })
+  const noCookie = await (await h.handler(post("/vault", { j: JTI, c: blob() }))).text()
+  for (const html of [bad, noCookie]) {
+    assert(
+      !html.includes("Max") && !html.includes("app.example.com") && !html.includes("Back to chat"),
+    )
+    assertStringIncludes(html, "Ask your agent for a fresh one.")
+  }
+  assertEquals(h.described, [])
+})
+
+Deno.test("the stylesheet is the pinned one and no element carries a style attribute", async () => {
+  const html = await render(vaultRow({ agentName: "Max", returnUrl: BACK }))
+  assertStringIncludes(html, `<style>${STYLE}</style>`)
+  assert(!/\sstyle=/.test(html))
 })

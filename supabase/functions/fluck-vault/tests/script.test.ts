@@ -33,6 +33,7 @@ interface Harness {
   submitted: () => number
   enabledFields: () => string[]
   field: (name: string) => Field
+  button: { disabled: boolean; textContent: string }
 }
 
 /**
@@ -58,7 +59,7 @@ function page(kind: string, sealKey: string): Harness {
   }
   const out = { value: "" }
   const err = { textContent: "" }
-  const button = { disabled: false }
+  const button = { disabled: false, textContent: "Add card" }
   let submitCount = 0
   let handler: ((event: { preventDefault(): void }) => void) | null = null
   let settle: (() => void) | null = null
@@ -103,6 +104,7 @@ function page(kind: string, sealKey: string): Harness {
 
   return {
     field: (name: string) => fields[name],
+    button,
     /**
      * Fill the form and press the button.
      *
@@ -354,6 +356,27 @@ Deno.test("the plaintext inputs are disabled before the form submits", async () 
   // than the only one.
   assertEquals(harness.enabledFields(), [])
   assert(harness.ciphertext().length > 0)
+})
+
+Deno.test("a valid submit shows Encrypting, a refused one leaves the button alone", async () => {
+  const { base64 } = await recipient()
+  const ok = page("cvv", base64)
+  ok.button.textContent = "Send code"
+  await ok.submit({ f1: "4321" })
+  assertEquals(ok.button.disabled, true)
+  assertEquals(ok.button.textContent, "Encrypting\u2026")
+
+  const refused = page("cvv", base64)
+  refused.button.textContent = "Send code"
+  await refused.submit({ f1: "12" })
+  assertEquals(refused.button.disabled, false)
+  assertEquals(refused.button.textContent, "Send code")
+
+  const broken = page("cvv", btoa("not a p-256 point"))
+  broken.button.textContent = "Send code"
+  await broken.submit({ f1: "123" })
+  assertEquals(broken.button.disabled, false)
+  assertEquals(broken.button.textContent, "Send code")
 })
 
 Deno.test("a page served a broken sealing key sends nothing and says so", async () => {

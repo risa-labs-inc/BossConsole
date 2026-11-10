@@ -62,6 +62,7 @@
 import { INSTANCE_ID_PATTERN, parseState, type StateClaims, verifyState } from "./state.ts"
 import { exchangeCode, type ExchangeFailure, refreshAccessToken } from "./google.ts"
 import { exchangeSlackCode } from "./slack.ts"
+import { agentRef, resultHtml, STATIC_CSP } from "../_shared/connect-ui.ts"
 import {
   bodyDigest,
   INSTANCE_HEADER,
@@ -152,38 +153,57 @@ export interface Dependencies {
   log(line: string): void
 }
 
-const PAGE_CONNECTED = "Connected. You can close this and go back to Messages."
-const PAGE_DECLINED = "The sign in was declined, so nothing was connected."
-const PAGE_STALE = "That sign in link is no longer valid. Ask Fluck for a fresh one."
-const PAGE_REPLAY = "That sign in link has already been used. Ask Fluck for a fresh one."
-const PAGE_BAD_CODE = "That sign in did not finish. Ask Fluck for a fresh link."
-const PAGE_NO_REFRESH =
-  "Google did not hand over lasting access. Ask Fluck for a fresh link and approve everything it asks for."
-const PAGE_UNREACHABLE =
-  "Google could not be reached to finish the sign in. Worth trying again in a minute."
-const PAGE_SLACK_NO_TOKEN =
-  "Slack did not hand over lasting access. Ask Fluck for a fresh link and approve everything it asks for."
-const PAGE_SLACK_UNREACHABLE =
-  "Slack could not be reached to finish the sign in. Worth trying again in a minute."
-const PAGE_STORE_FAILED =
-  "The sign in worked, but the credential could not be saved. Ask Fluck to try again."
-const PAGE_UNCONFIGURED =
-  "This sign in service is not set up yet. Whoever runs this BOSS has to finish setting it up."
-const PAGE_NOT_FOUND = "There is nothing at this address."
-const PAGE_NOT_A_BROWSER = "That link has to be opened in a browser."
-const PAGE_UPDATE_PLUGIN =
-  "That link came from an older version of Fluck. Update the Fluck plugin in BOSS, then ask Fluck for a fresh link."
-
-const FAILURE_PAGES: Record<ExchangeFailure, string> = {
-  bad_code: PAGE_BAD_CODE,
-  no_refresh_token: PAGE_NO_REFRESH,
-  unreachable: PAGE_UNREACHABLE,
+/** Who asked and where "Back to chat" goes, from a verified state. Absent on every fixed page. */
+interface View {
+  agent: string | null
+  returnUrl: string | null
 }
 
-const SLACK_FAILURE_PAGES: Record<ExchangeFailure, string> = {
-  bad_code: PAGE_BAD_CODE,
-  no_refresh_token: PAGE_SLACK_NO_TOKEN,
-  unreachable: PAGE_SLACK_UNREACHABLE,
+const NO_VIEW: View = { agent: null, returnUrl: null }
+
+function viewOf(claims: StateClaims): View {
+  return { agent: claims.an ?? null, returnUrl: claims.ru ?? null }
+}
+
+function copy(agent: string | null) {
+  const a = agentRef(agent)
+  const fresh = `Ask ${a.lower} for a fresh one.`
+  const link = `Ask ${a.lower} for a fresh link.`
+  return {
+    connected: `${a.upper} can use it now.`,
+    declined: "The sign in was declined, so nothing was connected.",
+    stale: `That sign in link is no longer valid. ${fresh}`,
+    replay: `That sign in link has already been used. ${fresh}`,
+    badCode: `That sign in did not finish. ${link}`,
+    noRefresh: `Google did not hand over lasting access. ${
+      link.replace(".", " and approve everything it asks for.")
+    }`,
+    unreachable:
+      "Google could not be reached to finish the sign in. Worth trying again in a minute.",
+    slackNoToken: `Slack did not hand over lasting access. ${
+      link.replace(".", " and approve everything it asks for.")
+    }`,
+    slackUnreachable:
+      "Slack could not be reached to finish the sign in. Worth trying again in a minute.",
+    storeFailed:
+      `The sign in worked, but the credential could not be saved. Ask ${a.lower} to try again.`,
+    unconfigured:
+      "This sign in service is not set up yet. Whoever runs this BOSS has to finish setting it up.",
+    notFound: "There is nothing at this address.",
+    notABrowser: "That link has to be opened in a browser.",
+    updatePlugin:
+      "That link came from an older version of the app. Update the plugin in BOSS, then ask for a fresh link.",
+  }
+}
+
+type Copy = ReturnType<typeof copy>
+
+function failurePages(c: Copy): Record<ExchangeFailure, string> {
+  return { bad_code: c.badCode, no_refresh_token: c.noRefresh, unreachable: c.unreachable }
+}
+
+function slackFailurePages(c: Copy): Record<ExchangeFailure, string> {
+  return { bad_code: c.badCode, no_refresh_token: c.slackNoToken, unreachable: c.slackUnreachable }
 }
 
 export function createHandler(deps: Dependencies): (request: Request) => Promise<Response> {
@@ -196,7 +216,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
     if (path === "/refresh") return await refresh(request, deps)
     if (path === "/mcp/callback") return await mcpCallback(request, deps)
     if (path === "/mcp/client.json") return await mcpClientMetadata(request, deps)
-    return page(404, "Not found", PAGE_NOT_FOUND)
+    return page(404, "Not found", copy(null).notFound)
   }
 }
 
@@ -286,7 +306,7 @@ async function acceptCallback(
   if (request.method !== "GET") {
     // Drained first: an unread body on a keep alive connection desyncs the next request on it.
     await request.body?.cancel().catch(() => {})
-    return page(405, "Sign in problem", PAGE_NOT_A_BROWSER)
+    return page(405, "Sign in problem", copy(null).notABrowser)
   }
   const query = new URL(request.url).searchParams
   const error = query.get("error")
@@ -297,19 +317,19 @@ async function acceptCallback(
   // and the remedy is the same for every value it takes.
   if (error) {
     deps.log(`${route} declined`)
-    return page(400, "Sign in problem", PAGE_DECLINED)
+    return page(400, "Sign in problem", copy(null).declined)
   }
 
   if (!configured) {
     deps.log(`${route} unconfigured: client`)
-    return page(503, "Sign in problem", PAGE_UNCONFIGURED)
+    return page(503, "Sign in problem", copy(null).unconfigured)
   }
 
   // The pre-1.0.120 plugin minted a three part HS256 JWT. Its holder needs an update, not a
   // fresh link from the same old plugin.
   if (state && isLegacyState(state)) {
     deps.log(`${route} refused: legacy state`)
-    return page(400, "Sign in problem", PAGE_UPDATE_PLUGIN)
+    return page(400, "Sign in problem", copy(null).updatePlugin)
   }
 
   const nowSeconds = Math.floor(deps.now() / 1000)
@@ -323,10 +343,15 @@ async function acceptCallback(
     await verifyState(publicKey, parsed, nowSeconds)
   if (!parsed || !verified || !code) {
     deps.log(`${route} refused: state`)
-    return page(400, "Sign in problem", PAGE_STALE)
+    return page(400, "Sign in problem", copy(null).stale)
   }
   const claims = parsed.claims
   const workspace = workspacePrefix(claims.ws)
+  const view = viewOf(claims)
+  const c = copy(view.agent)
+  if (parsed.ignored.length > 0) {
+    deps.log(`${route} ignored invalid ${parsed.ignored.join(" and ")}`)
+  }
 
   // Claimed BEFORE the exchange, not after. A code is single use at the provider anyway, but
   // the nonce is what makes a REPLAYED link dead even when the first attempt failed, and
@@ -335,15 +360,15 @@ async function acceptCallback(
   const claim = await deps.claimNonce(`${claims.iid}.${claims.nonce}`, claims.exp)
   if (claim === "invalid") {
     deps.log(`${route} refused: nonce validity [${workspace}]`)
-    return page(400, "Sign in problem", PAGE_STALE)
+    return page(400, "Sign in problem", c.stale, view)
   }
   if (claim === "replay") {
     deps.log(`${route} refused: replay [${workspace}]`)
-    return page(400, "Sign in problem", PAGE_REPLAY)
+    return page(400, "Sign in problem", c.replay, view)
   }
   if (claim === "unavailable") {
     deps.log(`${route} failed: nonce store [${workspace}]`)
-    return page(503, "Sign in problem", PAGE_STORE_FAILED)
+    return page(503, "Sign in problem", c.storeFailed, view)
   }
   return { claims, code, workspace }
 }
@@ -364,6 +389,8 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
   )
   if (accepted instanceof Response) return accepted
   const { claims, code, workspace } = accepted
+  const view = viewOf(claims)
+  const c = copy(view.agent)
 
   const exchanged = await exchangeCode(
     {
@@ -376,7 +403,7 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
   )
   if (!exchanged.ok) {
     deps.log(`callback failed: ${exchanged.reason} [${workspace}]`)
-    return page(400, "Sign in problem", FAILURE_PAGES[exchanged.reason])
+    return page(400, "Sign in problem", failurePages(c)[exchanged.reason], view)
   }
 
   // Bound BEFORE the secret is written: a failed bind then leaves no secret behind for the
@@ -384,7 +411,7 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
   const bound = await deps.bindGrant(await bodyDigest(exchanged.refreshToken), claims.uid)
   if (!bound) {
     deps.log(`callback failed: bind [${workspace}]`)
-    return page(503, "Sign in problem", PAGE_STORE_FAILED)
+    return page(503, "Sign in problem", c.storeFailed, view)
   }
 
   const stored = await deps.storeRefreshToken({
@@ -396,10 +423,10 @@ async function callback(request: Request, deps: Dependencies): Promise<Response>
   })
   if (!stored) {
     deps.log(`callback failed: store [${workspace}]`)
-    return page(503, "Sign in problem", PAGE_STORE_FAILED)
+    return page(503, "Sign in problem", c.storeFailed, view)
   }
   deps.log(`callback connected [${workspace}]`)
-  return page(200, "Connected", PAGE_CONNECTED)
+  return page(200, "Connected", c.connected, view)
 }
 
 /** The shape of the retired HS256 state: `{"alg":"HS256",…}.<payload>.<mac>`. */
@@ -434,6 +461,8 @@ async function slackCallback(request: Request, deps: Dependencies): Promise<Resp
   )
   if (accepted instanceof Response) return accepted
   const { claims, code, workspace } = accepted
+  const view = viewOf(claims)
+  const c = copy(view.agent)
 
   const exchanged = await exchangeSlackCode(
     {
@@ -446,7 +475,7 @@ async function slackCallback(request: Request, deps: Dependencies): Promise<Resp
   )
   if (!exchanged.ok) {
     deps.log(`slack callback failed: ${exchanged.reason} [${workspace}]`)
-    return page(400, "Sign in problem", SLACK_FAILURE_PAGES[exchanged.reason])
+    return page(400, "Sign in problem", slackFailurePages(c)[exchanged.reason], view)
   }
 
   const stored = await deps.storeRefreshToken({
@@ -458,10 +487,10 @@ async function slackCallback(request: Request, deps: Dependencies): Promise<Resp
   })
   if (!stored) {
     deps.log(`slack callback failed: store [${workspace}]`)
-    return page(503, "Sign in problem", PAGE_STORE_FAILED)
+    return page(503, "Sign in problem", c.storeFailed, view)
   }
   deps.log(`slack callback connected [${workspace}]`)
-  return page(200, "Connected", PAGE_CONNECTED)
+  return page(200, "Connected", c.connected, view)
 }
 
 /**
@@ -475,12 +504,14 @@ async function mcpCallback(request: Request, deps: Dependencies): Promise<Respon
   const accepted = await acceptCallback(request, deps, "mcp callback", true, true)
   if (accepted instanceof Response) return accepted
   const { claims, code, workspace } = accepted
+  const view = viewOf(claims)
+  const c = copy(view.agent)
   const connector = claims.connector!
 
   const iss = new URL(request.url).searchParams.get("iss")
   if (code.length > MAX_MCP_PARAM_LENGTH || (iss !== null && iss.length > MAX_MCP_PARAM_LENGTH)) {
     deps.log(`mcp callback refused: params [${workspace}]`)
-    return page(400, "Sign in problem", PAGE_BAD_CODE)
+    return page(400, "Sign in problem", c.badCode, view)
   }
 
   const stored = await deps.storeRefreshToken({
@@ -492,10 +523,10 @@ async function mcpCallback(request: Request, deps: Dependencies): Promise<Respon
   })
   if (!stored) {
     deps.log(`mcp callback failed: store [${workspace}]`)
-    return page(503, "Sign in problem", PAGE_STORE_FAILED)
+    return page(503, "Sign in problem", c.storeFailed, view)
   }
   deps.log(`mcp callback connected [${workspace}]`)
-  return page(200, "Connected", PAGE_CONNECTED)
+  return page(200, "Connected", c.connected, view)
 }
 
 /**
@@ -666,20 +697,26 @@ function workspacePrefix(workspaceId: string): string {
 }
 
 /**
- * The whole user interface: one sentence, no assets, no script, no third party.
+ * The whole user interface: one status, one sentence, no script, no third party.
  *
- * Nothing is interpolated except [message], which is only ever one of this module's own
- * constants. It is never a query parameter, never the provider's error, and never the code.
+ * [message] is only ever one of this module's own constants. It is never a query parameter,
+ * never the provider's error, and never the code. [view] comes only from a verified state, so a
+ * page with no state is fixed and request free. A 200 sends the person back to the chat after
+ * two seconds; an error offers the button and never redirects.
  */
-export function page(status: number, title: string, message: string): Response {
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex"><title>${escapeHtml(title)}</title>
-<style>body{margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;
-padding:24px;background:#fff;color:#111;font:17px/1.5 -apple-system,BlinkMacSystemFont,
-"Segoe UI",Roboto,sans-serif}p{max-width:22em;text-align:center}
-@media(prefers-color-scheme:dark){body{background:#111;color:#eee}}</style>
-</head><body><p>${escapeHtml(message)}</p></body></html>`
+export function page(
+  status: number,
+  title: string,
+  message: string,
+  view: View = NO_VIEW,
+): Response {
+  const html = resultHtml({
+    tone: status === 200 ? "ok" : status === 404 ? "info" : "bad",
+    title,
+    text: message,
+    returnUrl: view.returnUrl,
+    redirect: status === 200,
+  })
   return new Response(html, {
     status,
     headers: {
@@ -687,28 +724,12 @@ padding:24px;background:#fff;color:#111;font:17px/1.5 -apple-system,BlinkMacSyst
       "Cache-Control": "no-store",
       "Referrer-Policy": "no-referrer",
       "X-Content-Type-Options": "nosniff",
+      "X-Robots-Tag": "noindex, nofollow",
+      "Content-Security-Policy": STATIC_CSP,
     },
   })
 }
 
-function escapeHtml(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;").replaceAll("'", "&#39;")
-}
-
-export const PAGES = {
-  connected: PAGE_CONNECTED,
-  declined: PAGE_DECLINED,
-  stale: PAGE_STALE,
-  replay: PAGE_REPLAY,
-  badCode: PAGE_BAD_CODE,
-  noRefresh: PAGE_NO_REFRESH,
-  unreachable: PAGE_UNREACHABLE,
-  slackNoToken: PAGE_SLACK_NO_TOKEN,
-  slackUnreachable: PAGE_SLACK_UNREACHABLE,
-  storeFailed: PAGE_STORE_FAILED,
-  unconfigured: PAGE_UNCONFIGURED,
-  notFound: PAGE_NOT_FOUND,
-  notABrowser: PAGE_NOT_A_BROWSER,
-  updatePlugin: PAGE_UPDATE_PLUGIN,
-}
+/** The copy with no agent name, as every fixed page shows it. Exported for the tests. */
+export const PAGES = copy(null)
+export const copyFor = copy
