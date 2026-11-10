@@ -11,7 +11,6 @@ import {
   DEFAULT_PUBLIC_BASE_URL,
   type Dependencies,
   type Instance,
-  instanceFromRow,
   PAGES,
   type RegisterOutcome,
   resetRateLimits,
@@ -119,7 +118,7 @@ function harness(
           existing.sealPublicKey === registration.sealPublicKey
         return Promise.resolve(same ? "ok" : "rotation_requires_proof")
       }
-      instances.set(registration.instanceId, { ...registration, issuanceApproved: false })
+      instances.set(registration.instanceId, { ...registration })
       return Promise.resolve("ok")
     },
     // Mirrors fluck_vault_rotate_instance: compare-and-swap on the current link key.
@@ -133,8 +132,7 @@ function harness(
       }
       existing.linkPublicKey = rotation.linkPublicKey
       existing.sealPublicKey = rotation.sealPublicKey
-      // The SQL also clears approval and expires the install's unconsumed links.
-      existing.issuanceApproved = false
+      // The SQL also expires the install's unconsumed links.
       return Promise.resolve("ok")
     },
     userFromToken: (token) => Promise.resolve(tokens[token] ?? null),
@@ -159,14 +157,12 @@ function seed(
   userId: string,
   link: string,
   seal: string,
-  issuanceApproved = true,
 ) {
   h.instances.set(instanceId, {
     instanceId,
     userId,
     linkPublicKey: link,
     sealPublicKey: seal,
-    issuanceApproved,
   })
 }
 
@@ -559,7 +555,7 @@ Deno.test("an install's page renders with no env keys configured at all", async 
 })
 
 // --------------------------------------------------------------------------------------------
-// Issuance: registering is not enough to mint a page on this domain
+// Minting: any registered, live install may; a revoked one may not
 // --------------------------------------------------------------------------------------------
 
 const CVV_MINT = {
@@ -575,10 +571,8 @@ const CVV_MINT = {
   expiresAt: NOW + 120,
 }
 
-Deno.test("an ordinary account that registers its own key cannot mint a payment page", async () => {
+Deno.test("a freshly registered install can mint a payment page and a vault link", async () => {
   const h = harness()
-  // Bob signs in, registers a key he holds, and signs a CVV request with his own merchant,
-  // card and amount. Registration succeeds; minting is refused and nothing is written.
   const registered = await h.handler(
     register(
       { instanceId: INSTANCE_B, linkPublicKey: B.base64, sealPublicKey: B_SEAL },
@@ -586,19 +580,28 @@ Deno.test("an ordinary account that registers its own key cannot mint a payment 
     ),
   )
   assertEquals(registered.status, 200)
-  assertEquals(h.instances.get(INSTANCE_B)!.issuanceApproved, false)
   for (const body of [CVV_MINT, MINT]) {
     resetRateLimits()
     const response = await h.handler(await signed("/requests", body, B.pair.privateKey, INSTANCE_B))
-    assertEquals(response.status, 403)
-    assertEquals(await response.json(), { error: "issuance" })
+    assertEquals(response.status, 201)
   }
+  assertEquals(h.created.map((c) => c.instanceId), [INSTANCE_B, INSTANCE_B])
+})
+
+Deno.test("a revoked install cannot mint", async () => {
+  const h = harness()
+  seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL)
+  h.instances.get(INSTANCE_A)!.revoked = true
+  const response = await h.handler(
+    await signed("/requests", CVV_MINT, A.pair.privateKey, INSTANCE_A),
+  )
+  assertEquals(response.status, 401)
   assertEquals(h.created.length, 0)
 })
 
-Deno.test("an approved install mints, and the env key (the operator) still does", async () => {
+Deno.test("an install and the env key (the operator) both mint", async () => {
   const h = harness()
-  seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL, true)
+  seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL)
   assertEquals(
     (await h.handler(await signed("/requests", CVV_MINT, A.pair.privateKey, INSTANCE_A))).status,
     201,
@@ -612,9 +615,9 @@ Deno.test("an approved install mints, and the env key (the operator) still does"
   assertEquals(h.created.map((c) => c.instanceId), [INSTANCE_A, null])
 })
 
-Deno.test("an unapproved install can still drain its own (empty) inbox", async () => {
+Deno.test("an install can drain its own (empty) inbox", async () => {
   const h = harness()
-  seed(h, INSTANCE_B, BOB, B.base64, B_SEAL, false)
+  seed(h, INSTANCE_B, BOB, B.base64, B_SEAL)
   const response = await h.handler(
     await signed("/inbox/claim", { ws: WS }, B.pair.privateKey, INSTANCE_B),
   )
@@ -637,7 +640,7 @@ Deno.test("a cvv request must name the merchant and a positive amount in a known
   ]
   for (const [body, error] of cases) {
     const h = harness()
-    seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL, true)
+    seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL)
     const response = await h.handler(await signed("/requests", body, A.pair.privateKey, INSTANCE_A))
     assertEquals(response.status, 400, JSON.stringify(body))
     assertEquals(await response.json(), { error })
@@ -648,7 +651,7 @@ Deno.test("a cvv request must name the merchant and a positive amount in a known
 Deno.test("a cvv request in a zero or three decimal currency is accepted as minor units", async () => {
   for (const [currency, totalCents] of [["JPY", 1_200], ["KWD", 1_250], ["USD", 48_732]]) {
     const h = harness()
-    seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL, true)
+    seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL)
     const body = { ...CVV_MINT, currency, totalCents }
     const response = await h.handler(await signed("/requests", body, A.pair.privateKey, INSTANCE_A))
     assertEquals(response.status, 201, String(currency))
@@ -660,7 +663,7 @@ Deno.test("a cvv request in a zero or three decimal currency is accepted as mino
 Deno.test("a vault request carries no purchase details", async () => {
   for (const extra of [{ merchant: "shop.example" }, { totalCents: 100 }, { currency: "USD" }]) {
     const h = harness()
-    seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL, true)
+    seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL)
     const response = await h.handler(
       await signed("/requests", { ...MINT, ...extra }, A.pair.privateKey, INSTANCE_A),
     )
@@ -673,20 +676,18 @@ Deno.test("the cvv copy is constant and never claims a charge", () => {
 })
 
 // --------------------------------------------------------------------------------------------
-// Rotation and approval, lifecycle, limits, schema
+// Rotation, lifecycle, limits
 // --------------------------------------------------------------------------------------------
 
-Deno.test("a proven rotation does not inherit the operator's approval to mint", async () => {
+Deno.test("a proven rotation switches the install to the new keys, which then mint", async () => {
   const h = harness()
-  seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL, true)
+  seed(h, INSTANCE_A, ALICE, A.base64, A_SEAL)
   assertEquals((await h.handler(await rotation(TO_B, A.pair.privateKey))).status, 200)
   resetRateLimits()
   const response = await h.handler(
     await signed("/requests", CVV_MINT, B.pair.privateKey, INSTANCE_A),
   )
-  assertEquals(response.status, 403)
-  assertEquals(await response.json(), { error: "issuance" })
-  assertEquals(h.created.length, 0)
+  assertEquals(response.status, 201)
 })
 
 Deno.test("the eleventh live install is refused with 429 limit", async () => {
@@ -747,36 +748,4 @@ Deno.test("registration is capped per address", async () => {
   for (let i = 0; i < 21; i++) statuses.push((await h.handler(register(body))).status)
   assertEquals(statuses.filter((s) => s === 200).length, 20)
   assertEquals(statuses[20], 429)
-})
-
-Deno.test("a database without the issuance column fails minting with a clear 503", async () => {
-  const old = instanceFromRow(INSTANCE_A, {
-    user_id: ALICE,
-    link_public_key: A.base64,
-    seal_public_key: A_SEAL,
-  })
-  assertEquals(old?.issuanceApproved, null)
-  assertEquals(
-    instanceFromRow(INSTANCE_A, {
-      user_id: ALICE,
-      link_public_key: A.base64,
-      seal_public_key: A_SEAL,
-      issuance_approved: "yes",
-    })?.issuanceApproved,
-    false,
-  )
-  const h = harness()
-  h.instances.set(INSTANCE_A, old!)
-  const response = await h.handler(
-    await signed("/requests", CVV_MINT, A.pair.privateKey, INSTANCE_A),
-  )
-  assertEquals(response.status, 503)
-  assertEquals(await response.json(), { error: "schema" })
-  assertEquals(h.created.length, 0)
-  // Claiming does not depend on the column.
-  resetRateLimits()
-  const claim = await h.handler(
-    await signed("/inbox/claim", { ws: WS }, A.pair.privateKey, INSTANCE_A),
-  )
-  assertEquals(claim.status, 200)
 })
