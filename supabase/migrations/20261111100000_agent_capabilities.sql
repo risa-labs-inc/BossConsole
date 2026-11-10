@@ -152,3 +152,77 @@ BEGIN
     RETURN NULL;
 END;
 $$;
+
+-- ----------------------------------------------------------------------------
+-- Org defaults: what a new agent starts with. Existing agents are not changed.
+-- ----------------------------------------------------------------------------
+ALTER TABLE public.agent_org_defaults ADD COLUMN IF NOT EXISTS default_capabilities jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE public.agent_org_defaults DROP CONSTRAINT IF EXISTS agent_org_defaults_capabilities_valid;
+ALTER TABLE public.agent_org_defaults ADD CONSTRAINT agent_org_defaults_capabilities_valid
+    CHECK (public.agent_capabilities_valid(default_capabilities));
+
+-- Written only here (no column grant), so agents.capabilities, not agents.edit, decides.
+CREATE OR REPLACE FUNCTION public.set_org_default_capabilities(p_org_id uuid, p_capabilities jsonb)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF auth.uid() IS NULL OR NOT public.has_org_permission(p_org_id, 'agents.capabilities') THEN
+        RAISE EXCEPTION 'Permission denied: agents.capabilities' USING ERRCODE = '42501';
+    END IF;
+    IF p_capabilities IS NULL OR NOT public.agent_capabilities_valid(p_capabilities) THEN
+        RAISE EXCEPTION 'invalid_capabilities' USING ERRCODE = '22023';
+    END IF;
+    INSERT INTO public.agent_org_defaults (org_id, default_capabilities)
+        VALUES (p_org_id, p_capabilities)
+        ON CONFLICT (org_id) DO UPDATE SET default_capabilities = EXCLUDED.default_capabilities;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.set_org_default_capabilities(uuid, jsonb) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.set_org_default_capabilities(uuid, jsonb) TO authenticated, service_role;
+
+-- Body as in 20261019120000, split by column: brand changes keep their action, capabilities get their own.
+CREATE OR REPLACE FUNCTION public.agent_org_defaults_audit() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF (TG_OP = 'INSERT' AND NEW.default_brand IS DISTINCT FROM '{}'::jsonb)
+       OR (TG_OP = 'UPDATE' AND NEW.default_brand IS DISTINCT FROM OLD.default_brand) THEN
+        INSERT INTO public.agent_audit_log (org_id, agent_id, actor, action, detail)
+            VALUES (NEW.org_id, NULL, public.agent_audit_actor(), 'org.default_brand_change', '{}'::jsonb);
+    END IF;
+    IF (TG_OP = 'INSERT' AND NEW.default_capabilities IS DISTINCT FROM '{}'::jsonb)
+       OR (TG_OP = 'UPDATE' AND NEW.default_capabilities IS DISTINCT FROM OLD.default_capabilities) THEN
+        INSERT INTO public.agent_audit_log (org_id, agent_id, actor, action, detail)
+            VALUES (NEW.org_id, NULL, public.agent_audit_actor(), 'org.default_capabilities_change',
+                    jsonb_build_object('capabilities', NEW.default_capabilities));
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+-- Body as in 20261023100000, plus the org's default capabilities for an agent created without its own.
+-- Runs after agents_permission_check_on_write, so an agents.edit creator gets the org defaults without agents.capabilities.
+CREATE OR REPLACE FUNCTION public.agents_insert_defaults() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    domains jsonb;
+    org_brand jsonb;
+    org_caps jsonb;
+BEGIN
+    IF NEW.signup_policy ? 'org_default' THEN
+        SELECT pg_catalog.jsonb_agg(d.domain ORDER BY d.domain) INTO domains
+            FROM public.organisation_domains d WHERE d.org_id = NEW.org_id AND d.verified;
+        NEW.signup_policy := CASE WHEN domains IS NULL THEN '{"mode":"invite"}'::jsonb
+                                  ELSE pg_catalog.jsonb_build_object('mode', 'domain', 'domains', domains) END;
+    END IF;
+    SELECT o.default_brand, o.default_capabilities INTO org_brand, org_caps
+        FROM public.agent_org_defaults o WHERE o.org_id = NEW.org_id;
+    IF NOT (COALESCE(NEW.brand, '{}'::jsonb) ? 'accent') AND org_brand ? 'accent' THEN
+        NEW.brand := COALESCE(NEW.brand, '{}'::jsonb)
+            || pg_catalog.jsonb_strip_nulls(pg_catalog.jsonb_build_object(
+                   'accent', org_brand->'accent', 'accent_dark', org_brand->'accent_dark'));
+    END IF;
+    IF NEW.capabilities = '{}'::jsonb AND org_caps IS NOT NULL THEN
+        NEW.capabilities := org_caps;
+    END IF;
+    RETURN NEW;
+END;
+$$;
