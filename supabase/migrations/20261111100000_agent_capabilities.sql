@@ -123,12 +123,16 @@ BEGIN
         CASE WHEN NEW.capabilities IS DISTINCT FROM OLD.capabilities THEN 'capabilities' END], NULL);
     IF cardinality(changed) > 0 THEN
         IF 'capabilities' = ANY (changed) THEN
-            -- Flattened paths (evolve, tabs.memory) whose stored value changed.
+            -- Flattened paths (evolve, tabs.memory) whose effective value changed: unset reads as on, except
+            -- own_connectors, whose unset means the legacy rule.
             SELECT array_agg(k ORDER BY k) INTO cap_keys FROM (
                 SELECT k FROM unnest(ARRAY['evolve', 'own_connectors', 'tabs.shared', 'tabs.activity', 'tabs.vault',
                                            'tabs.connectors', 'tabs.skills', 'tabs.community', 'tabs.memory']) k
-                WHERE NEW.capabilities #> pg_catalog.string_to_array(k, '.')
-                      IS DISTINCT FROM OLD.capabilities #> pg_catalog.string_to_array(k, '.')) ks;
+                WHERE CASE WHEN k = 'own_connectors' THEN NEW.capabilities -> k
+                           ELSE COALESCE(NEW.capabilities #> pg_catalog.string_to_array(k, '.'), 'true'::jsonb) END
+                      IS DISTINCT FROM
+                      CASE WHEN k = 'own_connectors' THEN OLD.capabilities -> k
+                           ELSE COALESCE(OLD.capabilities #> pg_catalog.string_to_array(k, '.'), 'true'::jsonb) END) ks;
         END IF;
         INSERT INTO public.agent_audit_log (org_id, agent_id, actor, action, detail)
             VALUES (NEW.org_id, NEW.id, actor, 'agent.settings_change', jsonb_build_object('fields', to_jsonb(changed))

@@ -1,6 +1,6 @@
 -- Per-agent capabilities: validated column, agents.capabilities permission, audit trail.
 begin;
-select plan(29);
+select plan(30);
 
 -- a1 owner, a2 agent manager, a3 member with a custom capabilities role.
 insert into auth.users (id, email, email_confirmed_at) values
@@ -92,6 +92,13 @@ select is((select detail -> 'capabilities' from public.agent_audit_log
            where agent_id = pg_temp.id('agent') and action = 'agent.settings_change' and actor = pg_temp.u('a3')),
     '{"evolve": false}'::jsonb, 'and records the new value');
 
+reset role;
+update public.agents set capabilities = '{"evolve":false,"tabs":{"shared":true,"memory":false}}' where slug = 'capagent';
+select is((select detail -> 'capability_keys' from public.agent_audit_log
+           where agent_id = pg_temp.id('agent') and action = 'agent.settings_change' and actor is null
+             and detail -> 'fields' ? 'capabilities'),
+    '["tabs.memory"]'::jsonb, 'writing a switch explicitly on is not a change; turning Memory off is');
+
 -- ---- org defaults for new agents ----
 set local role authenticated;
 select pg_temp.as_user('a2');
@@ -109,7 +116,7 @@ select lives_ok($$ insert into public.agents (slug, org_id, name, plugin_id, cre
 reset role;
 select is((select capabilities from public.agents where slug = 'capnew'), '{"evolve":false,"tabs":{"vault":false}}'::jsonb,
     'and it starts with the org defaults');
-select is((select capabilities from public.agents where slug = 'capagent'), '{"evolve":false}'::jsonb,
+select is((select capabilities from public.agents where slug = 'capagent'), '{"evolve":false,"tabs":{"shared":true,"memory":false}}'::jsonb,
     'existing agents are not changed');
 select is((select detail -> 'capabilities' from public.agent_audit_log
            where org_id = pg_temp.id('org') and action = 'org.default_capabilities_change'),
