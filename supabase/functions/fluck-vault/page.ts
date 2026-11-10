@@ -24,29 +24,20 @@
  */
 import { SEAL_INFO_PREFIX } from "./seal.ts"
 import { MAX_MINOR_AMOUNT, MINOR_UNIT_EXPONENTS } from "./currency.ts"
+import {
+  escapeHtml,
+  FOOTER_ENCRYPTED,
+  parseReturnUrl,
+  resultHtml,
+  sha256Base64,
+  shell,
+  staticCsp,
+  STYLE,
+} from "../_shared/connect-ui.ts"
 
-/** Shared by every page. Hashed into the CSP, so it is a constant like the script. */
-export const STYLE = `*{box-sizing:border-box}
-body{margin:0;padding:24px 16px 48px;background:#fff;color:#111;
-font:17px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-main{max-width:26em;margin:0 auto}
-h1{font-size:20px;margin:0 0 8px}
-p{margin:0 0 20px;color:#444}
-label{display:block;margin:0 0 14px;font-size:14px;color:#444}
-input{display:block;width:100%;margin-top:4px;padding:12px;font-size:17px;
-border:1px solid #bbb;border-radius:8px;background:#fff;color:#111}
-input:focus{outline:2px solid #111;outline-offset:1px}
-.row{display:flex;gap:10px}
-.row label{flex:1}
-button{width:100%;margin-top:8px;padding:14px;font-size:17px;font-weight:600;
-border:0;border-radius:8px;background:#111;color:#fff}
-.note{font-size:14px;color:#666;margin-top:20px}
-.err{color:#b00020;font-size:14px;min-height:1.5em;margin:0 0 8px}
-@media(prefers-color-scheme:dark){
-body{background:#111;color:#eee}p{color:#aaa}label{color:#aaa}
-input{background:#1c1c1c;border-color:#444;color:#eee}
-input:focus{outline-color:#eee}button{background:#eee;color:#111}
-.note{color:#888}.err{color:#ff8a80}}`
+// Hashed into the CSP, so it is a constant like the script. Lives in `_shared` with the rest of
+// the chrome; re-exported so the tests and the CSP builder keep one name for it.
+export { escapeHtml, sha256Base64, staticCsp, STYLE }
 
 /**
  * The client. Sealing, validation, and the submit path, in one constant.
@@ -129,12 +120,13 @@ blob.set(iv,1+epk.length);blob.set(c,1+epk.length+12);return b64(blob)})})})})}
 form.addEventListener("submit",function(event){
 if(sealed)return;event.preventDefault();err.textContent="";
 var value=payload();if(!value)return;
-var button=form.querySelector("button");if(button)button.disabled=true;
+var button=form.querySelector("button");var idle=button?button.textContent:"";
+if(button){button.disabled=true;button.textContent="Encrypting\\u2026"}
 seal(JSON.stringify(value)).then(function(blob){
 var inputs=form.querySelectorAll("input[name^=f]");
 for(var i=0;i<inputs.length;i++){inputs[i].value="";inputs[i].checked=false;inputs[i].disabled=true}
 out.value=blob;sealed=true;form.submit()},function(){
-if(button)button.disabled=false;
+if(button){button.disabled=false;button.textContent=idle}
 err.textContent="This browser could not secure the details. Try Safari or Chrome."})});
 })()`
 
@@ -147,17 +139,6 @@ function baseHeaders(): Record<string, string> {
     "X-Robots-Tag": "noindex, nofollow, noarchive",
     "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
   }
-}
-
-/** Base64 SHA-256 of a string, in the shape a CSP hash source wants. */
-export async function sha256Base64(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value) as BufferSource,
-  )
-  let binary = ""
-  for (const byte of new Uint8Array(digest)) binary += String.fromCharCode(byte)
-  return btoa(binary)
 }
 
 /**
@@ -180,59 +161,42 @@ export async function scriptCsp(): Promise<string> {
   ].join("; ")
 }
 
-/** The CSP for a page with no script at all. */
-export async function staticCsp(): Promise<string> {
-  const style = await sha256Base64(STYLE)
-  return [
-    "default-src 'none'",
-    `style-src 'sha256-${style}'`,
-    "form-action 'none'",
-    "frame-ancestors 'none'",
-    "base-uri 'none'",
-  ].join("; ")
-}
-
-export function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;")
-}
-
-function shell(title: string, body: string, withScript: boolean): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex,nofollow">
-<title>${escapeHtml(title)}</title><style>${STYLE}</style></head>
-<body><main>${body}</main>${withScript ? `<script>${SCRIPT}</script>` : ""}</body></html>`
+/** Who asked and where "Back to chat" goes. Both optional, both already validated upstream. */
+export interface View {
+  agent: string | null
+  returnUrl: string | null
 }
 
 /**
  * A page with no form: every success, every refusal, every error.
  *
- * One shape for all of them, and the caller only ever passes one of `app.ts`'s own constants.
- * Nothing from the request reaches here, which is what makes the fixed 400 page fixed.
+ * The caller only ever passes one of `app.ts`'s own copy strings. With no `view` nothing from
+ * the request reaches here, which is what keeps the fixed 400 page fixed. With one, the return
+ * URL is re-validated by the shared renderer and a 200 sends the person back after two seconds.
  */
 export async function message(
   status: number,
   title: string,
   text: string,
   extra: Record<string, string> = {},
+  view?: View,
 ): Promise<Response> {
-  return new Response(
-    shell(title, `<h1>${escapeHtml(title)}</h1><p>${escapeHtml(text)}</p>`, false),
-    {
-      status,
-      headers: {
-        ...baseHeaders(),
-        ...extra,
-        "Content-Type": "text/html; charset=utf-8",
-        "Content-Security-Policy": await staticCsp(),
-      },
+  const html = resultHtml({
+    tone: status === 200 ? "ok" : status === 404 ? "info" : "bad",
+    title,
+    text,
+    returnUrl: view?.returnUrl,
+    redirect: status === 200,
+  })
+  return new Response(html, {
+    status,
+    headers: {
+      ...baseHeaders(),
+      ...extra,
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": await staticCsp(),
     },
-  )
+  })
 }
 
 export interface FormPage {
@@ -246,7 +210,13 @@ export interface FormPage {
   action: string
   submit: string
   note: string
+  /** `your agent` or the name; escaped here. */
+  agent: string
+  returnUrl: string | null
 }
+
+const field = (label: string, input: string, wrap = "") =>
+  `<label class="f${wrap}"><span>${label}</span>${input}</label>`
 
 /**
  * The form pages. Four of them, one function, because they differ only in their fields.
@@ -257,46 +227,79 @@ export interface FormPage {
  * `autocomplete="off"` says the same thing to the browsers that honour it.
  */
 export async function form(page: FormPage): Promise<Response> {
+  const text = (name: string, extra = "") =>
+    `<input name="${name}" type="text" autocomplete="off"${extra}>`
   const fields = page.kind === "password"
-    ? `<label>Username or email<input name="f1" type="text" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
-<label>Password<input name="f2" type="password" autocomplete="off" required></label>`
+    ? field(
+      "Username or email",
+      text("f1", ` autocapitalize="none" spellcheck="false"`),
+    ) +
+      field("Password", `<input name="f2" type="password" autocomplete="off" required>`)
     : page.kind === "secret"
-    ? `${
-      page.label
-        ? `<label>For<input name="f1" type="text" value="${
+    ? (page.label
+      ? field(
+        "For",
+        `<input name="f1" type="text" value="${
           escapeHtml(page.label)
-        }" readonly autocomplete="off" spellcheck="false"></label>`
-        : `<label>What is it for<input name="f1" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" required></label>`
-    }
-<label>Key<input name="f2" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required></label>`
+        }" readonly autocomplete="off" spellcheck="false">`,
+      )
+      : field(
+        "What is it for",
+        text("f1", ` autocapitalize="none" spellcheck="false" required`),
+      )) +
+      field(
+        "Key",
+        `<input name="f2" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required>`,
+      )
     : page.kind === "card"
-    ? `<label>Name on the card<input name="f1" type="text" autocomplete="off" spellcheck="false" required></label>
-<label>Card number<input name="f2" type="text" inputmode="numeric" autocomplete="off" required></label>
-<div class="row"><label>Expiry<input name="f3" type="text" inputmode="numeric" placeholder="MM/YY" maxlength="5" autocomplete="off" required></label>
-<label>Security code<input name="f11" type="text" inputmode="numeric" maxlength="4" autocomplete="off" required></label></div>
-<label>Billing address<input name="f4" type="text" autocomplete="off"></label>
-<label>Postcode<input name="f6" type="text" autocomplete="off" required></label>
-<div class="row"><label>City<input name="f5" type="text" autocomplete="off"></label>
-<label>Country<input name="f7" type="text" autocomplete="off"></label></div>
-<div class="row"><label>Spending limit<input name="f9" type="text" inputmode="decimal" autocomplete="off" required></label>
-<label>Limit currency<input name="f10" type="text" value="USD" maxlength="3" autocomplete="off" spellcheck="false" required></label></div>`
-    : `<label>Security code<input name="f1" type="text" inputmode="numeric" autocomplete="off" required autofocus></label>`
+    ? `<h2 class="sec">Card</h2>` +
+      field("Name on the card", text("f1", ` spellcheck="false" required`)) +
+      field("Card number", text("f2", ` inputmode="numeric" required`)) +
+      `<div class="row">${
+        field(
+          "Expiry",
+          text("f3", ` inputmode="numeric" placeholder="MM/YY" maxlength="5" required`),
+        )
+      }${
+        field("Security code", text("f11", ` inputmode="numeric" maxlength="4" required`))
+      }</div>` +
+      `<h2 class="sec">Billing address</h2>` +
+      field("Address", text("f4")) +
+      `<div class="row">${field("City", text("f5"))}${
+        field("Postcode", text("f6", " required"))
+      }</div>` +
+      field("Country", text("f7")) +
+      `<h2 class="sec">Spending limit</h2>` +
+      `<div class="row">${field("Amount", text("f9", ` inputmode="decimal" required`))}${
+        field("Currency", text("f10", ` value="USD" maxlength="3" spellcheck="false" required`))
+      }</div>`
+    : field(
+      "Security code",
+      text("f1", ` inputmode="numeric" required autofocus`),
+    )
 
-  const body = `<h1>${escapeHtml(page.title)}</h1><p>${escapeHtml(page.intro)}</p>
+  const back = parseReturnUrl(page.returnUrl)
+  const body = `<p class="eyebrow">Requested by ${escapeHtml(page.agent)}</p>
+<h1>${escapeHtml(page.title)}</h1><p>${escapeHtml(page.intro)}</p>
 <form id="f" method="post" action="${escapeHtml(page.action)}" autocomplete="off"
 data-kind="${page.kind}" data-jti="${escapeHtml(page.jti)}" data-key="${escapeHtml(page.sealKey)}">
-<p class="err" id="e"></p>
 ${fields}
+<p class="err" id="e" role="alert"></p>
 <input type="hidden" name="c" id="c"><input type="hidden" name="j" value="${escapeHtml(page.jti)}">
-<button type="submit">${escapeHtml(page.submit)}</button></form>
+<button class="btn btn-primary" type="submit">${escapeHtml(page.submit)}</button></form>${
+    back ? `<a class="cancel" href="${escapeHtml(back)}">Cancel</a>` : ""
+  }
 <p class="note">${escapeHtml(page.note)}</p>`
 
-  return new Response(shell(page.title, body, true), {
-    status: 200,
-    headers: {
-      ...baseHeaders(),
-      "Content-Type": "text/html; charset=utf-8",
-      "Content-Security-Policy": await scriptCsp(),
+  return new Response(
+    shell({ title: page.title, body, footer: FOOTER_ENCRYPTED, script: SCRIPT }),
+    {
+      status: 200,
+      headers: {
+        ...baseHeaders(),
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Security-Policy": await scriptCsp(),
+      },
     },
-  })
+  )
 }

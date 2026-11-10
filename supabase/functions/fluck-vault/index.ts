@@ -55,6 +55,9 @@ interface DescribeRow {
   instance_seal_public_key: string | null
   /** Absent before the secret-kind migration. */
   connector?: string | null
+  /** Absent before the return migration. */
+  agent_name?: string | null
+  return_url?: string | null
 }
 
 Deno.serve(createHandler({
@@ -96,6 +99,8 @@ Deno.serve(createHandler({
       totalCents: row.total_cents,
       currency: row.currency,
       connector: isConnector(row.connector) ? row.connector : null,
+      agentName: row.agent_name ?? null,
+      returnUrl: row.return_url ?? null,
       // Describe drops rows of a revoked install, so an id here always comes with its keys.
       instance: row.instance_id && row.instance_link_public_key && row.instance_seal_public_key
         ? {
@@ -141,7 +146,7 @@ Deno.serve(createHandler({
    * is the only thing in the system with one, and all it can do with it is move opaque blobs.
    */
   async createRequest(request: CreateRequest): Promise<CreateOutcome> {
-    const { data, error } = await client.rpc("fluck_vault_create", {
+    const args = {
       p_jti: request.jti,
       p_ws: request.ws,
       p_purpose: request.purpose,
@@ -158,7 +163,18 @@ Deno.serve(createHandler({
       // Sent only when set, so the other kinds still resolve against the pre-migration signature.
       ...(request.connector !== null ? { p_connector: request.connector } : {}),
       ...(request.env !== null ? { p_env: request.env } : {}),
+    }
+    const withReturn = request.agentName !== null || request.returnUrl !== null
+    let { data, error } = await client.rpc("fluck_vault_create", {
+      ...args,
+      ...(request.agentName !== null ? { p_agent_name: request.agentName } : {}),
+      ...(request.returnUrl !== null ? { p_return_url: request.returnUrl } : {}),
     })
+    // A database behind this function has no such parameters. They only personalise the page, so
+    // mint the link without them rather than fail it.
+    if (error && withReturn && SCHEMA_ERRORS.has(error.code ?? "")) {
+      ;({ data, error } = await client.rpc("fluck_vault_create", args))
+    }
     if (error) return SCHEMA_ERRORS.has(error.code ?? "") ? "schema" : "unavailable"
     return data === true ? "created" : "taken"
   },

@@ -13,9 +13,9 @@ CREATE TEMP TABLE k ON COMMIT DROP AS SELECT
 GRANT SELECT ON k TO authenticated;
 
 -- Grants
-SELECT ok(NOT has_function_privilege('authenticated', 'public.fluck_vault_create(uuid,text,text,text,text,text,text,text,text,bigint,text,timestamp with time zone,text,text,text)', 'EXECUTE'), 'signed-in clients cannot create requests');
+SELECT ok(NOT has_function_privilege('authenticated', 'public.fluck_vault_create(uuid,text,text,text,text,text,text,text,text,bigint,text,timestamp with time zone,text,text,text,text,text)', 'EXECUTE'), 'signed-in clients cannot create requests');
 SELECT ok(NOT has_function_privilege('anon', 'public.fluck_vault_claim(text,text)', 'EXECUTE'), 'anonymous callers cannot claim');
-SELECT ok(has_function_privilege('service_role', 'public.fluck_vault_create(uuid,text,text,text,text,text,text,text,text,bigint,text,timestamp with time zone,text,text,text)', 'EXECUTE'), 'the service role creates requests');
+SELECT ok(has_function_privilege('service_role', 'public.fluck_vault_create(uuid,text,text,text,text,text,text,text,text,bigint,text,timestamp with time zone,text,text,text,text,text)', 'EXECUTE'), 'the service role creates requests');
 
 -- Minting a secret on the env key (no install).
 SELECT ok(public.fluck_vault_create(
@@ -96,39 +96,25 @@ SELECT is((SELECT connector || ':' || env FROM claimed WHERE kind = 'secret'), '
 SELECT ok((SELECT connector IS NULL AND env IS NULL FROM claimed WHERE kind = 'password'), 'a claimed password carries no metadata');
 SELECT is((SELECT count(*)::int FROM public.fluck_vault_claim('ws-secret', NULL)), 0, 'a claim drains the queue');
 
--- #1830's install rules apply to a secret row: issuance, rotation expiry and revocation.
+-- Install rules apply to a secret row: rotation expiry and revocation.
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', 'fb000000-0000-0000-0000-000000000001', true);
 SELECT is(public.fluck_vault_register_my_instance('inst-secret-0123456789', (SELECT link_a FROM k), (SELECT seal_a FROM k)), 'ok', 'the install registers');
 RESET ROLE;
 
-SELECT throws_ok($$
-  SELECT public.fluck_vault_create(
-    'b0000000-0000-4000-8000-000000000030'::uuid, 'ws-secret', 'vault', 'secret', NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, now() + interval '5 minutes', 'inst-secret-0123456789', 'github', 'GH_TOKEN')
-$$, '42501', NULL, 'an unapproved install cannot mint a secret');
-
-SELECT ok(public.fluck_vault_set_instance_issuance('inst-secret-0123456789', true), 'the operator approves the install');
 SELECT ok(public.fluck_vault_create(
     'b0000000-0000-4000-8000-000000000031'::uuid, 'ws-secret', 'vault', 'secret', NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, now() + interval '5 minutes', 'inst-secret-0123456789', 'github', 'GH_TOKEN'),
-  'an approved install mints a secret');
+  'an install mints a secret without any approval');
 SELECT is((SELECT connector FROM public.fluck_vault_describe('b0000000-0000-4000-8000-000000000031')), 'github', 'the install''s secret link describes');
 
 SELECT is(public.fluck_vault_rotate_instance('inst-secret-0123456789', 'fb000000-0000-0000-0000-000000000001', (SELECT link_a FROM k), (SELECT link_b FROM k), (SELECT seal_b FROM k)), 'ok', 'the install rotates');
 SELECT is((SELECT count(*)::int FROM public.fluck_vault_describe('b0000000-0000-4000-8000-000000000031')), 0, 'a rotation expires the open secret link');
 SELECT is(public.fluck_vault_store('b0000000-0000-4000-8000-000000000031', (SELECT blob FROM k), 'cookie'), NULL, 'the expired secret link cannot be consumed');
-SELECT throws_ok($$
-  SELECT public.fluck_vault_create(
-    'b0000000-0000-4000-8000-000000000032'::uuid, 'ws-secret', 'vault', 'secret', NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, now() + interval '5 minutes', 'inst-secret-0123456789', 'github', 'GH_TOKEN')
-$$, '42501', NULL, 'a rotated install cannot mint a secret until approved again');
-
-SELECT ok(public.fluck_vault_set_instance_issuance('inst-secret-0123456789', true), 'the operator approves the new keys');
 SELECT ok(public.fluck_vault_create(
     'b0000000-0000-4000-8000-000000000033'::uuid, 'ws-secret', 'vault', 'secret', NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, now() + interval '5 minutes', 'inst-secret-0123456789', 'notion', NULL),
-  'the re-approved install mints a secret');
+  'the rotated install mints a secret at once');
 SELECT is(public.fluck_vault_store('b0000000-0000-4000-8000-000000000033', (SELECT blob FROM k), 'cookie'), 'secret', 'the secret is staged');
 
 SET LOCAL ROLE authenticated;

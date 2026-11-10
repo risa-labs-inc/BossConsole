@@ -23,6 +23,7 @@ import {
 import { emailFromIdToken, exchangeCode } from "../google.ts"
 import { exchangeSlackCode } from "../slack.ts"
 import { mintState } from "../state.ts"
+import { sha256Base64, STYLE } from "../../_shared/connect-ui.ts"
 import { bodyDigest } from "../signed.ts"
 
 const NOW_SECONDS = 1_800_000_000
@@ -45,9 +46,13 @@ function idToken(email: string): string {
 }
 
 async function state(
-  overrides: Partial<Record<"ws" | "uid" | "cid" | "nonce" | "iid" | "connector", string>> & {
-    signer?: CryptoKey
-  } = {},
+  overrides:
+    & Partial<
+      Record<"ws" | "uid" | "cid" | "nonce" | "iid" | "connector" | "an" | "ru", string>
+    >
+    & {
+      signer?: CryptoKey
+    } = {},
 ) {
   return await mintState(overrides.signer ?? INSTALL.privateKey, {
     v: 1,
@@ -56,6 +61,8 @@ async function state(
     ws: overrides.ws ?? WORKSPACE,
     cid: overrides.cid ?? "conversation-1",
     connector: overrides.connector,
+    an: overrides.an,
+    ru: overrides.ru,
     nonce: overrides.nonce ?? "nonce-one",
     iat: NOW_SECONDS - 10,
     exp: NOW_SECONDS + 590,
@@ -1060,4 +1067,136 @@ Deno.test("an MCP state is refused on the Google and Slack exchanges and spends 
     assertEquals(h.stored, [])
     assertEquals(h.logs, [`${route} refused: state`])
   }
+})
+
+// ---------------------------------------------------------------------------------------------
+// Agent name and "Back to chat"
+// ---------------------------------------------------------------------------------------------
+
+const BACK = "https://app.example.com/chat?a=1&b=2"
+
+Deno.test("no copy says Fluck or Messages", () => {
+  for (const text of Object.values(PAGES)) assert(!/Fluck|Messages/.test(text), text)
+})
+
+Deno.test("a connected page with a return URL redirects after two seconds and offers the button", async () => {
+  const h = harness()
+  const response = await callback(h, `code=abc&state=${await state({ an: "Max", ru: BACK })}`)
+  assertEquals(response.status, 200)
+  const html = await response.text()
+  assertStringIncludes(html, "Max can use it now.")
+  assertStringIncludes(
+    html,
+    `<meta http-equiv="refresh" content="2;url=https://app.example.com/chat?a=1&amp;b=2">`,
+  )
+  assertStringIncludes(
+    html,
+    `class="btn btn-primary" href="https://app.example.com/chat?a=1&amp;b=2">Back to chat</a>`,
+  )
+  assertStringIncludes(html, "Taking you back to the chat")
+  assert(!html.includes("<script"))
+})
+
+Deno.test("a connected page without one says to close it", async () => {
+  const html = await (await callback(harness(), `code=abc&state=${await state()}`)).text()
+  assertStringIncludes(html, "Your agent can use it now.")
+  assertStringIncludes(html, "You can close this page.")
+  assert(!html.includes("Back to chat") && !html.includes("http-equiv"))
+})
+
+Deno.test("Slack and MCP connected pages redirect too", async () => {
+  const slack = harness({
+    env: { SLACK_CLIENT_ID: "1.2", SLACK_CLIENT_SECRET: "s" },
+    tokenResponse: {
+      ok: true,
+      authed_user: { id: "U1", access_token: "xoxp-1" },
+      team: { id: "T1" },
+    },
+  })
+  const slackHtml = await (await slack.handler(
+    new Request(
+      `https://example.test/fluck-oauth/slack/callback?code=abc&state=${await state({ ru: BACK })}`,
+    ),
+  )).text()
+  assertStringIncludes(slackHtml, "http-equiv")
+  const mcp = harness()
+  const mcpHtml = await (await mcp.handler(
+    new Request(
+      `https://example.test/fluck-oauth/mcp/callback?code=abc&state=${await state({
+        connector: "catalog:x",
+        ru: BACK,
+      })}`,
+    ),
+  )).text()
+  assertStringIncludes(mcpHtml, "http-equiv")
+})
+
+Deno.test("an error after the state verified offers Back to chat and never redirects", async () => {
+  for (
+    const [options, expected] of [
+      [
+        { claim: "replay" as const },
+        "That sign in link has already been used. Ask Max for a fresh one.",
+      ],
+      [{ storeOk: false }, "Ask Max to try again."],
+    ] as const
+  ) {
+    const h = harness(options)
+    const response = await callback(h, `code=abc&state=${await state({ an: "Max", ru: BACK })}`)
+    const html = await response.text()
+    assertStringIncludes(html, expected)
+    assertStringIncludes(html, `class="btn btn-secondary"`)
+    assert(!html.includes("http-equiv") && !html.includes("Taking you back"))
+  }
+})
+
+Deno.test("a page with no verified state is fixed and carries nothing from the request", async () => {
+  const h = harness()
+  const tampered = (await state({ an: "Max", ru: BACK })).replace(/.$/, "A")
+  for (
+    const query of [
+      `code=abc&state=${tampered}`,
+      `error=access_denied&state=${await state({ an: "Max", ru: BACK })}`,
+    ]
+  ) {
+    const html = await (await callback(h, query)).text()
+    assert(
+      !html.includes("Max") && !html.includes("app.example.com") && !html.includes("Back to chat"),
+    )
+  }
+})
+
+Deno.test("the agent name is escaped", async () => {
+  const html = await (await callback(
+    harness({ claim: "replay" }),
+    `code=abc&state=${await state({ an: "<b>x</b>" })}`,
+  )).text()
+  assert(!html.includes("<b>x</b>"))
+  assertStringIncludes(html, "&lt;b&gt;x&lt;/b&gt;")
+})
+
+Deno.test("an unusable an or ru does not break the sign in, and is logged once", async () => {
+  const h = harness()
+  const response = await callback(
+    h,
+    `code=abc&state=${await state({ an: "x".repeat(60), ru: "http://example.com/x" })}`,
+  )
+  assertEquals(response.status, 200)
+  const html = await response.text()
+  assertStringIncludes(html, "Your agent can use it now.")
+  assert(!html.includes("http-equiv"))
+  assertEquals(h.logs.filter((l) => l.includes("ignored invalid an and ru")).length, 1)
+})
+
+Deno.test("every page carries a strict static CSP pinned to the shared stylesheet", async () => {
+  const response = await callback(harness(), `code=abc&state=${await state()}`)
+  const csp = response.headers.get("Content-Security-Policy") ?? ""
+  assertStringIncludes(csp, "default-src 'none'")
+  assertStringIncludes(csp, `style-src 'sha256-${await sha256Base64(STYLE)}'`)
+  assertStringIncludes(csp, "frame-ancestors 'none'")
+  assertStringIncludes(csp, "base-uri 'none'")
+  assertStringIncludes(csp, "form-action 'none'")
+  assert(!csp.includes("script-src"))
+  const notFound = await harness().handler(new Request("https://example.test/fluck-oauth/nope"))
+  assertEquals(notFound.headers.get("Content-Security-Policy"), csp)
 })

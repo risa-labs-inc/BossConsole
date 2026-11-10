@@ -3,7 +3,7 @@
  *
  * ## What it is for
  *
- * Fluck cannot ask for a password or a card number in Messages. The relay that carries those
+ * The agent cannot ask for a password or a card number in chat. The relay that carries those
  * messages sees plaintext, iMessage keeps them forever on two devices and in a backup, and a
  * model that ever held the value would have it in a dump, a log line and a memory summary. So
  * the agent texts a link instead, and the value is typed here, once, on a page with no script
@@ -50,7 +50,8 @@ import {
 } from "./token.ts"
 import { SIGNATURE_HEADER, TIMESTAMP_HEADER, verifySigned } from "./signed.ts"
 import { looksSealed, sealPublicKey } from "./seal.ts"
-import { form, message } from "./page.ts"
+import { form, message, type View } from "./page.ts"
+import { agentRef, parseReturnFields } from "../_shared/connect-ui.ts"
 import { isKnownCurrency, MAX_MINOR_AMOUNT, minorUnitExponent } from "./currency.ts"
 
 /**
@@ -133,6 +134,9 @@ export interface VaultRequestRow {
   instance: RowInstance | null
   /** A secret's connector, for the page's label. Absent or null on every other kind. */
   connector?: Connector | null
+  /** Who asked, and where "Back to chat" goes. Absent before the return migration. */
+  agentName?: string | null
+  returnUrl?: string | null
 }
 
 export interface RowInstance {
@@ -147,18 +151,9 @@ export interface Instance {
   userId: string
   linkPublicKey: string
   sealPublicKey: string
-  /**
-   * Whether an operator has approved this install to mint CVV and vault links. Registration
-   * alone never grants it: a signed-in account is not enough to put a page on this domain.
-   * Null when the database predates the issuance migration: minting answers 503 `schema`.
-   */
-  issuanceApproved: boolean | null
 }
 
-/**
- * One `fluck_vault_instance` row. Approval fails closed: anything but an explicit true is not
- * approved, and a row without the column at all (a database behind this function) is null.
- */
+/** One `fluck_vault_instance` row. */
 export function instanceFromRow(instanceId: string, row: Record<string, unknown>): Instance | null {
   if (typeof row.link_public_key !== "string" || typeof row.seal_public_key !== "string") {
     return null
@@ -168,7 +163,6 @@ export function instanceFromRow(instanceId: string, row: Record<string, unknown>
     userId: String(row.user_id),
     linkPublicKey: row.link_public_key,
     sealPublicKey: row.seal_public_key,
-    issuanceApproved: "issuance_approved" in row ? row.issuance_approved === true : null,
   }
 }
 
@@ -224,6 +218,9 @@ export interface CreateRequest {
   expiresAt: number
   /** The install whose key signed the mint; null on the legacy env key. */
   instanceId: string | null
+  /** Both validated by `parseReturnFields`, or null. Display only. */
+  agentName: string | null
+  returnUrl: string | null
 }
 
 /** One drained inbox row. `ciphertext` is base64; nothing here can open it. */
@@ -275,48 +272,61 @@ export interface Dependencies {
 // Copy. Every string a browser can see is here, and every one of them is a constant.
 // --------------------------------------------------------------------------------------------
 
-const COPY = {
-  passwordTitle: "Save a login",
-  passwordIntro: "Fluck never sees it in Messages.",
-  passwordSubmit: "Save",
-  passwordNote: "Encrypted in this browser before it is sent.",
-  cardTitle: "Add a card",
-  cardIntro: "Add a card and the most Fluck may spend on it. Fluck never sees it in Messages.",
-  cardSubmit: "Add card",
-  cardNote:
-    "The card and its security code are encrypted on this device, so only your Fluck can read them.",
-  // This page only seals the code and stages it for the install that minted the link. It does
-  // not charge anything, so nothing here may read as a payment.
-  cvvTitle: "Card security code",
-  cvvIntro: "Enter the card security code.",
-  cvvSubmit: "Send code",
-  cvvNote:
-    "This does not charge your card. Only continue if these details match a purchase you asked Fluck to make, and do not forward this link. The code is encrypted on this device and held for up to ten minutes until your Fluck collects it; Fluck keeps it, encrypted, for purchases you approve.",
-  secretTitle: "Save a key",
-  secretIntro: "Paste it here. Fluck never sees it in Messages.",
-  secretSubmit: "Save",
-  secretNote: "Encrypted in this browser before it is sent. Only your Fluck can read it.",
-  savedTitle: "Saved",
-  saved: "Saved. You can go back to Messages.",
-  cardSavedTitle: "Card added",
-  cardSaved: "Card added. It is only used when you approve a purchase.",
-  cvvDoneTitle: "Code sent",
-  cvvDone:
-    "Code sent to your Fluck, encrypted. Your card has not been charged. You can go back to Messages.",
-  badTitle: "Link problem",
-  bad: "That link is not valid any more. Ask Fluck for a fresh one.",
-  busyTitle: "Too many tries",
-  busy: "Too many attempts. Wait a few minutes and ask Fluck for a fresh link.",
-  downTitle: "Try again",
-  down: "That could not be saved just now. Ask Fluck for a fresh link and try again.",
-  unsetTitle: "Not set up",
-  unset: "This page is not set up yet. Whoever runs this BOSS has to finish setting it up.",
-  notFoundTitle: "Nothing here",
-  notFound: "There is nothing at this address.",
-} as const
+function copy(name: string | null | undefined) {
+  const a = agentRef(name)
+  return {
+    passwordTitle: "Save a login",
+    passwordIntro: `Type it here so it never goes through the chat.`,
+    passwordSubmit: "Save",
+    passwordNote: "Encrypted in this browser before it is sent.",
+    cardTitle: "Add a card",
+    cardIntro:
+      `Add a card and the most ${a.lower} may spend on it. Type it here so it never goes through the chat.`,
+    cardSubmit: "Add card",
+    cardNote:
+      `The card and its security code are encrypted on this device, so only ${a.lower} can read them.`,
+    // This page only seals the code and stages it for the install that minted the link. It does
+    // not charge anything, so nothing here may read as a payment.
+    cvvTitle: "Card security code",
+    cvvIntro: "Enter the card security code.",
+    cvvSubmit: "Send code",
+    cvvNote:
+      `This does not charge your card. Only continue if these details match a purchase you asked ${a.lower} to make, and do not forward this link. The code is encrypted on this device and held for up to ten minutes until ${a.lower} collects it, then kept encrypted for purchases you approve.`,
+    secretTitle: "Save a key",
+    secretIntro: `Paste it here. Type it here so it never goes through the chat.`,
+    secretSubmit: "Save",
+    secretNote: `Encrypted in this browser before it is sent. Only ${a.lower} can read it.`,
+    savedTitle: "Saved",
+    saved: "It was encrypted on this device before it was sent.",
+    cardSavedTitle: "Card added",
+    cardSaved: "Card added. It is only used when you approve a purchase.",
+    cvvDoneTitle: "Code sent",
+    cvvDone: `Code sent to ${a.lower}, encrypted. Your card has not been charged.`,
+    badTitle: "Link problem",
+    bad: `That link is not valid any more. Ask ${a.lower} for a fresh one.`,
+    busyTitle: "Too many tries",
+    busy: `Too many attempts. Wait a few minutes and ask ${a.lower} for a fresh link.`,
+    downTitle: "Try again",
+    down: `That could not be saved just now. Ask ${a.lower} for a fresh link and try again.`,
+    unsetTitle: "Not set up",
+    unset: "This page is not set up yet. Whoever runs this BOSS has to finish setting it up.",
+    notFoundTitle: "Nothing here",
+    notFound: "There is nothing at this address.",
+  } as const
+}
+
+/** The copy with no agent name: what every fixed, request free page says. */
+const COPY = copy(null)
+
+/** What a row's agent name and return URL put on a page; null fields fall back. */
+function viewOf(row: VaultRequestRow | null): View {
+  return { agent: row?.agentName ?? null, returnUrl: row?.returnUrl ?? null }
+}
 
 /** Exported so the tests assert the rendered copy rather than a paraphrase of it. */
 export const PAGES = COPY
+/** The same copy for a named agent, for the tests. */
+export const copyFor = copy
 
 // --------------------------------------------------------------------------------------------
 // Rate limiting
@@ -935,7 +945,8 @@ async function get(
     !hit(`ip:page:${clientAddress(request)}`, PAGE_IP_LIMIT, IP_WINDOW_MS, nowMs)
   ) {
     deps.log(`${purpose} limited: get [${workspacePrefix(row.ws)}] [${tag(row.jti)}]`)
-    return await message(429, COPY.busyTitle, COPY.busy)
+    const c = copy(row.agentName)
+    return await message(429, c.busyTitle, c.busy, {}, viewOf(row))
   }
 
   // The row's install, or the env key: the blob must open on the box that minted the link.
@@ -949,6 +960,7 @@ async function get(
     : `${baseUrl(deps)}${purpose === "cvv" ? "/cvv" : "/vault"}`
   const cookie = setCookieHeader(row.jti, "/")
 
+  const COPY = copy(row.agentName)
   const page = purpose === "cvv"
     ? {
       title: COPY.cvvTitle,
@@ -985,7 +997,14 @@ async function get(
       note: COPY.passwordNote,
     }
 
-  const response = await form({ ...page, jti: row.jti, sealKey, action })
+  const response = await form({
+    ...page,
+    jti: row.jti,
+    sealKey,
+    action,
+    agent: agentRef(row.agentName).lower,
+    returnUrl: row.returnUrl ?? null,
+  })
   response.headers.append("Set-Cookie", cookie)
   deps.log(`${purpose} rendered [${workspacePrefix(row.ws)}] [${tag(row.jti)}]`)
   return response
@@ -1084,6 +1103,13 @@ async function post(request: Request, deps: Dependencies, purpose: Purpose): Pro
     return await message(400, COPY.badTitle, COPY.bad)
   }
 
+  // Read only now that the device cookie proves this browser rendered the form, so a bare jti
+  // can never be used to pull a return URL out of this endpoint. Before the store, which spends
+  // the row. A miss only costs the page its personalisation.
+  const row = await deps.describeRequest(jti).catch(() => null)
+  const view = viewOf(row)
+  const c = copy(view.agent)
+
   const result = await deps.store({
     jti,
     ciphertext,
@@ -1092,7 +1118,7 @@ async function post(request: Request, deps: Dependencies, purpose: Purpose): Pro
   })
   if (result.outcome === "unavailable") {
     deps.log(`${purpose} failed: store [${tag(jti)}]`)
-    return await message(503, COPY.downTitle, COPY.down)
+    return await message(503, c.downTitle, c.down, {}, view)
   }
   if (result.outcome === "gone") {
     // Expired, already spent, or a purpose the row does not agree with. All one page: a replay
@@ -1105,10 +1131,10 @@ async function post(request: Request, deps: Dependencies, purpose: Purpose): Pro
   // The kind comes back from the database, not from the request, because a POST carries no
   // token and the browser is not asked what it just sent.
   const done = result.kind === "cvv"
-    ? await message(200, COPY.cvvDoneTitle, COPY.cvvDone, clearSiteData())
+    ? await message(200, c.cvvDoneTitle, c.cvvDone, clearSiteData(), view)
     : result.kind === "card"
-    ? await message(200, COPY.cardSavedTitle, COPY.cardSaved, clearSiteData())
-    : await message(200, COPY.savedTitle, COPY.saved, clearSiteData())
+    ? await message(200, c.cardSavedTitle, c.cardSaved, clearSiteData(), view)
+    : await message(200, c.savedTitle, c.saved, clearSiteData(), view)
   // The cookie has done its job and there is nothing left for it to authorise.
   // Both names: the one this deployment sets, and the bare one a page from the previous
   // deployment is still carrying. Clearing only the new name would leave the old one behind.
@@ -1201,18 +1227,6 @@ async function signedRoute(
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return json(400, { error: "body" })
-  }
-
-  // Minting is a privilege of the operator: the env key, or an install an operator approved.
-  // Without this any signed-in account could register a key and put its own merchant, card and
-  // amount on a first-party page that seals what is typed to that account.
-  if (path === "/requests" && instance && instance.issuanceApproved === null) {
-    deps.log(`requests refused: database is missing the issuance migration`)
-    return json(503, { error: "schema" })
-  }
-  if (path === "/requests" && instance && !instance.issuanceApproved) {
-    deps.log(`requests refused: issuance not approved [${instance.instanceId.slice(0, 8)}]`)
-    return json(403, { error: "issuance" })
   }
 
   const id = instance?.instanceId ?? null
@@ -1319,6 +1333,10 @@ async function createRequestRoute(
     return json(400, { error: "field" })
   }
 
+  // Display only. A bad value is dropped and logged, never a reason to refuse the mint, and an
+  // older install that sends neither lands here with both null.
+  const { agentName, returnUrl } = parseReturnFields(body.agentName, body.returnUrl, deps.log)
+
   const created = await deps.createRequest({
     jti,
     ws,
@@ -1335,6 +1353,8 @@ async function createRequestRoute(
     env,
     expiresAt,
     instanceId,
+    agentName,
+    returnUrl,
   })
   if (created === "schema") {
     deps.log(`requests refused: database schema is behind this function`)

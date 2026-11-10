@@ -1,3 +1,5 @@
+import { parseAgentName, parseReturnUrl } from "../_shared/connect-ui.ts"
+
 /**
  * The signed `state` that travels through Google's consent screen.
  *
@@ -18,7 +20,7 @@
  * Format: `<b64url(payload)>.<b64url(signature)>`, both unpadded.
  * - payload, compact JSON:
  *   `{"v":1,"iid":"…","uid":"…","ws":"…","cid":"…","connector":"…","nonce":"…","iat":<s>,"exp":<s>}`
- *   (`cid`, the conversation, `connector` and `iat` are optional; the verifier parses, so key
+ *   (`cid`, the conversation, `connector`, `an`, `ru` and `iat` are optional; the verifier parses, so key
  *   order is only fixed for the fixture)
  * - signature: Ed25519 over the ASCII bytes `fluck-oauth-state-v1.` + the payload segment
  */
@@ -50,6 +52,10 @@ export interface StateClaims {
   cid?: string
   /** The connector the secret is written for. Required by `/mcp/callback`, refused elsewhere. */
   connector?: string
+  /** The agent's display name, already validated. A bad or absent `an` is simply not here. */
+  an?: string
+  /** Where "Back to chat" goes, already validated. A bad or absent `ru` is simply not here. */
+  ru?: string
   /** Single use, claimed server side so a replayed link is dead. */
   nonce: string
   iat?: number
@@ -58,6 +64,8 @@ export interface StateClaims {
 
 export interface ParsedState {
   claims: StateClaims
+  /** Optional claims that were present but unusable and dropped; for one log line. */
+  ignored: string[]
   payloadSegment: string
   signature: Uint8Array
 }
@@ -133,8 +141,17 @@ export function parseState(token: string): ParsedState | null {
   }
   if (raw.cid !== undefined) claims.cid = raw.cid as string
   if (raw.connector !== undefined) claims.connector = raw.connector as string
+  // Display only, so an unusable value is dropped instead of refusing the state: a sign in must
+  // never fail over a name or a link. Unknown claims are ignored the same way.
+  const ignored: string[] = []
+  const an = parseAgentName(raw.an)
+  const ru = parseReturnUrl(raw.ru)
+  if (an !== null) claims.an = an
+  else if (raw.an !== undefined && raw.an !== null) ignored.push("an")
+  if (ru !== null) claims.ru = ru
+  else if (raw.ru !== undefined && raw.ru !== null) ignored.push("ru")
   if (raw.iat !== undefined) claims.iat = raw.iat as number
-  return { claims, payloadSegment, signature }
+  return { claims, ignored, payloadSegment, signature }
 }
 
 /**
@@ -189,6 +206,8 @@ export function statePayload(claims: StateClaims): string {
     ',"ws":' + JSON.stringify(claims.ws) +
     (claims.cid !== undefined ? ',"cid":' + JSON.stringify(claims.cid) : "") +
     (claims.connector !== undefined ? ',"connector":' + JSON.stringify(claims.connector) : "") +
+    (claims.an !== undefined ? ',"an":' + JSON.stringify(claims.an) : "") +
+    (claims.ru !== undefined ? ',"ru":' + JSON.stringify(claims.ru) : "") +
     ',"nonce":' + JSON.stringify(claims.nonce) +
     (claims.iat !== undefined ? ',"iat":' + String(Math.trunc(claims.iat)) : "") +
     ',"exp":' + String(Math.trunc(claims.exp)) + "}"
