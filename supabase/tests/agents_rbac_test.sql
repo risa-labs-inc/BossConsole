@@ -70,7 +70,7 @@ insert into public.agent_installs (user_id, agent_id, instance_id, port, data_di
     values (pg_temp.u('a9'), pg_temp.id('acme'), 'rbac-i1', 41001, 'agents/racme/a9', 'running');
 
 -- ---- catalog, seed, grants ----
-select is((select count(*)::int from public.permissions where name like 'agents.%' and is_system), 6, 'six agents.* system permissions');
+select is((select count(*)::int from public.permissions where name like 'agents.%' and is_system), 7, 'seven agents.* system permissions');
 select is((public.register_plugin_permission('agents.admin', null, 'x.y'))->>'success', 'false', 'the agents domain is reserved against plugin permissions');
 select is((select array_agg(preset order by preset) from public.organisation_roles where org_id = pg_temp.id('orga') and preset is not null),
     array['agent_analyst', 'agent_editor', 'agent_manager'], 'a new org gets the three built-in agent roles');
@@ -88,7 +88,7 @@ select is((select array_agg(p.name order by p.name) from public.role_permissions
            where rp.role_id = pg_temp.id('a_agent_analyst')),
     array['agents.view', 'organisation.read'], 'agent analyst permissions');
 select is((select count(*)::int from public.role_permissions rp join public.permissions p on p.id = rp.permission_id
-           where rp.role_id = pg_temp.id('a_admin') and p.name like 'agents.%'), 6, 'the admin-kind role carries all six');
+           where rp.role_id = pg_temp.id('a_admin') and p.name like 'agents.%'), 7, 'the admin-kind role carries all seven');
 select is((select count(*)::int from public.role_hierarchy where parent_role_id = pg_temp.id('a_admin')
            and child_role_id in (pg_temp.id('a_agent_manager'), pg_temp.id('a_agent_editor'), pg_temp.id('a_agent_analyst'))),
     3, 'built-in roles sit below the admin role');
@@ -129,13 +129,13 @@ select is(public.user_has_org_permission(pg_temp.u('a1'), pg_temp.id('orga'), nu
 set local role authenticated;
 select pg_temp.as_user('a1');
 select is(public.my_org_permissions(pg_temp.id('orga')),
-    array['agents.view','agents.edit','agents.publish','agents.evolve','agents.access','agents.domains','organisation.admin'], 'owner: everything');
+    array['agents.view','agents.edit','agents.publish','agents.evolve','agents.access','agents.domains','agents.capabilities','organisation.admin'], 'owner: everything');
 select pg_temp.as_user('a2');
 select is(public.my_org_permissions(pg_temp.id('orga')),
-    array['agents.view','agents.edit','agents.publish','agents.evolve','agents.access','agents.domains','organisation.admin'], 'admin-kind holder: everything');
+    array['agents.view','agents.edit','agents.publish','agents.evolve','agents.access','agents.domains','agents.capabilities','organisation.admin'], 'admin-kind holder: everything');
 select pg_temp.as_user('c1');
 select is(public.my_org_permissions(pg_temp.id('orga')),
-    array['agents.view','agents.edit','agents.publish','agents.evolve','agents.access','agents.domains','organisation.admin'], 'global admin: everything');
+    array['agents.view','agents.edit','agents.publish','agents.evolve','agents.access','agents.domains','agents.capabilities','organisation.admin'], 'global admin: everything');
 select pg_temp.as_user('a3');
 select is(public.my_org_permissions(pg_temp.id('orga')),
     array['agents.view','agents.edit','agents.publish','agents.access','agents.domains'], 'agent manager: no evolve, no team');
@@ -286,7 +286,7 @@ select is((select array_agg(coalesce(preset, kind) order by coalesce(preset, kin
 select is((select agent_permissions from public.org_team_roles(pg_temp.id('orga')) where preset = 'agent_editor'),
     array['agents.view', 'agents.edit'], 'effective agent permissions per role');
 select is((select agent_permissions from public.org_team_roles(pg_temp.id('orga')) where kind = 'admin'),
-    public.agents_permission_catalog(), 'the admin role shows all six');
+    public.agents_permission_catalog(), 'the admin role shows all seven');
 select is((select grantable from public.org_team_roles(pg_temp.id('orga')) where kind = 'admin'), true, 'the owner may grant the admin role');
 select pg_temp.as_user('a2');
 select is((select grantable from public.org_team_roles(pg_temp.id('orga')) where kind = 'admin'), false, 'another admin may not');

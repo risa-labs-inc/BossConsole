@@ -67,7 +67,7 @@ select is((select detail->>'mode' from public.agent_audit_log where org_id = (pg
     'reviewed', 'mode reviewed');
 select pg_temp.as_user('a1');
 select is(public.my_org_permissions((pg_temp.r('appr')->>'org_id')::uuid),
-    array['agents.view','agents.edit','agents.publish','agents.evolve','agents.access','agents.domains','organisation.admin'],
+    array['agents.view','agents.edit','agents.publish','agents.evolve','agents.access','agents.domains','agents.capabilities','organisation.admin'],
     'the owner is an admin with every agents.* permission');
 select ok((select bool_or((x->>'id')::uuid = (pg_temp.r('appr')->>'org_id')::uuid and (x->>'is_admin')::boolean)
            from jsonb_array_elements(public.get_my_organisations()->'data') x), 'and sees it in get_my_organisations');
@@ -109,7 +109,7 @@ insert into res values ('open', public.org_create('Open Co', 'openco'));
 select is(pg_temp.r('open')->>'status', 'created', 'open: created at once');
 select is((select owner_id from public.organisations where id = (pg_temp.r('open')->>'org_id')::uuid), pg_temp.u('a4'), 'owned by the requester');
 select is(public.my_org_permissions((pg_temp.r('open')->>'org_id')::uuid),
-    array['agents.view','agents.edit','agents.publish','agents.evolve','agents.access','agents.domains','organisation.admin'],
+    array['agents.view','agents.edit','agents.publish','agents.evolve','agents.access','agents.domains','agents.capabilities','organisation.admin'],
     'the founder holds every agents.* permission');
 select is((select status || ':' || (reviewer_id = pg_temp.u('a4'))::text from public.organisation_requests where id = (pg_temp.r('open')->>'request_id')::uuid),
     'approved:true', 'the request is approved by the open policy');
