@@ -286,12 +286,12 @@ function copy(name: string | null | undefined) {
   const a = agentRef(name)
   return {
     passwordTitle: "Save a login",
-    passwordIntro: `${a.upper} never sees it in the chat.`,
+    passwordIntro: `Type it here so it never goes through the chat.`,
     passwordSubmit: "Save",
     passwordNote: "Encrypted in this browser before it is sent.",
     cardTitle: "Add a card",
     cardIntro:
-      `Add a card and the most ${a.lower} may spend on it. ${a.upper} never sees it in the chat.`,
+      `Add a card and the most ${a.lower} may spend on it. Type it here so it never goes through the chat.`,
     cardSubmit: "Add card",
     cardNote:
       `The card and its security code are encrypted on this device, so only ${a.lower} can read them.`,
@@ -303,11 +303,11 @@ function copy(name: string | null | undefined) {
     cvvNote:
       `This does not charge your card. Only continue if these details match a purchase you asked ${a.lower} to make, and do not forward this link. The code is encrypted on this device and held for up to ten minutes until ${a.lower} collects it, then kept encrypted for purchases you approve.`,
     secretTitle: "Save a key",
-    secretIntro: `Paste it here. ${a.upper} never sees it in the chat.`,
+    secretIntro: `Paste it here. Type it here so it never goes through the chat.`,
     secretSubmit: "Save",
     secretNote: `Encrypted in this browser before it is sent. Only ${a.lower} can read it.`,
     savedTitle: "Saved",
-    saved: "Saved. It was encrypted before it left this page.",
+    saved: "It was encrypted on this device before it was sent.",
     cardSavedTitle: "Card added",
     cardSaved: "Card added. It is only used when you approve a purchase.",
     cvvDoneTitle: "Code sent",

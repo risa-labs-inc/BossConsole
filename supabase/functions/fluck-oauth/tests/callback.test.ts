@@ -1084,7 +1084,7 @@ Deno.test("a connected page with a return URL redirects after two seconds and of
   const response = await callback(h, `code=abc&state=${await state({ an: "Max", ru: BACK })}`)
   assertEquals(response.status, 200)
   const html = await response.text()
-  assertStringIncludes(html, "Connected. Max can use it now.")
+  assertStringIncludes(html, "Max can use it now.")
   assertStringIncludes(
     html,
     `<meta http-equiv="refresh" content="2;url=https://app.example.com/chat?a=1&amp;b=2">`,
@@ -1099,7 +1099,7 @@ Deno.test("a connected page with a return URL redirects after two seconds and of
 
 Deno.test("a connected page without one says to close it", async () => {
   const html = await (await callback(harness(), `code=abc&state=${await state()}`)).text()
-  assertStringIncludes(html, "Connected. Your agent can use it now.")
+  assertStringIncludes(html, "Your agent can use it now.")
   assertStringIncludes(html, "You can close this page.")
   assert(!html.includes("Back to chat") && !html.includes("http-equiv"))
 })

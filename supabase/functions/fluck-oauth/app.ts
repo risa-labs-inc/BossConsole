@@ -170,7 +170,7 @@ function copy(agent: string | null) {
   const fresh = `Ask ${a.lower} for a fresh one.`
   const link = `Ask ${a.lower} for a fresh link.`
   return {
-    connected: `Connected. ${a.upper} can use it now.`,
+    connected: `${a.upper} can use it now.`,
     declined: "The sign in was declined, so nothing was connected.",
     stale: `That sign in link is no longer valid. ${fresh}`,
     replay: `That sign in link has already been used. ${fresh}`,

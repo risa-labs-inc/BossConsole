@@ -771,14 +771,14 @@ Deno.test("a form names the agent, offers Cancel, and says nothing about Fluck o
     `<a class="cancel" href="https://app.example.com/chat?a=1&amp;b=2">Cancel</a>`,
   )
   assertStringIncludes(html, "only Max can read them")
-  assertStringIncludes(html, "Max never sees it in the chat.")
+  assertStringIncludes(html, "Type it here so it never goes through the chat.")
   assert(!/Fluck|Messages/.test(html))
 })
 
 Deno.test("a form with no agent or return URL falls back and has no Cancel", async () => {
   const html = await render(vaultRow())
   assertStringIncludes(html, "Requested by your agent")
-  assertStringIncludes(html, "Your agent never sees it in the chat.")
+  assertStringIncludes(html, "Type it here so it never goes through the chat.")
   assert(!html.includes("Cancel"))
 })
 
