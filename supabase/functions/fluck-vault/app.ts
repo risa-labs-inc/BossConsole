@@ -151,18 +151,9 @@ export interface Instance {
   userId: string
   linkPublicKey: string
   sealPublicKey: string
-  /**
-   * Whether an operator has approved this install to mint CVV and vault links. Registration
-   * alone never grants it: a signed-in account is not enough to put a page on this domain.
-   * Null when the database predates the issuance migration: minting answers 503 `schema`.
-   */
-  issuanceApproved: boolean | null
 }
 
-/**
- * One `fluck_vault_instance` row. Approval fails closed: anything but an explicit true is not
- * approved, and a row without the column at all (a database behind this function) is null.
- */
+/** One `fluck_vault_instance` row. */
 export function instanceFromRow(instanceId: string, row: Record<string, unknown>): Instance | null {
   if (typeof row.link_public_key !== "string" || typeof row.seal_public_key !== "string") {
     return null
@@ -172,7 +163,6 @@ export function instanceFromRow(instanceId: string, row: Record<string, unknown>
     userId: String(row.user_id),
     linkPublicKey: row.link_public_key,
     sealPublicKey: row.seal_public_key,
-    issuanceApproved: "issuance_approved" in row ? row.issuance_approved === true : null,
   }
 }
 
@@ -1237,18 +1227,6 @@ async function signedRoute(
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return json(400, { error: "body" })
-  }
-
-  // Minting is a privilege of the operator: the env key, or an install an operator approved.
-  // Without this any signed-in account could register a key and put its own merchant, card and
-  // amount on a first-party page that seals what is typed to that account.
-  if (path === "/requests" && instance && instance.issuanceApproved === null) {
-    deps.log(`requests refused: database is missing the issuance migration`)
-    return json(503, { error: "schema" })
-  }
-  if (path === "/requests" && instance && !instance.issuanceApproved) {
-    deps.log(`requests refused: issuance not approved [${instance.instanceId.slice(0, 8)}]`)
-    return json(403, { error: "issuance" })
   }
 
   const id = instance?.instanceId ?? null
