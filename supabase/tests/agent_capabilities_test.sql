@@ -95,8 +95,8 @@ select is((select detail -> 'capabilities' from public.agent_audit_log
 reset role;
 update public.agents set capabilities = '{"evolve":false,"tabs":{"shared":true,"memory":false}}' where slug = 'capagent';
 select is((select detail -> 'capability_keys' from public.agent_audit_log
-           where agent_id = pg_temp.id('agent') and action = 'agent.settings_change' and actor is null
-             and detail -> 'fields' ? 'capabilities'),
+           where agent_id = pg_temp.id('agent') and action = 'agent.settings_change'
+             and detail -> 'capabilities' = '{"evolve":false,"tabs":{"shared":true,"memory":false}}'::jsonb),
     '["tabs.memory"]'::jsonb, 'writing a switch explicitly on is not a change; turning Memory off is');
 
 -- ---- org defaults for new agents ----
