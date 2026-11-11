@@ -52,7 +52,8 @@ internal class MirrorIndex(
     fun save() {
         file.parentFile?.mkdirs()
         val tmp = File(file.parentFile, file.name + ".tmp")
-        tmp.writeText(Json.encodeToString(serializer, byProfile.filterValues { it.isNotEmpty() }.mapValues { it.value.sorted() }))
+        val snapshot = byProfile.filterValues { it.isNotEmpty() }.mapValues { it.value.sorted() }
+        tmp.writeText(Json.encodeToString(serializer, snapshot))
         Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
     }
 }

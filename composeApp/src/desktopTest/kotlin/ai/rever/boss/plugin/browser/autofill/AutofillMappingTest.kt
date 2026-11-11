@@ -41,7 +41,8 @@ class AutofillMappingTest {
         assertEquals("http://localhost:8123", AutofillMapping.normalizeOrigin("http://localhost:8123/login"))
         assertEquals("https://a.com", AutofillMapping.normalizeOrigin("https://a.com:443/"))
         assertEquals("https://a.com:8443", AutofillMapping.normalizeOrigin("a.com:8443"))
-        assertEquals("https://the-internet.herokuapp.com", AutofillMapping.normalizeOrigin("the-internet.herokuapp.com/login"))
+        val heroku = AutofillMapping.normalizeOrigin("the-internet.herokuapp.com/login")
+        assertEquals("https://the-internet.herokuapp.com", heroku)
         assertNull(AutofillMapping.normalizeOrigin("GitHub token"))
         assertNull(AutofillMapping.normalizeOrigin("boss-ai/key"))
         assertNull(AutofillMapping.normalizeOrigin("ftp://a.com"))
@@ -64,7 +65,8 @@ class AutofillMappingTest {
 
     @Test
     fun `max vault password maps to its site`() {
-        val a = AutofillMapping.map("fluck/ws1/vault/united.com", "ada", "pw", "label", listOf("kind:password", "fluck-ws:ws1"))
+        val maxTags = listOf("kind:password", "fluck-ws:ws1")
+        val a = AutofillMapping.map("fluck/ws1/vault/united.com", "ada", "pw", "label", maxTags)
         assertIs<MirrorItem.Login>(a)
         assertEquals("https://united.com", a.origin)
         val b = AutofillMapping.map("fluck/ws1/vault/clinic-b@flatiron.com", "ada2", "pw", "", listOf("kind:password"))
@@ -74,7 +76,9 @@ class AutofillMappingTest {
 
     @Test
     fun `max vault card maps from pan and notes`() {
-        val c = AutofillMapping.map("fluck/ws1/vault/card-4242", "Visa 4242", "4242424242424242", cardNotes, listOf("kind:card", "vault"))
+        val pan = "4242424242424242"
+        val cardTags = listOf("kind:card", "vault")
+        val c = AutofillMapping.map("fluck/ws1/vault/card-4242", "Visa 4242", pan, cardNotes, cardTags)
         assertIs<MirrorItem.Card>(c)
         assertEquals(YearMonth.of(2029, 7), c.expiry)
         assertEquals("Ada L", c.holder)
@@ -86,7 +90,9 @@ class AutofillMappingTest {
         assertNull(AutofillMapping.map("fluck/ws1/vault/secret-x", "key", "v", "", listOf("kind:secret")))
         assertNull(AutofillMapping.map("fluck/ws1/vault/card-4242-cvv", "cvv", "123", "", listOf("kind:cvv")))
         assertNull(AutofillMapping.map("fluck/ws1/github/GH_TOKEN", "GH_TOKEN", "t", null, emptyList()))
-        assertNull(AutofillMapping.map("fluck/ws1/vault/card-4242", "Visa", "4242424242424242", "not json", listOf("kind:card")))
+        val cardKey = "fluck/ws1/vault/card-4242"
+        val badNotes = AutofillMapping.map(cardKey, "Visa", "4242424242424242", "not json", listOf("kind:card"))
+        assertNull(badNotes)
     }
 
     @Test
@@ -111,7 +117,8 @@ class AutofillMappingTest {
 
         val login = AutofillMapping.loginRequest("https://a.com", "me", "pw")
         assertEquals(listOf("kind:password"), login.tags)
-        assertIs<MirrorItem.Login>(AutofillMapping.map(login.website, login.username, login.password, login.notes, login.tags))
+        val loginBack = AutofillMapping.map(login.website, login.username, login.password, login.notes, login.tags)
+        assertIs<MirrorItem.Login>(loginBack)
     }
 
     @Test

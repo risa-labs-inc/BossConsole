@@ -1134,22 +1134,27 @@ internal class BrowserHandleImpl(
 
     /** This view's on-screen rectangle (AWT logical units) for autofill overlays, or null when not showing. */
     internal fun autofillAnchor(): ai.rever.boss.plugin.browser.autofill.AutofillAnchor? {
-        val window = frameStallHostWindow ?: return null
-        val bounds = browserViewBoundsInWindow ?: return null
+        val window = frameStallHostWindow
+        val bounds = browserViewBoundsInWindow
         val density = browserViewDensity
-        if (!isValid || !window.isShowing || !density.isFinite() || density <= 0 || bounds.isEmpty) return null
-        val pane = (window as? javax.swing.RootPaneContainer)?.contentPane ?: return null
-        val origin = runCatching { pane.locationOnScreen }.getOrNull() ?: return null
-        return ai.rever.boss.plugin.browser.autofill.AutofillAnchor(
-            window,
-            java.awt.Rectangle(
-                origin.x + (bounds.left / density).toInt(),
-                origin.y + (bounds.top / density).toInt(),
-                (bounds.width / density).toInt(),
-                (bounds.height / density).toInt(),
-            ),
-            currentWindowId,
-        )
+        val usable = density.isFinite() && density > 0 && bounds != null && !bounds.isEmpty
+        val pane = (window as? javax.swing.RootPaneContainer)?.contentPane
+        val showing = pane?.takeIf { isValid && window.isShowing && usable }
+        val origin = showing?.let { runCatching { it.locationOnScreen }.getOrNull() }
+        return if (origin == null || bounds == null || window == null) {
+            null
+        } else {
+            ai.rever.boss.plugin.browser.autofill.AutofillAnchor(
+                window,
+                java.awt.Rectangle(
+                    origin.x + (bounds.left / density).toInt(),
+                    origin.y + (bounds.top / density).toInt(),
+                    (bounds.width / density).toInt(),
+                    (bounds.height / density).toInt(),
+                ),
+                currentWindowId,
+            )
+        }
     }
 
     /** Expose the browser lock for creating [LockedBrowser] wrappers externally. */

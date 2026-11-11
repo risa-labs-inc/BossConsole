@@ -28,7 +28,9 @@ internal object MirrorDiff {
             when {
                 // A record the user (or Chromium itself) saved before the mirror knew it: never ours to touch.
                 key in present && key !in owned -> foreign += key
+
                 key in owned && key in present && fingerprints[key] == item.fingerprint -> Unit
+
                 else -> write += item
             }
         }

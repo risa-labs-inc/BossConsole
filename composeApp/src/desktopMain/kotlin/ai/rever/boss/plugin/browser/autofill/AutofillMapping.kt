@@ -110,7 +110,10 @@ internal fun addressKey(f: AddressFields) =
     "addr|" + sha256(listOf(f.name, f.street, f.zip).joinToString("\u0000") { it.trim().lowercase() }).take(24)
 
 internal fun sha256(s: String): String =
-    MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
+    MessageDigest
+        .getInstance("SHA-256")
+        .digest(s.toByteArray())
+        .joinToString("") { "%02x".format(it) }
 
 private val JSON = Json { ignoreUnknownKeys = true }
 
@@ -129,6 +132,7 @@ private fun JsonObject.str(key: String): String = (this[key] as? JsonPrimitive)?
  * - `card/<brand>-<last4>` kind:card, `address/<label>` kind:address (canonical shapes).
  * - any other row whose website parses as a URL or domain -> login.
  */
+@Suppress("TooManyFunctions", "ReturnCount") // one mapping per row shape; early returns read as the shape rules
 internal object AutofillMapping {
     const val KIND_PASSWORD = "kind:password"
     const val KIND_CARD = "kind:card"
@@ -217,7 +221,11 @@ internal object AutofillMapping {
     ): YearMonth? {
         val m = month.trim().toIntOrNull()?.takeIf { it in 1..12 } ?: return null
         val y =
-            year.trim().toIntOrNull()?.let { if (it in 0..99) 2000 + it else it }?.takeIf { it in 2000..2199 }
+            year
+                .trim()
+                .toIntOrNull()
+                ?.let { if (it in 0..99) 2000 + it else it }
+                ?.takeIf { it in 2000..2199 }
                 ?: return null
         return YearMonth.of(y, m)
     }
@@ -227,6 +235,7 @@ internal object AutofillMapping {
      * treated as https; paths, queries and fragments are dropped; `www.` is kept (Chromium
      * matches exact origins and suggests across subdomains).
      */
+    @Suppress("CyclomaticComplexMethod")
     fun normalizeOrigin(raw: String): String? {
         val s = raw.trim()
         if (s.isEmpty() || s.any { it.isWhitespace() }) return null

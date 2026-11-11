@@ -50,7 +50,8 @@ class MirrorDiffAndCaptureTest {
         val same = MirrorDiff.plan(mapOf(a.key to a), setOf(a.key), setOf(a.key), mapOf(a.key to a.fingerprint))
         assertTrue(same.write.isEmpty())
         val changed = login("a.com", "me", "v2")
-        val plan = MirrorDiff.plan(mapOf(changed.key to changed), setOf(a.key), setOf(a.key), mapOf(a.key to a.fingerprint))
+        val old = mapOf(a.key to a.fingerprint)
+        val plan = MirrorDiff.plan(mapOf(changed.key to changed), setOf(a.key), setOf(a.key), old)
         assertEquals(listOf(changed.key), plan.write.map { it.key })
         // Owned but deleted from Chromium by hand: written back.
         val gone = MirrorDiff.plan(mapOf(a.key to a), emptySet(), setOf(a.key), mapOf(a.key to a.fingerprint))
@@ -59,7 +60,8 @@ class MirrorDiffAndCaptureTest {
 
     @Test
     fun `everything owned goes when SM is empty`() {
-        val plan = MirrorDiff.plan(emptyMap(), setOf("pw|https://a.com|me", "pw|https://b.com|x"), setOf("pw|https://a.com|me"), emptyMap())
+        val present = setOf("pw|https://a.com|me", "pw|https://b.com|x")
+        val plan = MirrorDiff.plan(emptyMap(), present, setOf("pw|https://a.com|me"), emptyMap())
         assertEquals(setOf("pw|https://a.com|me"), plan.remove)
     }
 

@@ -2967,7 +2967,10 @@ object FluckEngine {
                     ai.rever.boss.sharing.AppBrowserKeyDispatch
                         .consume(browser, event, ownerWindowId)
                 // An open autofill dropdown owns arrows / Enter / Esc while it is showing.
-                if (!modifiers.isAltDown && !modifiers.isControlDown && !modifiers.isMetaDown && !modifiers.isShiftDown &&
+                val unmodified =
+                    listOf(modifiers.isAltDown, modifiers.isControlDown, modifiers.isMetaDown, modifiers.isShiftDown)
+                        .none { it }
+                if (unmodified &&
                     ai.rever.boss.plugin.browser.autofill.NativeAutofill
                         .consumeSuggestionKey(browser, keyCode)
                 ) {

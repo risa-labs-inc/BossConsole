@@ -15,7 +15,13 @@ class PluginPasswordFlagsTest {
 
     @AfterTest
     fun restore() {
-        if (savedFlag == null) System.clearProperty(BrowserSettings.NATIVE_AUTOFILL_PROP) else System.setProperty(BrowserSettings.NATIVE_AUTOFILL_PROP, savedFlag)
+        if (savedFlag ==
+            null
+        ) {
+            System.clearProperty(BrowserSettings.NATIVE_AUTOFILL_PROP)
+        } else {
+            System.setProperty(BrowserSettings.NATIVE_AUTOFILL_PROP, savedFlag)
+        }
         BrowserSettings.suggestPasswords = savedSuggest
         BrowserSettings.offerToSavePasswords = savedOffer
     }

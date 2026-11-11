@@ -55,6 +55,7 @@ import kotlinx.serialization.json.*
  * )
  * ```
  */
+@Suppress("TooManyFunctions") // one public + one private per write, so writes announce changes
 object SecretService {
     // BossConsole#145: every catch here used to fail silently - the only WARN in the log came
     // from the *calling plugin*, not the code that actually failed, which is why an exception
@@ -466,7 +467,10 @@ object SecretService {
      * @param request Unshare request with secret ID and target user/role
      * @return Result with success/failure
      */
-    suspend fun unshareSecret(request: UnshareSecretRequest): Result<Unit> = unshareSecretUnannounced(request).announced()
+    suspend fun unshareSecret(request: UnshareSecretRequest): Result<Unit> {
+        val result = unshareSecretUnannounced(request)
+        return result.announced()
+    }
 
     private suspend fun unshareSecretUnannounced(request: UnshareSecretRequest): Result<Unit> {
         return try {

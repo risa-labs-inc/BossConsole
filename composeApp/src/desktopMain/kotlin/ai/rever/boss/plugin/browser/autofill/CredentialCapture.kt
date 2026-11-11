@@ -44,6 +44,7 @@ internal class CredentialCapture(
      * A capture with no username only pairs with a blank login.
      */
     @Synchronized
+    @Suppress("ReturnCount")
     fun take(
         url: String,
         login: String,
@@ -117,6 +118,7 @@ internal class CredentialCapture(
         private val JSON = Json { ignoreUnknownKeys = true }
 
         /** (username, password) from the script's payload, or null. */
+        @Suppress("ReturnCount")
         fun parse(payload: String): Pair<String, String>? {
             if (payload.length > 4 * MAX_VALUE) return null
             val o = runCatching { JSON.parseToJsonElement(payload).jsonObject }.getOrNull() ?: return null

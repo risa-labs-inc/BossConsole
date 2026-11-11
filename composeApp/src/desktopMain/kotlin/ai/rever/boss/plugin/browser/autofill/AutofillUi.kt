@@ -174,6 +174,7 @@ private fun iconFor(kind: SuggestionKind): ImageVector =
  * its own popup underneath it in HARDWARE_ACCELERATED). Never focusable, so the page field keeps
  * focus and typing; keys arrive via [moveSelection]/[acceptSelected]. EDT only.
  */
+@Suppress("TooManyFunctions")
 internal class SuggestionsWindow(
     private val anchor: AutofillAnchor,
     private val anchorNow: () -> AutofillAnchor?,
@@ -214,7 +215,13 @@ internal class SuggestionsWindow(
                     Column(Modifier.padding(vertical = Tokens.space.xs)) {
                         rows.forEachIndexed { i, row -> RowItem(row, i == selected, { select(i) }) { accept(i) } }
                         if (manageLabel != null) {
-                            Box(Modifier.fillMaxWidth().padding(vertical = Tokens.space.xs).height(1.dp).background(Tokens.colors.line))
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = Tokens.space.xs)
+                                    .height(1.dp)
+                                    .background(Tokens.colors.line),
+                            )
                             FooterItem(manageLabel) {
                                 dispose()
                                 onCancel()
@@ -251,10 +258,21 @@ internal class SuggestionsWindow(
                 .padding(horizontal = Tokens.space.sm),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(iconFor(row.kind), contentDescription = null, tint = Tokens.colors.textSecondary, modifier = Modifier.size(16.dp))
+            Icon(
+                iconFor(row.kind),
+                contentDescription = null,
+                tint = Tokens.colors.textSecondary,
+                modifier = Modifier.size(16.dp),
+            )
             Spacer(Modifier.width(Tokens.space.md))
             Column(Modifier.weight(1f)) {
-                Text(row.primary, color = Tokens.colors.textPrimary, style = Tokens.type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    row.primary,
+                    color = Tokens.colors.textPrimary,
+                    style = Tokens.type.body,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 if (row.secondary.isNotEmpty()) {
                     Text(
                         row.secondary,
@@ -288,7 +306,9 @@ internal class SuggestionsWindow(
     }
 
     /** [locationInView] is Chromium's popup point in DIP relative to the browser view. */
+
     /** False when it could not be shown (its window is not active); Chromium has been answered. */
+    @Suppress("ReturnCount")
     fun show(
         newRows: List<SuggestionRow>,
         locationInView: Point,
@@ -310,7 +330,8 @@ internal class SuggestionsWindow(
         if (newRows.isEmpty()) return cancel()
         rows = newRows
         select(-1)
-        val h = 2 * 4 + newRows.size.coerceAtMost(MAX_ROWS) * ROW_HEIGHT + (if (manageLabel != null) FOOTER_HEIGHT + 9 else 0)
+        val footer = if (manageLabel != null) FOOTER_HEIGHT + 9 else 0
+        val h = 2 * 4 + newRows.size.coerceAtMost(MAX_ROWS) * ROW_HEIGHT + footer
         overlay.place(anchor.viewOnScreen.x + location.x, anchor.viewOnScreen.y + location.y + 2, WIDTH, h)
     }
 
@@ -340,7 +361,8 @@ internal class SuggestionsWindow(
 
     private fun tick() {
         val now = anchorNow()
-        if (!overlay.ownerActive || now == null || now.window !== anchor.window || now.viewOnScreen != anchor.viewOnScreen) cancel()
+        val unchanged = now != null && now.window === anchor.window && now.viewOnScreen == anchor.viewOnScreen
+        if (!overlay.ownerActive || !unchanged) cancel()
     }
 
     private fun accept(i: Int) {
@@ -416,6 +438,7 @@ internal class SavePrompt(
     }
 
     @Composable
+    @Suppress("LongMethod")
     private fun Content() {
         val first = remember { FocusRequester() }
         Column(
@@ -454,7 +477,9 @@ internal class SavePrompt(
                 )
             }
             if (request.kind == SaveKind.PASSWORD) {
-                BossTextField(value = username, onValueChange = { username = it }, label = "Username", modifier = Modifier.fillMaxWidth().focusRequester(first))
+                BossTextField(value = username, onValueChange = {
+                    username = it
+                }, label = "Username", modifier = Modifier.fillMaxWidth().focusRequester(first))
                 PasswordField(request.password)
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -483,7 +508,13 @@ internal class SavePrompt(
     private fun PasswordField(value: String) {
         var shown by remember { mutableStateOf(false) }
         Column {
-            Text("Password", color = Tokens.colors.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(bottom = 4.dp))
+            Text(
+                "Password",
+                color = Tokens.colors.textPrimary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -507,7 +538,12 @@ internal class SavePrompt(
                     if (shown) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
                     contentDescription = if (shown) "Hide password" else "Show password",
                     tint = Tokens.colors.textSecondary,
-                    modifier = Modifier.size(28.dp).clip(Tokens.radius.buttonShape).clickable { shown = !shown }.padding(6.dp),
+                    modifier =
+                        Modifier
+                            .size(28.dp)
+                            .clip(Tokens.radius.buttonShape)
+                            .clickable { shown = !shown }
+                            .padding(6.dp),
                 )
             }
         }
@@ -523,7 +559,11 @@ internal class SavePrompt(
         Text(
             label,
             color = Tokens.colors.textSecondary,
-            style = Tokens.type.body.copy(fontSize = 12.sp, textDecoration = if (hovered) TextDecoration.Underline else null),
+            style =
+                Tokens.type.body.copy(
+                    fontSize = 12.sp,
+                    textDecoration = if (hovered) TextDecoration.Underline else null,
+                ),
             modifier = Modifier.hoverable(hover).clickable(onClick = onClick),
         )
     }

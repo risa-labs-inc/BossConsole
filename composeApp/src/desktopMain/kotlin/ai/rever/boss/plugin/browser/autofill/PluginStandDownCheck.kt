@@ -47,6 +47,7 @@ internal object PluginStandDownCheck {
         return false
     }
 
+    @Suppress("ReturnCount")
     internal fun versionAtLeast(
         version: String?,
         minimum: String,

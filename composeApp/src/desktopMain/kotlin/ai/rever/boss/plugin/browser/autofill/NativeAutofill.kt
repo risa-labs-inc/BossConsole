@@ -64,6 +64,7 @@ import java.util.concurrent.ConcurrentHashMap
  * of them on sign-out and quit. Saves go to SM first, then to Chromium. RPA / ephemeral / incognito
  * profiles and other engines are never touched. Values are never logged.
  */
+@Suppress("TooManyFunctions", "LargeClass") // one owner for mirror, save path and dropdown state
 object NativeAutofill {
     const val FLAG_PROP = BrowserSettings.NATIVE_AUTOFILL_PROP
 
@@ -106,9 +107,13 @@ object NativeAutofill {
         if (started) return
         started = true
         scope.launch {
-            for (req in syncRequests) {
+            for (ignored in syncRequests) {
                 runCatching { syncNow() }.onFailure {
-                    logger.warn(LogCategory.BROWSER, "Autofill mirror sync failed", mapOf("errorType" to it::class.simpleName))
+                    logger.warn(
+                        LogCategory.BROWSER,
+                        "Autofill mirror sync failed",
+                        mapOf("errorType" to it::class.simpleName),
+                    )
                 }
             }
         }
@@ -131,16 +136,27 @@ object NativeAutofill {
     }
 
     /** An old fluck-browser keeps its own saved-logins dropdown; the user then sees two. */
+    @Suppress("ReturnCount")
     private fun warnIfPluginStillAutofills() {
-        val entry = ai.rever.boss.plugin.PluginPersistence.getInstalledPlugin(PluginStandDownCheck.FLUCK_BROWSER_ID) ?: return
+        val entry =
+            ai.rever.boss.plugin.PluginPersistence
+                .getInstalledPlugin(PluginStandDownCheck.FLUCK_BROWSER_ID) ?: return
         if (!entry.enabled) return
-        val path = runCatching { ai.rever.boss.plugin.PluginStoreSetup.resolvePersistedEntryPath(entry) }.getOrDefault(entry.jarPath)
+        val path =
+            runCatching {
+                ai.rever.boss.plugin.PluginStoreSetup
+                    .resolvePersistedEntryPath(entry)
+            }.getOrDefault(entry.jarPath)
         val jar = java.io.File(path).takeIf { it.isFile }
         if (PluginStandDownCheck.honoursFlag(jar, entry.installedVersion)) return
         logger.warn(
             LogCategory.BROWSER,
-            "Installed fluck-browser does not defer to native autofill; its own saved-logins dropdown will also show until it is updated",
-            mapOf("installedVersion" to entry.installedVersion, "requires" to PluginStandDownCheck.FIRST_DEFERRING_VERSION),
+            "Installed fluck-browser does not defer to native autofill; " +
+                "its own saved-logins dropdown will also show until it is updated",
+            mapOf(
+                "installedVersion" to entry.installedVersion,
+                "requires" to PluginStandDownCheck.FIRST_DEFERRING_VERSION,
+            ),
         )
     }
 
@@ -152,7 +168,13 @@ object NativeAutofill {
     internal fun onEngineReady(engine: Engine) {
         if (!enabled) return
         readyEngine = engine
-        runCatching { engine.profiles().defaultProfile().preferences().enableAutofill() }
+        runCatching {
+            engine
+                .profiles()
+                .defaultProfile()
+                .preferences()
+                .enableAutofill()
+        }
         requestSync()
     }
 
@@ -165,7 +187,11 @@ object NativeAutofill {
             val profile = mirrorProfile() ?: return@withLock
             // A failed read is never an empty vault: leave Chromium as it is.
             val rows =
-                fetchAllRows() ?: return@withLock logger.warn(LogCategory.BROWSER, "Autofill mirror sync skipped: Secret Manager read failed")
+                fetchAllRows()
+                    ?: return@withLock logger.warn(
+                        LogCategory.BROWSER,
+                        "Autofill mirror sync skipped: Secret Manager read failed",
+                    )
             lastRows = rows
             syncedUserId = user.id
             val desired = AutofillMapping.map(rows)
@@ -237,7 +263,9 @@ object NativeAutofill {
             }
         fingerprints.clear()
         runCatching { index.save() }
-        if (removed > 0) logger.info(LogCategory.BROWSER, "Autofill mirror cleared", mapOf("reason" to reason, "removed" to removed))
+        if (removed > 0) {
+            logger.info(LogCategory.BROWSER, "Autofill mirror cleared", mapOf("reason" to reason, "removed" to removed))
+        }
     }
 
     /** Shutdown step; runs before the engine closes. */
@@ -261,18 +289,25 @@ object NativeAutofill {
         try {
             installSaveCallbacks(browser)
             installCapture(browser)
-            if (dropdown && JxBrowserConfig.renderingMode == RenderingMode.HARDWARE_ACCELERATED) installDropdown(browser)
-        } catch (e: Throwable) {
-            if (e is Error && e !is LinkageError) throw e
-            logger.warn(LogCategory.BROWSER, "Native autofill attach failed", mapOf("errorType" to e::class.simpleName))
+            val hardware = JxBrowserConfig.renderingMode == RenderingMode.HARDWARE_ACCELERATED
+            if (dropdown && hardware) installDropdown(browser)
+        } catch (e: LinkageError) {
+            attachFailed(e)
+        } catch (e: Exception) {
+            attachFailed(e)
         }
+    }
+
+    private fun attachFailed(e: Throwable) {
+        logger.warn(LogCategory.BROWSER, "Native autofill attach failed", mapOf("errorType" to e::class.simpleName))
     }
 
     private fun eligible(browser: Browser): Boolean =
         runCatching {
             val profile = browser.profile()
             val engine = browser.engine()
-            profile.isDefault && !profile.isIncognito && (engine === FluckEngine.currentEngine || engine === readyEngine)
+            val ours = engine === FluckEngine.currentEngine || engine === readyEngine
+            profile.isDefault && !profile.isIncognito && ours
         }.getOrDefault(false)
 
     private fun installCapture(browser: Browser) {
@@ -284,7 +319,13 @@ object NativeAutofill {
             }
         val inject = { frame: Frame ->
             if (frame.isMain) {
-                val slot = "b" + UUID.randomUUID().toString().replace("-", "").take(24)
+                val slot =
+                    "b" +
+                        UUID
+                            .randomUUID()
+                            .toString()
+                            .replace("-", "")
+                            .take(24)
                 val window = frame.executeJavaScript<JsObject>("window")
                 if (window != null) {
                     window.putProperty(slot, bridge)
@@ -303,13 +344,29 @@ object NativeAutofill {
         browser.set(
             SavePasswordCallback::class.java,
             SavePasswordCallback { p, action ->
-                onPasswordSave(browser, p.url(), p.login(), update = false, commit = action::save, never = action::neverSave, ignore = action::ignore)
+                onPasswordSave(
+                    browser,
+                    p.url(),
+                    p.login(),
+                    update = false,
+                    commit = action::save,
+                    never = action::neverSave,
+                    ignore = action::ignore,
+                )
             },
         )
         browser.set(
             UpdatePasswordCallback::class.java,
             UpdatePasswordCallback { p, action ->
-                onPasswordSave(browser, p.url(), p.login(), update = true, commit = action::update, never = null, ignore = action::ignore)
+                onPasswordSave(
+                    browser,
+                    p.url(),
+                    p.login(),
+                    update = true,
+                    commit = action::update,
+                    never = null,
+                    ignore = action::ignore,
+                )
             },
         )
         browser.set(
@@ -318,12 +375,15 @@ object NativeAutofill {
         )
         browser.set(
             SaveUserDataProfileCallback::class.java,
-            SaveUserDataProfileCallback { p, action -> onAddressSave(browser, p.profile(), action::save, action::decline) },
+            SaveUserDataProfileCallback { p, action ->
+                onAddressSave(browser, p.profile(), action::save, action::decline)
+            },
         )
     }
 
     private fun canSave(): Boolean = BrowserSettings.offerToSavePasswords && AuthStateManager.currentUser.value != null
 
+    @Suppress("LongParameterList", "LongMethod", "CyclomaticComplexMethod", "ReturnCount")
     private fun onPasswordSave(
         browser: Browser,
         url: String,
@@ -359,7 +419,7 @@ object NativeAutofill {
             )
         prompt(browser, request) { choice, editedUser ->
             when (choice) {
-                SaveChoice.SAVE ->
+                SaveChoice.SAVE -> {
                     scope.launch {
                         val user = editedUser.ifBlank { login }
                         val edited = !CredentialCapture.sameLogin(user, login)
@@ -374,14 +434,28 @@ object NativeAutofill {
                                 runCatching { index.save() }
                                 safely(commit)
                             }
-                            logger.info(LogCategory.BROWSER, "Password saved to Secret Manager", mapOf("origin" to origin, "updated" to (existing != null)))
+                            logger.info(
+                                LogCategory.BROWSER,
+                                "Password saved to Secret Manager",
+                                mapOf(
+                                    "origin" to origin,
+                                    "updated" to (existing != null),
+                                ),
+                            )
                         } else {
                             safely(ignore)
                         }
                         requestSync()
                     }
-                SaveChoice.NEVER -> safely(never ?: ignore)
-                SaveChoice.NOT_NOW -> safely(ignore)
+                }
+
+                SaveChoice.NEVER -> {
+                    safely(never ?: ignore)
+                }
+
+                SaveChoice.NOT_NOW -> {
+                    safely(ignore)
+                }
             }
         }
     }
@@ -423,7 +497,9 @@ object NativeAutofill {
                 SecretService.createSecret(AutofillMapping.loginRequest(origin, login, password))
             }
         return result.isSuccess.also {
-            if (!it) logger.warn(LogCategory.BROWSER, "Password save to Secret Manager failed", mapOf("origin" to origin))
+            if (!it) {
+                logger.warn(LogCategory.BROWSER, "Password save to Secret Manager failed", mapOf("origin" to origin))
+            }
         }
     }
 
@@ -435,7 +511,9 @@ object NativeAutofill {
     ) {
         val number = card.number().orEmpty()
         if (!canSave() || number.any { !it.isDigit() } || number.length !in 12..19) return safely(decline)
-        val expiry = runCatching { YearMonth.of(card.expirationYear(), card.expirationMonth()) }.getOrNull() ?: return safely(decline)
+        val expiry =
+            runCatching { YearMonth.of(card.expirationYear(), card.expirationMonth()) }.getOrNull()
+                ?: return safely(decline)
         val key = cardKey(number.takeLast(4), expiry)
         val brand = AutofillMapping.brandOf(number)
         val holder = card.cardholder().orEmpty()
@@ -445,13 +523,26 @@ object NativeAutofill {
                 title = "Save card?",
                 saveLabel = "Save",
                 allowNever = false,
-                lines = listOfNotNull("$brand •••• ${number.takeLast(4)}", "Expires %02d/%02d".format(expiry.monthValue, expiry.year % 100), holder.ifBlank { null }),
+                lines =
+                    listOfNotNull(
+                        "$brand •••• ${number.takeLast(
+                            4,
+                        )}",
+                        "Expires %02d/%02d".format(expiry.monthValue, expiry.year % 100),
+                        holder.ifBlank {
+                            null
+                        },
+                    ),
             )
         prompt(browser, request) { choice, _ ->
             if (choice != SaveChoice.SAVE) return@prompt safely(decline)
             scope.launch {
                 val known = AutofillMapping.map(lastRows).containsKey(key)
-                val ok = known || SecretService.createSecret(AutofillMapping.cardRequest(number, expiry, card.cardholder().orEmpty())).isSuccess
+                val ok =
+                    known ||
+                        SecretService
+                            .createSecret(AutofillMapping.cardRequest(number, expiry, card.cardholder().orEmpty()))
+                            .isSuccess
                 if (ok) {
                     index.add(currentProfilePath(), key)
                     runCatching { index.save() }
@@ -528,9 +619,17 @@ object NativeAutofill {
         prompts.remove(browser)?.dismiss()
         lateinit var prompt: SavePrompt
         prompt =
-            SavePrompt(anchor, { anchorFor(browser) ?: fallbackAnchor()?.takeIf { it.window === anchor.window } }, request) { choice, user ->
+            SavePrompt(
+                anchor,
+                { anchorFor(browser) ?: fallbackAnchor()?.takeIf { it.window === anchor.window } },
+                request,
+            ) { choice, user ->
                 prompts.remove(browser, prompt)
-                logger.info(LogCategory.BROWSER, "Autofill save prompt answered", mapOf("kind" to request.kind.name, "choice" to choice.name))
+                logger.info(
+                    LogCategory.BROWSER,
+                    "Autofill save prompt answered",
+                    mapOf("kind" to request.kind.name, "choice" to choice.name),
+                )
                 onChoice(choice, user)
             }
         prompts[browser] = prompt
@@ -542,6 +641,7 @@ object NativeAutofill {
         BrowserServiceImpl.getActiveHandles().firstOrNull { it.getRawBrowser() === browser }?.autofillAnchor()
 
     /** For browsers outside a BrowserHandle (Swing popup windows): the active BOSS window. */
+    @Suppress("ReturnCount")
     private fun fallbackAnchor(): AutofillAnchor? {
         val w = KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow ?: return null
         if (!w.isShowing) return null
@@ -549,7 +649,9 @@ object NativeAutofill {
     }
 
     private fun openManager(windowId: String?) {
-        val id = windowId ?: ai.rever.boss.utils.WindowFocusManager.resolveActionableWindowId() ?: return
+        val id =
+            windowId ?: ai.rever.boss.utils.WindowFocusManager
+                .resolveActionableWindowId() ?: return
         scope.launch {
             runCatching {
                 ai.rever.boss.components.events.PanelEventBus
@@ -590,10 +692,16 @@ object NativeAutofill {
                     }
                 }
                 browser.on(SuggestionsHidden::class.java) { onEdt { popups.remove(browser)?.window?.dispose() } }
-                browser.navigation().on(NavigationStarted::class.java) { onEdt { popups.remove(browser)?.window?.cancel() } }
+                browser.navigation().on(NavigationStarted::class.java) {
+                    onEdt { popups.remove(browser)?.window?.cancel() }
+                }
             }
         installed.onFailure {
-            logger.warn(LogCategory.BROWSER, "Autofill dropdown unavailable - keeping JxBrowser default", mapOf("errorType" to it::class.simpleName))
+            logger.warn(
+                LogCategory.BROWSER,
+                "Autofill dropdown unavailable - keeping JxBrowser default",
+                mapOf("errorType" to it::class.simpleName),
+            )
         }
     }
 
@@ -606,9 +714,20 @@ object NativeAutofill {
     ) {
         popups.remove(browser)?.window?.dispose()
         val anchor = anchorFor(browser)
-        val site = runCatching { java.net.URI(browser.url()).host.orEmpty().removePrefix("www.") }.getOrDefault("")
+        val site =
+            runCatching {
+                java.net
+                    .URI(browser.url())
+                    .host
+                    .orEmpty()
+                    .removePrefix("www.")
+            }.getOrDefault("")
         if (anchor == null || suggestions.isEmpty()) {
-            logger.debug(LogCategory.BROWSER, "Autofill dropdown declined", mapOf("type" to type, "anchored" to (anchor != null)))
+            logger.debug(
+                LogCategory.BROWSER,
+                "Autofill dropdown declined",
+                mapOf("type" to type, "anchored" to (anchor != null)),
+            )
             runCatching { action.cancel() }
             return
         }
@@ -628,7 +747,8 @@ object NativeAutofill {
                 onAccept = { i ->
                     popups.remove(browser, state)
                     logger.info(LogCategory.BROWSER, "Autofill dropdown accepted", mapOf("type" to type))
-                    state.suggestions.getOrNull(i)?.let { s -> runCatching { action.accept(s) } } ?: runCatching { action.cancel() }
+                    val picked = state.suggestions.getOrNull(i)
+                    if (picked != null) runCatching { action.accept(picked) } else runCatching { action.cancel() }
                 },
                 onCancel = {
                     popups.remove(browser, state)
@@ -645,6 +765,7 @@ object NativeAutofill {
         )
     }
 
+    @Suppress("LongParameterList")
     internal fun rowOf(
         primary: String,
         hiddenPassword: String?,
@@ -654,11 +775,30 @@ object NativeAutofill {
         site: String,
     ): SuggestionRow =
         when {
-            type == "PASSWORDS" || hiddenPassword != null ->
-                SuggestionRow(primary, listOfNotNull(hiddenPassword?.ifBlank { null } ?: "••••••••", site.ifBlank { null }).joinToString("  ·  "), SuggestionKind.PASSWORD)
-            type == "CREDIT_CARDS" || cardInfo != null -> cardRow(primary, cardInfo.orEmpty())
-            type == "ADDRESSES" || address != null -> SuggestionRow(primary, address.orEmpty(), SuggestionKind.ADDRESS)
-            else -> SuggestionRow(primary, "", SuggestionKind.OTHER)
+            type == "PASSWORDS" || hiddenPassword != null -> {
+                SuggestionRow(
+                    primary,
+                    listOfNotNull(
+                        hiddenPassword?.ifBlank {
+                            null
+                        } ?: "••••••••",
+                        site.ifBlank { null },
+                    ).joinToString("  ·  "),
+                    SuggestionKind.PASSWORD,
+                )
+            }
+
+            type == "CREDIT_CARDS" || cardInfo != null -> {
+                cardRow(primary, cardInfo.orEmpty())
+            }
+
+            type == "ADDRESSES" || address != null -> {
+                SuggestionRow(primary, address.orEmpty(), SuggestionKind.ADDRESS)
+            }
+
+            else -> {
+                SuggestionRow(primary, "", SuggestionKind.OTHER)
+            }
         }
 
     /** Chromium's card label varies ("Visa  ••4242, •, 12/30"); show network, last four and expiry only. */
@@ -668,7 +808,10 @@ object NativeAutofill {
     ): SuggestionRow {
         val all = "$value $info"
         val last4 = Regex("(\\d{4})(?!.*\\d{4})").find(all)?.groupValues?.get(1)
-        val exp = Regex("\\b(\\d{1,2})/(\\d{2,4})\\b").find(all)?.let { "Expires ${it.groupValues[1].padStart(2, '0')}/${it.groupValues[2].takeLast(2)}" }
+        val exp =
+            Regex("\\b(\\d{1,2})/(\\d{2,4})\\b").find(all)?.let {
+                "Expires ${it.groupValues[1].padStart(2, '0')}/${it.groupValues[2].takeLast(2)}"
+            }
         val network = Regex("^[A-Za-z][A-Za-z ]*[A-Za-z]").find(value.trim())?.value?.trim()
         if (last4 == null) return SuggestionRow(value, info, SuggestionKind.CARD)
         val holder = info.takeIf { i -> i.isNotBlank() && i.none { it.isDigit() } && '•' !in i }
@@ -706,17 +849,30 @@ object NativeAutofill {
                 if (esc) onEdt { prompts[browser]?.dismiss() }
             }
         return when (key) {
-            KeyCode.KEY_CODE_DOWN -> true.also { onEdt { open.window.moveSelection(1) } }
-            KeyCode.KEY_CODE_UP -> true.also { onEdt { open.window.moveSelection(-1) } }
-            KeyCode.KEY_CODE_ESCAPE -> true.also { onEdt { open.window.cancel() } }
-            KeyCode.KEY_CODE_RETURN ->
+            KeyCode.KEY_CODE_DOWN -> {
+                true.also { onEdt { open.window.moveSelection(1) } }
+            }
+
+            KeyCode.KEY_CODE_UP -> {
+                true.also { onEdt { open.window.moveSelection(-1) } }
+            }
+
+            KeyCode.KEY_CODE_ESCAPE -> {
+                true.also { onEdt { open.window.cancel() } }
+            }
+
+            KeyCode.KEY_CODE_RETURN -> {
                 if (open.window.hasSelection) {
                     onEdt { open.window.acceptSelected() }
                     true
                 } else {
                     false
                 }
-            else -> false
+            }
+
+            else -> {
+                false
+            }
         }
     }
 
@@ -740,9 +896,15 @@ object NativeAutofill {
     private class ChromiumStores(
         private val profile: Profile,
     ) {
-        private fun loginKeyOf(r: PasswordRecord) = loginKey(AutofillMapping.normalizeOrigin(r.url()) ?: r.url(), r.login())
+        private fun loginKeyOf(r: PasswordRecord): String {
+            val origin = AutofillMapping.normalizeOrigin(r.url()) ?: r.url()
+            return loginKey(origin, r.login())
+        }
 
-        private fun cardKeyOf(c: CreditCard) = cardKey(c.number().takeLast(4), YearMonth.of(c.expirationYear(), c.expirationMonth()))
+        private fun cardKeyOf(c: CreditCard): String {
+            val expiry = YearMonth.of(c.expirationYear(), c.expirationMonth())
+            return cardKey(c.number().takeLast(4), expiry)
+        }
 
         fun presentKeys(): Set<String> {
             val out = mutableSetOf<String>()
@@ -758,10 +920,12 @@ object NativeAutofill {
                     val store = profile.passwordStore()
                     store.allSaved().filter { loginKeyOf(it) == key }.forEach(store::remove)
                 }
+
                 key.startsWith("card|") -> {
                     val cards = profile.creditCards()
                     cards.all().filter { runCatching { cardKeyOf(it) }.getOrNull() == key }.forEach(cards::remove)
                 }
+
                 key.startsWith("addr|") -> {
                     val profiles = profile.userDataProfiles()
                     profiles.all().filter { addressKey(fieldsOf(it)) == key }.forEach(profiles::remove)
@@ -775,15 +939,21 @@ object NativeAutofill {
         ) {
             if (replaceOwned) remove(item.key)
             when (item) {
-                is MirrorItem.Login ->
-                    profile.passwordStore().add(PasswordRecord.newBuilder(item.origin + "/", item.password).login(item.username).build())
-                is MirrorItem.Card ->
+                is MirrorItem.Login -> {
+                    profile.passwordStore().add(
+                        PasswordRecord.newBuilder(item.origin + "/", item.password).login(item.username).build(),
+                    )
+                }
+
+                is MirrorItem.Card -> {
                     profile.creditCards().add(
                         CreditCard
                             .newBuilder(item.number, item.expiry)
                             .apply { if (item.holder.isNotBlank()) cardholder(item.holder) }
                             .build(),
                     )
+                }
+
                 is MirrorItem.Address -> {
                     val f = item.fields
                     val address =
