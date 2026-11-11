@@ -190,8 +190,10 @@ class SecretReferenceResolverTest {
         override suspend fun page(
             limit: Int,
             offset: Int,
-        ): Result<List<SecretRecord>> =
-            Result.success(records.map { it.copy(password = "", notes = null) }.drop(offset).take(limit))
+        ): Result<List<SecretRecord>> {
+            val metadataOnly = records.map { it.copy(password = "", notes = null) }
+            return Result.success(metadataOnly.drop(offset).take(limit))
+        }
 
         override suspend fun values(ids: Set<String>): Result<Map<String, SecretFieldValues>> {
             valueCalls.add(ids)
@@ -203,7 +205,8 @@ class SecretReferenceResolverTest {
     fun `payment cards and cvvs are forbidden`() =
         runBlocking {
             for (tag in listOf("kind:card", "kind:cvv")) {
-                val vault = PagedVault(listOf(record(a, password = "4242424242424242", tags = listOf(tag, "fluck-ws:w1"))))
+                val card = record(a, password = "4242424242424242", tags = listOf(tag, "fluck-ws:w1"))
+                val vault = PagedVault(listOf(card))
                 val resolution = SecretReferenceResolver(vault).resolve(setOf(passwordOf(a)))
                 assertIs<SecretResolution.Forbidden>(resolution, tag)
                 assertTrue(resolution.reason.contains("payment card"), resolution.reason)
@@ -238,7 +241,8 @@ class SecretReferenceResolverTest {
     fun `a vault login is not mistaken for a connector token`() =
         runBlocking {
             val r = record(a, tags = listOf("kind:password", "fluck-ws:w1")).copy(website = "fluck/w1/vault/github")
-            assertIs<SecretResolution.Resolved>(SecretReferenceResolver(PagedVault(listOf(r))).resolve(setOf(passwordOf(a))))
+            val resolution = SecretReferenceResolver(PagedVault(listOf(r))).resolve(setOf(passwordOf(a)))
+            assertIs<SecretResolution.Resolved>(resolution)
             Unit
         }
 
@@ -270,7 +274,8 @@ class SecretReferenceResolverTest {
     @Test
     fun `a refused reference never reaches the audited value read`() =
         runBlocking {
-            val vault = AuditedVault(listOf(record(a, tags = listOf("kind:card")), record(b))) { error("must not be called") }
+            val records = listOf(record(a, tags = listOf("kind:card")), record(b))
+            val vault = AuditedVault(records) { error("must not be called") }
             assertIs<SecretResolution.Forbidden>(
                 SecretReferenceResolver(vault).resolve(setOf(passwordOf(a), passwordOf(b))),
             )

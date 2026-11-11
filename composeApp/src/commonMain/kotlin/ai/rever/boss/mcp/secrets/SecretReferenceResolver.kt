@@ -114,18 +114,8 @@ class SecretReferenceResolver(
         found: Map<String, SecretRecord>,
     ): Result<Map<String, SecretRecord>> {
         val needed = references.filter { it.field != SecretField.USERNAME }.map { it.id }.toSet()
-        if (needed.isEmpty()) return Result.success(found)
-        val fetched =
-            try {
-                lookup.values(needed) ?: return Result.success(found)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (
-                @Suppress("TooGenericExceptionCaught") t: Throwable,
-            ) {
-                Result.failure(t)
-            }
-        return fetched.map { values ->
+        val fetched = if (needed.isEmpty()) null else readValues(needed)
+        return fetched?.map { values ->
             found.mapValues { (id, record) ->
                 val v = values[id]
                 when {
@@ -134,8 +124,20 @@ class SecretReferenceResolver(
                     else -> record.copy(password = v.password, notes = v.notes)
                 }
             }
-        }
+        } ?: Result.success(found)
     }
+
+    /** [SecretLookup.values], with a throwing host folded into a failure. Null: pages carry values. */
+    private suspend fun readValues(ids: Set<String>): Result<Map<String, SecretFieldValues>>? =
+        try {
+            lookup.values(ids)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (
+            @Suppress("TooGenericExceptionCaught") t: Throwable,
+        ) {
+            Result.failure(t)
+        }
 
     /**
      * Walk pages until every id in [wanted] is found, the vault runs out, or [maxPages] is hit.

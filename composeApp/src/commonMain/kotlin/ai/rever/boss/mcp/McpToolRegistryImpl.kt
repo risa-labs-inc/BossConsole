@@ -22,7 +22,7 @@ import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.api.RegisteredMcpTool
 import ai.rever.boss.plugin.logging.LogSanitizer
 import ai.rever.boss.plugin.pathutils.BossDirectories
-import ai.rever.boss.services.supabase.SecretService
+import ai.rever.boss.services.supabase.SecretValueService
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.ComponentLogger
@@ -116,7 +116,7 @@ object McpToolRegistryImpl : McpToolRegistry {
     private const val FAULT_MESSAGE_MS = 10_000L
 
     /**
-     * How `{{secret:<id>}}` references reach the vault: the host-owned `SecretService`, mapped
+     * How `{{secret:<id>}}` references reach the vault: the host-owned `SecretValueService`, mapped
      * to the resolver's record type at this one seam. Pages are metadata only
      * (`list_secrets_v2`); the referenced values come from `get_secret_values` with purpose
      * [MCP_SECRET_PURPOSE], which logs each reveal server-side. Only consulted for a call that
@@ -128,7 +128,7 @@ object McpToolRegistryImpl : McpToolRegistry {
                 limit: Int,
                 offset: Int,
             ): Result<List<SecretRecord>> =
-                SecretService.listV2(limit, offset).map { rows ->
+                SecretValueService.listV2(limit, offset).map { rows ->
                     rows.map { row ->
                         SecretRecord(
                             id = row.id,
@@ -143,8 +143,9 @@ object McpToolRegistryImpl : McpToolRegistry {
 
             override suspend fun values(ids: Set<String>): Result<Map<String, SecretFieldValues>> {
                 val out = HashMap<String, SecretFieldValues>()
-                for (chunk in ids.chunked(SecretService.MAX_VALUE_IDS)) {
-                    val rows = SecretService.getValues(chunk, MCP_SECRET_PURPOSE).getOrElse { return Result.failure(it) }
+                for (chunk in ids.chunked(SecretValueService.MAX_VALUE_IDS)) {
+                    val rows =
+                        SecretValueService.getValues(chunk, MCP_SECRET_PURPOSE).getOrElse { return Result.failure(it) }
                     rows.forEach { out[it.id.lowercase()] = SecretFieldValues(it.password, it.notes) }
                 }
                 return Result.success(out)

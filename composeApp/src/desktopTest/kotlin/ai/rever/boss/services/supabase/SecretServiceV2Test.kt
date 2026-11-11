@@ -17,20 +17,20 @@ import kotlin.test.assertTrue
 class SecretServiceV2Test {
     @Test
     fun `listV2 sends kinds only when given`() {
-        val all = SecretService.listV2Params(50, 0, null)
+        val all = SecretValueService.listV2Params(50, 0, null)
         assertFalse("p_kinds" in all)
         assertEquals(JsonPrimitive(50), all["p_limit"])
-        val cards = SecretService.listV2Params(10, 20, listOf("card"))
+        val cards = SecretValueService.listV2Params(10, 20, listOf("card"))
         assertEquals(JsonArray(listOf(JsonPrimitive("card"))), cards["p_kinds"])
         assertEquals(JsonPrimitive(20), cards["p_offset"])
     }
 
     @Test
     fun `getValues validates purpose and id count before the network`() {
-        assertTrue(SecretService.getValuesParams(listOf("a"), "").isFailure)
-        assertTrue(SecretService.getValuesParams(listOf("a"), "Has Spaces").isFailure)
-        assertTrue(SecretService.getValuesParams((1..101).map { "id$it" }, "mcp").isFailure)
-        val ok = SecretService.getValuesParams(listOf("a", "a", "b"), "autofill").getOrThrow()
+        assertTrue(SecretValueService.getValuesParams(listOf("a"), "").isFailure)
+        assertTrue(SecretValueService.getValuesParams(listOf("a"), "Has Spaces").isFailure)
+        assertTrue(SecretValueService.getValuesParams((1..101).map { "id$it" }, "mcp").isFailure)
+        val ok = SecretValueService.getValuesParams(listOf("a", "a", "b"), "autofill").getOrThrow()
         assertEquals(listOf("a", "b"), ok["p_ids"]!!.jsonArray.map { it.jsonPrimitive.content })
         assertEquals("autofill", ok["p_purpose"]!!.jsonPrimitive.content)
     }
