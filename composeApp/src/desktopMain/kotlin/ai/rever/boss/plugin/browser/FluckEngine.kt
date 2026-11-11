@@ -2422,11 +2422,6 @@ object FluckEngine {
                 .apply {
                     if (capabilityIsTrue(ChromiumFlagKeys.DISABLE_SANDBOX) || inContainer) disableSandbox()
                 }.apply { applyRemoteDebuggingPort(this) }
-                .apply {
-                    if (SystemUtils.isLinux && ai.rever.boss.plugin.browser.autofill.NativeAutofill.enabled) {
-                        passwordStore(ai.rever.boss.plugin.browser.autofill.LinuxPasswordStore.choose())
-                    }
-                }
 
         // Add user agent if configured
         BrowserSettings.userAgent?.let { ua ->

@@ -1,6 +1,5 @@
 package ai.rever.boss.plugin.browser.autofill
 
-import com.teamdev.jxbrowser.engine.PasswordStore
 import java.io.File
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
@@ -110,16 +109,5 @@ class MirrorDiffAndCaptureTest {
         again.save()
         assertTrue(MirrorIndex(f).keys("/p").isEmpty())
         dir.deleteRecursively()
-    }
-
-    @Test
-    fun `linux store choice`() {
-        assertEquals(PasswordStore.BASIC, LinuxPasswordStore.decide(null) { error("not probed") })
-        assertEquals(PasswordStore.BASIC, LinuxPasswordStore.decide("unix:path=/x") { null })
-        assertEquals(PasswordStore.BASIC, LinuxPasswordStore.decide("unix:path=/x") { "string \"org.freedesktop.DBus\"" })
-        assertEquals(
-            PasswordStore.GNOME_LIBSECRET,
-            LinuxPasswordStore.decide("unix:path=/x") { "string \"org.freedesktop.secrets\"" },
-        )
     }
 }
