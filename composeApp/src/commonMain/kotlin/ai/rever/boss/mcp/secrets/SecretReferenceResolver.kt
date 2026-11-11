@@ -20,17 +20,31 @@ data class SecretRecord(
 }
 
 /**
- * One page of the signed-in user's own secrets. The only thing the resolver asks of the host.
+ * One page of the signed-in user's secrets. The only thing the resolver asks of the host.
  *
- * Pages rather than a by-id lookup because that is the RPC the host has (`get_user_secrets`
- * takes a limit and an offset, nothing else). The resolver walks pages until every reference is
- * found or the vault runs out; [SecretReferenceResolver.maxPages] bounds the walk.
+ * The resolver walks pages until every reference is found or the vault runs out;
+ * [SecretReferenceResolver.maxPages] bounds the walk. A host whose pages are metadata only
+ * (`list_secrets_v2`) also implements [values], the audited read of the referenced ids.
  */
 fun interface SecretLookup {
     suspend fun page(
         limit: Int,
         offset: Int,
     ): Result<List<SecretRecord>>
+
+    /**
+     * Password and notes for [ids], read through the audited path. `null` means [page]
+     * already carries values. An id absent from the map is one the caller may not read.
+     */
+    suspend fun values(ids: Set<String>): Result<Map<String, SecretFieldValues>>? = null
+}
+
+/** The value-bearing fields of one secret. */
+data class SecretFieldValues(
+    val password: String,
+    val notes: String?,
+) {
+    override fun toString(): String = "SecretFieldValues(fields=[password, notes])"
 }
 
 /**
@@ -64,9 +78,9 @@ sealed interface SecretResolution {
  * Refusal precedence inside one call: a forbidden reference refuses the call even when another
  * reference is merely missing, because "you may not have this" is the more important answer.
  *
- * The AI-provider refusal mirrors `aiProviderRefusal` in the secret-manager plugin: secrets tagged
- * [AI_PROVIDER_TAG] are provider configuration that the host's AI settings own, and the plugin
- * already refuses to reveal them through `secret_get`. A reference must not be a way around that.
+ * Refusals ([deliveryRefusal]): AI provider keys (parity with the secret-manager plugin's
+ * `aiProviderRefusal`), payment cards and CVVs (kind:card, kind:cvv), and connector tokens
+ * (`fluck/<ws>/<connector>/...`). A reference must not be a way around `secret_get`.
  */
 class SecretReferenceResolver(
     private val lookup: SecretLookup,
@@ -76,11 +90,51 @@ class SecretReferenceResolver(
     suspend fun resolve(references: Set<SecretReference>): SecretResolution {
         if (references.isEmpty()) return SecretResolution.Resolved(emptyMap(), emptyList())
         return findRecords(references.map { it.id }.toSet()).fold(
-            onSuccess = { found -> refusalFor(references, found) ?: assemble(references, found) },
-            onFailure = { failure ->
-                SecretResolution.Unresolved("the vault could not be read (${failure::class.simpleName ?: "error"})")
+            onSuccess = { found ->
+                refusalFor(references, found)
+                    ?: withValues(references, found).fold(
+                        onSuccess = { assemble(references, it) },
+                        onFailure = { failure -> unreadable(failure) },
+                    )
             },
+            onFailure = { failure -> unreadable(failure) },
         )
+    }
+
+    private fun unreadable(failure: Throwable): SecretResolution =
+        SecretResolution.Unresolved("the vault could not be read (${failure::class.simpleName ?: "error"})")
+
+    /**
+     * Fill password and notes for the referenced records that need them, through
+     * [SecretLookup.values] when the host provides it. Only ids a reference reads a value
+     * from are fetched, so a username-only reference reveals (and logs) nothing.
+     */
+    private suspend fun withValues(
+        references: Set<SecretReference>,
+        found: Map<String, SecretRecord>,
+    ): Result<Map<String, SecretRecord>> {
+        val needed = references.filter { it.field != SecretField.USERNAME }.map { it.id }.toSet()
+        if (needed.isEmpty()) return Result.success(found)
+        val fetched =
+            try {
+                lookup.values(needed) ?: return Result.success(found)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (
+                @Suppress("TooGenericExceptionCaught") t: Throwable,
+            ) {
+                Result.failure(t)
+            }
+        return fetched.map { values ->
+            found.mapValues { (id, record) ->
+                val v = values[id]
+                when {
+                    id !in needed -> record
+                    v == null -> record.copy(password = "", notes = null)
+                    else -> record.copy(password = v.password, notes = v.notes)
+                }
+            }
+        }
     }
 
     /**
@@ -124,14 +178,12 @@ class SecretReferenceResolver(
         references: Set<SecretReference>,
         found: Map<String, SecretRecord>,
     ): SecretResolution? {
-        val forbidden = references.firstOrNull { found[it.id]?.tags?.contains(AI_PROVIDER_TAG) == true }
+        val forbidden =
+            references.firstNotNullOfOrNull { ref -> found[ref.id]?.let(::deliveryRefusal)?.let { ref.id to it } }
         val missing = references.filter { it.id !in found }
         return when {
             forbidden != null -> {
-                SecretResolution.Forbidden(
-                    "secret ${forbidden.id} is an AI provider key and is not readable through a reference; " +
-                        "configure the provider in the host's AI settings instead",
-                )
+                SecretResolution.Forbidden("secret ${forbidden.first} ${forbidden.second}")
             }
 
             missing.isNotEmpty() -> {
@@ -176,6 +228,39 @@ class SecretReferenceResolver(
          * fail-open cross-repository contract: change both declarations together.
          */
         const val AI_PROVIDER_TAG: String = "ai-provider"
+
+        /** Max vault payment rows: card number and CVV. Delivered only by the vault itself. */
+        val PAYMENT_KIND_TAGS: Set<String> = setOf("kind:card", "kind:cvv")
+
+        /** Connector credentials stored as `fluck/<ws>/<connector>/<VAR>`, also tagged `connector`. */
+        const val CONNECTOR_TAG: String = "connector"
+        private val CONNECTOR_TOKEN_WEBSITE = Regex("^fluck/[^/]+/(?!vault/)[^/]+/[^/]+$")
+
+        /**
+         * Why [record] must never be delivered through an agent-facing path, or null if it may.
+         * Shared with the plugin's `secret_get` refusals; never names the website or a value.
+         */
+        fun deliveryRefusal(record: SecretRecord): String? =
+            when {
+                AI_PROVIDER_TAG in record.tags -> {
+                    "is an AI provider key and is not readable through a reference; " +
+                        "configure the provider in the host's AI settings instead"
+                }
+
+                record.tags.any { it in PAYMENT_KIND_TAGS } -> {
+                    "is a payment card and is not readable through a reference; " +
+                        "card details are only used by the vault's own checkout"
+                }
+
+                CONNECTOR_TAG in record.tags || CONNECTOR_TOKEN_WEBSITE.matches(record.website) -> {
+                    "is a connector credential and is not readable through a reference; " +
+                        "connectors read their own tokens"
+                }
+
+                else -> {
+                    null
+                }
+            }
 
         const val DEFAULT_PAGE_SIZE: Int = 200
 

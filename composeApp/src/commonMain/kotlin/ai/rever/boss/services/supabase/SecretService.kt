@@ -6,6 +6,8 @@ import ai.rever.boss.services.supabase.models.PaginatedSecretsWithSharing
 import ai.rever.boss.services.supabase.models.SecretEntry
 import ai.rever.boss.services.supabase.models.SecretEntryWithSharing
 import ai.rever.boss.services.supabase.models.SecretShareEntry
+import ai.rever.boss.services.supabase.models.SecretSummary
+import ai.rever.boss.services.supabase.models.SecretValues
 import ai.rever.boss.services.supabase.models.ShareSecretRequest
 import ai.rever.boss.services.supabase.models.UnshareSecretRequest
 import ai.rever.boss.services.supabase.models.UpdateSecretRequest
@@ -520,6 +522,96 @@ object SecretService {
             )
             Result.failure(safe)
         }
+
+    /**
+     * Owned and shared secrets, metadata only (`list_secrets_v2`). [kinds] filters on
+     * `kind:<k>` tags (`card`, `password`, ...); null lists every kind.
+     */
+    suspend fun listV2(
+        limit: Int = 50,
+        offset: Int = 0,
+        kinds: List<String>? = null,
+    ): Result<List<SecretSummary>> =
+        try {
+            val postgrestResult =
+                client.postgrest.rpc(
+                    function = "list_secrets_v2",
+                    parameters = listV2Params(limit, offset, kinds),
+                )
+            Result.success(supabaseJson.decodeFromJsonElement<List<SecretSummary>>(supabaseJson.parseToJsonElement(postgrestResult.data)))
+        } catch (e: Exception) {
+            val safe = sanitizeSupabaseFailure("listV2", e)
+            logger.warn(
+                LogCategory.NETWORK,
+                "Secret RPC failed",
+                data = mapOf("operation" to "listV2", "errorType" to e::class.simpleName),
+            )
+            Result.failure(safe)
+        }
+
+    /**
+     * Decrypted values for [ids] (`get_secret_values`). The server writes one access-log row
+     * per id returned, tagged [purpose]; ids the caller may not read are silently omitted.
+     */
+    suspend fun getValues(
+        ids: Collection<String>,
+        purpose: String,
+    ): Result<List<SecretValues>> {
+        // Built here from the caller's own arguments; no server payload to sanitise.
+        val params = getValuesParams(ids, purpose).getOrElse { safe -> return Result.failure(safe) }
+        if (ids.isEmpty()) return Result.success(emptyList())
+        return try {
+            val postgrestResult =
+                client.postgrest.rpc(
+                    function = "get_secret_values",
+                    parameters = params,
+                )
+            Result.success(supabaseJson.decodeFromJsonElement<List<SecretValues>>(supabaseJson.parseToJsonElement(postgrestResult.data)))
+        } catch (e: Exception) {
+            val safe = sanitizeSupabaseFailure("getValues", e)
+            logger.warn(
+                LogCategory.NETWORK,
+                "Secret RPC failed",
+                data = mapOf("operation" to "getValues", "errorType" to e::class.simpleName),
+            )
+            Result.failure(safe)
+        }
+    }
+
+    /** Server limit per `get_secret_values` call. */
+    const val MAX_VALUE_IDS: Int = 100
+
+    private val PURPOSE = Regex("^[a-z0-9][a-z0-9_.:-]{0,63}$")
+
+    internal fun listV2Params(
+        limit: Int,
+        offset: Int,
+        kinds: List<String>?,
+    ): JsonObject =
+        buildJsonObject {
+            put("p_limit", limit)
+            put("p_offset", offset)
+            if (kinds != null) put("p_kinds", JsonArray(kinds.map { JsonPrimitive(it) }))
+        }
+
+    /** Mirrors the server checks so a bad call fails before it leaves the host. */
+    internal fun getValuesParams(
+        ids: Collection<String>,
+        purpose: String,
+    ): Result<JsonObject> {
+        if (!PURPOSE.matches(purpose)) {
+            return Result.failure(IllegalArgumentException("purpose must be a short lowercase label"))
+        }
+        if (ids.size > MAX_VALUE_IDS) {
+            return Result.failure(IllegalArgumentException("at most $MAX_VALUE_IDS ids per call"))
+        }
+        return Result.success(
+            buildJsonObject {
+                put("p_ids", JsonArray(ids.distinct().map { JsonPrimitive(it) }))
+                put("p_purpose", purpose)
+            },
+        )
+    }
 
     /**
      * RPC response structure for create/update/delete operations

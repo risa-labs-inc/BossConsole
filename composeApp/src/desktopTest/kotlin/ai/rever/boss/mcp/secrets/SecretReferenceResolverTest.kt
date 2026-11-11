@@ -179,4 +179,118 @@ class SecretReferenceResolverTest {
             assertIs<SecretResolution.Resolved>(SecretReferenceResolver(vault).resolve(emptySet()))
             assertEquals(0, vault.pagesServed)
         }
+
+    /** A metadata-only vault (list_secrets_v2) with an audited value read, recording each call. */
+    private class AuditedVault(
+        private val records: List<SecretRecord>,
+        private val reveal: (Set<String>) -> Result<Map<String, SecretFieldValues>>,
+    ) : SecretLookup {
+        val valueCalls = mutableListOf<Set<String>>()
+
+        override suspend fun page(
+            limit: Int,
+            offset: Int,
+        ): Result<List<SecretRecord>> =
+            Result.success(records.map { it.copy(password = "", notes = null) }.drop(offset).take(limit))
+
+        override suspend fun values(ids: Set<String>): Result<Map<String, SecretFieldValues>> {
+            valueCalls.add(ids)
+            return reveal(ids)
+        }
+    }
+
+    @Test
+    fun `payment cards and cvvs are forbidden`() =
+        runBlocking {
+            for (tag in listOf("kind:card", "kind:cvv")) {
+                val vault = PagedVault(listOf(record(a, password = "4242424242424242", tags = listOf(tag, "fluck-ws:w1"))))
+                val resolution = SecretReferenceResolver(vault).resolve(setOf(passwordOf(a)))
+                assertIs<SecretResolution.Forbidden>(resolution, tag)
+                assertTrue(resolution.reason.contains("payment card"), resolution.reason)
+                assertFalse(resolution.reason.contains("4242"), resolution.reason)
+            }
+        }
+
+    @Test
+    fun `card notes are forbidden too, not just the number`() =
+        runBlocking {
+            val vault = PagedVault(listOf(record(a, notes = "{\"name\":\"Ada\"}", tags = listOf("kind:card"))))
+            assertIs<SecretResolution.Forbidden>(
+                SecretReferenceResolver(vault).resolve(setOf(SecretReference(a, SecretField.NOTES))),
+            )
+            Unit
+        }
+
+    @Test
+    fun `connector tokens are forbidden by tag or by website shape`() =
+        runBlocking {
+            val tagged = record(a, tags = listOf("fluck", "connector"))
+            val byPath = record(b).copy(website = "fluck/w1/github/GH_TOKEN")
+            for (r in listOf(tagged, byPath)) {
+                val resolution = SecretReferenceResolver(PagedVault(listOf(r))).resolve(setOf(passwordOf(r.id)))
+                assertIs<SecretResolution.Forbidden>(resolution)
+                assertTrue(resolution.reason.contains("connector credential"), resolution.reason)
+                assertFalse(resolution.reason.contains("fluck/w1"), resolution.reason)
+            }
+        }
+
+    @Test
+    fun `a vault login is not mistaken for a connector token`() =
+        runBlocking {
+            val r = record(a, tags = listOf("kind:password", "fluck-ws:w1")).copy(website = "fluck/w1/vault/github")
+            assertIs<SecretResolution.Resolved>(SecretReferenceResolver(PagedVault(listOf(r))).resolve(setOf(passwordOf(a))))
+            Unit
+        }
+
+    @Test
+    fun `a metadata-only vault reads values through the audited path for referenced ids only`() =
+        runBlocking {
+            val vault =
+                AuditedVault(listOf(record(a), record(b))) { ids ->
+                    Result.success(ids.associateWith { SecretFieldValues("v-$it", "n-$it") })
+                }
+            val resolution =
+                SecretReferenceResolver(vault).resolve(setOf(passwordOf(a), SecretReference(a, SecretField.NOTES)))
+            assertIs<SecretResolution.Resolved>(resolution)
+            assertEquals("v-$a", resolution.values[passwordOf(a)])
+            assertEquals("n-$a", resolution.values[SecretReference(a, SecretField.NOTES)])
+            assertEquals(listOf(setOf(a)), vault.valueCalls)
+        }
+
+    @Test
+    fun `a username-only reference reveals nothing`() =
+        runBlocking {
+            val vault = AuditedVault(listOf(record(a))) { error("must not be called") }
+            val resolution = SecretReferenceResolver(vault).resolve(setOf(SecretReference(a, SecretField.USERNAME)))
+            assertIs<SecretResolution.Resolved>(resolution)
+            assertEquals("user-$a", resolution.values[SecretReference(a, SecretField.USERNAME)])
+            assertTrue(vault.valueCalls.isEmpty())
+        }
+
+    @Test
+    fun `a refused reference never reaches the audited value read`() =
+        runBlocking {
+            val vault = AuditedVault(listOf(record(a, tags = listOf("kind:card")), record(b))) { error("must not be called") }
+            assertIs<SecretResolution.Forbidden>(
+                SecretReferenceResolver(vault).resolve(setOf(passwordOf(a), passwordOf(b))),
+            )
+            assertTrue(vault.valueCalls.isEmpty())
+        }
+
+    @Test
+    fun `a failed value read is unresolved and leaks nothing`() =
+        runBlocking {
+            val vault = AuditedVault(listOf(record(a))) { Result.failure(IllegalStateException("pw-leak")) }
+            val resolution = SecretReferenceResolver(vault).resolve(setOf(passwordOf(a)))
+            assertIs<SecretResolution.Unresolved>(resolution)
+            assertFalse(resolution.reason.contains("pw-leak"), resolution.reason)
+        }
+
+    @Test
+    fun `an id the value read omits is unresolved, not an empty value`() =
+        runBlocking {
+            val vault = AuditedVault(listOf(record(a))) { Result.success(emptyMap()) }
+            assertIs<SecretResolution.Unresolved>(SecretReferenceResolver(vault).resolve(setOf(passwordOf(a))))
+            Unit
+        }
 }

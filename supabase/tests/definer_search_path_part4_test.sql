@@ -320,8 +320,8 @@ select is(
             'public.user_display_name(uuid)'::regprocedure
           )
         and pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE')),
-    4,
-    'service_role keeps EXECUTE on all four (the secrets edge-function path)'
+    1,
+    'service_role keeps user_display_name only; the crypto helpers are revoked (20261111190200)'
 );
 select is(
     (select count(*)::int

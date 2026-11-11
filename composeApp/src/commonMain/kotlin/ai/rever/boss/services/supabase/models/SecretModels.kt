@@ -315,3 +315,58 @@ data class PaginatedSecretsWithSharing(
     val hasMore: Boolean,
     val total: Int? = null,
 )
+
+/**
+ * One row of `list_secrets_v2`: metadata only. Values come from [SecretValues] via
+ * `get_secret_values`, which writes an access-log row per id.
+ */
+@Serializable
+data class SecretSummary(
+    val id: String,
+    val website: String,
+    val username: String,
+    @SerialName("has_notes")
+    val hasNotes: Boolean = false,
+    @SerialName("expiration_date")
+    val expirationDate: String? = null,
+    val tags: List<String> = emptyList(),
+    @SerialName("twofa_enabled")
+    val twofaEnabled: Boolean = false,
+    @SerialName("twofa_type")
+    val twofaType: String? = null,
+    @SerialName("created_at")
+    val createdAt: String,
+    @SerialName("updated_at")
+    val updatedAt: String,
+    @SerialName("is_owner")
+    val isOwner: Boolean? = null,
+    @SerialName("shared_by_email")
+    val sharedByEmail: String? = null,
+    @SerialName("access_level")
+    val accessLevel: String? = null,
+    @SerialName("org_id")
+    val orgId: String? = null,
+    @SerialName("org_slug")
+    val orgSlug: String? = null,
+    @SerialName("is_org_owned")
+    val isOrgOwned: Boolean? = null,
+    @SerialName("shared_with_org_slug")
+    val sharedWithOrgSlug: String? = null,
+    // Unknown (null) is "cannot manage", as for SecretEntry.
+    @SerialName("can_manage")
+    val canManage: Boolean? = null,
+)
+
+/** One row of `get_secret_values`. */
+@Serializable
+data class SecretValues(
+    val id: String,
+    val password: String = "",
+    val notes: String? = null,
+    @SerialName("twofa_secret")
+    val twofaSecret: String? = null,
+    @SerialName("recovery_codes")
+    val recoveryCodes: List<String>? = null,
+) {
+    override fun toString(): String = "SecretValues(id=$id, fields=[password, notes, twofaSecret, recoveryCodes])"
+}
