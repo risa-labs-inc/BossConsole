@@ -1,6 +1,6 @@
 -- First run: python3 scripts/test/prepare-totp-migration-fixtures.py
--- 20261111190000 / 20261111190100: list_secrets_v2, get_secret_values, sealed
--- notes, durable access log, crypto helper grants. Rolled back; never run on live data.
+-- 20261111190000 / 20261111190100: sealed notes, v1 output unchanged, durable
+-- access log, delete logging, backfill. Rolled back; never run on live data.
 BEGIN;
 SELECT no_plan();
 
@@ -17,18 +17,6 @@ END;
 $fixture$;
 
 -- ---- Grants.
-SELECT ok(NOT has_function_privilege('service_role', 'public.encrypt_text(text)', 'EXECUTE'), 'service_role cannot encrypt_text');
-SELECT ok(NOT has_function_privilege('service_role', 'public.decrypt_text(text)', 'EXECUTE'), 'service_role cannot decrypt_text');
-SELECT ok(NOT has_function_privilege('service_role', 'public.get_encryption_key()', 'EXECUTE'), 'service_role cannot read the key');
-SELECT ok(NOT has_function_privilege('service_role', 'public.safe_decrypt_recovery_codes(text)', 'EXECUTE'), 'service_role cannot decrypt recovery codes');
-SELECT ok(has_function_privilege('service_role', 'public.fluck_oauth_store_secret(uuid,text,text,text,text)', 'EXECUTE'), 'service_role keeps its definer writer');
-
-SELECT ok(has_function_privilege('authenticated', 'public.list_secrets_v2(integer,integer,text[])', 'EXECUTE'), 'authenticated may list v2');
-SELECT ok(NOT has_function_privilege('anon', 'public.list_secrets_v2(integer,integer,text[])', 'EXECUTE'), 'anon may not list v2');
-SELECT ok(NOT has_function_privilege('service_role', 'public.list_secrets_v2(integer,integer,text[])', 'EXECUTE'), 'service_role may not list v2');
-SELECT ok(has_function_privilege('authenticated', 'public.get_secret_values(uuid[],text)', 'EXECUTE'), 'authenticated may read values');
-SELECT ok(NOT has_function_privilege('anon', 'public.get_secret_values(uuid[],text)', 'EXECUTE'), 'anon may not read values');
-SELECT ok(NOT has_function_privilege('service_role', 'public.get_secret_values(uuid[],text)', 'EXECUTE'), 'service_role may not read values');
 SELECT ok(NOT has_function_privilege('authenticated', 'public.secret_notes_sensitive(uuid)', 'EXECUTE'), 'helper is internal');
 SELECT ok(NOT has_function_privilege('authenticated', 'public.secrets_seal_notes_trigger_fn()', 'EXECUTE'), 'seal trigger fn is internal');
 SELECT ok(NOT has_function_privilege('authenticated', 'public.secret_tags_seal_notes_trigger_fn()', 'EXECUTE'), 'tag trigger fn is internal');
@@ -115,83 +103,36 @@ SET LOCAL ROLE authenticated;
 SELECT throws_ok($$ UPDATE public.secrets SET notes_encrypted = 'x' WHERE id = (SELECT card FROM ids) $$,
     '42501', NULL, 'a client cannot import ciphertext into notes_encrypted');
 
--- ---- list_secrets_v2: metadata only.
-SELECT is((SELECT count(*) FROM public.list_secrets_v2()), 3::bigint, 'owner lists all three rows');
-SELECT is((SELECT count(*) FROM public.list_secrets_v2(50, 0, ARRAY['card'])), 1::bigint, 'kinds filter selects cards');
-SELECT is((SELECT count(*) FROM public.list_secrets_v2(50, 0, ARRAY['card','password'])), 2::bigint, 'kinds filter ORs kinds');
-SELECT is((SELECT has_notes FROM public.list_secrets_v2() WHERE id = (SELECT card FROM ids)), true, 'has_notes reports sealed notes');
-SELECT ok((SELECT tags ? 'kind:card' FROM public.list_secrets_v2() WHERE id = (SELECT card FROM ids)), 'tags are returned');
-SELECT is((SELECT is_owner FROM public.list_secrets_v2() WHERE id = (SELECT card FROM ids)), true, 'ownership is returned');
-SELECT is((SELECT count(*) FROM public.list_secrets_v2(1, 0)), 1::bigint, 'limit is honoured');
-SELECT is((SELECT count(*) FROM public.list_secrets_v2(0, 0)), 1::bigint, 'limit is clamped to at least 1');
-SELECT ok(NOT EXISTS (
-        SELECT 1 FROM pg_proc p, unnest(p.proargnames) a
-        WHERE p.oid = 'public.list_secrets_v2(integer,integer,text[])'::regprocedure
-          AND a IN ('password', 'notes', 'twofa_secret', 'recovery_codes')),
-    'list_secrets_v2 has no value-bearing output column');
-SELECT is((SELECT count(*) FROM public.secret_access_log WHERE operation = 'reveal'), 0::bigint, 'listing logs nothing');
-
--- ---- get_secret_values: values + one log row per id.
-SELECT is((SELECT password FROM public.get_secret_values(ARRAY[(SELECT card FROM ids)], 'autofill')),
-    '4242424242424242', 'owner reads the card number');
-SELECT is((SELECT notes FROM public.get_secret_values(ARRAY[(SELECT card FROM ids)], 'autofill')),
-    'direct write', 'owner reads sealed notes');
-SELECT is((SELECT count(*) FROM public.get_secret_values(
-        ARRAY[(SELECT card FROM ids), (SELECT card FROM ids), (SELECT login FROM ids)], 'mcp')),
-    2::bigint, 'duplicate ids collapse');
-SELECT throws_ok($$ SELECT * FROM public.get_secret_values(ARRAY[(SELECT card FROM ids)], '') $$,
-    '22023', NULL, 'purpose is required');
-SELECT throws_ok($$ SELECT * FROM public.get_secret_values(ARRAY[(SELECT card FROM ids)], 'Has Spaces') $$,
-    '22023', NULL, 'purpose must be a label');
-SELECT throws_ok($$ SELECT * FROM public.get_secret_values(array_fill(gen_random_uuid(), ARRAY[101]), 'mcp') $$,
-    '22023', NULL, 'at most 100 ids');
-SELECT is((SELECT count(*) FROM public.get_secret_values(NULL, 'mcp')), 0::bigint, 'NULL ids return nothing');
-
+-- ---- A share keeps working on a sealed row: the reader gets the notes through v1.
 RESET ROLE;
-SELECT is((SELECT count(*) FROM public.secret_access_log WHERE operation = 'reveal'
-           AND user_id = 'd1a00000-0000-4000-8000-000000000001'), 4::bigint, 'one reveal row per id returned');
-SELECT is((SELECT count(*) FROM public.secret_access_log WHERE operation = 'reveal' AND purpose = 'mcp'), 2::bigint, 'purpose recorded');
-SELECT is((SELECT DISTINCT access_granted_via FROM public.secret_access_log WHERE operation = 'reveal'), 'owner', 'grant path recorded');
-
--- ---- Share with reader; outsider gets nothing and leaves no log.
 INSERT INTO public.secret_shares (secret_id, shared_with_user_id, shared_by, access_level)
-VALUES ((SELECT login FROM ids), 'd1a00000-0000-4000-8000-000000000002', 'd1a00000-0000-4000-8000-000000000001', 'read');
-
+VALUES ((SELECT card FROM ids), 'd1a00000-0000-4000-8000-000000000002', 'd1a00000-0000-4000-8000-000000000001', 'read');
 SELECT set_config('request.jwt.claims', '{"sub":"d1a00000-0000-4000-8000-000000000002","role":"authenticated"}', true);
 SET LOCAL ROLE authenticated;
-SELECT is((SELECT count(*) FROM public.list_secrets_v2()), 1::bigint, 'reader lists only the shared row');
-SELECT is((SELECT shared_by_email FROM public.list_secrets_v2()), 'smh-owner@pgtap.test', 'sharer reported');
-SELECT is((SELECT password FROM public.get_secret_values(ARRAY[(SELECT login FROM ids), (SELECT card FROM ids)], 'mcp')),
-    'pw-mail', 'reader gets the shared value and nothing else');
-
+SELECT is((SELECT notes FROM public.get_user_secrets_with_shared() WHERE id = (SELECT card FROM ids)),
+    'direct write', 'a share recipient reads sealed notes through v1');
 SELECT set_config('request.jwt.claims', '{"sub":"d1a00000-0000-4000-8000-000000000003","role":"authenticated"}', true);
-SELECT is((SELECT count(*) FROM public.list_secrets_v2()), 0::bigint, 'outsider lists nothing');
-SELECT is((SELECT count(*) FROM public.get_secret_values(ARRAY[(SELECT card FROM ids), (SELECT login FROM ids)], 'mcp')),
-    0::bigint, 'outsider reads nothing');
-SELECT set_config('request.jwt.claims', '', true);
-SELECT throws_ok($$ SELECT * FROM public.get_secret_values(ARRAY[(SELECT card FROM ids)], 'mcp') $$,
-    '42501', NULL, 'unauthenticated read is refused');
-SELECT is((SELECT count(*) FROM public.list_secrets_v2()), 0::bigint, 'unauthenticated list is empty');
-
+SELECT is((SELECT count(*) FROM public.get_user_secrets_with_shared() WHERE id = (SELECT card FROM ids)),
+    0::bigint, 'an outsider still sees nothing');
 RESET ROLE;
-SELECT is((SELECT count(*) FROM public.secret_access_log WHERE user_id = 'd1a00000-0000-4000-8000-000000000002'
-           AND operation = 'reveal' AND access_granted_via = 'share'), 1::bigint, 'reader reveal logged as share');
-SELECT is((SELECT count(*) FROM public.secret_access_log WHERE user_id = 'd1a00000-0000-4000-8000-000000000003'), 0::bigint,
-    'outsider left no reveal rows');
+
+-- A pre-existing audit row on the card, as share_secret would write.
+INSERT INTO public.secret_access_log (secret_id, user_id, operation, access_granted_via)
+VALUES ((SELECT card FROM ids), 'd1a00000-0000-4000-8000-000000000001', 'share', 'owner');
 
 -- ---- Clients still cannot write the log.
 SELECT set_config('request.jwt.claims', '{"sub":"d1a00000-0000-4000-8000-000000000003","role":"authenticated"}', true);
 SET LOCAL ROLE authenticated;
-SELECT throws_ok($$ INSERT INTO public.secret_access_log (secret_id, user_id, operation) VALUES (gen_random_uuid(), auth.uid(), 'reveal') $$,
-    '42501', NULL, 'clients cannot forge reveal rows');
+SELECT throws_ok($$ INSERT INTO public.secret_access_log (secret_id, user_id, operation) VALUES (gen_random_uuid(), auth.uid(), 'view') $$,
+    '42501', NULL, 'clients cannot forge audit rows');
 
 -- ---- Delete keeps the trail and logs the delete.
 SELECT set_config('request.jwt.claims', '{"sub":"d1a00000-0000-4000-8000-000000000001","role":"authenticated"}', true);
 SELECT is((public.delete_secret((SELECT card FROM ids)))->>'success', 'true', 'owner deletes the card');
 SELECT is((public.delete_secret((SELECT card FROM ids)))->>'error', 'Secret not found or access denied', 'second delete unchanged message');
 RESET ROLE;
-SELECT is((SELECT count(*) FROM public.secret_access_log WHERE secret_id = (SELECT card FROM ids) AND operation = 'reveal'),
-    3::bigint, 'reveal rows survive deletion of the secret');
+SELECT is((SELECT count(*) FROM public.secret_access_log WHERE secret_id = (SELECT card FROM ids) AND operation = 'share'),
+    1::bigint, 'earlier audit rows survive deletion of the secret');
 SELECT is((SELECT count(*) FROM public.secret_access_log WHERE secret_id = (SELECT card FROM ids) AND operation = 'delete'),
     1::bigint, 'delete is logged');
 SELECT ok(NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'secret_access_log_secret_id_fkey'),

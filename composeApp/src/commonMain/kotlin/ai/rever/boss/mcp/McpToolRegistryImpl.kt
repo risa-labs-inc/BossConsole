@@ -7,7 +7,6 @@ import ai.rever.boss.mcp.sandbox.McpRiskLevel
 import ai.rever.boss.mcp.secrets.McpResultFilter
 import ai.rever.boss.mcp.secrets.McpSecretPrePass
 import ai.rever.boss.mcp.secrets.SecretDescriptor
-import ai.rever.boss.mcp.secrets.SecretFieldValues
 import ai.rever.boss.mcp.secrets.SecretLookup
 import ai.rever.boss.mcp.secrets.SecretPreparation
 import ai.rever.boss.mcp.secrets.SecretRecord
@@ -22,7 +21,7 @@ import ai.rever.boss.plugin.api.McpToolResult
 import ai.rever.boss.plugin.api.RegisteredMcpTool
 import ai.rever.boss.plugin.logging.LogSanitizer
 import ai.rever.boss.plugin.pathutils.BossDirectories
-import ai.rever.boss.services.supabase.SecretValueService
+import ai.rever.boss.services.supabase.SecretService
 import ai.rever.boss.utils.atomicWriteText
 import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.ComponentLogger
@@ -116,39 +115,25 @@ object McpToolRegistryImpl : McpToolRegistry {
     private const val FAULT_MESSAGE_MS = 10_000L
 
     /**
-     * How `{{secret:<id>}}` references reach the vault: the host-owned `SecretValueService`, mapped
-     * to the resolver's record type at this one seam. Pages are metadata only
-     * (`list_secrets_v2`); the referenced values come from `get_secret_values` with purpose
-     * [MCP_SECRET_PURPOSE], which logs each reveal server-side. Only consulted for a call that
-     * carries a reference; with no session the RPCs refuse and so does the call.
+     * How `{{secret:<id>}}` references reach the vault: the same host-owned `SecretService` the
+     * Secret Manager panel and the browser autofill read through, mapped to the resolver's own
+     * record type at this one seam. Only consulted for a call that carries a reference, so a
+     * host with no signed-in session pays nothing until an agent asks for a secret - and then
+     * gets a refusal, since the RPC has no session to run under.
      */
     private val hostSecretLookup =
-        object : SecretLookup {
-            override suspend fun page(
-                limit: Int,
-                offset: Int,
-            ): Result<List<SecretRecord>> =
-                SecretValueService.listV2(limit, offset).map { rows ->
-                    rows.map { row ->
-                        SecretRecord(
-                            id = row.id,
-                            website = row.website,
-                            username = row.username,
-                            password = "",
-                            notes = null,
-                            tags = row.tags,
-                        )
-                    }
+        SecretLookup { limit, offset ->
+            SecretService.getUserSecrets(limit, offset).map { page ->
+                page.data.map { entry ->
+                    SecretRecord(
+                        id = entry.id,
+                        website = entry.website,
+                        username = entry.username,
+                        password = entry.password,
+                        notes = entry.notes,
+                        tags = entry.tags,
+                    )
                 }
-
-            override suspend fun values(ids: Set<String>): Result<Map<String, SecretFieldValues>> {
-                val out = HashMap<String, SecretFieldValues>()
-                for (chunk in ids.chunked(SecretValueService.MAX_VALUE_IDS)) {
-                    val rows =
-                        SecretValueService.getValues(chunk, MCP_SECRET_PURPOSE).getOrElse { return Result.failure(it) }
-                    rows.forEach { out[it.id.lowercase()] = SecretFieldValues(it.password, it.notes) }
-                }
-                return Result.success(out)
             }
         }
 
@@ -413,9 +398,6 @@ internal const val MAX_MCP_RESULT_CHARS: Int = 150_000
  * the secret-manager plugin puts on `secret_get` and `secrets_list` (see `docs/RBAC_GUIDE.md`).
  */
 internal const val SECRET_READ_PERMISSION: String = "secret.read"
-
-/** The `get_secret_values` purpose every MCP reveal is logged under. */
-internal const val MCP_SECRET_PURPOSE: String = "mcp"
 
 private data class McpAccessSnapshot(
     val isAdmin: Boolean = false,
