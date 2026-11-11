@@ -1,7 +1,7 @@
 -- pgTAP tests for 20261111150000_invite_links: create/preview/redeem/revoke/list RPCs, policy, quotas, grants, audit.
 -- Run with: supabase test db
 begin;
-select plan(99);
+select plan(115);
 
 -- a1 owner, a3 agent manager, a4 plain member, a8 at the domain, a9 outside it, b1 owner of B.
 insert into auth.users (id, email, email_confirmed_at) values
@@ -353,6 +353,37 @@ select is((select array_agg(distinct action order by action) from public.platfor
 select is((select count(*)::int from public.agent_audit_log where action = 'invite_link.redeem' and agent_id = pg_temp.agent('ilinv')
            and actor = pg_temp.u('a7') and detail->>'redeemer' = pg_temp.u('a7')::text), 1, 'audit: redeem is attributed to the redeemer');
 select is((select count(*)::int from public.agent_audit_log where detail::text ~ '[A-Za-z0-9_-]{43}' and action like 'invite_link.%'), 0, 'audit: no token in any invite_link row');
+
+-- ---- 9. admin list and platform policy read ----
+select pg_temp.as_user('a3');
+select is((select count(*)::int from jsonb_array_elements(public.list_invite_links('ilinv'))),
+    (select count(*)::int from public.invite_links where target = 'ilinv'), 'list_invite_links: an agents.access holder sees every link of the agent');
+select is((select count(distinct e->>'creator_email')::int from jsonb_array_elements(public.list_invite_links('ilinv')) e
+           where e->>'creator_email' in ('ann@other-il.test', 'member@acme-il.test')), 2, 'list_invite_links: shows each creator''s email');
+select is((select count(*)::int from jsonb_array_elements(public.list_invite_links('ilinv')) e
+           where e ? 'token' or e ? 'token_hash' or e::text ~ '[A-Za-z0-9_-]{43}'), 0, 'list_invite_links: no token fields');
+select is((select e->>'status' from jsonb_array_elements(public.list_invite_links('ilinv')) e where e->>'id' = pg_temp.lid('e1')::text),
+    'expired', 'list_invite_links: status');
+select is((select (e->>'created_at')::timestamptz from jsonb_array_elements(public.list_invite_links('ilinv')) with ordinality t(e, n) where n = 1),
+    (select max(created_at) from public.invite_links where target = 'ilinv'), 'list_invite_links: newest first');
+select pg_temp.as_user('a5');
+select throws_ok($$ select public.list_invite_links('ilinv') $$, '42501', 'not_allowed', 'list_invite_links: a plain user is refused');
+select pg_temp.as_user('b1');
+select throws_ok($$ select public.list_invite_links('ilinv') $$, '42501', 'not_allowed', 'list_invite_links: another org''s admin is refused');
+select throws_ok($$ select public.list_invite_links('nosuch') $$, '42501', 'not_allowed', 'list_invite_links: unknown target is refused alike');
+select pg_temp.as_user('c1');
+select is((select count(*)::int from jsonb_array_elements(public.list_invite_links('max'))), (select count(*)::int from public.invite_links where target = 'max'),
+    'list_invite_links: a platform admin sees every platform link');
+select is((select count(*)::int from jsonb_array_elements(public.list_invite_links('max')) e where e->>'creator_email' = 'ann@other-il.test'), (select count(*)::int from public.invite_links where target = 'max' and created_by = pg_temp.u('a5')),
+    'list_invite_links: platform links carry the creator email');
+select is(public.get_platform_invite_policy('max')->>'max_uses', '2', 'get_platform_invite_policy: stored value');
+select is(public.get_platform_invite_policy('optimist')->>'max_uses', '10', 'get_platform_invite_policy: defaults fill the gaps');
+select throws_ok($$ select public.get_platform_invite_policy('x') $$, '22023', 'bad_request', 'get_platform_invite_policy: unknown platform');
+select pg_temp.as_user('a3');
+select throws_ok($$ select public.get_platform_invite_policy('max') $$, '42501', 'not_allowed', 'get_platform_invite_policy: a non-admin is refused');
+select throws_ok($$ select public.list_invite_links('max') $$, '42501', 'not_allowed', 'list_invite_links: an org admin is not a platform admin');
+select is(has_function_privilege('anon', 'public.list_invite_links(text)', 'EXECUTE')
+       or has_function_privilege('anon', 'public.get_platform_invite_policy(text)', 'EXECUTE'), false, 'both new functions are closed to anon');
 
 select * from finish();
 rollback;

@@ -492,10 +492,48 @@ BEGIN
 END;
 $$;
 
+/** Every link of a target, for its admins (agents.access on the owning org; platform admins for platforms). Raises 42501 otherwise. */
+CREATE OR REPLACE FUNCTION public.list_invite_links(p_target text) RETURNS jsonb
+    LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    v_uid uuid := auth.uid();
+    v_info jsonb := CASE WHEN p_target IS NULL THEN NULL ELSE public.invite_target_info(p_target) END;
+BEGIN
+    IF v_uid IS NULL OR v_info IS NULL OR NOT public.invite_audience_ok(v_uid, auth.email(), 'admins', v_info) THEN
+        RAISE EXCEPTION 'not_allowed' USING ERRCODE = '42501';
+    END IF;
+    RETURN COALESCE((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'id', l.id, 'target', l.target, 'max_uses', l.max_uses, 'uses', l.uses, 'expires_at', l.expires_at,
+        'revoked_at', l.revoked_at, 'created_at', l.created_at, 'via', l.via, 'created_by', l.created_by,
+        'creator_email', u.email::text,
+        'status', CASE WHEN l.revoked_at IS NOT NULL THEN 'revoked' WHEN l.expires_at <= now() THEN 'expired'
+                       WHEN l.uses >= l.max_uses THEN 'used_up' ELSE 'active' END) ORDER BY l.created_at DESC, l.id)
+        FROM public.invite_links l LEFT JOIN auth.users u ON u.id = l.created_by
+        WHERE l.target = p_target), '[]'::jsonb);
+END;
+$$;
+
+/** The effective policy (stored row over the defaults). Platform admins only; raises 42501 otherwise. */
+CREATE OR REPLACE FUNCTION public.get_platform_invite_policy(p_platform text) RETURNS jsonb
+    LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF auth.uid() IS NULL OR NOT public.is_user_admin(auth.uid()) THEN
+        RAISE EXCEPTION 'not_allowed' USING ERRCODE = '42501';
+    END IF;
+    IF p_platform IS NULL OR p_platform NOT IN ('optimist', 'max') THEN
+        RAISE EXCEPTION 'bad_request' USING ERRCODE = '22023';
+    END IF;
+    RETURN public.invite_policy_default() || COALESCE(
+        (SELECT p.policy FROM public.platform_invite_policies p WHERE p.platform = p_platform), '{}'::jsonb);
+END;
+$$;
+
 REVOKE ALL ON FUNCTION public.create_invite_link(text, int, int, text), public.invite_link_preview(text),
     public.redeem_invite_link(text), public.revoke_invite_link(uuid), public.list_my_invite_links(text),
-    public.platform_access_allowed(text), public.set_platform_invite_policy(text, jsonb) FROM PUBLIC, anon, authenticated;
+    public.platform_access_allowed(text), public.set_platform_invite_policy(text, jsonb), public.list_invite_links(text),
+    public.get_platform_invite_policy(text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.create_invite_link(text, int, int, text), public.redeem_invite_link(text),
     public.revoke_invite_link(uuid), public.list_my_invite_links(text), public.platform_access_allowed(text),
-    public.set_platform_invite_policy(text, jsonb) TO authenticated, service_role;
+    public.set_platform_invite_policy(text, jsonb), public.list_invite_links(text), public.get_platform_invite_policy(text)
+    TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.invite_link_preview(text) TO anon, authenticated, service_role;
