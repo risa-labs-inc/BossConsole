@@ -13,6 +13,9 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 
@@ -63,6 +66,13 @@ object SecretService {
 
     private val client
         get() = SupabaseConfig.client
+
+    private val _changes = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /** Fires after every successful in-process write (create/update/delete/share/unshare). */
+    val changes: SharedFlow<Unit> = _changes.asSharedFlow()
+
+    private fun <T> Result<T>.announced(): Result<T> = also { if (it.isSuccess) _changes.tryEmit(Unit) }
 
     /**
      * Get user secrets with pagination
@@ -158,7 +168,9 @@ object SecretService {
      * @param request Secret creation request with website, username, password, etc.
      * @return Result with success/failure
      */
-    suspend fun createSecret(request: CreateSecretRequest): Result<Unit> {
+    suspend fun createSecret(request: CreateSecretRequest): Result<Unit> = createSecretUnannounced(request).announced()
+
+    private suspend fun createSecretUnannounced(request: CreateSecretRequest): Result<Unit> {
         return try {
             request.validate().getOrElse { return Result.failure(it) }
 
@@ -216,7 +228,9 @@ object SecretService {
      * @param request Secret update request with all fields
      * @return Result with success/failure
      */
-    suspend fun updateSecret(request: UpdateSecretRequest): Result<Unit> {
+    suspend fun updateSecret(request: UpdateSecretRequest): Result<Unit> = updateSecretUnannounced(request).announced()
+
+    private suspend fun updateSecretUnannounced(request: UpdateSecretRequest): Result<Unit> {
         return try {
             // Validate request
             request.validate().getOrElse { return Result.failure(it) }
@@ -276,7 +290,9 @@ object SecretService {
      * @param secretId ID of the secret to delete
      * @return Result with success/failure
      */
-    suspend fun deleteSecret(secretId: String): Result<Unit> =
+    suspend fun deleteSecret(secretId: String): Result<Unit> = deleteSecretUnannounced(secretId).announced()
+
+    private suspend fun deleteSecretUnannounced(secretId: String): Result<Unit> =
         try {
             val params =
                 buildJsonObject {
@@ -396,7 +412,9 @@ object SecretService {
      * @param request Share request with secret ID and target user/role
      * @return Result with success/failure
      */
-    suspend fun shareSecret(request: ShareSecretRequest): Result<Unit> {
+    suspend fun shareSecret(request: ShareSecretRequest): Result<Unit> = shareSecretUnannounced(request).announced()
+
+    private suspend fun shareSecretUnannounced(request: ShareSecretRequest): Result<Unit> {
         return try {
             request.validate().getOrElse { return Result.failure(it) }
 
@@ -448,7 +466,9 @@ object SecretService {
      * @param request Unshare request with secret ID and target user/role
      * @return Result with success/failure
      */
-    suspend fun unshareSecret(request: UnshareSecretRequest): Result<Unit> {
+    suspend fun unshareSecret(request: UnshareSecretRequest): Result<Unit> = unshareSecretUnannounced(request).announced()
+
+    private suspend fun unshareSecretUnannounced(request: UnshareSecretRequest): Result<Unit> {
         return try {
             request.validate().getOrElse { return Result.failure(it) }
 

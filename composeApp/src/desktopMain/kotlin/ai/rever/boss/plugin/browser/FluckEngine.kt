@@ -2422,6 +2422,11 @@ object FluckEngine {
                 .apply {
                     if (capabilityIsTrue(ChromiumFlagKeys.DISABLE_SANDBOX) || inContainer) disableSandbox()
                 }.apply { applyRemoteDebuggingPort(this) }
+                .apply {
+                    if (SystemUtils.isLinux && ai.rever.boss.plugin.browser.autofill.NativeAutofill.enabled) {
+                        passwordStore(ai.rever.boss.plugin.browser.autofill.LinuxPasswordStore.choose())
+                    }
+                }
 
         // Add user agent if configured
         BrowserSettings.userAgent?.let { ua ->
@@ -2456,6 +2461,9 @@ object FluckEngine {
         // attempt survived a later successful boot).
         initializationError = null
         attemptCount = 0
+
+        ai.rever.boss.plugin.browser.autofill.NativeAutofill
+            .onEngineReady(newEngine)
 
         // Activate Widevine DRM for protected content (Netflix, Disney+, etc.).
         // Deliberately NOT joined: activation can hit the network (CDM download on
@@ -2963,6 +2971,14 @@ object FluckEngine {
                 val remoteKey =
                     ai.rever.boss.sharing.AppBrowserKeyDispatch
                         .consume(browser, event, ownerWindowId)
+                // An open autofill dropdown owns arrows / Enter / Esc while it is showing.
+                if (!modifiers.isAltDown && !modifiers.isControlDown && !modifiers.isMetaDown && !modifiers.isShiftDown &&
+                    ai.rever.boss.plugin.browser.autofill.NativeAutofill
+                        .consumeSuggestionKey(browser, keyCode)
+                ) {
+                    return@PressKeyCallback com.teamdev.jxbrowser.browser.callback.input.PressKeyCallback.Response
+                        .suppress()
+                }
                 // The active AWT window is not enough: its native URL editor may own the key.
                 // Retire a remote permit before rejecting it, so it cannot authorize a later key.
                 if (ai.rever.boss.window

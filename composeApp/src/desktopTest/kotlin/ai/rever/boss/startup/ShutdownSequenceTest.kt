@@ -47,6 +47,7 @@ class ShutdownSequenceTest {
                 "flushing MCP operation ledger on exit",
                 "awaiting window plugin teardown",
                 "stopping performance monitor",
+                "clearing native autofill mirror",
                 "closing browser engine",
                 "closing favicon HTTP client",
                 "uninstalling keyboard interceptor",

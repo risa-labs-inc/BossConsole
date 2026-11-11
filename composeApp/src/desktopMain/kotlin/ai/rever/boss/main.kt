@@ -246,6 +246,9 @@ fun main(rawArgs: Array<String>) {
 
     // Publish browser configuration flags as system properties
     ChromiumFlagsSettingsManager.applyToSystemProperties()
+    // Before any browser exists: plugin-side autofill stands down on this flag.
+    ai.rever.boss.plugin.browser.autofill.NativeAutofill
+        .publishFlag()
     ai.rever.boss.config.SwipeNavSettingsManager
         .publish()
     ai.rever.boss.config.AutoPipSettingsManager

@@ -78,6 +78,10 @@ object ShutdownSequence {
             ShutdownStep("stopping performance monitor") {
                 PerformanceMonitor.stop()
             },
+            ShutdownStep("clearing native autofill mirror") {
+                ai.rever.boss.plugin.browser.autofill.NativeAutofill
+                    .clearOnExit()
+            },
             ShutdownStep("closing browser engine") {
                 val engine = FluckEngine.currentEngine
                 if (engine != null && !engine.isClosed) {

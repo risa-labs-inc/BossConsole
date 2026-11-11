@@ -309,6 +309,9 @@ internal fun installPopupWindowChrome(
     }
     // Deliberately outside the catch above: if the menu failed to install, page clicks still need dismissing.
     FluckEngine.setupSwingPopupDismissOnPageClick(popupBrowser)
+    // Swing popup windows draw JxBrowser's own suggestions popup visibly, so no custom dropdown.
+    ai.rever.boss.plugin.browser.autofill.NativeAutofill
+        .attach(popupBrowser, dropdown = false)
 }
 
 /** Renders [entries] against the frame the click resolved to. */

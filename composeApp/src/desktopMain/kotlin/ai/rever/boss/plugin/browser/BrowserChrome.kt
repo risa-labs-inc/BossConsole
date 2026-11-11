@@ -16,6 +16,8 @@ private val logger = BossLogger.forComponent("BrowserChrome")
 internal fun installDefaultBrowserChrome(browser: Browser) {
     installSuppressingContextMenu(browser)
     FluckEngine.setupSwingPopupDismissOnPageClick(browser)
+    ai.rever.boss.plugin.browser.autofill.NativeAutofill
+        .attach(browser)
 }
 
 /**
