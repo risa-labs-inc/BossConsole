@@ -1148,6 +1148,7 @@ internal class BrowserHandleImpl(
                 (bounds.width / density).toInt(),
                 (bounds.height / density).toInt(),
             ),
+            currentWindowId,
         )
     }
 

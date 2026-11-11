@@ -65,7 +65,7 @@ import java.util.concurrent.ConcurrentHashMap
  * profiles and other engines are never touched. Values are never logged.
  */
 object NativeAutofill {
-    const val FLAG_PROP = "boss.browser.nativeAutofill"
+    const val FLAG_PROP = BrowserSettings.NATIVE_AUTOFILL_PROP
 
     private val logger = BossLogger.forComponent("NativeAutofill")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -95,6 +95,7 @@ object NativeAutofill {
     /** Publish the stand-down flag for plugin-side autofill, then start. Call before any browser exists. */
     fun publishFlag() {
         System.setProperty(FLAG_PROP, enabled.toString())
+        BrowserSettings.republishPluginPasswordFlags()
         if (enabled) start()
     }
 
@@ -327,21 +328,33 @@ object NativeAutofill {
             return safely(commit)
         }
         val host = origin.substringAfter("://")
-        prompt(
-            browser,
-            title = if (update || existing != null) "Update password for $host?" else "Save password for $host?",
-            detail = login,
-            saveLabel = if (update || existing != null) "Update" else "Save",
-            allowNever = never != null,
-        ) { choice ->
+        val updating = update || existing != null
+        val request =
+            SaveRequest(
+                kind = SaveKind.PASSWORD,
+                title = if (updating) "Update password?" else "Save password for $host?",
+                saveLabel = if (updating) "Update" else "Save",
+                allowNever = never != null,
+                username = login,
+                password = captured.password,
+            )
+        prompt(browser, request) { choice, editedUser ->
             when (choice) {
                 SaveChoice.SAVE ->
                     scope.launch {
-                        val ok = writeLogin(origin, login, captured.password, existing)
+                        val user = editedUser.ifBlank { login }
+                        val edited = !CredentialCapture.sameLogin(user, login)
+                        val target = if (edited) findLoginRow(origin, user) else existing
+                        val ok = writeLogin(origin, user, captured.password, target)
                         if (ok) {
-                            index.add(currentProfilePath(), key)
-                            runCatching { index.save() }
-                            safely(commit)
+                            // An edited username is not what Chromium would store; the mirror adds it instead.
+                            if (edited) {
+                                safely(ignore)
+                            } else {
+                                index.add(currentProfilePath(), key)
+                                runCatching { index.save() }
+                                safely(commit)
+                            }
                             logger.info(LogCategory.BROWSER, "Password saved to Secret Manager", mapOf("origin" to origin, "updated" to (existing != null)))
                         } else {
                             safely(ignore)
@@ -406,7 +419,16 @@ object NativeAutofill {
         val expiry = runCatching { YearMonth.of(card.expirationYear(), card.expirationMonth()) }.getOrNull() ?: return safely(decline)
         val key = cardKey(number.takeLast(4), expiry)
         val brand = AutofillMapping.brandOf(number)
-        prompt(browser, "Save card?", "$brand ending ${number.takeLast(4)}", "Save", allowNever = false) { choice ->
+        val holder = card.cardholder().orEmpty()
+        val request =
+            SaveRequest(
+                kind = SaveKind.CARD,
+                title = "Save card?",
+                saveLabel = "Save",
+                allowNever = false,
+                lines = listOfNotNull("$brand •••• ${number.takeLast(4)}", "Expires %02d/%02d".format(expiry.monthValue, expiry.year % 100), holder.ifBlank { null }),
+            )
+        prompt(browser, request) { choice, _ ->
             if (choice != SaveChoice.SAVE) return@prompt safely(decline)
             scope.launch {
                 val known = AutofillMapping.map(lastRows).containsKey(key)
@@ -434,8 +456,20 @@ object NativeAutofill {
         val fields = fieldsOf(profile)
         if (fields.isEmpty()) return safely(decline)
         val key = addressKey(fields)
-        val detail = listOf(fields.street, fields.city).filter { it.isNotBlank() }.joinToString(", ")
-        prompt(browser, "Save address?", detail, "Save", allowNever = false) { choice ->
+        val request =
+            SaveRequest(
+                kind = SaveKind.ADDRESS,
+                title = "Save address?",
+                saveLabel = "Save",
+                allowNever = false,
+                lines =
+                    listOf(
+                        fields.name,
+                        fields.street,
+                        listOf(fields.city, fields.state, fields.zip).filter { it.isNotBlank() }.joinToString(", "),
+                    ).filter { it.isNotBlank() },
+            )
+        prompt(browser, request) { choice, _ ->
             if (choice != SaveChoice.SAVE) return@prompt safely(decline)
             scope.launch {
                 val known = AutofillMapping.map(lastRows).containsKey(key)
@@ -460,33 +494,49 @@ object NativeAutofill {
         runCatching(f)
     }
 
+    private val prompts = ConcurrentHashMap<Browser, SavePrompt>()
+
     private fun prompt(
         browser: Browser,
-        title: String,
-        detail: String,
-        saveLabel: String,
-        allowNever: Boolean,
-        onChoice: (SaveChoice) -> Unit,
+        request: SaveRequest,
+        onChoice: (SaveChoice, String) -> Unit,
     ) = onEdt {
         val anchor = anchorFor(browser) ?: fallbackAnchor()
         if (anchor == null) {
-            onChoice(SaveChoice.NOT_NOW)
+            onChoice(SaveChoice.NOT_NOW, request.username)
             return@onEdt
         }
-        SavePrompt(anchor, title, detail, saveLabel, allowNever) { choice ->
-            logger.info(LogCategory.BROWSER, "Autofill save prompt answered", mapOf("choice" to choice.name))
-            onChoice(choice)
-        }.show()
-        logger.info(LogCategory.BROWSER, "Autofill save prompt shown", mapOf("title" to title.substringBefore(" for ")))
+        prompts.remove(browser)?.dismiss()
+        lateinit var prompt: SavePrompt
+        prompt =
+            SavePrompt(anchor, { anchorFor(browser) ?: fallbackAnchor()?.takeIf { it.window === anchor.window } }, request) { choice, user ->
+                prompts.remove(browser, prompt)
+                logger.info(LogCategory.BROWSER, "Autofill save prompt answered", mapOf("kind" to request.kind.name, "choice" to choice.name))
+                onChoice(choice, user)
+            }
+        prompts[browser] = prompt
+        prompt.show()
+        logger.info(LogCategory.BROWSER, "Autofill save prompt shown", mapOf("kind" to request.kind.name))
     }
 
     private fun anchorFor(browser: Browser): AutofillAnchor? =
         BrowserServiceImpl.getActiveHandles().firstOrNull { it.getRawBrowser() === browser }?.autofillAnchor()
 
+    /** For browsers outside a BrowserHandle (Swing popup windows): the active BOSS window. */
     private fun fallbackAnchor(): AutofillAnchor? {
         val w = KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow ?: return null
         if (!w.isShowing) return null
-        return AutofillAnchor(w, Rectangle(w.locationOnScreen, w.size))
+        return AutofillAnchor(w, Rectangle(w.locationOnScreen, w.size), null)
+    }
+
+    private fun openManager(windowId: String?) {
+        val id = windowId ?: ai.rever.boss.utils.WindowFocusManager.resolveActionableWindowId() ?: return
+        scope.launch {
+            runCatching {
+                ai.rever.boss.components.events.PanelEventBus
+                    .openPanel(ai.rever.boss.components.plugin.PanelIds.SECRET_MANAGER, sourceWindowId = id)
+            }
+        }
     }
 
     // ------------------------------------------------------------------ dropdown
@@ -494,6 +544,8 @@ object NativeAutofill {
     private class OpenSuggestions(
         val window: SuggestionsWindow,
         @Volatile var suggestions: List<Suggestion>,
+        val type: String,
+        val site: String,
     )
 
     private fun installDropdown(browser: Browser) {
@@ -514,7 +566,7 @@ object NativeAutofill {
                     onEdt {
                         popups[browser]?.let {
                             it.suggestions = list
-                            it.window.update(list.map(::rowOf))
+                            it.window.update(list.map { s -> rowOf(s, it.type, it.site) })
                         }
                     }
                 }
@@ -535,7 +587,8 @@ object NativeAutofill {
     ) {
         popups.remove(browser)?.window?.dispose()
         val anchor = anchorFor(browser)
-        if (anchor == null || suggestions.isEmpty() || (type == "PASSWORDS" && !BrowserSettings.suggestPasswords)) {
+        val site = runCatching { java.net.URI(browser.url()).host.orEmpty().removePrefix("www.") }.getOrDefault("")
+        if (anchor == null || suggestions.isEmpty()) {
             logger.debug(LogCategory.BROWSER, "Autofill dropdown declined", mapOf("type" to type, "anchored" to (anchor != null)))
             runCatching { action.cancel() }
             return
@@ -544,6 +597,15 @@ object NativeAutofill {
         val window =
             SuggestionsWindow(
                 anchor,
+                anchorNow = { anchorFor(browser) },
+                manageLabel =
+                    when (type) {
+                        "PASSWORDS" -> "Manage passwords"
+                        "CREDIT_CARDS" -> "Manage cards"
+                        "ADDRESSES" -> "Manage addresses"
+                        else -> null
+                    },
+                onManage = { openManager(anchor.windowId) },
                 onAccept = { i ->
                     popups.remove(browser, state)
                     logger.info(LogCategory.BROWSER, "Autofill dropdown accepted", mapOf("type" to type))
@@ -554,22 +616,63 @@ object NativeAutofill {
                     runCatching { action.cancel() }
                 },
             )
-        state = OpenSuggestions(window, suggestions)
+        state = OpenSuggestions(window, suggestions, type, site)
         popups[browser] = state
-        window.show(suggestions.map(::rowOf), location)
-        logger.info(LogCategory.BROWSER, "Autofill dropdown shown", mapOf("type" to type, "count" to suggestions.size))
+        val shown = window.show(suggestions.map { rowOf(it, type, site) }, location)
+        logger.info(
+            LogCategory.BROWSER,
+            if (shown) "Autofill dropdown shown" else "Autofill dropdown withheld: window not active",
+            mapOf("type" to type, "count" to suggestions.size),
+        )
     }
 
-    private fun rowOf(s: Suggestion): SuggestionRow {
-        val secondary =
-            when {
-                s.hasHiddenPassword() -> s.hiddenPassword
-                s.hasCreditCardInfo() -> s.creditCardInfo
-                s.hasAddressOrFullname() -> s.addressOrFullname
-                else -> ""
-            }
-        return SuggestionRow(s.value.orEmpty(), secondary.orEmpty())
+    internal fun rowOf(
+        primary: String,
+        hiddenPassword: String?,
+        cardInfo: String?,
+        address: String?,
+        type: String,
+        site: String,
+    ): SuggestionRow =
+        when {
+            type == "PASSWORDS" || hiddenPassword != null ->
+                SuggestionRow(primary, listOfNotNull(hiddenPassword?.ifBlank { null } ?: "••••••••", site.ifBlank { null }).joinToString("  ·  "), SuggestionKind.PASSWORD)
+            type == "CREDIT_CARDS" || cardInfo != null -> cardRow(primary, cardInfo.orEmpty())
+            type == "ADDRESSES" || address != null -> SuggestionRow(primary, address.orEmpty(), SuggestionKind.ADDRESS)
+            else -> SuggestionRow(primary, "", SuggestionKind.OTHER)
+        }
+
+    /** Chromium's card label varies ("Visa  ••4242, •, 12/30"); show network, last four and expiry only. */
+    internal fun cardRow(
+        value: String,
+        info: String,
+    ): SuggestionRow {
+        val all = "$value $info"
+        val last4 = Regex("(\\d{4})(?!.*\\d{4})").find(all)?.groupValues?.get(1)
+        val exp = Regex("\\b(\\d{1,2})/(\\d{2,4})\\b").find(all)?.let { "Expires ${it.groupValues[1].padStart(2, '0')}/${it.groupValues[2].takeLast(2)}" }
+        val network = Regex("^[A-Za-z][A-Za-z ]*[A-Za-z]").find(value.trim())?.value?.trim()
+        if (last4 == null) return SuggestionRow(value, info, SuggestionKind.CARD)
+        val holder = info.takeIf { i -> i.isNotBlank() && i.none { it.isDigit() } && '•' !in i }
+        return SuggestionRow(
+            listOfNotNull(network, "•••• $last4").joinToString(" "),
+            listOfNotNull(exp, holder).joinToString("  ·  "),
+            SuggestionKind.CARD,
+        )
     }
+
+    private fun rowOf(
+        s: Suggestion,
+        type: String,
+        site: String,
+    ): SuggestionRow =
+        rowOf(
+            s.value.orEmpty(),
+            s.hiddenPassword.takeIf { s.hasHiddenPassword() },
+            s.creditCardInfo.takeIf { s.hasCreditCardInfo() },
+            s.addressOrFullname.takeIf { s.hasAddressOrFullname() },
+            type,
+            site,
+        )
 
     /**
      * Called from the browser's PressKeyCallback. True = the key drove the open dropdown and must
@@ -579,7 +682,10 @@ object NativeAutofill {
         browser: Browser,
         key: KeyCode,
     ): Boolean {
-        val open = popups[browser] ?: return false
+        val open =
+            popups[browser] ?: return (key == KeyCode.KEY_CODE_ESCAPE && prompts[browser] != null).also { esc ->
+                if (esc) onEdt { prompts[browser]?.dismiss() }
+            }
         return when (key) {
             KeyCode.KEY_CODE_DOWN -> true.also { onEdt { open.window.moveSelection(1) } }
             KeyCode.KEY_CODE_UP -> true.also { onEdt { open.window.moveSelection(-1) } }

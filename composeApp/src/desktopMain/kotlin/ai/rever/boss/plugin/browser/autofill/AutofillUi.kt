@@ -1,60 +1,97 @@
 package ai.rever.boss.plugin.browser.autofill
 
-import ai.rever.boss.plugin.browser.FluckEngine
-import java.awt.BorderLayout
-import java.awt.Color
-import java.awt.Component
-import java.awt.Cursor
-import java.awt.Dimension
-import java.awt.FlowLayout
-import java.awt.Font
+import ai.rever.boss.plugin.ui.BossPrimaryButton
+import ai.rever.boss.plugin.ui.BossTextField
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.Icon
+import androidx.compose.material.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CreditCard
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import java.awt.Dialog
+import java.awt.Frame
 import java.awt.GraphicsEnvironment
 import java.awt.Point
 import java.awt.Rectangle
 import java.awt.Window
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
-import java.awt.event.MouseAdapter
-import java.awt.event.MouseEvent
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
-import javax.swing.BorderFactory
-import javax.swing.BoxLayout
-import javax.swing.DefaultListModel
-import javax.swing.JButton
-import javax.swing.JLabel
-import javax.swing.JList
-import javax.swing.JPanel
-import javax.swing.JWindow
-import javax.swing.ListCellRenderer
-import javax.swing.ListSelectionModel
 import javax.swing.SwingUtilities
 import javax.swing.Timer
+import BossTheme as HostTheme
+import ai.rever.boss.plugin.ui.BossTheme as Tokens
 
-/** Where a browser view sits on screen, in AWT logical units. */
+/** Where a browser view sits on screen, in AWT logical units, and the BOSS window hosting it. */
 internal data class AutofillAnchor(
     val window: Window,
     val viewOnScreen: Rectangle,
+    val windowId: String?,
 )
+
+internal enum class SuggestionKind { PASSWORD, CARD, ADDRESS, OTHER }
 
 internal data class SuggestionRow(
     val primary: String,
     val secondary: String,
+    val kind: SuggestionKind,
 )
 
-private object Palette {
-    val dark get() = FluckEngine.isColorSchemeDark
-    val bg get() = if (dark) Color(0x24, 0x26, 0x2B) else Color(0xFF, 0xFF, 0xFF)
-    val fg get() = if (dark) Color(0xE6, 0xE7, 0xEA) else Color(0x1F, 0x23, 0x28)
-    val muted get() = if (dark) Color(0x9A, 0x9E, 0xA6) else Color(0x65, 0x6D, 0x76)
-    val border get() = if (dark) Color(0x3A, 0x3D, 0x44) else Color(0xD0, 0xD7, 0xDE)
-    val selection get() = if (dark) Color(0x2F, 0x4A, 0x6E) else Color(0xDD, 0xEB, 0xFB)
-    val accent = Color(0x2F, 0x81, 0xF7)
-}
+/** Margin around the card inside the transparent window, so the shadow has room. */
+private const val SHADOW_PAD = 16
 
 private fun clampToScreen(
     p: Point,
-    size: Dimension,
+    w: Int,
+    h: Int,
 ): Point {
     val screen =
         GraphicsEnvironment
@@ -63,121 +100,247 @@ private fun clampToScreen(
             .map { it.defaultConfiguration.bounds }
             .firstOrNull { it.contains(p) } ?: return p
     return Point(
-        p.x.coerceIn(screen.x, (screen.x + screen.width - size.width).coerceAtLeast(screen.x)),
-        p.y.coerceIn(screen.y, (screen.y + screen.height - size.height).coerceAtLeast(screen.y)),
+        p.x.coerceIn(screen.x, (screen.x + screen.width - w).coerceAtLeast(screen.x)),
+        p.y.coerceIn(screen.y, (screen.y + screen.height - h).coerceAtLeast(screen.y)),
     )
 }
 
 /**
- * Chromium's autofill dropdown, drawn as an owned heavyweight window over the native browser
- * surface (the jxbrowser-compose popup renders underneath it in HARDWARE_ACCELERATED). Never
- * focusable, so the page field keeps focus and typing; keys arrive via [moveSelection]/[acceptSelected].
- * EDT only.
+ * An undecorated, transparent, MODELESS dialog owned by the BOSS window that hosts the browser.
+ * Never always-on-top: it orders with its owner only. Visible only while that window (or the
+ * overlay itself) is active and the anchor is still showing; [tick] re-checks that every 200 ms.
+ */
+private class OwnedOverlay(
+    private val owner: Window,
+    focusable: Boolean,
+) {
+    val dialog =
+        androidx.compose.ui.awt.ComposeDialog(owner, Dialog.ModalityType.MODELESS).apply {
+            isUndecorated = true
+            isTransparent = true
+            focusableWindowState = focusable
+            isAlwaysOnTop = false
+            isAutoRequestFocus = false
+            isResizable = false
+            background = java.awt.Color(0, 0, 0, 0)
+        }
+
+    val ownerActive: Boolean
+        get() =
+            (owner.isActive || dialog.isActive) &&
+                owner.isShowing &&
+                ((owner as? Frame)?.extendedState?.and(Frame.ICONIFIED) ?: 0) == 0
+
+    fun place(
+        x: Int,
+        y: Int,
+        w: Int,
+        h: Int,
+    ) {
+        val at = clampToScreen(Point(x - SHADOW_PAD, y - SHADOW_PAD), w + 2 * SHADOW_PAD, h + 2 * SHADOW_PAD)
+        dialog.setBounds(at.x, at.y, w + 2 * SHADOW_PAD, h + 2 * SHADOW_PAD)
+    }
+
+    fun dispose() {
+        dialog.isVisible = false
+        dialog.dispose()
+    }
+}
+
+@Composable
+private fun Card(content: @Composable () -> Unit) {
+    val shape = Tokens.radius.dialogShape
+    Box(Modifier.fillMaxSize().padding(SHADOW_PAD.dp)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .shadow(6.dp, shape)
+                .clip(shape)
+                .background(Tokens.colors.raised)
+                .border(1.dp, Tokens.colors.line, shape),
+        ) { content() }
+    }
+}
+
+private fun iconFor(kind: SuggestionKind): ImageVector =
+    when (kind) {
+        SuggestionKind.CARD -> Icons.Outlined.CreditCard
+        SuggestionKind.ADDRESS -> Icons.Outlined.Home
+        else -> Icons.Outlined.Key
+    }
+
+/**
+ * Chromium's autofill dropdown, drawn over the native browser surface (jxbrowser-compose draws
+ * its own popup underneath it in HARDWARE_ACCELERATED). Never focusable, so the page field keeps
+ * focus and typing; keys arrive via [moveSelection]/[acceptSelected]. EDT only.
  */
 internal class SuggestionsWindow(
     private val anchor: AutofillAnchor,
+    private val anchorNow: () -> AutofillAnchor?,
+    private val manageLabel: String?,
     private val onAccept: (Int) -> Unit,
+    private val onManage: () -> Unit,
     private val onCancel: () -> Unit,
 ) {
-    private val model = DefaultListModel<SuggestionRow>()
-    private val list = JList(model)
-    private val window = JWindow(anchor.window)
-    private var origin = Point()
+    private val overlay = OwnedOverlay(anchor.window, focusable = false)
+    private var rows by mutableStateOf(emptyList<SuggestionRow>())
+    private var selected by mutableIntStateOf(-1)
+    private var location = Point()
     private var closed = false
-
-    /** Read from the key callback thread. */
-    @Volatile var hasSelection = false
-        private set
-
-    private val ownerFocus =
+    private val watcher = Timer(200) { tick() }
+    private val ownerListener =
         object : WindowAdapter() {
-            override fun windowLostFocus(e: WindowEvent) = cancel()
-
             override fun windowDeactivated(e: WindowEvent) = cancel()
+
+            override fun windowIconified(e: WindowEvent) = cancel()
         }
-    private val ownerMoved =
+    private val moveListener =
         object : ComponentAdapter() {
             override fun componentMoved(e: ComponentEvent) = cancel()
 
             override fun componentResized(e: ComponentEvent) = cancel()
         }
 
-    init {
-        window.focusableWindowState = false
-        window.type = Window.Type.POPUP
-        list.selectionMode = ListSelectionModel.SINGLE_SELECTION
-        list.addListSelectionListener { hasSelection = list.selectedIndex >= 0 }
-        list.background = Palette.bg
-        list.cellRenderer = Renderer()
-        list.addMouseMotionListener(
-            object : MouseAdapter() {
-                override fun mouseMoved(e: MouseEvent) {
-                    val i = list.locationToIndex(e.point)
-                    if (i >= 0 && list.getCellBounds(i, i)?.contains(e.point) == true) list.selectedIndex = i
-                }
-            },
-        )
-        list.addMouseListener(
-            object : MouseAdapter() {
-                override fun mouseReleased(e: MouseEvent) {
-                    val i = list.locationToIndex(e.point)
-                    if (i >= 0 && list.getCellBounds(i, i)?.contains(e.point) == true) accept(i)
-                }
-            },
-        )
-        list.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-        val panel = JPanel(BorderLayout())
-        panel.border = BorderFactory.createLineBorder(Palette.border)
-        panel.background = Palette.bg
-        panel.add(list, BorderLayout.CENTER)
-        window.contentPane = panel
-        anchor.window.addWindowFocusListener(ownerFocus)
-        anchor.window.addWindowListener(ownerFocus)
-        anchor.window.addComponentListener(ownerMoved)
-    }
+    /** Read from the key callback thread. */
+    @Volatile var hasSelection = false
+        private set
 
     val isOpen get() = !closed
 
-    /** [locationInView] is Chromium's popup point in DIP relative to the browser view. */
-    fun show(
-        rows: List<SuggestionRow>,
-        locationInView: Point,
-    ) {
-        origin = Point(anchor.viewOnScreen.x + locationInView.x, anchor.viewOnScreen.y + locationInView.y)
-        update(rows)
-        window.isVisible = true
+    init {
+        overlay.dialog.setContent {
+            HostTheme {
+                Card {
+                    Column(Modifier.padding(vertical = Tokens.space.xs)) {
+                        rows.forEachIndexed { i, row -> RowItem(row, i == selected, { select(i) }) { accept(i) } }
+                        if (manageLabel != null) {
+                            Box(Modifier.fillMaxWidth().padding(vertical = Tokens.space.xs).height(1.dp).background(Tokens.colors.line))
+                            FooterItem(manageLabel) {
+                                dispose()
+                                onCancel()
+                                onManage()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        anchor.window.addWindowListener(ownerListener)
+        anchor.window.addComponentListener(moveListener)
     }
 
-    fun update(rows: List<SuggestionRow>) {
+    @Composable
+    private fun RowItem(
+        row: SuggestionRow,
+        highlighted: Boolean,
+        onHover: () -> Unit,
+        onClick: () -> Unit,
+    ) {
+        val hover = remember { MutableInteractionSource() }
+        val hovered by hover.collectIsHoveredAsState()
+        androidx.compose.runtime.LaunchedEffect(hovered) { if (hovered) onHover() }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(ROW_HEIGHT.dp)
+                .padding(horizontal = Tokens.space.xs)
+                .clip(Tokens.radius.cardShape)
+                .background(if (highlighted) Tokens.colors.signalWash else Tokens.colors.raised)
+                .hoverable(hover)
+                .clickable(onClick = onClick)
+                .padding(horizontal = Tokens.space.sm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(iconFor(row.kind), contentDescription = null, tint = Tokens.colors.textSecondary, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(Tokens.space.md))
+            Column(Modifier.weight(1f)) {
+                Text(row.primary, color = Tokens.colors.textPrimary, style = Tokens.type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (row.secondary.isNotEmpty()) {
+                    Text(
+                        row.secondary,
+                        color = Tokens.colors.textMuted,
+                        style = Tokens.type.body.copy(fontSize = 11.sp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun FooterItem(
+        label: String,
+        onClick: () -> Unit,
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(FOOTER_HEIGHT.dp)
+                .padding(horizontal = Tokens.space.xs)
+                .clip(Tokens.radius.cardShape)
+                .clickable(onClick = onClick)
+                .padding(horizontal = Tokens.space.sm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(label, color = Tokens.colors.signalText, style = Tokens.type.body)
+        }
+    }
+
+    /** [locationInView] is Chromium's popup point in DIP relative to the browser view. */
+    /** False when it could not be shown (its window is not active); Chromium has been answered. */
+    fun show(
+        newRows: List<SuggestionRow>,
+        locationInView: Point,
+    ): Boolean {
+        location = locationInView
+        update(newRows)
+        if (closed) return false
+        if (!overlay.ownerActive) {
+            cancel()
+            return false
+        }
+        overlay.dialog.isVisible = true
+        watcher.start()
+        return true
+    }
+
+    fun update(newRows: List<SuggestionRow>) {
         if (closed) return
-        if (rows.isEmpty()) return cancel()
-        model.clear()
-        rows.forEach(model::addElement)
-        list.selectedIndex = -1
-        val visible = rows.size.coerceAtMost(MAX_ROWS)
-        val size = Dimension(WIDTH, visible * ROW_HEIGHT + 2)
-        window.size = size
-        window.location = clampToScreen(origin, size)
+        if (newRows.isEmpty()) return cancel()
+        rows = newRows
+        select(-1)
+        val h = 2 * 4 + newRows.size.coerceAtMost(MAX_ROWS) * ROW_HEIGHT + (if (manageLabel != null) FOOTER_HEIGHT + 9 else 0)
+        overlay.place(anchor.viewOnScreen.x + location.x, anchor.viewOnScreen.y + location.y + 2, WIDTH, h)
+    }
+
+    private fun select(i: Int) {
+        selected = i
+        hasSelection = i >= 0
     }
 
     fun moveSelection(delta: Int) {
-        if (model.isEmpty) return
-        val n = model.size()
-        val cur = list.selectedIndex
-        list.selectedIndex =
+        val n = rows.size
+        if (n == 0) return
+        select(
             when {
-                cur < 0 && delta > 0 -> 0
-                cur < 0 -> n - 1
-                else -> (cur + delta + n) % n
-            }
+                selected < 0 && delta > 0 -> 0
+                selected < 0 -> n - 1
+                else -> (selected + delta + n) % n
+            },
+        )
     }
 
-    /** True when a row was selected and accepted. */
+    /** True when a row was highlighted and accepted. */
     fun acceptSelected(): Boolean {
-        val i = list.selectedIndex
-        if (i < 0) return false
-        accept(i)
+        if (selected < 0) return false
+        accept(selected)
         return true
+    }
+
+    private fun tick() {
+        val now = anchorNow()
+        if (!overlay.ownerActive || now == null || now.window !== anchor.window || now.viewOnScreen != anchor.viewOnScreen) cancel()
     }
 
     private fun accept(i: Int) {
@@ -196,115 +359,217 @@ internal class SuggestionsWindow(
     fun dispose() {
         if (closed) return
         closed = true
-        anchor.window.removeWindowFocusListener(ownerFocus)
-        anchor.window.removeWindowListener(ownerFocus)
-        anchor.window.removeComponentListener(ownerMoved)
-        window.isVisible = false
-        window.dispose()
-    }
-
-    private class Renderer : ListCellRenderer<SuggestionRow> {
-        private val panel = JPanel()
-        private val primary = JLabel()
-        private val secondary = JLabel()
-
-        init {
-            panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
-            panel.border = BorderFactory.createEmptyBorder(3, 10, 3, 10)
-            primary.font = primary.font.deriveFont(Font.PLAIN, 13f)
-            secondary.font = secondary.font.deriveFont(Font.PLAIN, 11f)
-            panel.add(primary)
-            panel.add(secondary)
-            panel.preferredSize = Dimension(WIDTH, ROW_HEIGHT)
-        }
-
-        override fun getListCellRendererComponent(
-            list: JList<out SuggestionRow>,
-            value: SuggestionRow,
-            index: Int,
-            isSelected: Boolean,
-            cellHasFocus: Boolean,
-        ): Component {
-            panel.background = if (isSelected) Palette.selection else Palette.bg
-            primary.foreground = Palette.fg
-            secondary.foreground = Palette.muted
-            primary.text = value.primary
-            secondary.text = value.secondary
-            secondary.isVisible = value.secondary.isNotEmpty()
-            return panel
-        }
+        watcher.stop()
+        anchor.window.removeWindowListener(ownerListener)
+        anchor.window.removeComponentListener(moveListener)
+        overlay.dispose()
     }
 
     companion object {
-        const val WIDTH = 300
-        const val ROW_HEIGHT = 40
+        const val WIDTH = 320
+        const val ROW_HEIGHT = 44
+        const val FOOTER_HEIGHT = 34
         const val MAX_ROWS = 8
     }
 }
 
 internal enum class SaveChoice { SAVE, NEVER, NOT_NOW }
 
+internal enum class SaveKind { PASSWORD, CARD, ADDRESS }
+
+/** What the save card shows. [password] is only ever rendered masked unless the user reveals it. */
+internal data class SaveRequest(
+    val kind: SaveKind,
+    val title: String,
+    val saveLabel: String,
+    val allowNever: Boolean,
+    val username: String = "",
+    val password: String = "",
+    val lines: List<String> = emptyList(),
+) {
+    override fun toString() = "SaveRequest($kind)"
+}
+
 /**
- * "Save password?" bubble at the top-right of the browser view. Answers exactly once; times out
- * as [SaveChoice.NOT_NOW]. EDT only.
+ * Chrome-style save card anchored to the browser's top-right. Answers exactly once; Esc and the
+ * timeout answer [SaveChoice.NOT_NOW]. Hidden (not answered) while its BOSS window is inactive.
+ * EDT only.
  */
 internal class SavePrompt(
-    anchor: AutofillAnchor,
-    title: String,
-    detail: String,
-    saveLabel: String,
-    allowNever: Boolean,
-    private val onChoice: (SaveChoice) -> Unit,
+    private val anchor: AutofillAnchor,
+    private val anchorNow: () -> AutofillAnchor?,
+    private val request: SaveRequest,
+    private val onChoice: (SaveChoice, String) -> Unit,
 ) {
-    private val window = JWindow(anchor.window)
+    private val overlay = OwnedOverlay(anchor.window, focusable = request.kind == SaveKind.PASSWORD)
     private var answered = false
-    private val timer = Timer(TIMEOUT_MS) { answer(SaveChoice.NOT_NOW) }
+    private var username by mutableStateOf(request.username)
+    private val timeout = Timer(TIMEOUT_MS) { answer(SaveChoice.NOT_NOW) }
+    private val watcher = Timer(200) { tick() }
 
     init {
-        window.focusableWindowState = false
-        val panel = JPanel(BorderLayout(0, 8))
-        panel.background = Palette.bg
-        panel.border =
-            BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(Palette.border),
-                BorderFactory.createEmptyBorder(12, 14, 10, 14),
-            )
-        val text = JPanel()
-        text.layout = BoxLayout(text, BoxLayout.Y_AXIS)
-        text.isOpaque = false
-        text.add(
-            JLabel(title).apply {
-                foreground = Palette.fg
-                font = font.deriveFont(Font.BOLD, 13f)
-            },
-        )
-        if (detail.isNotEmpty()) {
-            text.add(
-                JLabel(detail).apply {
-                    foreground = Palette.muted
-                    font = font.deriveFont(Font.PLAIN, 12f)
-                },
-            )
+        overlay.dialog.setContent {
+            HostTheme {
+                Card { Content() }
+            }
         }
-        val buttons = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0))
-        buttons.isOpaque = false
-        if (allowNever) buttons.add(button("Never for this site", primary = false) { answer(SaveChoice.NEVER) })
-        buttons.add(button("Not now", primary = false) { answer(SaveChoice.NOT_NOW) })
-        buttons.add(button(saveLabel, primary = true) { answer(SaveChoice.SAVE) })
-        panel.add(text, BorderLayout.CENTER)
-        panel.add(buttons, BorderLayout.SOUTH)
-        window.contentPane = panel
-        window.pack()
-        val size = Dimension(window.width.coerceAtLeast(320), window.height)
-        window.size = size
-        val view = anchor.viewOnScreen
-        window.location = clampToScreen(Point(view.x + view.width - size.width - 12, view.y + 8), size)
     }
 
+    @Composable
+    private fun Content() {
+        val first = remember { FocusRequester() }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .onPreviewKeyEvent {
+                    if (it.type == KeyEventType.KeyDown && it.key == Key.Escape) {
+                        answer(SaveChoice.NOT_NOW)
+                        true
+                    } else {
+                        false
+                    }
+                }.padding(Tokens.space.lg),
+            verticalArrangement = Arrangement.spacedBy(Tokens.space.md),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    iconFor(
+                        when (request.kind) {
+                            SaveKind.CARD -> SuggestionKind.CARD
+                            SaveKind.ADDRESS -> SuggestionKind.ADDRESS
+                            SaveKind.PASSWORD -> SuggestionKind.PASSWORD
+                        },
+                    ),
+                    contentDescription = null,
+                    tint = Tokens.colors.signalText,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(Tokens.space.sm))
+                Text(
+                    request.title,
+                    color = Tokens.colors.textPrimary,
+                    style = Tokens.type.body.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (request.kind == SaveKind.PASSWORD) {
+                BossTextField(value = username, onValueChange = { username = it }, label = "Username", modifier = Modifier.fillMaxWidth().focusRequester(first))
+                PasswordField(request.password)
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    request.lines.forEachIndexed { i, line ->
+                        Text(
+                            line,
+                            color = if (i == 0) Tokens.colors.textPrimary else Tokens.colors.textSecondary,
+                            style = Tokens.type.body,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                if (request.allowNever) TextLink("Never for this site") { answer(SaveChoice.NEVER) }
+                Spacer(Modifier.weight(1f))
+                QuietButton("Not now") { answer(SaveChoice.NOT_NOW) }
+                Spacer(Modifier.width(Tokens.space.sm))
+                BossPrimaryButton(text = request.saveLabel, onClick = { answer(SaveChoice.SAVE) })
+            }
+        }
+    }
+
+    @Composable
+    private fun PasswordField(value: String) {
+        var shown by remember { mutableStateOf(false) }
+        Column {
+            Text("Password", color = Tokens.colors.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(bottom = 4.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(Tokens.radius.buttonShape)
+                    .background(Tokens.colors.panel)
+                    .border(1.dp, Tokens.colors.line, Tokens.radius.buttonShape)
+                    .padding(start = 10.dp, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                BasicTextField(
+                    value = value,
+                    onValueChange = {},
+                    readOnly = true,
+                    singleLine = true,
+                    textStyle = TextStyle(color = Tokens.colors.textPrimary, fontSize = 13.sp),
+                    cursorBrush = SolidColor(Tokens.colors.signal),
+                    visualTransformation = if (shown) VisualTransformation.None else PasswordVisualTransformation(),
+                    modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+                )
+                Icon(
+                    if (shown) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                    contentDescription = if (shown) "Hide password" else "Show password",
+                    tint = Tokens.colors.textSecondary,
+                    modifier = Modifier.size(28.dp).clip(Tokens.radius.buttonShape).clickable { shown = !shown }.padding(6.dp),
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun TextLink(
+        label: String,
+        onClick: () -> Unit,
+    ) {
+        val hover = remember { MutableInteractionSource() }
+        val hovered by hover.collectIsHoveredAsState()
+        Text(
+            label,
+            color = Tokens.colors.textSecondary,
+            style = Tokens.type.body.copy(fontSize = 12.sp, textDecoration = if (hovered) TextDecoration.Underline else null),
+            modifier = Modifier.hoverable(hover).clickable(onClick = onClick),
+        )
+    }
+
+    @Composable
+    private fun QuietButton(
+        label: String,
+        onClick: () -> Unit,
+    ) {
+        val hover = remember { MutableInteractionSource() }
+        val hovered by hover.collectIsHoveredAsState()
+        Box(
+            Modifier
+                .clip(Tokens.radius.buttonShape)
+                .background(if (hovered) Tokens.colors.signalWash else Tokens.colors.raised)
+                .hoverable(hover)
+                .clickable(onClick = onClick)
+                .padding(horizontal = Tokens.space.md, vertical = Tokens.space.sm),
+        ) { Text(label, color = Tokens.colors.textPrimary, fontSize = 13.sp) }
+    }
+
+    private val height =
+        when (request.kind) {
+            SaveKind.PASSWORD -> 252
+            else -> 120 + 18 * request.lines.size
+        }
+
     fun show() {
-        window.isVisible = true
-        timer.isRepeats = false
-        timer.start()
+        place(anchor)
+        timeout.isRepeats = false
+        timeout.start()
+        watcher.start()
+        tick()
+    }
+
+    private fun place(a: AutofillAnchor) {
+        val v = a.viewOnScreen
+        overlay.place(v.x + v.width - WIDTH - 12, v.y + 8, WIDTH, height)
+    }
+
+    private fun tick() {
+        if (answered) return
+        val now = anchorNow()
+        val visible = overlay.ownerActive && now != null && now.window === anchor.window
+        if (visible) place(now!!)
+        if (overlay.dialog.isVisible != visible) overlay.dialog.isVisible = visible
     }
 
     fun dismiss() = answer(SaveChoice.NOT_NOW)
@@ -312,33 +577,14 @@ internal class SavePrompt(
     private fun answer(choice: SaveChoice) {
         if (answered) return
         answered = true
-        timer.stop()
-        window.isVisible = false
-        window.dispose()
-        onChoice(choice)
-    }
-
-    private fun button(
-        label: String,
-        primary: Boolean,
-        onClick: () -> Unit,
-    ) = JButton(label).apply {
-        isFocusable = false
-        isFocusPainted = false
-        isContentAreaFilled = true
-        isOpaque = true
-        background = if (primary) Palette.accent else Palette.bg
-        foreground = if (primary) Color.WHITE else Palette.fg
-        border =
-            BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(if (primary) Palette.accent else Palette.border),
-                BorderFactory.createEmptyBorder(4, 10, 4, 10),
-            )
-        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-        addActionListener { onClick() }
+        timeout.stop()
+        watcher.stop()
+        overlay.dispose()
+        onChoice(choice, username.trim())
     }
 
     companion object {
+        const val WIDTH = 360
         const val TIMEOUT_MS = 45_000
     }
 }

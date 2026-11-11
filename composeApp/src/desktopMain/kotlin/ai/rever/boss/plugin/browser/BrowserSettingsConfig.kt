@@ -43,7 +43,7 @@ object BrowserSettings {
     var suggestPasswords: Boolean = true
         set(value) {
             field = value
-            System.setProperty(SUGGEST_PASSWORDS_PROP, value.toString())
+            System.setProperty(SUGGEST_PASSWORDS_PROP, pluginSideValue(value).toString())
         }
 
     // Offer to save or update a credential the user typed, after a login that looks like it
@@ -53,8 +53,26 @@ object BrowserSettings {
     var offerToSavePasswords: Boolean = true
         set(value) {
             field = value
-            System.setProperty(OFFER_TO_SAVE_PASSWORDS_PROP, value.toString())
+            System.setProperty(OFFER_TO_SAVE_PASSWORDS_PROP, pluginSideValue(value).toString())
         }
+
+    /**
+     * What the fluck-browser plugin is told for its own suggest/save features. While native
+     * autofill is on the host owns both (driven by the same toggles), so any plugin version
+     * stands down and the user sees exactly one save prompt.
+     */
+    internal fun pluginSideValue(
+        value: Boolean,
+        nativeAutofill: String? = System.getProperty(NATIVE_AUTOFILL_PROP),
+    ): Boolean = value && nativeAutofill != "true"
+
+    const val NATIVE_AUTOFILL_PROP = "boss.browser.nativeAutofill"
+
+    /** Re-publish the plugin-side flags; called once native autofill has decided whether it is on. */
+    fun republishPluginPasswordFlags() {
+        System.setProperty(SUGGEST_PASSWORDS_PROP, pluginSideValue(suggestPasswords).toString())
+        System.setProperty(OFFER_TO_SAVE_PASSWORDS_PROP, pluginSideValue(offerToSavePasswords).toString())
+    }
 
     // Tab sharing (configurable via Settings > Browser > Tab Sharing). OFF by default:
     // the co-browse share (QR) button stays hidden in the browser toolbar until the
@@ -90,8 +108,7 @@ object BrowserSettings {
         // These two matter more than the others here: they default to ON, so a plugin reading an
         // absent property has to guess which way an unset value falls. Publishing them removes the
         // guess.
-        System.setProperty(SUGGEST_PASSWORDS_PROP, suggestPasswords.toString())
-        System.setProperty(OFFER_TO_SAVE_PASSWORDS_PROP, offerToSavePasswords.toString())
+        republishPluginPasswordFlags()
     }
 }
 
