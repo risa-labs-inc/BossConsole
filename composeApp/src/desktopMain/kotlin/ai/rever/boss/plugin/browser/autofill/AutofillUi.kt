@@ -392,7 +392,7 @@ internal data class SaveRequest(
 
 /**
  * Chrome-style save card anchored to the browser's top-right. Answers exactly once; Esc and the
- * timeout answer [SaveChoice.NOT_NOW]. Hidden (not answered) while its BOSS window is inactive.
+ * password timeout answer [SaveChoice.NOT_NOW]. Hidden (not answered) while its BOSS window is inactive.
  * EDT only.
  */
 internal class SavePrompt(
@@ -554,7 +554,9 @@ internal class SavePrompt(
     fun show() {
         place(anchor)
         timeout.isRepeats = false
-        timeout.start()
+        // Chromium counts a declined card/address as a strike and stops offering after a few, so
+        // only an explicit "Not now" (or a newer prompt) may decline one; passwords just ignore.
+        if (request.kind == SaveKind.PASSWORD) timeout.start()
         watcher.start()
         tick()
     }

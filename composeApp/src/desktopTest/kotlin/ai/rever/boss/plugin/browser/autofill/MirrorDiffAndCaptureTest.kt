@@ -111,3 +111,34 @@ class MirrorDiffAndCaptureTest {
         dir.deleteRecursively()
     }
 }
+
+class PluginStandDownCheckTest {
+    private fun jar(classText: String): File {
+        val f = File.createTempFile("fluck-browser", ".jar")
+        java.util.zip.ZipOutputStream(f.outputStream()).use { z ->
+            z.putNextEntry(java.util.zip.ZipEntry("ai/rever/boss/plugin/dynamic/fluckbrowser/X.class"))
+            z.write(byteArrayOf(0xCA.toByte(), 0xFE.toByte()) + classText.toByteArray() + byteArrayOf(0))
+            z.closeEntry()
+        }
+        return f
+    }
+
+    @Test
+    fun `a deferring build is recognised from its classes, whatever its version`() {
+        val deferring = jar("boss.browser.nativeAutofill")
+        val old = jar("boss.fluck.suggestPasswords")
+        assertTrue(PluginStandDownCheck.honoursFlag(deferring, "1.2.35"))
+        assertTrue(!PluginStandDownCheck.honoursFlag(old, "1.2.35"))
+        deferring.delete()
+        old.delete()
+    }
+
+    @Test
+    fun `version is the fallback when the jar cannot be read`() {
+        assertTrue(!PluginStandDownCheck.honoursFlag(null, "1.2.35"))
+        assertTrue(PluginStandDownCheck.honoursFlag(null, "1.2.36"))
+        assertTrue(PluginStandDownCheck.honoursFlag(null, "1.3.0"))
+        assertTrue(!PluginStandDownCheck.honoursFlag(null, null))
+        assertTrue(!PluginStandDownCheck.honoursFlag(File("/nonexistent.jar"), "1.2.35"))
+    }
+}

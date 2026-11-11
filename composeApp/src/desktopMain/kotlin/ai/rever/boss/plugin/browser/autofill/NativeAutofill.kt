@@ -87,6 +87,7 @@ object NativeAutofill {
     @Volatile private var readyEngine: Engine? = null
 
     private const val PERIODIC_SYNC_MS = 5 * 60_000L
+    private const val PLUGIN_CHECK_DELAY_MS = 20_000L
     private const val PAGE_SIZE = 200
     private const val MAX_ROWS = 5_000
 
@@ -118,11 +119,29 @@ object NativeAutofill {
         }
         scope.launch { SecretService.changes.debounce(750).collect { requestSync() } }
         scope.launch {
+            delay(PLUGIN_CHECK_DELAY_MS)
+            runCatching { warnIfPluginStillAutofills() }
+        }
+        scope.launch {
             while (true) {
                 delay(PERIODIC_SYNC_MS)
                 requestSync()
             }
         }
+    }
+
+    /** An old fluck-browser keeps its own saved-logins dropdown; the user then sees two. */
+    private fun warnIfPluginStillAutofills() {
+        val entry = ai.rever.boss.plugin.PluginPersistence.getInstalledPlugin(PluginStandDownCheck.FLUCK_BROWSER_ID) ?: return
+        if (!entry.enabled) return
+        val path = runCatching { ai.rever.boss.plugin.PluginStoreSetup.resolvePersistedEntryPath(entry) }.getOrDefault(entry.jarPath)
+        val jar = java.io.File(path).takeIf { it.isFile }
+        if (PluginStandDownCheck.honoursFlag(jar, entry.installedVersion)) return
+        logger.warn(
+            LogCategory.BROWSER,
+            "Installed fluck-browser does not defer to native autofill; its own saved-logins dropdown will also show until it is updated",
+            mapOf("installedVersion" to entry.installedVersion, "requires" to PluginStandDownCheck.FIRST_DEFERRING_VERSION),
+        )
     }
 
     fun requestSync() {
