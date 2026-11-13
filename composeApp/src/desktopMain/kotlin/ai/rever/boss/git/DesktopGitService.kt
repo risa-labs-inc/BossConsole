@@ -1580,7 +1580,7 @@ actual object GitService {
         vararg args: String,
     ): GitCommandResult {
         val process =
-            ProcessBuilder("git", *args)
+            ProcessBuilder(GitCommandGuards.command(args, File(workingDir)))
                 .directory(File(workingDir))
                 .apply {
                     // Inherit parent process environment for SSH/git credentials
@@ -1930,7 +1930,7 @@ actual object GitService {
         withGitCommandSignal {
             gitCommandLock.withLock {
                 val process =
-                    ProcessBuilder("git", *args)
+                    ProcessBuilder(GitCommandGuards.command(args, File(workingDir)))
                         .directory(File(workingDir))
                         .apply {
                             environment().putAll(System.getenv())
@@ -2735,4 +2735,10 @@ private const val SMALL_FILE_CONTEXT = 3
 // `diff --git` header or inject colour, which UnifiedDiffParser cannot read - and a
 // header it cannot read throws out through the provider into the calling plugin.
 // These flags force `a/`..`b/` prefixes, no colour, and git's own diff, regardless.
-private val DIFF_SHAPE_FLAGS = listOf("--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/")
+// --no-textconv also stops a `diff.<driver>.textconv` from the repository's own config
+// running on a modified file every time a diff tab is opened - the same run-without-asking
+// GitCommandGuards closes for the status poll, reached from a different command. The cost is
+// that a user's own textconv (for a binary format) is bypassed here; BOSS shows the binary
+// diff rather than its converted text.
+private val DIFF_SHAPE_FLAGS =
+    listOf("--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/")
