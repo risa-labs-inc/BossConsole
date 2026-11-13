@@ -1,7 +1,7 @@
 -- pgTAP tests for 20261113120000_platform_ai_caps: readers see caps, platform.ai_caps.manage changes them.
 -- Run with: supabase test db
 begin;
-select plan(26);
+select plan(30);
 
 insert into auth.users (id, email, email_confirmed_at) values
     ('dd000000-0000-4000-8000-00000000000a', 'admin@aicaps.test', now()),
@@ -68,7 +68,16 @@ select is((select limit_usd from (select monthly_usd_limit as limit_usd, note fr
 select is((select count(*)::int from public.platform_audit_log where action = 'ai_cap.set' and target_user = 'dd000000-0000-4000-8000-00000000000d'), 1,
           'one audit row for the change, none for the repeat');
 select is((select detail - 'default_usd' from public.platform_audit_log where action = 'ai_cap.set' and target_user = 'dd000000-0000-4000-8000-00000000000d'),
-          '{"router": "pgtap-caps-router", "from_usd": null, "to_usd": 250.56, "note": "heavy user"}'::jsonb, 'audited with old, new and note');
+          '{"router": "pgtap-caps-router", "from_usd": null, "to_usd": 250.56, "note": "heavy user", "from_note": null}'::jsonb, 'audited with old, new and note');
+
+-- a note-only change rewrites the stored note, so it is audited too
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'dd000000-0000-4000-8000-00000000000a', true);
+select lives_ok($q$ select public.platform_set_ai_cap('dd000000-0000-4000-8000-00000000000d', 'pgtap-caps-router', 250.56, 'quarter end') $q$, 'same amount, new note');
+reset role;
+select is((select detail->>'from_note' || ' -> ' || (detail->>'note') from public.platform_audit_log
+            where action = 'ai_cap.set' and target_user = 'dd000000-0000-4000-8000-00000000000d' order by id desc limit 1),
+          'heavy user -> quarter end', 'a note-only change is audited with the old and new note');
 
 -- --- a granted manager changes caps until revoked ------------------------------------------------
 set local role authenticated;
@@ -81,6 +90,21 @@ select set_config('request.jwt.claim.sub', 'dd000000-0000-4000-8000-00000000000a
 select is(public.platform_set_ai_cap_manager('dd000000-0000-4000-8000-00000000000c', false, null), false, 'an admin revokes it');
 select set_config('request.jwt.claim.sub', 'dd000000-0000-4000-8000-00000000000c', true);
 select throws_ok($q$ select public.platform_set_ai_cap('dd000000-0000-4000-8000-00000000000d', 'pgtap-caps-router', 20, null) $q$, '42501', 'no_ai_cap_access', 'and they can no longer change caps');
+reset role;
+
+-- --- an org role carrying the permission grants nothing ('platform' is not a reserved domain) -----
+select public.create_organisation_internal(p_slug=>'aicapsorg', p_name=>'AI caps org',
+    p_owner_id=>'dd000000-0000-4000-8000-00000000000b', p_visibility=>'private', p_join_policy=>'invite_only');
+insert into public.role_permissions (role_id, permission_id)
+select orl.role_id, p.id from public.organisation_roles orl join public.organisations o on o.id = orl.org_id, public.permissions p
+ where o.slug = 'aicapsorg' and orl.kind = 'admin' and p.name = 'platform.ai_caps.manage';
+select ok(exists (select 1 from public.user_roles ur join public.organisation_roles orl on orl.role_id = ur.role_id join public.role_permissions rp on rp.role_id = ur.role_id
+                   join public.permissions p on p.id = rp.permission_id
+                  where ur.user_id = 'dd000000-0000-4000-8000-00000000000b' and p.name = 'platform.ai_caps.manage'),
+          'the viewer holds the permission through their own org''s admin role');
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'dd000000-0000-4000-8000-00000000000b', true);
+select is(public.platform_ai_cap_access(), false, 'an org-granted permission does not let them change caps');
 reset role;
 
 select * from finish();

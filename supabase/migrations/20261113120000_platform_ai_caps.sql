@@ -98,6 +98,7 @@ RETURNS jsonb
 DECLARE
     v_actor uuid := public.require_platform_reader();
     v_old numeric;
+    v_old_note text;
     v_default numeric;
     v_note text := NULLIF(pg_catalog.btrim(COALESCE(p_note, '')), '');
 BEGIN
@@ -120,7 +121,7 @@ BEGIN
     IF NOT FOUND THEN
         RAISE EXCEPTION 'router_not_found' USING ERRCODE = 'P0002';
     END IF;
-    SELECT b.monthly_usd_limit INTO v_old FROM public.boss_ai_user_budgets b
+    SELECT b.monthly_usd_limit, b.note INTO v_old, v_old_note FROM public.boss_ai_user_budgets b
      WHERE b.user_id = p_user_id AND b.router_model_id = p_router_model_id FOR UPDATE;
     IF p_monthly_usd IS NULL THEN
         DELETE FROM public.boss_ai_user_budgets b WHERE b.user_id = p_user_id AND b.router_model_id = p_router_model_id;
@@ -130,11 +131,12 @@ BEGIN
             VALUES (p_user_id, p_router_model_id, p_monthly_usd, v_note)
         ON CONFLICT (user_id, router_model_id) DO UPDATE SET monthly_usd_limit = EXCLUDED.monthly_usd_limit, note = EXCLUDED.note;
     END IF;
-    IF v_old IS DISTINCT FROM p_monthly_usd THEN
+    -- The stored note changes with the amount, so either change is audited.
+    IF v_old IS DISTINCT FROM p_monthly_usd OR (p_monthly_usd IS NOT NULL AND v_old_note IS DISTINCT FROM v_note) THEN
         INSERT INTO public.platform_audit_log (actor, action, target_user, detail)
             VALUES (v_actor, CASE WHEN p_monthly_usd IS NULL THEN 'ai_cap.clear' ELSE 'ai_cap.set' END, p_user_id,
                     pg_catalog.jsonb_build_object('router', p_router_model_id, 'from_usd', v_old, 'to_usd', p_monthly_usd,
-                                                  'default_usd', v_default, 'note', v_note));
+                                                  'default_usd', v_default, 'note', v_note, 'from_note', v_old_note));
     END IF;
     RETURN pg_catalog.jsonb_build_object('limit_usd', COALESCE(p_monthly_usd, v_default), 'override_usd', p_monthly_usd);
 END;
