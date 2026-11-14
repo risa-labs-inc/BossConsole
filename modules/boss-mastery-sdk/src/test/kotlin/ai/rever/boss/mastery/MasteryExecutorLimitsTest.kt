@@ -36,7 +36,7 @@ class MasteryExecutorLimitsTest {
                 listOf(true, false),
                 events.filterIsInstance<MasteryProgress.NodeFailed>().map { it.willRetry },
             )
-            assertIs<MasteryProgress.Failed>(events.last())
+            assertEquals("node-1", assertIs<MasteryProgress.Failed>(events.last()).failedNodeId)
         }
 
     @Test

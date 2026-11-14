@@ -29,10 +29,12 @@ class MasteryExecutor(
     /**
      * Execute a mastery definition, streaming progress events.
      *
-     * Persisted definitions are re-read at this seam as trusted data, so a structurally hostile
-     * document — an oversized graph, a blank, duplicate, or INPUT-reserved node id, a dangling
-     * edge endpoint, or a cycle — is refused with a [MasteryProgress.Failed] verdict before a
-     * single capability invocation.
+     * Every run — including a refused one — opens with [MasteryProgress.Started] so collectors
+     * can rely on the stream always carrying run context first. Persisted definitions are
+     * re-read at this seam as trusted data, so a structurally hostile document — an oversized
+     * graph, a blank, duplicate, or INPUT-reserved node id, a dangling edge endpoint, or a
+     * cycle — is then refused with a [MasteryProgress.Failed] verdict before a single
+     * capability invocation.
      *
      * @param mastery The mastery DAG to execute
      * @param input   Initial key-value input (available to nodes as "INPUT.key")
@@ -43,15 +45,24 @@ class MasteryExecutor(
         input: Map<String, String>,
     ): Flow<MasteryProgress> =
         channelFlow {
-            // Load-time re-validation: persisted definitions are re-read here as trusted data,
-            // so a hostile document is refused before a single capability invocation.
-            val violation = structuralViolation(mastery)
-            if (violation != null) {
-                send(MasteryProgress.Failed(violation, mastery.id))
-                return@channelFlow
-            }
             val startTime = System.currentTimeMillis()
             send(MasteryProgress.Started(mastery.id, mastery.nodes.size))
+
+            // Load-time re-validation: persisted definitions are re-read here as trusted data,
+            // so a hostile document is refused before a single capability invocation. A
+            // definition-level refusal names no node — failedNodeId stays null instead of
+            // smuggling the mastery id into a slot that callers map back to a node.
+            val levels =
+                when (val check = structuralCheck(mastery)) {
+                    is StructuralCheck.Rejected -> {
+                        send(MasteryProgress.Failed(check.reason, failedNodeId = null))
+                        return@channelFlow
+                    }
+
+                    is StructuralCheck.Accepted -> {
+                        check.levels
+                    }
+                }
 
             // Accumulates node outputs; "INPUT" is the virtual source node
             val nodeOutputs = mutableMapOf<String, Map<String, String>>("INPUT" to input)
@@ -60,7 +71,6 @@ class MasteryExecutor(
 
             try {
                 reserveOutput("INPUT", input, outputBudget)
-                val levels = topoLevels(mastery)
 
                 for (level in levels) {
                     // All nodes in a level are independent — execute in parallel
@@ -108,10 +118,47 @@ class MasteryExecutor(
      * Structural re-validation at the load/execute seam. Persisted definitions are re-read as
      * trusted data, so the executor refuses a hostile-but-schema-valid document — an oversized
      * graph, a blank, duplicate, or INPUT-reserved node id, a dangling edge endpoint, or a
-     * cycle — before emitting [MasteryProgress.Started]. Returns the refusal reason handed to
-     * [MasteryProgress.Failed], or null when the DAG is walkable.
+     * cycle — before any node runs. A walkable DAG's levels ride back in
+     * [StructuralCheck.Accepted] so the run does not sort the graph a second time.
+     */
+    private fun structuralCheck(mastery: MasteryDefinition): StructuralCheck {
+        val violation = structuralViolation(mastery)
+        if (violation != null) return StructuralCheck.Rejected(violation)
+
+        // The final structural check: the definition must be a walkable DAG. [TopologicalSort]
+        // refuses cycles with an [IllegalArgumentException]; its message becomes the refusal
+        // reason, while a successful sort's levels are reused for the run.
+        return try {
+            StructuralCheck.Accepted(topoLevels(mastery))
+        } catch (conflict: IllegalArgumentException) {
+            StructuralCheck.Rejected(conflict.message ?: "Definition is not a walkable DAG")
+        }
+    }
+
+    /**
+     * Scans a persisted definition for anything that must refuse the run: the size budgets
+     * first, so an oversized document is refused for its size alone without paying the graph
+     * scans, then a blank, duplicate, or INPUT-reserved node id, then a dangling edge
+     * endpoint. Returns the refusal reason handed to [MasteryProgress.Failed], or null when
+     * nothing structural trips.
      */
     private fun structuralViolation(mastery: MasteryDefinition): String? {
+        val oversized =
+            when {
+                mastery.nodes.size > MAX_NODES -> {
+                    "Definition exceeds the runtime budget of $MAX_NODES nodes (${mastery.nodes.size})"
+                }
+
+                mastery.edges.size > MAX_EDGES -> {
+                    "Definition exceeds the runtime budget of $MAX_EDGES edges (${mastery.edges.size})"
+                }
+
+                else -> {
+                    null
+                }
+            }
+        if (oversized != null) return oversized
+
         val nodeIds = mutableSetOf<String>()
         var duplicateId: String? = null
         for (node in mastery.nodes) {
@@ -125,14 +172,6 @@ class MasteryExecutor(
         val danglingTarget =
             mastery.edges.firstOrNull { edge -> edge.toNode !in nodeIds }?.toNode
         return when {
-            mastery.nodes.size > MAX_NODES -> {
-                "Definition exceeds the runtime budget of $MAX_NODES nodes (${mastery.nodes.size})"
-            }
-
-            mastery.edges.size > MAX_EDGES -> {
-                "Definition exceeds the runtime budget of $MAX_EDGES edges (${mastery.edges.size})"
-            }
-
             mastery.nodes.any { it.id.isBlank() || it.id == INPUT_NODE_ID } -> {
                 "Node id is blank or claims the reserved '$INPUT_NODE_ID' id of the caller's input"
             }
@@ -150,23 +189,10 @@ class MasteryExecutor(
             }
 
             else -> {
-                walkViolation(mastery)
+                null
             }
         }
     }
-
-    /**
-     * The final structural check: the definition must be a walkable DAG. [TopologicalSort]
-     * refuses cycles with an [IllegalArgumentException]; its message becomes the refusal
-     * reason handed to [MasteryProgress.Failed].
-     */
-    private fun walkViolation(mastery: MasteryDefinition): String? =
-        try {
-            topoLevels(mastery)
-            null
-        } catch (conflict: IllegalArgumentException) {
-            conflict.message ?: "Definition is not a walkable DAG"
-        }
 
     private suspend fun executeNode(
         node: MasteryNode,
@@ -301,8 +327,28 @@ class MasteryExecutor(
             }.associate { it.key to it.value }
     }
 
-    private companion object {
-        /** Runtime budget, mirroring the persistence-side definition caps. */
+    /**
+     * Outcome of the load-seam structural checks: a refusal reason to hand to
+     * [MasteryProgress.Failed], or the walkable DAG's execution-ready levels.
+     */
+    private sealed interface StructuralCheck {
+        /** The DAG is walkable; [levels] are sorted once here and reused by the run. */
+        data class Accepted(
+            val levels: List<List<MasteryNode>>,
+        ) : StructuralCheck
+
+        /** The document is refused; [reason] becomes the [MasteryProgress.Failed] error. */
+        data class Rejected(
+            val reason: String,
+        ) : StructuralCheck
+    }
+
+    companion object {
+        /**
+         * Runtime graph budget, shared with the orchestrator's create-time admission cap
+         * (`MasteryServiceImpl.validateDefinition` references these same constants) so a
+         * definition too large to run is refused at write time with the same numbers.
+         */
         const val MAX_NODES = 128
         const val MAX_EDGES = 512
 
@@ -351,8 +397,13 @@ sealed class MasteryProgress {
         val totalDurationMs: Long,
     ) : MasteryProgress()
 
+    /**
+     * Terminal failure verdict. [failedNodeId] names the node that killed the run, or is null
+     * for a definition-level refusal where no node was ever invoked — consumers must not map
+     * a null id back to a node.
+     */
     data class Failed(
         val error: String,
-        val failedNodeId: String,
+        val failedNodeId: String?,
     ) : MasteryProgress()
 }
