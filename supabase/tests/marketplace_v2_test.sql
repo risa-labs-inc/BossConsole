@@ -1,7 +1,7 @@
 -- Marketplace v2: bundle submissions, four default-off platform flags, listings restricted to named agents, the install RPC
 -- Max calls, and the private bundle bucket. Refusals of the new RPCs are {"error": code}; only "not signed in" raises.
 begin;
-select plan(138);
+select plan(143);
 
 -- a1 org admin (may publish for the org's agent), a2 plain org member, a3 outsider, a4 trusted publisher, a5 rate-limit user,
 -- c1 platform admin.
@@ -393,6 +393,30 @@ select is(public.marketplace_bundle_access(pg_temp.u('c1'), (select id from vid)
 select is(public.marketplace_bundle_access(pg_temp.u('a2'), (select id from vid)), null, 'another user gets nothing');
 select is(public.marketplace_bundle_access(null, (select id from vid)), null, 'no user gets nothing');
 select is(public.marketplace_bundle_access(pg_temp.u('c1'), gen_random_uuid()), null, 'an unknown version gets nothing');
+
+-- ---------------------------------------------------------------------------------------------------------------------
+-- Agent defaults serve markdown only.
+-- ---------------------------------------------------------------------------------------------------------------------
+reset role;
+insert into public.agents (slug, org_id, name, plugin_id, created_by) values
+    ('mkt2agent', (select id from public.organisations where slug = 'mkt2co'), 'Mkt2 Agent',
+     'ai.rever.boss.plugin.dynamic.agent.mkt2agent', 'c9000000-0000-4000-8000-0000000000a1');
+create temp table agid as select id from public.agents where slug = 'mkt2agent';
+grant select on agid to authenticated;
+set local role authenticated;
+select pg_temp.as_user('c1');
+select public.marketplace_submit('skill', 'legacy-live', 'Legacy Live', 'Sum', '', 'Pub', '{"markdown":"Legacy markdown."}', true);
+select throws_ok($$ select public.marketplace_agent_default_set((select id from agid), 'skip-yes', true) $$, 'P0001', 'default_requires_legacy_skill', 'a bundle skill cannot be an agent default');
+select throws_ok($$ select public.marketplace_agent_default_set((select id from agid), 'rs-skill', true) $$, 'P0001', 'default_requires_legacy_skill', 'nor a restricted skill');
+select is(jsonb_array_length(public.marketplace_agent_default_set((select id from agid), 'legacy-live', true)), 1, 'a legacy skill still can');
+reset role;
+insert into public.marketplace_agent_defaults (agent_id, listing_id)
+    select (select id from agid), id from public.marketplace_listings where slug in ('skip-yes', 'rs-skill');
+set local role authenticated;
+select pg_temp.as_user('c1');
+select is((select jsonb_agg(x ->> 'slug') from jsonb_array_elements(public.marketplace_agent_skills('ai.rever.boss.plugin.dynamic.agent.mkt2agent') -> 'skills') x),
+    '["legacy-live"]'::jsonb, 'the runtime read skips bundle and restricted defaults');
+select is(public.marketplace_agent_skills('ai.rever.boss.plugin.dynamic.agent.mkt2agent') -> 'skills' -> 0 ->> 'markdown', 'Legacy markdown.', 'and still serves the legacy markdown');
 
 select * from finish();
 rollback;

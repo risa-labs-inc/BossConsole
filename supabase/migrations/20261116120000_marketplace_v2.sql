@@ -720,4 +720,94 @@ $$;
 REVOKE ALL ON FUNCTION public.marketplace_bundle_access(uuid, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.marketplace_bundle_access(uuid, uuid) TO service_role;
 
+-- ----------------------------------------------------------------------------
+-- Agent defaults serve markdown only: bundle and restricted skills are refused and skipped.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.marketplace_agent_default_set(p_agent_id uuid, p_slug text, p_on boolean)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    a public.agents%ROWTYPE;
+    l public.marketplace_listings%ROWTYPE;
+    changed boolean;
+BEGIN
+    IF auth.uid() IS NULL OR NOT public.is_user_admin(auth.uid()) THEN
+        RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
+    END IF;
+    SELECT * INTO a FROM public.agents WHERE id = p_agent_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'agent_not_found' USING ERRCODE = 'P0001';
+    END IF;
+    SELECT * INTO l FROM public.marketplace_listings WHERE slug = p_slug;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'listing_not_found' USING ERRCODE = 'P0001';
+    END IF;
+    IF l.kind <> 'skill' THEN
+        RAISE EXCEPTION 'not_a_skill' USING ERRCODE = 'P0001';
+    END IF;
+    IF COALESCE(p_on, false) THEN
+        IF l.status <> 'live' THEN
+            RAISE EXCEPTION 'listing_not_live' USING ERRCODE = 'P0001';
+        END IF;
+        -- Defaults are served as markdown: a bundle or agent-restricted live version cannot be one.
+        IF EXISTS (SELECT 1 FROM public.marketplace_versions v WHERE v.id = l.live_version_id
+                   AND (v.bundle_path IS NOT NULL OR pg_catalog.cardinality(v.allowed_agents) > 0)) THEN
+            RAISE EXCEPTION 'default_requires_legacy_skill' USING ERRCODE = 'P0001';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM public.marketplace_agent_defaults WHERE agent_id = a.id AND listing_id = l.id)
+           AND (SELECT pg_catalog.count(*) FROM public.marketplace_agent_defaults WHERE agent_id = a.id) >= 50 THEN
+            RAISE EXCEPTION 'too_many_defaults' USING ERRCODE = 'P0001';
+        END IF;
+        INSERT INTO public.marketplace_agent_defaults (agent_id, listing_id, added_by) VALUES (a.id, l.id, auth.uid())
+            ON CONFLICT DO NOTHING;
+    ELSE
+        DELETE FROM public.marketplace_agent_defaults WHERE agent_id = a.id AND listing_id = l.id;
+    END IF;
+    GET DIAGNOSTICS changed = ROW_COUNT;
+    IF changed THEN
+        INSERT INTO public.agent_audit_log (org_id, agent_id, actor, action, detail)
+            VALUES (a.org_id, a.id, auth.uid(),
+                    CASE WHEN COALESCE(p_on, false) THEN 'agent.marketplace_default_added' ELSE 'agent.marketplace_default_removed' END,
+                    pg_catalog.jsonb_build_object('slug', l.slug));
+    END IF;
+    RETURN public.marketplace_agent_defaults(a.id);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.marketplace_agent_default_set(uuid, text, boolean) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.marketplace_agent_default_set(uuid, text, boolean) TO authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION public.marketplace_agent_skills(p_plugin_id text)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    me uuid := auth.uid();
+    a public.agents%ROWTYPE;
+BEGIN
+    IF me IS NULL THEN
+        RAISE EXCEPTION 'Not signed in' USING ERRCODE = '42501';
+    END IF;
+    SELECT * INTO a FROM public.agents WHERE plugin_id = p_plugin_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'agent_not_found' USING ERRCODE = 'P0001';
+    END IF;
+    IF NOT (
+        EXISTS (SELECT 1 FROM public.agent_installs i WHERE i.agent_id = a.id AND i.user_id = me AND i.state <> 'removed')
+        OR public.has_agent_permission(a.id, 'agents.edit')
+        OR EXISTS (SELECT 1 FROM public.plugins p WHERE p.plugin_id = a.plugin_id AND public.user_can_install_plugin(me, p.id))
+        OR public.is_user_admin(me)
+    ) THEN
+        RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
+    END IF;
+    RETURN pg_catalog.jsonb_build_object('skills', COALESCE((
+        SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+                   'slug', l.slug, 'name', v.name, 'summary', v.summary, 'version', v.version,
+                   'reviewed', v.decision = 'approved', 'markdown', v.content->>'markdown') ORDER BY l.slug)
+        FROM public.marketplace_agent_defaults d
+        JOIN public.marketplace_listings l ON l.id = d.listing_id
+        JOIN public.marketplace_versions v ON v.id = l.live_version_id
+        WHERE d.agent_id = a.id AND l.status = 'live' AND l.kind = 'skill'
+          AND v.bundle_path IS NULL AND pg_catalog.cardinality(v.allowed_agents) = 0), '[]'::jsonb));
+END;
+$$;
+REVOKE ALL ON FUNCTION public.marketplace_agent_skills(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.marketplace_agent_skills(text) TO authenticated, service_role;
+
 COMMIT;
