@@ -297,6 +297,17 @@ Deno.test("a skill must fit what Max installs: 64 supporting files", () => {
   refuses(many(65), "64 supporting files");
 });
 
+Deno.test("a skill's file names must be ones Max installs", () => {
+  assertEquals(
+    code(() => validateBundle(skillFiles({ "references/My notes_v2.md": text("a") }))),
+    "ok",
+  );
+  refuses(skillFiles({ ".hidden": text("a") }), "do not start with a dot");
+  refuses(skillFiles({ "refs/.env": text("a") }), "do not start with a dot");
+  refuses(skillFiles({ "refs/a+b.md": text("a") }), "letters, digits");
+  refuses(skillFiles({ "refs /a.md": text("a") }), "letters, digits");
+});
+
 Deno.test("a skill must fit what Max installs: 256 KB a file, 2 MB in all", () => {
   const big = (n: number) => new Uint8Array(n).fill(97);
   assertEquals(code(() => validateBundle(skillFiles({ "ref/a.md": big(262_144) }))), "ok");

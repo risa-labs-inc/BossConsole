@@ -201,6 +201,7 @@ function checkFileFolderClash(entries: Entry[]): void {
 }
 
 const MAIN = "SKILL.md";
+const SKILL_SEGMENT = /^[A-Za-z0-9_][A-Za-z0-9._ -]{0,99}$/;
 
 /** A skill must fit what Max installs: file count, file size, total size and folder depth. */
 function checkSkillFits(files: Map<string, Entry>): void {
@@ -215,6 +216,12 @@ function checkSkillFits(files: Map<string, Entry>): void {
     }
     supporting++;
     if (e.size > SKILL_LIMITS.perFile) invalid("Skill files may be at most 256 KB each.");
+    // Max's SkillFiles.SEGMENT: no hidden names, plain characters, no trailing space.
+    if (name.split("/").some((seg) => !SKILL_SEGMENT.test(seg) || seg.endsWith(" "))) {
+      invalid(
+        "Skill file and folder names use letters, digits, '.', '_', '-' and spaces, and do not start with a dot.",
+      );
+    }
     if (name.split("/").length > SKILL_LIMITS.depth) {
       invalid("Skill files may be at most 4 folders deep.");
     }
