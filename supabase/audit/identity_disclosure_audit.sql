@@ -57,10 +57,12 @@ with intentionally_anon as (
     -- before sign-in, to answer 503 instead of the sign-in page. One boolean about a
     -- public host; no identity.
     'public.agent_unavailable(text)',
-    -- Marketplace (20261030150000; search, categories and tags from 20261030180000): skills and connectors are
-    -- browsable before sign-in. All return live listings only, with the publisher's chosen display name; never an
-    -- email or user id.
-    'public.marketplace_search(text,public.marketplace_kind,integer,integer,text,text)', 'public.marketplace_get(text)',
+    -- Marketplace (20261030150000; search, categories and tags from 20261030180000; agent-aware search/get and the
+    -- flag read from 20261116120000): skills and connectors are browsable before sign-in. All return live listings
+    -- only, with the publisher's chosen display name and the display names of the agents a listing is restricted to;
+    -- never an email or user id. marketplace_flags returns four booleans.
+    'public.marketplace_search(text,public.marketplace_kind,integer,integer,text,text,text)', 'public.marketplace_get(text,text)',
+    'public.marketplace_flags()',
     'public.marketplace_categories()', 'public.marketplace_tags(integer)',
     -- The fluck-web function redeems a plugin-minted push ticket with the anon key (it holds no
     -- service-role key); the single-use 256-bit ticket is the whole credential (20261013100000; prune widened in 20261013200000).
