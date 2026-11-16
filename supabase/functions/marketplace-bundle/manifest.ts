@@ -32,7 +32,7 @@ const PUBLIC_HOST = /^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z][a-z0-9-]*[a-z0-9]$
 const PRIVATE_HOST = /(^|\.)(localhost|local|internal|lan|home|test|invalid|onion)$/;
 const BASE_URL = /^https:\/\/[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:443)?(\/[^?#\s]*)?$/;
 const HTTP_PATH = /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/{}-]*$/;
-const SCRIPT_FILE = /^tools\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.(py|js)$/;
+const SCRIPT_FILE = /^tools\/[A-Za-z0-9_-]+\.(py|js)$/;
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
 export const publicHost = (h: string): boolean =>
@@ -80,6 +80,8 @@ function checkTool(
   i: number,
   type: "http" | "scripts",
   names: Set<string>,
+  slug: string,
+  runtime: string,
   required: RequiredFile[],
 ) {
   const p = `connector.tools[${i}]`;
@@ -99,6 +101,9 @@ function checkTool(
   if (typeof t.name !== "string" || !TOOL.test(t.name)) bad(`${p}.name: invalid tool name`);
   if (names.has(t.name as string)) bad(`${p}.name: duplicate tool name`);
   names.add(t.name as string);
+  if (chars(slug) + 2 + chars(t.name as string) > 64) {
+    bad(`${p}.name: slug and tool name together exceed 62 characters`);
+  }
   if (
     typeof t.description !== "string" || t.description.trim() === "" || chars(t.description) > 1000
   ) {
@@ -149,8 +154,11 @@ function checkTool(
     for (const k of ["method", "path", "query", "body"]) {
       if (k in t) bad(`${p}.${k}: not allowed for a script tool`);
     }
-    if (typeof t.file !== "string" || !SCRIPT_FILE.test(t.file) || t.file.includes("..")) {
-      bad(`${p}.file: must be tools/<name>.py or tools/<name>.js`);
+    if (
+      typeof t.file !== "string" || !SCRIPT_FILE.test(t.file) ||
+      !t.file.endsWith(runtime === "python3" ? ".py" : ".js")
+    ) {
+      bad(`${p}.file: tools/<name>.py for python3 or tools/<name>.js for node`);
     }
     if ("effect" in t && t.effect !== "read" && t.effect !== "write") {
       bad(`${p}.effect: read or write`);
@@ -351,7 +359,10 @@ export function validateManifest(raw: unknown): { manifest: Manifest; required: 
       }
     }
   }
+  if ((m.slug as string).includes("--")) bad("slug: must not contain --");
   const names = new Set<string>();
-  (c.tools as unknown[]).forEach((t, i) => checkTool(t, i, type, names, required));
+  (c.tools as unknown[]).forEach((t, i) =>
+    checkTool(t, i, type, names, m.slug as string, String(c.runtime), required)
+  );
   return { manifest: m as unknown as Manifest, required };
 }

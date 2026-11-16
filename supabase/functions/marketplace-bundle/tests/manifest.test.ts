@@ -192,4 +192,24 @@ Deno.test("script connectors", () => {
     "invalid_manifest",
   );
   assertEquals(code(scripts({ extra: 1 })), "invalid_manifest");
+  assertEquals(code(scripts({}, { file: "tools/a.b.py" })), "invalid_manifest");
+  assertEquals(code(scripts({}, { file: "tools/a.js" })), "invalid_manifest"); // python3 needs .py
+  assertEquals(code(scripts({ runtime: "node" }, { file: "tools/a.py" })), "invalid_manifest");
+  assertEquals(code(scripts({}, { file: "tools/a_b-c.py" })), "ok");
+});
+
+Deno.test("slug and tool name stay unambiguous and within 64 characters", () => {
+  const slugged = (m: Record<string, unknown>, slug: string) => ({ ...m, slug });
+  assertEquals(code(slugged(http(), "a--b")), "invalid_manifest");
+  assertEquals(code(slugged(scripts(), "a--b")), "invalid_manifest");
+  assertEquals(code(slugged(skillManifest(), "a--b")), "ok"); // skills have no tools
+  assertEquals(code(slugged(http({}, { name: "x".repeat(22) }), "s".repeat(40))), "ok"); // 40+2+22 = 64
+  assertEquals(
+    code(slugged(http({}, { name: "x".repeat(23) }), "s".repeat(40))),
+    "invalid_manifest",
+  );
+  assertEquals(
+    code(slugged(scripts({}, { name: "x".repeat(23) }), "s".repeat(40))),
+    "invalid_manifest",
+  );
 });

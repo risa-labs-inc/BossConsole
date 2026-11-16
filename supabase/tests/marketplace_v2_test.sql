@@ -1,7 +1,7 @@
 -- Marketplace v2: bundle submissions, four default-off platform flags, listings restricted to named agents, the install RPC
 -- Max calls, and the private bundle bucket. Refusals of the new RPCs are {"error": code}; only "not signed in" raises.
 begin;
-select plan(143);
+select plan(151);
 
 -- a1 org admin (may publish for the org's agent), a2 plain org member, a3 outsider, a4 trusted publisher, a5 rate-limit user,
 -- c1 platform admin.
@@ -199,6 +199,16 @@ select is(pg_temp.err(pg_temp.sb('a1', pg_temp.scripts('sc') || jsonb_build_obje
 select is(pg_temp.err(pg_temp.sb('a1', pg_temp.scripts('sc') || jsonb_build_object('connector', jsonb_set(pg_temp.scripts('sc') -> 'connector', '{runtime}', '"ruby"')))), 'invalid_manifest', 'scripts: runtime list');
 select is(pg_temp.err(pg_temp.sb('a1', pg_temp.scripts('sc') || jsonb_build_object('connector', jsonb_set(pg_temp.scripts('sc') -> 'connector', '{secrets}', '[{"name":"A"},{"name":"A"}]')))), 'invalid_manifest', 'scripts: unique secret names');
 select is(pg_temp.err(pg_temp.sb('a1', pg_temp.scripts('sc') || jsonb_build_object('connector', jsonb_set(pg_temp.scripts('sc') -> 'connector', '{tools}', (select jsonb_agg(jsonb_build_object('name', 't' || i, 'description', 'd', 'file', 'tools/a.py', 'input_schema', '{}'::jsonb)) from generate_series(1, 51) i))))), 'invalid_manifest', 'scripts: at most 50 tools');
+
+-- Tool names are exposed as <slug>__<tool>: no "--" in the slug, 64 characters at most, file extension follows the runtime.
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.http('a--b'))), 'invalid_manifest', 'http: no -- in the slug');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.scripts('a--b'))), 'invalid_manifest', 'scripts: no -- in the slug');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.http(repeat('s', 40)) || '{"name":"Long slug"}'::jsonb || jsonb_build_object('connector', jsonb_set(pg_temp.http('x') -> 'connector', '{tools,0,name}', to_jsonb(repeat('x', 23)))))), 'invalid_manifest', 'http: slug + 2 + tool name over 64');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.scripts(repeat('s', 40)) || '{"name":"Long slug"}'::jsonb || jsonb_build_object('connector', jsonb_set(pg_temp.scripts('x') -> 'connector', '{tools,0,name}', to_jsonb(repeat('x', 23)))))), 'invalid_manifest', 'scripts: slug + 2 + tool name over 64');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.http(repeat('s', 40)) || '{"name":"Long slug"}'::jsonb || jsonb_build_object('connector', jsonb_set(pg_temp.http('x') -> 'connector', '{tools,0,name}', to_jsonb(repeat('x', 22)))))), null, 'exactly 64 is accepted');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.scripts('sc') || jsonb_build_object('connector', jsonb_set(pg_temp.scripts('sc') -> 'connector', '{tools,0,file}', '"tools/a.js"')))), 'invalid_manifest', 'scripts: python3 needs .py');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.scripts('sc') || jsonb_build_object('connector', jsonb_set(jsonb_set(pg_temp.scripts('sc') -> 'connector', '{runtime}', '"node"'), '{tools,0,file}', '"tools/a.py"')))), 'invalid_manifest', 'scripts: node needs .js');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.scripts('sc') || jsonb_build_object('connector', jsonb_set(pg_temp.scripts('sc') -> 'connector', '{tools,0,file}', '"tools/a.b.py"')))), 'invalid_manifest', 'scripts: no dots in the file stem');
 
 -- ---------------------------------------------------------------------------------------------------------------------
 -- Review skip rules.

@@ -209,6 +209,8 @@ BEGIN
         RETURN 'invalid_manifest';
     END IF;
     tool_names := '{}';
+    -- Tools are exposed as <slug>__<tool>, which must stay within 64 characters and parse unambiguously.
+    IF pg_catalog.strpos(slug, '--') > 0 THEN RETURN 'invalid_manifest'; END IF;
 
     IF ctype = 'http' THEN
         IF EXISTS (SELECT 1 FROM pg_catalog.jsonb_object_keys(c) x WHERE x NOT IN ('type', 'base_url', 'auth', 'tools'))
@@ -293,6 +295,7 @@ BEGIN
             RETURN 'invalid_manifest';
         END IF;
         tool_names := tool_names || (t->>'name');
+        IF pg_catalog.char_length(slug) + 2 + pg_catalog.char_length(t->>'name') > 64 THEN RETURN 'invalid_manifest'; END IF;
         IF t->'input_schema' ? 'properties' AND pg_catalog.jsonb_typeof(t->'input_schema'->'properties') <> 'object' THEN
             RETURN 'invalid_manifest';
         END IF;
@@ -330,7 +333,8 @@ BEGIN
         ELSE
             IF EXISTS (SELECT 1 FROM pg_catalog.jsonb_object_keys(t) x WHERE x IN ('method', 'path', 'query', 'body'))
                OR pg_catalog.jsonb_typeof(t->'file') IS DISTINCT FROM 'string'
-               OR (t->>'file') !~ '^tools/[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.(py|js)$' OR (t->>'file') ~ '\.\.'
+               OR (t->>'file') !~ '^tools/[A-Za-z0-9_-]+\.(py|js)$'
+               OR (t->>'file') !~ (CASE WHEN c->>'runtime' = 'python3' THEN '\.py$' ELSE '\.js$' END)
                OR (t ? 'effect' AND (t->>'effect') IS DISTINCT FROM 'read' AND (t->>'effect') IS DISTINCT FROM 'write')
                OR (t ? 'effect' AND pg_catalog.jsonb_typeof(t->'effect') <> 'string') THEN
                 RETURN 'invalid_manifest';
