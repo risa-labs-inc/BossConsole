@@ -9,6 +9,8 @@ import { validateBundle } from "./zip.ts";
 import { BundleError } from "./manifest.ts";
 
 export const MAX_BYTES = 10 * 1024 * 1024;
+/** Past this an oversized upload is cut off rather than drained. */
+const DRAIN_LIMIT = 64 * 1024 * 1024;
 const SLUG = /^[a-z0-9][a-z0-9-]{1,46}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -103,24 +105,23 @@ function bearer(req: Request): string | null {
 /** Reads the body up to MAX_BYTES; null when it is larger. */
 async function readCapped(req: Request): Promise<Uint8Array | null> {
   const declared = Number(req.headers.get("content-length") ?? "");
-  if (Number.isFinite(declared) && declared > MAX_BYTES) {
-    await req.body?.cancel();
-    return null;
-  }
-  if (!req.body) return new Uint8Array(0);
+  const over = Number.isFinite(declared) && declared > MAX_BYTES;
+  if (!req.body) return over ? null : new Uint8Array(0);
   const reader = req.body.getReader();
   const chunks: Uint8Array[] = [];
   let n = 0;
+  // An oversized body is drained, not cancelled: the edge runtime sends no reply while the request body is unread.
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     n += value.length;
-    if (n > MAX_BYTES) {
-      await reader.cancel();
+    if (n > DRAIN_LIMIT) {
+      reader.cancel().catch(() => {});
       return null;
     }
-    chunks.push(value);
+    if (n <= MAX_BYTES) chunks.push(value);
   }
+  if (over || n > MAX_BYTES) return null;
   const out = new Uint8Array(n);
   let o = 0;
   for (const c of chunks) {
