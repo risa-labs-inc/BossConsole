@@ -114,9 +114,9 @@ grant execute on function pg_temp.mp(text, text, text, uuid, text), pg_temp.mpk(
 
 
 -- ---- 1. grants ----
-select ok(has_function_privilege('service_role', 'public.invite_link_mail_failed(uuid,boolean)', 'EXECUTE')
-      and not has_function_privilege('authenticated', 'public.invite_link_mail_failed(uuid,boolean)', 'EXECUTE')
-      and not has_function_privilege('anon', 'public.invite_link_mail_failed(uuid,boolean)', 'EXECUTE')
+select ok(has_function_privilege('service_role', 'public.invite_link_mail_failed(uuid,boolean,text)', 'EXECUTE')
+      and not has_function_privilege('authenticated', 'public.invite_link_mail_failed(uuid,boolean,text)', 'EXECUTE')
+      and not has_function_privilege('anon', 'public.invite_link_mail_failed(uuid,boolean,text)', 'EXECUTE')
       and has_function_privilege('anon', 'public.invite_link_admits(text,text)', 'EXECUTE')
       and has_function_privilege('authenticated', 'public.invite_link_admits(text,text)', 'EXECUTE')
       and has_function_privilege('service_role', 'public.invite_link_mail_prepare(uuid,text,text,uuid,text)', 'EXECUTE')
@@ -131,30 +131,30 @@ insert into base select 'agent_log', count(*) from public.agent_invite_mail_log 
 select pg_temp.mpk('n1', 'a5', 'ilinv', 'bo@other-il.test');
 select is((select count(*)::int from public.agent_invite_mail_log where email = 'bo@other-il.test'), 1, 'the send was logged (mirror row)');
 select is((select count(*)::int from public.invite_link_mail_log where link_id = pg_temp.lid('n1')), 1, 'the send was logged (link log, with the link)');
-select is(public.invite_link_mail_failed(pg_temp.lid('n1'), false), '{"success":true,"result":"deleted"}'::jsonb, 'a failed new send: the link is deleted');
+select is(public.invite_link_mail_failed(pg_temp.lid('n1'), false, pg_temp.tk('n1')), '{"success":true,"result":"deleted"}'::jsonb, 'a failed new send: the link is deleted');
 select is((select count(*)::int from public.invite_links where id = pg_temp.lid('n1')), 0, 'no link is left');
 select is((select count(*)::int from public.agent_invite_mail_log where email = 'bo@other-il.test')
         + (select count(*)::int from public.invite_link_mail_log where email = 'bo@other-il.test'), 0, 'no mail is counted against the recipient or the org');
 select is(pg_temp.mp('a5', 'ilinv', 'bo@other-il.test')->>'success', 'true', 'the address can be mailed again at once');
 select is((select count(*)::int from public.invite_links where created_by = pg_temp.u('a5') and target = 'ilinv' and revoked_at is null), 1,
     'a deleted link no longer counts toward the active-link cap');
-select is(public.invite_link_mail_failed(pg_temp.lid('n1'), false)->>'error', 'not_found', 'a second call: not_found');
-select is(public.invite_link_mail_failed(gen_random_uuid(), false)->>'error', 'not_found', 'unknown link');
+select is(public.invite_link_mail_failed(pg_temp.lid('n1'), false, pg_temp.tk('n1'))->>'error', 'not_found', 'a second call: not_found');
+select is(public.invite_link_mail_failed(gen_random_uuid(), false, 'x')->>'error', 'not_found', 'unknown link');
 select is((select count(*)::int from public.agent_audit_log where action = 'invite_link.mail_failed' and agent_id = pg_temp.agent('ilinv')
            and detail->>'result' = 'deleted' and actor = pg_temp.u('a5') and detail::text !~ '(@|[A-Za-z0-9_-]{43})'), 1,
     'audited with the sender, no address or token');
 
 -- limits are not consumed: three failed sends to one address leave room for three real ones
-select pg_temp.mpk('f1', 'a5', 'ilinv', 'lim@other-il.test'); select public.invite_link_mail_failed(pg_temp.lid('f1'), false);
-select pg_temp.mpk('f2', 'a5', 'ilinv', 'lim@other-il.test'); select public.invite_link_mail_failed(pg_temp.lid('f2'), false);
-select pg_temp.mpk('f3', 'a5', 'ilinv', 'lim@other-il.test'); select public.invite_link_mail_failed(pg_temp.lid('f3'), false);
+select pg_temp.mpk('f1', 'a5', 'ilinv', 'lim@other-il.test'); select public.invite_link_mail_failed(pg_temp.lid('f1'), false, pg_temp.tk('f1'));
+select pg_temp.mpk('f2', 'a5', 'ilinv', 'lim@other-il.test'); select public.invite_link_mail_failed(pg_temp.lid('f2'), false, pg_temp.tk('f2'));
+select pg_temp.mpk('f3', 'a5', 'ilinv', 'lim@other-il.test'); select public.invite_link_mail_failed(pg_temp.lid('f3'), false, pg_temp.tk('f3'));
 select is((pg_temp.mp('a5', 'ilinv', 'lim@other-il.test')->>'success') || (pg_temp.mp('a5', 'ilinv', 'lim@other-il.test')->>'success')
        || (pg_temp.mp('a5', 'ilinv', 'lim@other-il.test')->>'success'), 'truetruetrue', 'failed sends did not spend the per-recipient limit');
 select is(pg_temp.mp('a5', 'ilinv', 'lim@other-il.test')->>'error', 'rate_limited', 'the limit still holds for real sends');
 
 -- a platform send
 select pg_temp.mpk('pf', 'a5', 'max', 'pf@other-il.test');
-select is(public.invite_link_mail_failed(pg_temp.lid('pf'), false)->>'result', 'deleted', 'a platform link is deleted too');
+select is(public.invite_link_mail_failed(pg_temp.lid('pf'), false, pg_temp.tk('pf'))->>'result', 'deleted', 'a platform link is deleted too');
 select is((select count(*)::int from public.invite_link_mail_log where email = 'pf@other-il.test'), 0, 'and its mail-log row');
 select is((select count(*)::int from public.platform_audit_log where action = 'invite_link.mail_failed' and actor = pg_temp.u('a5')), 1,
     'platform audit names the sender');
@@ -162,16 +162,16 @@ select is((select count(*)::int from public.platform_audit_log where action = 'i
 -- guards: only a pending email invite, and a "new" one only when just made
 select pg_temp.mpk('g1', 'a5', 'ilinv', 'g1@other-il.test');
 update public.invite_links set created_at = now() - interval '1 hour' where id = pg_temp.lid('g1');
-select is(public.invite_link_mail_failed(pg_temp.lid('g1'), false)->>'error', 'not_pending', 'an old link is not deleted as a failed new send');
+select is(public.invite_link_mail_failed(pg_temp.lid('g1'), false, pg_temp.tk('g1'))->>'error', 'not_pending', 'an old link is not deleted as a failed new send');
 select pg_temp.as_user('a5');
 select pg_temp.mkk('open1', 'ilinv');
 select pg_temp.as_service();
-select is(public.invite_link_mail_failed(pg_temp.lid('open1'), false)->>'error', 'not_pending', 'an open (non-email) link is never touched');
+select is(public.invite_link_mail_failed(pg_temp.lid('open1'), false, pg_temp.tk('open1'))->>'error', 'not_pending', 'an open (non-email) link is never touched');
 select pg_temp.mpk('g2', 'a5', 'ilinv', 'cy@other-il.test');
 select pg_temp.as_user('a7');
 select public.redeem_invite_link(pg_temp.tk('g2'));
 select pg_temp.as_service();
-select is(public.invite_link_mail_failed(pg_temp.lid('g2'), false)->>'error', 'not_pending', 'a redeemed link is never touched');
+select is(public.invite_link_mail_failed(pg_temp.lid('g2'), false, pg_temp.tk('g2'))->>'error', 'not_pending', 'a redeemed link is never touched');
 select is((select count(*)::int from public.invite_links where id = pg_temp.lid('g2')), 1, 'and it stays');
 
 -- ---- 3. a failed resend ----
@@ -181,7 +181,7 @@ create temp table tk2 (t text) on commit drop;
 grant all on tk2 to service_role;
 insert into tk2 select pg_temp.mp('a5', null, null, pg_temp.lid('s1'))->>'token';
 select is((select count(*)::int from public.invite_link_mail_log where link_id = pg_temp.lid('s1')), 2, 'the resend was logged');
-select is(public.invite_link_mail_failed(pg_temp.lid('s1'), true), '{"success":true,"result":"restored"}'::jsonb, 'a failed resend: restored');
+select is(public.invite_link_mail_failed(pg_temp.lid('s1'), true, (select t from tk2)), '{"success":true,"result":"restored"}'::jsonb, 'a failed resend: restored');
 select is((select last_sent_at from public.invite_links where id = pg_temp.lid('s1')), timestamptz '2026-01-02 03:04:05+00', 'last_sent_at is back to its earlier value');
 select is((select count(*)::int from public.invite_links where id = pg_temp.lid('s1')), 1, 'the link is kept');
 select is((select count(*)::int from public.invite_link_mail_log where link_id = pg_temp.lid('s1')), 1, 'only that send''s log row is removed');

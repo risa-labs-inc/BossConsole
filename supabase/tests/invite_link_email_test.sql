@@ -201,6 +201,7 @@ select pg_temp.as_service();
 -- the rotated token works: fetch it by hashing back is impossible, so rotate once more and keep it
 create temp table rot (t text) on commit drop;
 grant all on rot to authenticated, anon, service_role;
+select public.invite_link_mail_sent(pg_temp.lid('r1'), (select r->>'token' from rs));
 insert into rot select pg_temp.mp('a3', null, null, pg_temp.lid('r1'))->>'token';
 select is((select count(*)::int from public.invite_links where id = pg_temp.lid('r1')
            and token_hash = encode(extensions.digest((select t from rot), 'sha256'), 'hex')), 1, 'an admin (agents.access) may resend; the stored hash is the new token''s');

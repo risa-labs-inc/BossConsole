@@ -113,11 +113,11 @@ end $$;
 grant execute on function pg_temp.mp(text, text, text, uuid, text), pg_temp.mpk(text, text, text, text) to authenticated, anon, service_role;
 
 
-select ok(has_function_privilege('service_role', 'public.invite_link_mail_sent(uuid)', 'EXECUTE')
-      and not has_function_privilege('authenticated', 'public.invite_link_mail_sent(uuid)', 'EXECUTE')
-      and not has_function_privilege('anon', 'public.invite_link_mail_sent(uuid)', 'EXECUTE')
+select ok(has_function_privilege('service_role', 'public.invite_link_mail_sent(uuid,text)', 'EXECUTE')
+      and not has_function_privilege('authenticated', 'public.invite_link_mail_sent(uuid,text)', 'EXECUTE')
+      and not has_function_privilege('anon', 'public.invite_link_mail_sent(uuid,text)', 'EXECUTE')
       and has_function_privilege('service_role', 'public.invite_link_mail_prepare(uuid,text,text,uuid,text)', 'EXECUTE')
-      and not has_function_privilege('authenticated', 'public.invite_link_mail_failed(uuid,boolean)', 'EXECUTE'), 'grants: the mail functions are service only');
+      and not has_function_privilege('authenticated', 'public.invite_link_mail_failed(uuid,boolean,text)', 'EXECUTE'), 'grants: the mail functions are service only');
 
 create temp table tn (k text primary key, t text) on commit drop;
 grant all on tn to service_role, anon, authenticated;
@@ -130,7 +130,7 @@ set local role anon;
 select is(public.invite_link_preview(pg_temp.tk('x'))->>'reason', 'not_found', 'while the resend is in flight the old token is replaced');
 reset role;
 select pg_temp.as_service();
-select is(public.invite_link_mail_failed(pg_temp.lid('x'), true)->>'result', 'restored', 'the resend failed');
+select is(public.invite_link_mail_failed(pg_temp.lid('x'), true, (select t from tn where k = 'x'))->>'result', 'restored', 'the resend failed');
 set local role anon;
 select is(public.invite_link_preview(pg_temp.tk('x'))->>'valid', 'true', 'failed resend: the earlier token previews valid again');
 select is(public.invite_link_preview((select t from tn where k = 'x'))->>'reason', 'not_found', 'failed resend: the token that was never mailed is not_found');
@@ -146,13 +146,13 @@ select pg_temp.as_service();
 select pg_temp.mpk('y', 'a5', 'ilinv', 'bo@other-il.test');
 insert into tn select 'y', pg_temp.mp('a5', null, null, pg_temp.lid('y'))->>'token';
 select is((select prev_token_hash is not null from public.invite_links where id = pg_temp.lid('y')), true, 'a resend keeps the previous hash until the outcome is known');
-select public.invite_link_mail_sent(pg_temp.lid('y'));
+select public.invite_link_mail_sent(pg_temp.lid('y'), (select t from tn where k = 'y'));
 select is((select prev_token_hash is null and prev_sent_at is null from public.invite_links where id = pg_temp.lid('y')), true, 'a sent mail clears the saved values');
 set local role anon;
 select is(public.invite_link_preview(pg_temp.tk('y'))->>'reason', 'not_found', 'successful resend: the old token is not_found');
 select is(public.invite_link_preview((select t from tn where k = 'y'))->>'valid', 'true', 'successful resend: the new token is valid');
 reset role;
-select is(public.invite_link_mail_failed(pg_temp.lid('y'), true)->>'result', 'restored', 'a late failure report cannot bring the old token back');
+select is(public.invite_link_mail_failed(pg_temp.lid('y'), true, (select t from tn where k = 'y'))->>'result', 'stale', 'a late failure report cannot bring the old token back');
 set local role anon;
 select is(public.invite_link_preview(pg_temp.tk('y'))->>'reason', 'not_found', 'the old token stays not_found');
 select is(public.invite_link_preview((select t from tn where k = 'y'))->>'valid', 'true', 'and the new one stays valid');
@@ -161,9 +161,9 @@ reset role;
 -- ---- a second resend replaces the saved values, and a failure restores the one before it ----
 select pg_temp.mpk('z', 'a5', 'ilinv', 'e1@other-il.test');
 insert into tn select 'z1', pg_temp.mp('a5', null, null, pg_temp.lid('z'))->>'token';
-select public.invite_link_mail_sent(pg_temp.lid('z'));
+select public.invite_link_mail_sent(pg_temp.lid('z'), (select t from tn where k = 'z1'));
 insert into tn select 'z2', pg_temp.mp('a5', null, null, pg_temp.lid('z'))->>'token';
-select public.invite_link_mail_failed(pg_temp.lid('z'), true);
+select public.invite_link_mail_failed(pg_temp.lid('z'), true, (select t from tn where k = 'z2'));
 set local role anon;
 select is(public.invite_link_preview((select t from tn where k = 'z1'))->>'valid', 'true', 'a failure restores the last mailed token (not the original)');
 select is(public.invite_link_preview(pg_temp.tk('z'))->>'reason', 'not_found', 'the first token stays gone');
@@ -171,7 +171,7 @@ reset role;
 
 -- a failed NEW send is unchanged: the link is deleted
 select pg_temp.mpk('w', 'a5', 'ilinv', 'w@other-il.test');
-select is(public.invite_link_mail_failed(pg_temp.lid('w'), false)->>'result', 'deleted', 'a failed new send still deletes the link');
+select is(public.invite_link_mail_failed(pg_temp.lid('w'), false, pg_temp.tk('w'))->>'result', 'deleted', 'a failed new send still deletes the link');
 
 select * from finish();
 rollback;

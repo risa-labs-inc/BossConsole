@@ -50,11 +50,12 @@ export interface Db {
   ): Promise<LinkInviteFacts>;
   /**
    * invite_link_mail_failed as the service role, when the mail did not go out: a new invite's link is deleted, a resend gets
-   * its earlier last_sent_at back, and that send's mail-log rows are removed. Best effort: failures are swallowed.
+   * its earlier token and last_sent_at back, and that send's mail-log rows are removed. `token` is the one this send issued;
+   * the database ignores the report when it is no longer the link's current token. Best effort: failures are swallowed.
    */
-  mailFailed(linkId: string, resend: boolean): Promise<void>;
-  /** invite_link_mail_sent as the service role: the mail went out, so the saved previous token is dropped. Best effort. */
-  mailSent(linkId: string): Promise<void>;
+  mailFailed(linkId: string, resend: boolean, token: string): Promise<void>;
+  /** invite_link_mail_sent as the service role: the mail went out, so the saved previous token is dropped (if `token` is current). Best effort. */
+  mailSent(linkId: string, token: string): Promise<void>;
 }
 
 export type Mailer = (msg: MailMessage) => Promise<void>;
@@ -190,7 +191,7 @@ export function restDb(): Db {
       }
       return out as LinkInviteFacts;
     },
-    async mailFailed(linkId, resend) {
+    async mailFailed(linkId, resend, token) {
       try {
         const r = await fetch(`${url}/rest/v1/rpc/invite_link_mail_failed`, {
           method: "POST",
@@ -199,13 +200,13 @@ export function restDb(): Db {
             Authorization: `Bearer ${service}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ p_link_id: linkId, p_resend: resend }),
+          body: JSON.stringify({ p_link_id: linkId, p_resend: resend, p_token: token }),
           signal: timeout(),
         });
         await r.body?.cancel();
       } catch { /* the send already failed; nothing more to report */ }
     },
-    async mailSent(linkId) {
+    async mailSent(linkId, token) {
       try {
         const r = await fetch(`${url}/rest/v1/rpc/invite_link_mail_sent`, {
           method: "POST",
@@ -214,7 +215,7 @@ export function restDb(): Db {
             Authorization: `Bearer ${service}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ p_link_id: linkId }),
+          body: JSON.stringify({ p_link_id: linkId, p_token: token }),
           signal: timeout(),
         });
         await r.body?.cancel();
@@ -231,6 +232,7 @@ const LINK_REFUSALS: Record<string, number> = {
   invites_off: 403,
   not_found: 404,
   not_pending: 409,
+  resend_in_progress: 409,
   too_many_active_links: 409,
   rate_limited: 429,
   quota_exceeded: 429,
@@ -379,7 +381,7 @@ export function createApp(
    * own JWT) emails a single-use invite link bound to one address, or re-sends one (the token rotates, the earlier mail stops
    * working). The link origin is built here from the target, never from the request.
    * 200 {sent, id, recipient, expires_at} | 400 bad_request, bad_email | 401 | 403 not_allowed, invites_off | 404 not_found |
-   * 409 not_pending, too_many_active_links | 429 rate_limited, quota_exceeded | 503 mail_unavailable.
+   * 409 not_pending, resend_in_progress, too_many_active_links | 429 rate_limited, quota_exceeded | 503 mail_unavailable.
    */
   const linkInvite = async (request: Request): Promise<Response> => {
     const auth = request.headers.get("Authorization") ?? "";
@@ -435,7 +437,7 @@ export function createApp(
     }
     if (!origin || !isAddress(facts.recipient_email) || !TOKEN_43.test(facts.token)) {
       logLink(facts.link_id, "no origin");
-      await db.mailFailed(facts.link_id, "linkId" in req).catch(() => {});
+      await db.mailFailed(facts.link_id, "linkId" in req, facts.token).catch(() => {});
       return json(503, { error: "mail_unavailable" });
     }
     try {
@@ -445,10 +447,10 @@ export function createApp(
       });
     } catch {
       logLink(facts.link_id, "smtp failed");
-      await db.mailFailed(facts.link_id, "linkId" in req).catch(() => {});
+      await db.mailFailed(facts.link_id, "linkId" in req, facts.token).catch(() => {});
       return json(503, { error: "mail_unavailable" });
     }
-    await db.mailSent(facts.link_id).catch(() => {});
+    await db.mailSent(facts.link_id, facts.token).catch(() => {});
     logLink(facts.link_id, "sent");
     return json(200, {
       sent: true,

@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { createApp, type Db, type Mailer, platformOrigins, Refused } from "../app.ts";
+import { createApp, type Db, type Mailer, platformOrigins, Refused, restDb } from "../app.ts";
 import type { LinkInviteFacts } from "../mail.ts";
 import type { MailMessage } from "../smtp.ts";
 
@@ -26,8 +26,8 @@ function harness(
 ) {
   const sent: MailMessage[] = [];
   const calls: unknown[][] = [];
-  const failed: [string, boolean][] = [];
-  const sentIds: string[] = [];
+  const failed: [string, boolean, string][] = [];
+  const sentIds: [string, string][] = [];
   const db: Db = {
     user: (jwt) => Promise.resolve(jwt === "good-jwt" ? userId : null),
     prepare: () => Promise.reject(new Error("not an org invite")),
@@ -36,12 +36,12 @@ function harness(
       calls.push(a);
       return prepareLink(...a);
     },
-    mailFailed: (id, resend) => {
-      failed.push([id, resend]);
+    mailFailed: (id, resend, token) => {
+      failed.push([id, resend, token]);
       return Promise.resolve();
     },
-    mailSent: (id) => {
-      sentIds.push(id);
+    mailSent: (id, token) => {
+      sentIds.push([id, token]);
       return Promise.resolve();
     },
   };
@@ -173,6 +173,7 @@ Deno.test("link: the refusals map to their statuses", async () => {
     ["invites_off", 403],
     ["not_found", 404],
     ["not_pending", 409],
+    ["resend_in_progress", 409],
     ["too_many_active_links", 409],
     ["rate_limited", 429],
     ["quota_exceeded", 429],
@@ -256,13 +257,13 @@ Deno.test("link: the mail has one button and no stray content; no inviter name f
 Deno.test("link: an smtp failure on a new invite asks the database to drop the link", async () => {
   const { app, failed } = harness(undefined, { mailFails: true });
   assertEquals((await app(req(body))).status, 503);
-  assertEquals(failed, [[linkId, false]]);
+  assertEquals(failed, [[linkId, false, TOKEN]]);
 });
 
 Deno.test("link: an smtp failure on a resend asks for the earlier state back", async () => {
   const { app, failed } = harness(undefined, { mailFails: true });
   assertEquals((await app(req({ link_id: linkId }))).status, 503);
-  assertEquals(failed, [[linkId, true]]);
+  assertEquals(failed, [[linkId, true, TOKEN]]);
 });
 
 Deno.test("link: a send that went out, or was refused, never calls mailFailed", async () => {
@@ -278,7 +279,7 @@ Deno.test("link: a send that went out, or was refused, never calls mailFailed", 
 Deno.test("link: facts that cannot be mailed also release the link", async () => {
   const { app, failed } = harness(() => Promise.resolve({ ...facts, token: "short" }));
   assertEquals((await app(req(body))).status, 503);
-  assertEquals(failed, [[linkId, false]]);
+  assertEquals(failed, [[linkId, false, "short"]]);
 });
 
 Deno.test("link: a failing mailFailed does not change the answer", async () => {
@@ -305,8 +306,37 @@ Deno.test("link: a failing mailFailed does not change the answer", async () => {
 Deno.test("link: a sent mail tells the database; a failed one does not", async () => {
   const ok = harness();
   assertEquals((await ok.app(req({ link_id: linkId }))).status, 200);
-  assertEquals(ok.sentIds, [linkId]);
+  assertEquals(ok.sentIds, [[linkId, TOKEN]]);
   const bad = harness(undefined, { mailFails: true });
   await bad.app(req({ link_id: linkId }));
   assertEquals(bad.sentIds, []);
+});
+
+Deno.test("restDb: resend_in_progress is a 409, and the outcome calls carry the issued token", async () => {
+  const real = globalThis.fetch;
+  const bodies: Record<string, unknown>[] = [];
+  Deno.env.set("SUPABASE_URL", "http://db.test");
+  Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", "svc");
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (init?.body) bodies.push(JSON.parse(String(init.body)));
+    const out = url.endsWith("invite_link_mail_prepare")
+      ? { success: false, error: "resend_in_progress" }
+      : null;
+    return Promise.resolve(new Response(JSON.stringify(out), { status: 200 }));
+  }) as typeof fetch;
+  try {
+    const db = restDb();
+    const err = await db.prepareLink(userId, { linkId }).catch((e) => e);
+    assert(err instanceof Refused);
+    assertEquals([err.status, err.code], [409, "resend_in_progress"]);
+    await db.mailFailed(linkId, true, TOKEN);
+    await db.mailSent(linkId, TOKEN);
+    assertEquals(bodies.slice(-2), [
+      { p_link_id: linkId, p_resend: true, p_token: TOKEN },
+      { p_link_id: linkId, p_token: TOKEN },
+    ]);
+  } finally {
+    globalThis.fetch = real;
+  }
 });
