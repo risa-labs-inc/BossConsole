@@ -20,6 +20,8 @@ const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !
 const chars = (s: string) => [...s].length;
 // deno-lint-ignore no-control-regex
 const CNTRL = /[\u0000-\u001f\u007f-\u009f]/;
+/** Invisible and format characters: soft hyphen, zero-width, bidi marks and overrides, word joiner and friends, BOM. */
+const INVISIBLE = /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/;
 
 const SLUG = /^[a-z0-9][a-z0-9-]{1,46}$/;
 const TOOL = /^[a-z][a-z0-9_]{0,47}$/;
@@ -66,6 +68,8 @@ function only(o: Obj, keys: string[], path: string) {
 function normTags(raw: unknown[]): string[] {
   const out: string[] = [];
   for (const t of raw) {
+    // Before trimming: JavaScript's trim() would swallow a leading U+FEFF.
+    if (INVISIBLE.test(String(t))) throw new BundleError("invalid_tag", "tags: a tag is not valid");
     const n = String(t).trim().toLowerCase().replace(/\s+/g, "-");
     if (n === "" || out.includes(n)) continue;
     if (!TAG.test(n)) throw new BundleError("invalid_tag", "tags: a tag is not valid");
@@ -105,7 +109,9 @@ function checkTool(
     bad(`${p}.name: slug and tool name together exceed 62 characters`);
   }
   if (
-    typeof t.description !== "string" || t.description.trim() === "" || chars(t.description) > 1000
+    typeof t.description !== "string" || t.description.trim() === "" ||
+    chars(t.description) > 1000 ||
+    INVISIBLE.test(t.description)
   ) {
     bad(`${p}.description: 1 to 1000 characters`);
   }
@@ -206,22 +212,29 @@ export function validateManifest(raw: unknown): { manifest: Manifest; required: 
   const name = m.name;
   if (
     typeof name !== "string" || name.trim() !== name || chars(name) < 2 || chars(name) > 40 ||
-    CNTRL.test(name)
+    CNTRL.test(name) || INVISIBLE.test(name)
   ) {
     throw new BundleError("invalid_name", "name: 2 to 40 characters, trimmed");
   }
   const summary = m.summary;
   if (
     typeof summary !== "string" || summary.trim() === "" || chars(summary) > 200 ||
-    CNTRL.test(summary)
+    CNTRL.test(summary) || INVISIBLE.test(summary)
   ) {
     throw new BundleError("invalid_summary", "summary: one line, 1 to 200 characters");
   }
-  if ("description" in m && (typeof m.description !== "string" || chars(m.description) > 4000)) {
+  if (
+    "description" in m &&
+    (typeof m.description !== "string" || chars(m.description) > 4000 ||
+      INVISIBLE.test(m.description))
+  ) {
     throw new BundleError("invalid_description", "description: at most 4000 characters");
   }
   const pub = m.publisher_name;
-  if (typeof pub !== "string" || pub.trim() === "" || chars(pub) > 60 || CNTRL.test(pub)) {
+  if (
+    typeof pub !== "string" || pub.trim() === "" || chars(pub) > 60 || CNTRL.test(pub) ||
+    INVISIBLE.test(pub)
+  ) {
     throw new BundleError("invalid_publisher_name", "publisher_name: 1 to 60 characters");
   }
   if ("category" in m && m.category !== null && typeof m.category !== "string") {
@@ -336,10 +349,12 @@ export function validateManifest(raw: unknown): { manifest: Manifest; required: 
     if ("egress" in c) {
       const e = c.egress;
       if (!Array.isArray(e) || e.length > 20) bad("connector.egress: at most 20 hosts");
+      const hosts = new Set<string>();
       for (const h of e as unknown[]) {
-        if (typeof h !== "string" || h !== h.toLowerCase() || !publicHost(h)) {
-          bad("connector.egress: exact public lowercase hostnames");
+        if (typeof h !== "string" || h !== h.toLowerCase() || !publicHost(h) || hosts.has(h)) {
+          bad("connector.egress: exact, unique, public lowercase hostnames");
         }
+        hosts.add(h as string);
       }
     }
     if ("secrets" in c) {

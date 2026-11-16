@@ -61,6 +61,14 @@ RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
 $$;
 REVOKE ALL ON FUNCTION public.marketplace_public_host(text) FROM PUBLIC, anon, authenticated, service_role;
 
+-- Invisible and format characters (soft hyphen, zero-width, bidi marks and overrides, word joiner and friends, BOM) that make a
+-- listing's text read differently from what it is. Refused in every listing text field.
+CREATE FUNCTION public.marketplace_has_invisible(p_text text)
+RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
+    SELECT COALESCE(p_text ~ '[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]', false);
+$$;
+REVOKE ALL ON FUNCTION public.marketplace_has_invisible(text) FROM PUBLIC, anon, authenticated, service_role;
+
 -- marketplace_can_skip_review for an explicit user (the service-only submit has no auth.uid()).
 CREATE FUNCTION public.marketplace_user_can_skip_review(p_user uuid)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
@@ -88,6 +96,7 @@ DECLARE
     ctype text;
     tool_names text[];
     secret_names text[];
+    egress_hosts text[];
     ph text;
     k text;
     base text;
@@ -118,19 +127,23 @@ BEGIN
     IF slug IN ('publish', 'mine') THEN RETURN 'reserved_slug'; END IF;
     nm := p->>'name';
     IF pg_catalog.jsonb_typeof(p->'name') IS DISTINCT FROM 'string' OR pg_catalog.btrim(nm) <> nm
-       OR pg_catalog.char_length(nm) NOT BETWEEN 2 AND 40 OR nm ~ '[[:cntrl:]]' THEN
+       OR pg_catalog.char_length(nm) NOT BETWEEN 2 AND 40 OR nm ~ '[[:cntrl:]]'
+       OR public.marketplace_has_invisible(nm) THEN
         RETURN 'invalid_name';
     END IF;
     IF pg_catalog.jsonb_typeof(p->'summary') IS DISTINCT FROM 'string' OR pg_catalog.btrim(p->>'summary') = ''
-       OR pg_catalog.char_length(p->>'summary') > 200 OR (p->>'summary') ~ '[[:cntrl:]]' THEN
+       OR pg_catalog.char_length(p->>'summary') > 200 OR (p->>'summary') ~ '[[:cntrl:]]'
+       OR public.marketplace_has_invisible(p->>'summary') THEN
         RETURN 'invalid_summary';
     END IF;
     IF p ? 'description' AND (pg_catalog.jsonb_typeof(p->'description') IS DISTINCT FROM 'string'
-                              OR pg_catalog.char_length(p->>'description') > 4000) THEN
+                              OR pg_catalog.char_length(p->>'description') > 4000
+                              OR public.marketplace_has_invisible(p->>'description')) THEN
         RETURN 'invalid_description';
     END IF;
     IF pg_catalog.jsonb_typeof(p->'publisher_name') IS DISTINCT FROM 'string' OR pg_catalog.btrim(p->>'publisher_name') = ''
-       OR pg_catalog.char_length(p->>'publisher_name') > 60 OR (p->>'publisher_name') ~ '[[:cntrl:]]' THEN
+       OR pg_catalog.char_length(p->>'publisher_name') > 60 OR (p->>'publisher_name') ~ '[[:cntrl:]]'
+       OR public.marketplace_has_invisible(p->>'publisher_name') THEN
         RETURN 'invalid_publisher_name';
     END IF;
     IF p ? 'category' AND pg_catalog.jsonb_typeof(p->'category') <> 'null' THEN
@@ -144,6 +157,9 @@ BEGIN
         IF pg_catalog.jsonb_typeof(p->'tags') <> 'array'
            OR EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(p->'tags') e WHERE pg_catalog.jsonb_typeof(e) <> 'string') THEN
             RETURN 'invalid_manifest';
+        END IF;
+        IF EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements_text(p->'tags') e WHERE public.marketplace_has_invisible(e)) THEN
+            RETURN 'invalid_tag';
         END IF;
         BEGIN
             PERFORM public.marketplace_norm_tags(ARRAY(SELECT pg_catalog.jsonb_array_elements_text(p->'tags')));
@@ -256,11 +272,13 @@ BEGIN
             IF pg_catalog.jsonb_typeof(c->'egress') <> 'array' OR pg_catalog.jsonb_array_length(c->'egress') > 20 THEN
                 RETURN 'invalid_manifest';
             END IF;
+            egress_hosts := '{}';
             FOR s IN SELECT e FROM pg_catalog.jsonb_array_elements(c->'egress') e LOOP
                 IF pg_catalog.jsonb_typeof(s) <> 'string' OR (s #>> '{}') <> pg_catalog.lower(s #>> '{}')
-                   OR NOT public.marketplace_public_host(s #>> '{}') THEN
+                   OR NOT public.marketplace_public_host(s #>> '{}') OR (s #>> '{}') = ANY (egress_hosts) THEN
                     RETURN 'invalid_manifest';
                 END IF;
+                egress_hosts := egress_hosts || (s #>> '{}');
             END LOOP;
         END IF;
         IF c ? 'secrets' THEN
@@ -289,7 +307,7 @@ BEGIN
            OR pg_catalog.jsonb_typeof(t->'name') IS DISTINCT FROM 'string' OR (t->>'name') !~ '^[a-z][a-z0-9_]{0,47}$'
            OR (t->>'name') = ANY (tool_names)
            OR pg_catalog.jsonb_typeof(t->'description') IS DISTINCT FROM 'string' OR pg_catalog.btrim(t->>'description') = ''
-           OR pg_catalog.char_length(t->>'description') > 1000
+           OR pg_catalog.char_length(t->>'description') > 1000 OR public.marketplace_has_invisible(t->>'description')
            OR pg_catalog.jsonb_typeof(t->'input_schema') IS DISTINCT FROM 'object'
            OR pg_catalog.octet_length((t->'input_schema')::text) > 16384 THEN
             RETURN 'invalid_manifest';
@@ -577,11 +595,11 @@ REVOKE ALL ON FUNCTION public.marketplace_install_v2(text, text) FROM PUBLIC, an
 GRANT EXECUTE ON FUNCTION public.marketplace_install_v2(text, text) TO authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
--- Service-only: a bundle submission, called by the marketplace-bundle edge function after it verified the user's JWT,
--- validated the zip and stored it. Same rules as marketplace_submit, for p_user.
+-- Service-only: every submission check that does not need the stored object, so the edge function can refuse BEFORE it
+-- stores anything. Returns {"error": code} or {}. marketplace_submit_bundle runs it again under the user's lock, so this
+-- is the single source of truth for these rules.
 -- ----------------------------------------------------------------------------
-CREATE FUNCTION public.marketplace_submit_bundle(p_user uuid, p_manifest jsonb, p_bundle_path text, p_sha256 text, p_size int,
-    p_skip_review boolean DEFAULT false)
+CREATE FUNCTION public.marketplace_bundle_precheck(p_user uuid, p_manifest jsonb, p_skip_review boolean DEFAULT false)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
     me uuid := p_user;
@@ -592,14 +610,7 @@ DECLARE
     agents text[];
     ag text;
     pl public.plugins%ROWTYPE;
-    skip boolean;
     l public.marketplace_listings%ROWTYPE;
-    live_decision text;
-    next_version int;
-    vid uuid;
-    v_slug text;
-    cat text;
-    new_tags text[];
 BEGIN
     IF me IS NULL THEN
         RAISE EXCEPTION 'Not signed in' USING ERRCODE = '42501';
@@ -607,25 +618,14 @@ BEGIN
     IF NOT public.marketplace_flag_on('marketplace_bundles') THEN
         RETURN pg_catalog.jsonb_build_object('error', 'bundles_disabled');
     END IF;
-    IF p_size IS NOT NULL AND p_size > 10 * 1024 * 1024 THEN
-        RETURN pg_catalog.jsonb_build_object('error', 'bundle_too_large');
-    END IF;
-    IF p_bundle_path IS NULL OR p_bundle_path !~ '^bundles/[0-9a-f]{64}\.zip$' OR p_sha256 IS NULL OR p_sha256 !~ '^[0-9a-f]{64}$'
-       OR p_bundle_path <> 'bundles/' || p_sha256 || '.zip' OR p_size IS NULL OR p_size < 1 THEN
-        RETURN pg_catalog.jsonb_build_object('error', 'invalid_bundle');
-    END IF;
     code := public.marketplace_check_manifest(p_manifest);
     IF code IS NOT NULL THEN
         RETURN pg_catalog.jsonb_build_object('error', code);
     END IF;
 
     v_kind := (p_manifest->>'kind')::public.marketplace_kind;
-    v_slug := p_manifest->>'slug';
     ctype := p_manifest->'connector'->>'type';
     scripts := COALESCE(ctype = 'scripts', false);
-    cat := NULLIF(pg_catalog.btrim(COALESCE(p_manifest->>'category', '')), '');
-    new_tags := public.marketplace_norm_tags(ARRAY(SELECT pg_catalog.jsonb_array_elements_text(
-        COALESCE(NULLIF(p_manifest->'tags', 'null'::jsonb), '[]'::jsonb))));
     agents := ARRAY(SELECT DISTINCT ON (x.a) x.a FROM pg_catalog.jsonb_array_elements_text(
         COALESCE(p_manifest->'visibility'->'agents', '[]'::jsonb)) WITH ORDINALITY AS x(a, ord) ORDER BY x.a, x.ord);
 
@@ -658,7 +658,6 @@ BEGIN
        AND NOT public.marketplace_open_publishing() THEN
         RETURN pg_catalog.jsonb_build_object('error', 'review_skip_not_allowed');
     END IF;
-    skip := NOT scripts AND (COALESCE(p_skip_review, false) OR public.marketplace_open_publishing());
 
     -- Platform admins and trusted publishers have no daily cap; everyone else gets 20 a day.
     IF NOT public.marketplace_user_can_skip_review(me) AND (SELECT pg_catalog.count(*) FROM public.marketplace_versions
@@ -666,7 +665,78 @@ BEGIN
         RETURN pg_catalog.jsonb_build_object('error', 'submission_rate_limited');
     END IF;
 
-    -- Every refusal below concerns a listing that already existed, so nothing is left behind by returning it.
+    -- The listing, when the slug already has one.
+    SELECT * INTO l FROM public.marketplace_listings WHERE slug = p_manifest->>'slug';
+    IF FOUND THEN
+        IF l.publisher_id <> me THEN
+            RETURN pg_catalog.jsonb_build_object('error', 'slug_taken');
+        END IF;
+        IF l.kind <> v_kind THEN
+            RETURN pg_catalog.jsonb_build_object('error', 'kind_mismatch');
+        END IF;
+        IF l.status = 'suspended' THEN
+            RETURN pg_catalog.jsonb_build_object('error', 'listing_suspended');
+        END IF;
+    END IF;
+    RETURN '{}'::jsonb;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.marketplace_bundle_precheck(uuid, jsonb, boolean) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.marketplace_bundle_precheck(uuid, jsonb, boolean) TO service_role;
+
+-- ----------------------------------------------------------------------------
+-- Service-only: a bundle submission, called by the marketplace-bundle edge function after it verified the user's JWT,
+-- validated the zip, ran the precheck and stored it at bundles/<user id>/<sha256>.zip. One user's submissions run one at a
+-- time (the lock), so the daily cap cannot be beaten by parallel uploads.
+-- ----------------------------------------------------------------------------
+CREATE FUNCTION public.marketplace_submit_bundle(p_user uuid, p_manifest jsonb, p_bundle_path text, p_sha256 text, p_size int,
+    p_skip_review boolean DEFAULT false)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    me uuid := p_user;
+    pre jsonb;
+    v_kind public.marketplace_kind;
+    ctype text;
+    scripts boolean;
+    agents text[];
+    skip boolean;
+    l public.marketplace_listings%ROWTYPE;
+    live_decision text;
+    next_version int;
+    vid uuid;
+    v_slug text;
+    cat text;
+    new_tags text[];
+BEGIN
+    PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('marketplace_submit:' || p_user::text, 0));
+    IF me IS NULL THEN
+        RAISE EXCEPTION 'Not signed in' USING ERRCODE = '42501';
+    END IF;
+    pre := public.marketplace_bundle_precheck(me, p_manifest, p_skip_review);
+    IF pre ? 'error' THEN
+        RETURN pre;
+    END IF;
+    IF p_size IS NOT NULL AND p_size > 10 * 1024 * 1024 THEN
+        RETURN pg_catalog.jsonb_build_object('error', 'bundle_too_large');
+    END IF;
+    IF p_sha256 IS NULL OR p_sha256 !~ '^[0-9a-f]{64}$' OR p_size IS NULL OR p_size < 1
+       OR p_bundle_path IS DISTINCT FROM 'bundles/' || me::text || '/' || p_sha256 || '.zip' THEN
+        RETURN pg_catalog.jsonb_build_object('error', 'invalid_bundle');
+    END IF;
+
+    v_kind := (p_manifest->>'kind')::public.marketplace_kind;
+    v_slug := p_manifest->>'slug';
+    ctype := p_manifest->'connector'->>'type';
+    scripts := COALESCE(ctype = 'scripts', false);
+    cat := NULLIF(pg_catalog.btrim(COALESCE(p_manifest->>'category', '')), '');
+    new_tags := public.marketplace_norm_tags(ARRAY(SELECT pg_catalog.jsonb_array_elements_text(
+        COALESCE(NULLIF(p_manifest->'tags', 'null'::jsonb), '[]'::jsonb))));
+    agents := ARRAY(SELECT DISTINCT ON (x.a) x.a FROM pg_catalog.jsonb_array_elements_text(
+        COALESCE(p_manifest->'visibility'->'agents', '[]'::jsonb)) WITH ORDINALITY AS x(a, ord) ORDER BY x.a, x.ord);
+    skip := NOT scripts AND (COALESCE(p_skip_review, false) OR public.marketplace_open_publishing());
+
+    -- Every refusal below concerns a listing that already existed, so nothing is left behind by returning it. The precheck
+    -- looked at the listing without a lock; this settles a slug another user took in between.
     INSERT INTO public.marketplace_listings (kind, slug, publisher_id)
         VALUES (v_kind, v_slug, me) ON CONFLICT (slug) DO NOTHING;
     SELECT * INTO l FROM public.marketplace_listings WHERE slug = v_slug FOR UPDATE;
@@ -814,5 +884,128 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.marketplace_agent_skills(text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.marketplace_agent_skills(text) TO authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- Legacy submit path: the invisible-character rule in marketplace_validate, and the same per-user lock as the bundle path.
+-- Both bodies are the latest ones (20261030150000, 20261110120000) with only those additions.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.marketplace_validate(p_kind public.marketplace_kind, p_slug text, p_name text, p_summary text,
+    p_description text, p_publisher_name text, p_content jsonb)
+RETURNS void LANGUAGE plpgsql IMMUTABLE SET search_path = '' AS $$
+BEGIN
+    IF p_slug IS NULL OR p_slug !~ '^[a-z0-9][a-z0-9-]{1,46}$' THEN
+        RAISE EXCEPTION 'invalid_slug' USING ERRCODE = '22023';
+    END IF;
+    -- The console's own pages under /marketplace/.
+    IF p_slug IN ('publish', 'mine') THEN
+        RAISE EXCEPTION 'reserved_slug' USING ERRCODE = '22023';
+    END IF;
+    IF p_name IS NULL OR pg_catalog.btrim(p_name) <> p_name OR pg_catalog.char_length(p_name) NOT BETWEEN 2 AND 40 OR p_name ~ '[[:cntrl:]]'
+       OR public.marketplace_has_invisible(p_name) THEN
+        RAISE EXCEPTION 'invalid_name' USING ERRCODE = '22023';
+    END IF;
+    IF p_summary IS NULL OR pg_catalog.btrim(p_summary) = '' OR pg_catalog.char_length(p_summary) > 200 OR p_summary ~ '[[:cntrl:]]'
+       OR public.marketplace_has_invisible(p_summary) THEN
+        RAISE EXCEPTION 'invalid_summary' USING ERRCODE = '22023';
+    END IF;
+    IF pg_catalog.char_length(COALESCE(p_description, '')) > 4000 OR public.marketplace_has_invisible(p_description) THEN
+        RAISE EXCEPTION 'invalid_description' USING ERRCODE = '22023';
+    END IF;
+    IF p_publisher_name IS NULL OR pg_catalog.btrim(p_publisher_name) = '' OR pg_catalog.char_length(p_publisher_name) > 60
+       OR p_publisher_name ~ '[[:cntrl:]]' OR public.marketplace_has_invisible(p_publisher_name) THEN
+        RAISE EXCEPTION 'invalid_publisher_name' USING ERRCODE = '22023';
+    END IF;
+    IF pg_catalog.jsonb_typeof(p_content) IS DISTINCT FROM 'object' THEN
+        RAISE EXCEPTION 'invalid_content' USING ERRCODE = '22023';
+    END IF;
+    IF p_kind = 'skill' THEN
+        IF EXISTS (SELECT 1 FROM pg_catalog.jsonb_object_keys(p_content) k WHERE k <> 'markdown')
+           OR pg_catalog.jsonb_typeof(p_content->'markdown') IS DISTINCT FROM 'string'
+           OR pg_catalog.btrim(p_content->>'markdown') = '' THEN
+            RAISE EXCEPTION 'invalid_content' USING ERRCODE = '22023';
+        END IF;
+        PERFORM public.validate_agent_draft_content(pg_catalog.jsonb_build_object('soul', '', 'identity', '',
+            'skills', pg_catalog.jsonb_build_object(p_slug, p_content->'markdown'), 'custom_connectors', '[]'::jsonb));
+    ELSE
+        IF EXISTS (SELECT 1 FROM pg_catalog.jsonb_object_keys(p_content) k WHERE k NOT IN ('url', 'auth')) THEN
+            RAISE EXCEPTION 'invalid_content' USING ERRCODE = '22023';
+        END IF;
+        PERFORM public.validate_agent_draft_content(pg_catalog.jsonb_build_object('soul', '', 'identity', '',
+            'skills', '{}'::jsonb, 'custom_connectors', pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+                'id', 'mcp-' || p_slug, 'name', p_name, 'url', p_content->'url', 'auth', p_content->'auth'))));
+    END IF;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.marketplace_submit(p_kind public.marketplace_kind, p_slug text, p_name text, p_summary text,
+    p_description text, p_publisher_name text, p_content jsonb, p_skip_review boolean DEFAULT false,
+    p_category text DEFAULT NULL, p_tags text[] DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    me uuid := auth.uid();
+    skip boolean := COALESCE(p_skip_review, false) OR public.marketplace_open_publishing();
+    l public.marketplace_listings%ROWTYPE;
+    live_decision text;
+    next_version int;
+    vid uuid;
+    cat text := NULLIF(pg_catalog.btrim(COALESCE(p_category, '')), '');
+    new_tags text[] := public.marketplace_norm_tags(p_tags);
+BEGIN
+    PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('marketplace_submit:' || me::text, 0));
+    IF me IS NULL THEN
+        RAISE EXCEPTION 'Not signed in' USING ERRCODE = '42501';
+    END IF;
+    IF COALESCE(p_skip_review, false) AND NOT public.marketplace_can_skip_review() AND NOT public.marketplace_open_publishing() THEN
+        RAISE EXCEPTION 'review_skip_not_allowed' USING ERRCODE = '42501';
+    END IF;
+    PERFORM public.marketplace_validate(p_kind, p_slug, p_name, p_summary, COALESCE(p_description, ''), p_publisher_name, p_content);
+    IF cat IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.marketplace_categories c WHERE c.slug = cat) THEN
+        RAISE EXCEPTION 'invalid_category' USING ERRCODE = '22023';
+    END IF;
+    -- Platform admins and trusted publishers have no daily cap; everyone else gets 20 a day.
+    IF NOT public.marketplace_can_skip_review() AND (SELECT pg_catalog.count(*) FROM public.marketplace_versions
+            WHERE created_by = me AND created_at > now() - interval '1 day') >= 20 THEN
+        RAISE EXCEPTION 'submission_rate_limited' USING ERRCODE = 'P0001';
+    END IF;
+    INSERT INTO public.marketplace_listings (kind, slug, publisher_id)
+        VALUES (p_kind, p_slug, me) ON CONFLICT (slug) DO NOTHING;
+    SELECT * INTO l FROM public.marketplace_listings WHERE slug = p_slug FOR UPDATE;
+    IF l.publisher_id <> me THEN
+        RAISE EXCEPTION 'slug_taken' USING ERRCODE = 'P0001';
+    END IF;
+    IF l.kind <> p_kind THEN
+        RAISE EXCEPTION 'kind_mismatch' USING ERRCODE = 'P0001';
+    END IF;
+    IF l.status = 'suspended' THEN
+        RAISE EXCEPTION 'listing_suspended' USING ERRCODE = 'P0001';
+    END IF;
+    UPDATE public.marketplace_versions SET decision = 'superseded', decided_at = now()
+        WHERE id = l.pending_version_id AND decision IS NULL;
+    SELECT COALESCE(pg_catalog.max(version), 0) + 1 INTO next_version
+        FROM public.marketplace_versions WHERE listing_id = l.id;
+    INSERT INTO public.marketplace_versions (listing_id, version, name, summary, description, publisher_name, content, created_by,
+                                             decision, decided_by, decided_at, category, tags)
+        VALUES (l.id, next_version, p_name, p_summary, COALESCE(p_description, ''), pg_catalog.btrim(p_publisher_name), p_content, me,
+                CASE WHEN skip THEN 'unreviewed' END, CASE WHEN skip THEN me END, CASE WHEN skip THEN now() END, cat, new_tags)
+        RETURNING id INTO vid;
+    IF skip THEN
+        UPDATE public.marketplace_listings SET live_version_id = vid, pending_version_id = NULL, review_note = NULL,
+            status = 'live', updated_at = now() WHERE id = l.id;
+        INSERT INTO public.platform_audit_log (actor, action, detail)
+            VALUES (me, 'marketplace.publish_unreviewed',
+                    pg_catalog.jsonb_build_object('slug', l.slug, 'kind', l.kind, 'version', next_version));
+        RETURN pg_catalog.jsonb_build_object('slug', l.slug, 'version', next_version, 'status', 'live', 'reviewed', false);
+    END IF;
+    UPDATE public.marketplace_listings SET pending_version_id = vid, review_note = NULL, updated_at = now(),
+        -- A live listing keeps serving its live version; anything else (rejected, withdrawn) waits for review unlisted.
+        status = (CASE WHEN l.status = 'live' THEN 'live' ELSE 'pending_review' END)::public.marketplace_status
+        WHERE id = l.id;
+    INSERT INTO public.platform_audit_log (actor, action, detail)
+        VALUES (me, 'marketplace.submit', pg_catalog.jsonb_build_object('slug', l.slug, 'kind', l.kind, 'version', next_version));
+    SELECT v.decision INTO live_decision FROM public.marketplace_versions v WHERE v.id = l.live_version_id;
+    RETURN pg_catalog.jsonb_strip_nulls(pg_catalog.jsonb_build_object('slug', l.slug, 'version', next_version,
+        'status', 'pending_review', 'reviewed', CASE WHEN l.live_version_id IS NOT NULL THEN live_decision = 'approved' END));
+END;
+$$;
 
 COMMIT;

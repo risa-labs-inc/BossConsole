@@ -2,7 +2,17 @@ import { assert, assertEquals, assertThrows } from "@std/assert";
 import { type Zippable, zipSync } from "fflate";
 import { BundleError } from "../manifest.ts";
 import { checkEntryName, crc32, LIMITS, validateBundle } from "../zip.ts";
-import { bundle, findSig, patchAll, skillBundle, skillManifest, text } from "./helpers.ts";
+import {
+  bundle,
+  connectorManifest,
+  findSig,
+  httpConnector,
+  patchAll,
+  scriptsConnector,
+  skillBundle,
+  skillManifest,
+  text,
+} from "./helpers.ts";
 
 function code(fn: () => unknown): string {
   try {
@@ -163,7 +173,7 @@ Deno.test("duplicate names are refused, exact or by case", () => {
 Deno.test("at most 200 entries", () => {
   const mk = (n: number) => {
     const z: Zippable = {
-      "boss.json": text(JSON.stringify(skillManifest())),
+      "boss.json": text(JSON.stringify(connectorManifest(httpConnector()))),
       "SKILL.md": text("x"),
     };
     for (let i = 0; i < n - 2; i++) z[`f${i}.txt`] = text("a");
@@ -174,7 +184,10 @@ Deno.test("at most 200 entries", () => {
 });
 
 Deno.test("size limits: 2 MB a file, 30 MB in all, 10 MB compressed", () => {
-  const base = { "boss.json": text(JSON.stringify(skillManifest())), "SKILL.md": text("x") };
+  const base = {
+    "boss.json": text(JSON.stringify(connectorManifest(httpConnector()))),
+    "SKILL.md": text("x"),
+  };
   const zeros = (n: number) => new Uint8Array(n);
   assertEquals(
     code(() => validateBundle(zipSync({ ...base, "a.bin": zeros(LIMITS.perFile) }))),
@@ -257,4 +270,127 @@ Deno.test("trailing data, truncation and non-zip input are refused", () => {
 
 Deno.test("crc32 matches the known value", () => {
   assertEquals(crc32(text("123456789")), 0xcbf43926);
+});
+
+const skillFiles = (extra: Record<string, Uint8Array>, manifest = skillManifest()) =>
+  bundle(manifest, { "SKILL.md": text("x"), ...extra });
+const refuses = (zip: Uint8Array, fragment: string) => {
+  try {
+    validateBundle(zip);
+  } catch (e) {
+    if (e instanceof BundleError && e.code === "invalid_bundle") {
+      assert(e.message.includes(fragment), `${e.message} should name ${fragment}`);
+      return;
+    }
+    throw e;
+  }
+  throw new Error("expected the bundle to be refused");
+};
+
+Deno.test("a skill must fit what Max installs: 64 supporting files", () => {
+  const many = (n: number) => {
+    const f: Record<string, Uint8Array> = {};
+    for (let i = 0; i < n; i++) f[`ref/f${i}.md`] = text("a");
+    return skillFiles(f);
+  };
+  assertEquals(code(() => validateBundle(many(64))), "ok");
+  refuses(many(65), "64 supporting files");
+});
+
+Deno.test("a skill must fit what Max installs: 256 KB a file, 2 MB in all", () => {
+  const big = (n: number) => new Uint8Array(n).fill(97);
+  assertEquals(code(() => validateBundle(skillFiles({ "ref/a.md": big(262_144) }))), "ok");
+  refuses(skillFiles({ "ref/a.md": big(262_145) }), "256 KB");
+  // 8 files of 256 KB = 2 MiB; with SKILL.md (1 byte) the total is over.
+  const eight: Record<string, Uint8Array> = {};
+  for (let i = 0; i < 8; i++) eight[`ref/f${i}.md`] = big(262_144);
+  refuses(skillFiles(eight), "2 MB");
+  const seven: Record<string, Uint8Array> = {};
+  for (let i = 0; i < 7; i++) seven[`ref/f${i}.md`] = big(262_144);
+  assertEquals(code(() => validateBundle(skillFiles(seven))), "ok");
+});
+
+Deno.test("a skill must fit what Max installs: at most 4 levels (file name included)", () => {
+  assertEquals(code(() => validateBundle(skillFiles({ "a/b/c/d.md": text("x") }))), "ok");
+  refuses(skillFiles({ "a/b/c/d/e.md": text("x") }), "4 folders");
+  // Connectors are not held to the skill limits.
+  const c = bundle(connectorManifest(httpConnector()), { "a/b/c/d/e/f.txt": text("x") });
+  assertEquals(code(() => validateBundle(c)), "ok");
+});
+
+Deno.test("a file may not share its name with a folder, in any letter case", () => {
+  refuses(skillFiles({ "refs": text("x"), "refs/x.md": text("y") }), "folder");
+  refuses(skillFiles({ "Refs": text("x"), "refs/x.md": text("y") }), "folder");
+  refuses(skillFiles({ "a/b": text("x"), "A/B/c.md": text("y") }), "folder");
+  refuses(skillFiles({ "refs": text("x"), "refs/": new Uint8Array(0) }), "");
+  assertEquals(
+    code(() => validateBundle(skillFiles({ "refs.md": text("x"), "refs/x.md": text("y") }))),
+    "ok",
+  );
+});
+
+/** A zip whose entry `name` has general-purpose flag bit 3 set in both headers. */
+function withDescriptorFlag(zip: Uint8Array, name: string, method: number): Uint8Array {
+  const out = zip.slice();
+  const dv = new DataView(out.buffer);
+  const nameBytes = text(name);
+  for (const [sig, nameAt, flagAt, methodAt] of [[0x04034b50, 30, 6, 8], [0x02014b50, 46, 8, 10]]) {
+    let from = 0;
+    for (;;) {
+      const i = findSig(out, sig, from);
+      if (i < 0) break;
+      from = i + 4;
+      const len = dv.getUint16(i + (sig === 0x04034b50 ? 26 : 28), true);
+      const n = out.subarray(i + nameAt, i + nameAt + len);
+      if (n.length === nameBytes.length && n.every((b, k) => b === nameBytes[k])) {
+        dv.setUint16(i + flagAt, dv.getUint16(i + flagAt, true) | 0x8, true);
+        assertEquals(dv.getUint16(i + methodAt, true), method);
+      }
+    }
+  }
+  return out;
+}
+
+Deno.test("a stored entry with a data descriptor is refused; a deflated one is fine", () => {
+  const stored = zipSync({
+    "boss.json": text(JSON.stringify(skillManifest())),
+    "SKILL.md": [text("x"), { level: 0 }],
+  });
+  assertEquals(code(() => validateBundle(stored)), "ok");
+  refuses(withDescriptorFlag(stored, "SKILL.md", 0), "data descriptor");
+  const deflated = zipSync({
+    "boss.json": text(JSON.stringify(skillManifest())),
+    "SKILL.md": [text("x".repeat(500)), { level: 6 }],
+  });
+  assertEquals(code(() => validateBundle(withDescriptorFlag(deflated, "SKILL.md", 8))), "ok");
+});
+
+Deno.test("script connectors may contain only text files", () => {
+  const manifest = connectorManifest(scriptsConnector());
+  const ok = bundle(manifest, {
+    "tools/run.py": text("print('héllo')\n"),
+    "data/x.txt": text("a"),
+  });
+  assertEquals(code(() => validateBundle(ok)), "ok");
+  const msg = "Script connectors may contain only text files.";
+  refuses(
+    bundle(manifest, {
+      "tools/run.py": text("x"),
+      "lib/x.so": new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0, 1]),
+    }),
+    msg,
+  );
+  refuses(
+    bundle(manifest, {
+      "tools/run.py": text("x"),
+      "lib/bad.txt": new Uint8Array([0xff, 0xfe, 0x41]),
+    }),
+    msg,
+  );
+  refuses(bundle(manifest, { "tools/run.py": text("a\u0000b") }), msg);
+  // Other kinds may ship binaries.
+  const skill = skillFiles({ "img/a.png": new Uint8Array([0x89, 0x50, 0, 0xff]) });
+  assertEquals(code(() => validateBundle(skill)), "ok");
+  const http = bundle(connectorManifest(httpConnector()), { "x.bin": new Uint8Array([0, 255]) });
+  assertEquals(code(() => validateBundle(http)), "ok");
 });

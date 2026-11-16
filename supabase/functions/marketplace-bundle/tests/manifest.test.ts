@@ -213,3 +213,51 @@ Deno.test("slug and tool name stay unambiguous and within 64 characters", () => 
     "invalid_manifest",
   );
 });
+
+const INVISIBLE = [
+  "­",
+  "​",
+  "‎",
+  "‏",
+  "‪",
+  "‮",
+  "⁠",
+  "⁤",
+  "⁦",
+  "⁩",
+  "﻿",
+];
+
+Deno.test("invisible and format characters are refused in listing text", () => {
+  for (const ch of INVISIBLE) {
+    const at = `U+${ch.codePointAt(0)!.toString(16)}`;
+    assertEquals(code(skillManifest({ name: `My${ch}skill` })), "invalid_name", at);
+    assertEquals(code(skillManifest({ summary: `Does${ch}one thing.` })), "invalid_summary", at);
+    assertEquals(code(skillManifest({ description: `Long${ch}text` })), "invalid_description", at);
+    assertEquals(
+      code(skillManifest({ publisher_name: `Ac${ch}me` })),
+      "invalid_publisher_name",
+      at,
+    );
+    assertEquals(code(skillManifest({ tags: [`ta${ch}g`] })), "invalid_tag", at);
+    assertEquals(code(skillManifest({ tags: [`${ch}tag`] })), "invalid_tag", at);
+    assertEquals(code(scripts({}, { description: `Run${ch}it` })), "invalid_manifest", at);
+    assertEquals(code(http({}, { description: `Get${ch}it` })), "invalid_manifest", at);
+  }
+  // Characters next to the refused ranges stay fine.
+  assertEquals(code(skillManifest({ name: "Café – tool" })), "ok");
+  assertEquals(code(skillManifest({ name: "Zero⁥width" })), "ok");
+});
+
+Deno.test("duplicate egress hosts and duplicate secret names are refused", () => {
+  assertEquals(
+    code(scripts({ egress: ["api.example.com", "api.example.com"] })),
+    "invalid_manifest",
+  );
+  assertEquals(code(scripts({ egress: ["a.example.com", "b.example.com"] })), "ok");
+  assertEquals(
+    code(scripts({ secrets: [{ name: "TOKEN" }, { name: "TOKEN", description: "again" }] })),
+    "invalid_manifest",
+  );
+  assertEquals(code(scripts({ secrets: [{ name: "TOKEN" }, { name: "OTHER" }] })), "ok");
+});

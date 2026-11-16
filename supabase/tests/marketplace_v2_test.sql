@@ -1,7 +1,7 @@
 -- Marketplace v2: bundle submissions, four default-off platform flags, listings restricted to named agents, the install RPC
 -- Max calls, and the private bundle bucket. Refusals of the new RPCs are {"error": code}; only "not signed in" raises.
 begin;
-select plan(151);
+select plan(201);
 
 -- a1 org admin (may publish for the org's agent), a2 plain org member, a3 outsider, a4 trusted publisher, a5 rate-limit user,
 -- c1 platform admin.
@@ -56,7 +56,7 @@ create function pg_temp.mcp(slug text) returns jsonb language sql immutable as $
     select pg_temp.base('connector', slug) || '{"connector":{"type":"mcp","url":"https://mcp.example.com/mcp","auth":"none"}}'::jsonb $$;
 -- Service-role call of the submit RPC with a path/sha derived from the slug-independent constant.
 create function pg_temp.sb(who text, m jsonb, skip boolean default false) returns jsonb language sql as $$
-    select public.marketplace_submit_bundle(pg_temp.u(who), m, 'bundles/' || repeat('a', 64) || '.zip', repeat('a', 64), 1000, skip) $$;
+    select public.marketplace_submit_bundle(pg_temp.u(who), m, 'bundles/' || pg_temp.u(who) || '/' || repeat('a', 64) || '.zip', repeat('a', 64), 1000, skip) $$;
 create function pg_temp.err(j jsonb) returns text language sql immutable as $$ select j ->> 'error' $$;
 create function pg_temp.submit_many(who text, n int) returns int language plpgsql as $$
 declare ok int := 0; i int;
@@ -119,7 +119,7 @@ select pg_temp.as_anon();
 select is(public.marketplace_flags(), '{"bundles":false,"restricted":false,"http":false,"scripts":false}'::jsonb, 'flags read all false for anon');
 reset role;
 set local role service_role;
-select throws_ok($$ select public.marketplace_submit_bundle(null, pg_temp.skill('x-skill'), 'bundles/' || repeat('a', 64) || '.zip', repeat('a', 64), 10) $$,
+select throws_ok($$ select public.marketplace_submit_bundle(null, pg_temp.skill('x-skill'), 'bundles/x/' || repeat('a', 64) || '.zip', repeat('a', 64), 10) $$,
     '42501', 'Not signed in', 'submit_bundle needs a user');
 select is(pg_temp.err(pg_temp.sb('a1', pg_temp.skill('off-skill'))), 'bundles_disabled', 'bundles off: submission refused');
 
@@ -137,7 +137,7 @@ select is((select v.content from public.marketplace_versions v join public.marke
     '{}'::jsonb, 'the bundle version stores empty legacy content');
 select is((select v.manifest ->> 'slug' || v.bundle_sha256 || v.bundle_size::text || v.bundle_path || coalesce(v.connector_type, '-')
            from public.marketplace_versions v join public.marketplace_listings l on l.id = v.listing_id where l.slug = 'bundle-skill'),
-    'bundle-skill' || repeat('a', 64) || '1000' || 'bundles/' || repeat('a', 64) || '.zip' || '-', 'manifest, sha, size and path are stored');
+    'bundle-skill' || repeat('a', 64) || '1000' || 'bundles/' || pg_temp.u('a1') || '/' || repeat('a', 64) || '.zip' || '-', 'manifest, sha, size and path are stored');
 set local role service_role;
 select is(pg_temp.sb('a1', pg_temp.skill('bundle-skill')) ->> 'version', '2', 'a second submission is version 2');
 reset role;
@@ -149,8 +149,10 @@ set local role service_role;
 
 -- Refusals of the manifest and the bundle.
 select is(pg_temp.err(public.marketplace_submit_bundle(pg_temp.u('a1'), pg_temp.skill('bad-sha'), 'bundles/x.zip', 'xyz', 10)), 'invalid_bundle', 'bad sha');
-select is(pg_temp.err(public.marketplace_submit_bundle(pg_temp.u('a1'), pg_temp.skill('bad-path'), 'bundles/other.zip', repeat('a', 64), 10)), 'invalid_bundle', 'path must be the sha path');
-select is(pg_temp.err(public.marketplace_submit_bundle(pg_temp.u('a1'), pg_temp.skill('too-big'), 'bundles/' || repeat('a', 64) || '.zip', repeat('a', 64), 10485761)), 'bundle_too_large', 'over 10 MB');
+select is(pg_temp.err(public.marketplace_submit_bundle(pg_temp.u('a1'), pg_temp.skill('bad-path'), 'bundles/other.zip', repeat('a', 64), 10)), 'invalid_bundle', 'path must be the user''s sha path');
+select is(pg_temp.err(public.marketplace_submit_bundle(pg_temp.u('a1'), pg_temp.skill('bad-path'), 'bundles/' || repeat('a', 64) || '.zip', repeat('a', 64), 10)), 'invalid_bundle', 'the old shared path is refused');
+select is(pg_temp.err(public.marketplace_submit_bundle(pg_temp.u('a1'), pg_temp.skill('bad-path'), 'bundles/' || pg_temp.u('a2') || '/' || repeat('a', 64) || '.zip', repeat('a', 64), 10)), 'invalid_bundle', 'another user''s folder is refused');
+select is(pg_temp.err(public.marketplace_submit_bundle(pg_temp.u('a1'), pg_temp.skill('too-big'), 'bundles/' || pg_temp.u('a1') || '/' || repeat('a', 64) || '.zip', repeat('a', 64), 10485761)), 'bundle_too_large', 'over 10 MB');
 select is(pg_temp.err(pg_temp.sb('a1', '[]'::jsonb)), 'invalid_manifest', 'manifest must be an object');
 select is(pg_temp.err(pg_temp.sb('a1', pg_temp.skill('s1') || '{"schema":2}')), 'invalid_manifest', 'schema must be 1');
 select is(pg_temp.err(pg_temp.sb('a1', pg_temp.skill('s1') || '{"extra":1}')), 'invalid_manifest', 'unknown top-level key');
@@ -280,6 +282,143 @@ set local role service_role;
 select is(pg_temp.sb('c1', pg_temp.skill('rs-open') || '{"visibility":{"agents":[]}}', true) ->> 'status', 'live', 'an empty agent list is public');
 
 -- ---------------------------------------------------------------------------------------------------------------------
+-- Precheck: every refusal that needs no stored object, with nothing written. Submit answers exactly the same.
+-- ---------------------------------------------------------------------------------------------------------------------
+reset role;
+select ok(not has_function_privilege('authenticated', 'public.marketplace_bundle_precheck(uuid, jsonb, boolean)', 'execute')
+      and not has_function_privilege('anon', 'public.marketplace_bundle_precheck(uuid, jsonb, boolean)', 'execute')
+      and has_function_privilege('service_role', 'public.marketplace_bundle_precheck(uuid, jsonb, boolean)', 'execute'),
+    'precheck is service-role only');
+create temp table pc_before as
+    select (select count(*) from public.marketplace_versions) as versions, (select count(*) from public.marketplace_listings) as listings,
+           (select count(*) from public.platform_audit_log where action in ('marketplace.submit', 'marketplace.publish_unreviewed')) as audit;
+grant select on pc_before to service_role;
+create function pg_temp.pc(who text, m jsonb, skip boolean default false) returns jsonb language sql as $$
+    select public.marketplace_bundle_precheck(pg_temp.u(who), m, skip) $$;
+grant execute on function pg_temp.pc(text, jsonb, boolean) to service_role;
+set local role service_role;
+
+select is(pg_temp.pc('a1', pg_temp.skill('pc-new')), '{}'::jsonb, 'precheck: an acceptable manifest returns {}');
+select is(pg_temp.pc('a1', pg_temp.skill('bundle-skill')), '{}'::jsonb, 'precheck: the publisher''s own existing slug is fine');
+select throws_ok($$ select public.marketplace_bundle_precheck(null, pg_temp.skill('pc-new')) $$, '42501', 'Not signed in', 'precheck needs a user');
+select is(pg_temp.pc('a3', pg_temp.skill('bundle-skill')), '{"error":"slug_taken"}'::jsonb, 'precheck: slug_taken');
+select is(pg_temp.pc('a1', pg_temp.mcp('bundle-skill')), '{"error":"kind_mismatch"}'::jsonb, 'precheck: kind_mismatch');
+select is(pg_temp.pc('a5', pg_temp.skill('pc-new')), '{"error":"submission_rate_limited"}'::jsonb, 'precheck: rate limit');
+select is(pg_temp.pc('a1', pg_temp.skill('pc-new'), true), '{"error":"review_skip_not_allowed"}'::jsonb, 'precheck: review_skip_not_allowed');
+select is(pg_temp.pc('a4', pg_temp.scripts('pc-new'), true), '{"error":"review_required"}'::jsonb, 'precheck: review_required');
+select is(pg_temp.pc('a1', pg_temp.skill('pc-new') || '{"visibility":{"agents":["nope.agent"]}}'), '{"error":"unknown_agent"}'::jsonb, 'precheck: unknown_agent');
+select is(pg_temp.pc('a2', pg_temp.skill('pc-new') || '{"visibility":{"agents":["test.mkt2.org"]}}'), '{"error":"agent_restriction_not_allowed"}'::jsonb,
+    'precheck: agent_restriction_not_allowed');
+select is(pg_temp.pc('a1', pg_temp.skill('pc-new') || '{"schema":2}'), '{"error":"invalid_manifest"}'::jsonb, 'precheck: the manifest checks');
+select is(pg_temp.pc('a1', pg_temp.skill('pc-new') || '{"category":"nope"}'), '{"error":"invalid_category"}'::jsonb, 'precheck: category');
+
+reset role;
+set local role authenticated;
+select pg_temp.as_user('c1');
+select public.marketplace_suspend('open-skill', true, 'test');
+reset role;
+set local role service_role;
+select is(pg_temp.pc('a1', pg_temp.skill('open-skill')), '{"error":"listing_suspended"}'::jsonb, 'precheck: listing_suspended');
+reset role;
+set local role authenticated;
+select pg_temp.as_user('c1');
+select public.marketplace_suspend('open-skill', false);
+reset role;
+
+-- Flags off, one at a time.
+update public.platform_flags set value = 'false'::jsonb where key = 'marketplace_restricted_listings';
+set local role service_role;
+select is(pg_temp.pc('a1', pg_temp.skill('pc-new') || '{"visibility":{"agents":["test.mkt2.org"]}}'), '{"error":"restricted_disabled"}'::jsonb, 'precheck: restricted_disabled');
+reset role;
+update public.platform_flags set value = 'true'::jsonb where key = 'marketplace_restricted_listings';
+update public.platform_flags set value = 'false'::jsonb where key = 'marketplace_http_connectors';
+set local role service_role;
+select is(pg_temp.pc('a1', pg_temp.http('pc-new')), '{"error":"http_connectors_disabled"}'::jsonb, 'precheck: http_connectors_disabled');
+reset role;
+update public.platform_flags set value = 'true'::jsonb where key = 'marketplace_http_connectors';
+update public.platform_flags set value = 'false'::jsonb where key = 'marketplace_script_connectors';
+set local role service_role;
+select is(pg_temp.pc('a1', pg_temp.scripts('pc-new')), '{"error":"script_connectors_disabled"}'::jsonb, 'precheck: script_connectors_disabled');
+reset role;
+update public.platform_flags set value = 'true'::jsonb where key = 'marketplace_script_connectors';
+update public.platform_flags set value = 'false'::jsonb where key = 'marketplace_bundles';
+set local role service_role;
+select is(pg_temp.pc('a1', pg_temp.skill('pc-new')), '{"error":"bundles_disabled"}'::jsonb, 'precheck: bundles_disabled');
+reset role;
+update public.platform_flags set value = 'true'::jsonb where key = 'marketplace_bundles';
+set local role service_role;
+
+-- Submit runs the same checks (one source of truth): same answer for each refusal.
+select is(pg_temp.err(pg_temp.sb('a3', pg_temp.skill('bundle-skill'))), pg_temp.pc('a3', pg_temp.skill('bundle-skill')) ->> 'error', 'submit and precheck agree: slug_taken');
+select is(pg_temp.err(pg_temp.sb('a5', pg_temp.skill('pc-new'))), pg_temp.pc('a5', pg_temp.skill('pc-new')) ->> 'error', 'submit and precheck agree: rate limit');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.skill('pc-new'), true)), pg_temp.pc('a1', pg_temp.skill('pc-new'), true) ->> 'error', 'submit and precheck agree: skip');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.skill('pc-new') || '{"visibility":{"agents":["nope.agent"]}}')),
+    pg_temp.pc('a1', pg_temp.skill('pc-new') || '{"visibility":{"agents":["nope.agent"]}}') ->> 'error', 'submit and precheck agree: unknown agent');
+
+reset role;
+select is((select count(*) from public.marketplace_listings where slug = 'pc-new'), 0::bigint, 'no refusal or precheck left a listing behind');
+select is((select count(*) from public.marketplace_versions) - (select versions from pc_before), 0::bigint, 'nor a version row');
+select is((select count(*) from public.platform_audit_log where action in ('marketplace.submit', 'marketplace.publish_unreviewed'))
+    - (select audit from pc_before), 0::bigint, 'nor a submission audit row');
+
+-- ---------------------------------------------------------------------------------------------------------------------
+-- One submission at a time per user: the advisory lock, taken first.
+-- ---------------------------------------------------------------------------------------------------------------------
+create function pg_temp.has_lock(who text) returns boolean language sql as $$
+    select exists (select 1 from pg_locks where locktype = 'advisory' and pid = pg_backend_pid() and database = (select oid from pg_database where datname = current_database())
+        and ((classid::bigint << 32) | objid::bigint) = hashtextextended('marketplace_submit:' || pg_temp.u(who)::text, 0)) $$;
+insert into auth.users (id, email, email_confirmed_at) values
+    (pg_temp.u('a6'), 'lock1@mkt2.test', now()), (pg_temp.u('a7'), 'lock2@mkt2.test', now()), (pg_temp.u('a8'), 'lock3@mkt2.test', now());
+select ok(not pg_temp.has_lock('a6') and not pg_temp.has_lock('a7') and not pg_temp.has_lock('a8'), 'no lock held for users who have not submitted');
+set local role service_role;
+select pg_temp.sb('a6', pg_temp.skill('lock-bundle'));
+reset role;
+select ok(pg_temp.has_lock('a6'), 'a bundle submission takes the user''s lock');
+select ok(not pg_temp.has_lock('a7') and not pg_temp.has_lock('a8'), 'and only that user''s');
+set local role authenticated;
+select pg_temp.as_user('a7');
+select public.marketplace_submit('skill', 'lock-legacy', 'Lock Legacy', 'Sum', '', 'Pub', '{"markdown":"Do it."}');
+reset role;
+select ok(pg_temp.has_lock('a7'), 'the legacy submit takes the same lock');
+-- A refused submission holds it too: the lock is the first statement.
+set local role service_role;
+select pg_temp.sb('a8', '[]'::jsonb);
+reset role;
+select ok(pg_temp.has_lock('a8'), 'a refused bundle submission took the lock too');
+
+-- ---------------------------------------------------------------------------------------------------------------------
+-- Invisible and format characters, in the manifest checks and the legacy validator.
+-- ---------------------------------------------------------------------------------------------------------------------
+set local role service_role;
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.skill('iv') || jsonb_build_object('name', 'My' || chr(8203) || 'skill'))), 'invalid_name', 'invisible: zero-width space in the name');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.skill('iv') || jsonb_build_object('name', 'My' || chr(173) || 'skill'))), 'invalid_name', 'invisible: soft hyphen in the name');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.skill('iv') || jsonb_build_object('summary', 'a' || chr(8238) || 'b'))), 'invalid_summary', 'invisible: bidi override in the summary');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.skill('iv') || jsonb_build_object('description', 'a' || chr(8206) || 'b'))), 'invalid_description', 'invisible: left-to-right mark in the description');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.skill('iv') || jsonb_build_object('publisher_name', chr(65279) || 'Pub'))), 'invalid_publisher_name', 'invisible: BOM in the publisher name');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.skill('iv') || jsonb_build_object('tags', jsonb_build_array('ta' || chr(8288) || 'g')))), 'invalid_tag', 'invisible: word joiner in a tag');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.skill('iv') || jsonb_build_object('tags', jsonb_build_array(chr(65279) || 'tag')))), 'invalid_tag', 'invisible: a leading BOM in a tag');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.http('iv') || jsonb_build_object('connector', jsonb_set(pg_temp.http('iv') -> 'connector', '{tools,0,description}', to_jsonb('Get' || chr(8236) || ' it'::text))))), 'invalid_manifest', 'invisible: a tool description');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.skill('iv') || jsonb_build_object('name', 'Caf' || chr(233) || ' ' || chr(8211) || ' tool'))), null, 'neighbouring characters are fine');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.skill('iv') || jsonb_build_object('name', 'Zero' || chr(8293) || 'width'))), null, 'U+2065 is outside the refused ranges');
+reset role;
+set local role authenticated;
+select pg_temp.as_user('a3');
+select throws_ok($$ select public.marketplace_submit('skill', 'iv-legacy', 'My' || chr(8203) || 'skill', 'Sum', '', 'Pub', '{"markdown":"x"}') $$, '22023', 'invalid_name', 'legacy: invisible in the name');
+select throws_ok($$ select public.marketplace_submit('skill', 'iv-legacy', 'My skill', 'Su' || chr(173) || 'm', '', 'Pub', '{"markdown":"x"}') $$, '22023', 'invalid_summary', 'legacy: invisible in the summary');
+select throws_ok($$ select public.marketplace_submit('skill', 'iv-legacy', 'My skill', 'Sum', 'a' || chr(8238) || 'b', 'Pub', '{"markdown":"x"}') $$, '22023', 'invalid_description', 'legacy: invisible in the description');
+select throws_ok($$ select public.marketplace_submit('skill', 'iv-legacy', 'My skill', 'Sum', '', 'P' || chr(65279) || 'ub', '{"markdown":"x"}') $$, '22023', 'invalid_publisher_name', 'legacy: invisible in the publisher name');
+select lives_ok($$ select public.marketplace_submit('skill', 'iv-legacy', 'My skill', 'Sum', '', 'Pub', '{"markdown":"x"}') $$, 'legacy: a clean submission still works');
+reset role;
+
+-- Duplicates in a script connector.
+set local role service_role;
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.scripts('dup') || jsonb_build_object('connector', jsonb_set(pg_temp.scripts('dup') -> 'connector', '{egress}', '["api.example.com","api.example.com"]')))), 'invalid_manifest', 'duplicate egress hosts');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.scripts('dup') || jsonb_build_object('connector', jsonb_set(pg_temp.scripts('dup') -> 'connector', '{secrets}', '[{"name":"TOKEN"},{"name":"TOKEN"}]')))), 'invalid_manifest', 'duplicate secret names');
+select is(pg_temp.err(pg_temp.sb('a1', pg_temp.scripts('dup') || jsonb_build_object('connector', jsonb_set(pg_temp.scripts('dup') -> 'connector', '{egress}', '["a.example.com","b.example.com"]')))), null, 'distinct egress hosts are fine');
+
+reset role;
+
+-- ---------------------------------------------------------------------------------------------------------------------
 -- Reads: restricted listings stay visible, content only for agents that may install.
 -- ---------------------------------------------------------------------------------------------------------------------
 reset role;
@@ -327,7 +466,7 @@ select is(public.marketplace_install_v2('rs-skill', 'test.mkt2.org') - 'manifest
                        'content', '{}'::jsonb, 'connector_type', null, 'bundle_sha256', repeat('a', 64), 'bundle_size', 1000,
                        'allowed_agents', '["test.mkt2.org"]'::jsonb), 'restricted, allowed agent and installable plugin: installed');
 select is((public.marketplace_install_v2('rs-skill', 'test.mkt2.org') -> 'manifest' ->> 'slug') || (public.marketplace_install_v2('rs-skill', 'test.mkt2.org') ->> 'bundle_path'),
-    'rs-skill' || 'bundles/' || repeat('a', 64) || '.zip', 'the install carries the manifest and bundle path');
+    'rs-skill' || 'bundles/' || pg_temp.u('c1') || '/' || repeat('a', 64) || '.zip', 'the install carries the manifest and bundle path');
 select pg_temp.as_user('a3');
 select is(public.marketplace_install_v2('rs-skill', 'test.mkt2.org') ->> 'error', 'agent_not_allowed', 'restricted, the person cannot install the agent');
 select is(public.marketplace_install_v2('rs-pub', 'test.mkt2.pub') ->> 'slug', 'rs-pub', 'an outsider can use a listing restricted to a public agent');
@@ -398,8 +537,8 @@ reset role;
 create temp table vid as select pending_version_id as id from public.marketplace_listings where slug = 'rs-pending';
 grant select on vid to service_role;
 set local role service_role;
-select is(public.marketplace_bundle_access(pg_temp.u('a1'), (select id from vid)), 'bundles/' || repeat('a', 64) || '.zip', 'the creator gets the bundle path');
-select is(public.marketplace_bundle_access(pg_temp.u('c1'), (select id from vid)), 'bundles/' || repeat('a', 64) || '.zip', 'a platform admin gets it');
+select is(public.marketplace_bundle_access(pg_temp.u('a1'), (select id from vid)), 'bundles/' || pg_temp.u('a1') || '/' || repeat('a', 64) || '.zip', 'the creator gets the bundle path');
+select is(public.marketplace_bundle_access(pg_temp.u('c1'), (select id from vid)), 'bundles/' || pg_temp.u('a1') || '/' || repeat('a', 64) || '.zip', 'a platform admin gets it');
 select is(public.marketplace_bundle_access(pg_temp.u('a2'), (select id from vid)), null, 'another user gets nothing');
 select is(public.marketplace_bundle_access(null, (select id from vid)), null, 'no user gets nothing');
 select is(public.marketplace_bundle_access(pg_temp.u('c1'), gen_random_uuid()), null, 'an unknown version gets nothing');

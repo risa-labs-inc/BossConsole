@@ -1,4 +1,4 @@
-import { type Deps, type SubmitArgs, Unauthorized } from "./app.ts";
+import { type Deps, type PrecheckArgs, type SubmitArgs, Unauthorized } from "./app.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -71,6 +71,27 @@ export function restDeps(): Deps {
         return "exists";
       }
       throw new Error(`put ${r.status}`);
+    },
+    async precheck(a: PrecheckArgs) {
+      const r = await rpc("marketplace_bundle_precheck", svc, {
+        p_user: a.userId,
+        p_manifest: a.manifest,
+        p_skip_review: a.skipReview,
+      });
+      if (!r.ok) {
+        await r.body?.cancel();
+        throw new Error(`precheck ${r.status}`);
+      }
+      return await r.json() as Record<string, unknown>;
+    },
+    async remove(path) {
+      const r = await fetch(`${url}/storage/v1/object/marketplace-bundles/${path}`, {
+        method: "DELETE",
+        headers: svc,
+        signal: timeout(),
+      });
+      await r.body?.cancel();
+      if (!r.ok && r.status !== 404) throw new Error(`remove ${r.status}`);
     },
     async submit(a: SubmitArgs) {
       const r = await rpc("marketplace_submit_bundle", svc, {

@@ -1,6 +1,6 @@
 /**
  * marketplace-bundle: zip bundles for the marketplace.
- *   POST /marketplace-bundle/upload    raw zip (application/zip), ?skip_review=1  -> marketplace_submit_bundle
+ *   POST /marketplace-bundle/upload    raw zip (application/zip), ?skip_review=1  -> precheck, store, marketplace_submit_bundle
  *   POST /marketplace-bundle/download  {slug, agent}                              -> marketplace_install_v2 + signed URL
  *   POST /marketplace-bundle/review    {version_id}                               -> signed URL for the creator or a platform reader
  * Every answer is JSON. Errors are {error, message} with a 4xx/5xx; zip contents and stack traces are never echoed.
@@ -13,6 +13,12 @@ export const MAX_BYTES = 10 * 1024 * 1024;
 const DRAIN_LIMIT = 64 * 1024 * 1024;
 const SLUG = /^[a-z0-9][a-z0-9-]{1,46}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export interface PrecheckArgs {
+  userId: string;
+  manifest: unknown;
+  skipReview: boolean;
+}
 
 export interface SubmitArgs {
   userId: string;
@@ -29,8 +35,12 @@ export interface Deps {
   user(jwt: string): Promise<string | null>;
   /** marketplace_flags() (public). */
   flags(): Promise<{ bundles: boolean }>;
-  /** Stores bundles/<sha>.zip in the private bucket without overwriting. */
+  /** marketplace_bundle_precheck as the service role: {error} or {}. Nothing is stored before it passes. */
+  precheck(a: PrecheckArgs): Promise<Record<string, unknown>>;
+  /** Stores bundles/<user id>/<sha256>.zip in the private bucket without overwriting. */
   put(path: string, bytes: Uint8Array): Promise<"created" | "exists">;
+  /** Deletes a stored bundle with the service role (cleanup of an object this request created). */
+  remove(path: string): Promise<void>;
   /** marketplace_submit_bundle as the service role. Returns the RPC's JSON. */
   submit(a: SubmitArgs): Promise<Record<string, unknown>>;
   /** marketplace_install_v2 as the user (anon key + the user's JWT). */
@@ -172,18 +182,32 @@ export function createApp(deps: Deps): (req: Request) => Promise<Response> {
       if (e instanceof BundleError) return fail(statusFor(e.code), e.code, e.message);
       return fail(400, "invalid_bundle", message("invalid_bundle"));
     }
+    const skipReview = url.searchParams.get("skip_review") === "1";
+    // Every refusal that does not need the object comes first: a refused upload stores nothing.
+    const pre = await deps.precheck({ userId, manifest, skipReview });
+    const early = refusal(pre);
+    if (early) return early;
     const sha = await sha256Hex(bytes);
-    const path = `bundles/${sha}.zip`;
-    await deps.put(path, bytes);
+    // Per user, so removing this request's object can never race another user's identical upload.
+    const path = `bundles/${userId}/${sha}.zip`;
+    const stored = await deps.put(path, bytes);
     const r = await deps.submit({
       userId,
       manifest,
       path,
       sha256: sha,
       size: bytes.length,
-      skipReview: url.searchParams.get("skip_review") === "1",
+      skipReview,
     });
-    return refusal(r) ?? json(200, r);
+    const refused = refusal(r);
+    if (refused && stored === "created") {
+      try {
+        await deps.remove(path);
+      } catch {
+        console.error("marketplace-bundle", "upload", "cleanup failed");
+      }
+    }
+    return refused ?? json(200, r);
   }
 
   async function download(req: Request, jwt: string): Promise<Response> {

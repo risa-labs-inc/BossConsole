@@ -3,6 +3,7 @@ import {
   createApp,
   type Deps,
   MAX_BYTES,
+  type PrecheckArgs,
   statusFor,
   type SubmitArgs,
   Unauthorized,
@@ -15,6 +16,8 @@ const VID = "11111111-2222-4333-8444-555555555555";
 function harness(over: Partial<Deps> = {}) {
   const log = {
     put: [] as string[],
+    precheck: [] as PrecheckArgs[],
+    remove: [] as string[],
     submit: [] as SubmitArgs[],
     install: [] as unknown[][],
     sign: [] as string[],
@@ -23,9 +26,17 @@ function harness(over: Partial<Deps> = {}) {
   const deps: Deps = {
     user: (jwt) => Promise.resolve(jwt === "good" ? U : null),
     flags: () => Promise.resolve({ bundles: true }),
+    precheck: (a) => {
+      log.precheck.push(a);
+      return Promise.resolve({});
+    },
     put: (p) => {
       log.put.push(p);
       return Promise.resolve("created");
+    },
+    remove: (p) => {
+      log.remove.push(p);
+      return Promise.resolve();
     },
     submit: (a) => {
       log.submit.push(a);
@@ -91,7 +102,7 @@ Deno.test("routing, CORS and auth", async () => {
   assertEquals(r.headers.get("content-type"), "application/json");
 });
 
-Deno.test("upload: stores bundles/<sha>.zip and submits the validated manifest", async () => {
+Deno.test("upload: stores bundles/<user>/<sha>.zip and submits the validated manifest", async () => {
   const { call, log } = harness();
   const zip = skillBundle();
   const r = await call("upload", zipReq(zip));
@@ -100,10 +111,12 @@ Deno.test("upload: stores bundles/<sha>.zip and submits the validated manifest",
   const sha = [
     ...new Uint8Array(await crypto.subtle.digest("SHA-256", zip as unknown as BufferSource)),
   ].map((b) => b.toString(16).padStart(2, "0")).join("");
-  assertEquals(log.put, [`bundles/${sha}.zip`]);
+  assertEquals(log.put, [`bundles/${U}/${sha}.zip`]);
+  assertEquals(log.precheck.length, 1);
+  assertEquals(log.remove, []);
   assertEquals(log.submit.length, 1);
   assertEquals(log.submit[0].userId, U);
-  assertEquals(log.submit[0].path, `bundles/${sha}.zip`);
+  assertEquals(log.submit[0].path, `bundles/${U}/${sha}.zip`);
   assertEquals(log.submit[0].sha256, sha);
   assertEquals(log.submit[0].size, zip.length);
   assertEquals(log.submit[0].skipReview, false);
@@ -113,6 +126,7 @@ Deno.test("upload: stores bundles/<sha>.zip and submits the validated manifest",
 Deno.test("upload: skip_review=1 is passed through", async () => {
   const { call, log } = harness();
   await call("upload?skip_review=1", zipReq());
+  assertEquals(log.precheck[0].skipReview, true);
   assertEquals(log.submit[0].skipReview, true);
 });
 
@@ -172,6 +186,54 @@ Deno.test("upload: database refusals map to statuses", async () => {
     assertEquals((await bodyOf(r)).error, code);
   }
   assertEquals(statusFor("something_new"), 400);
+});
+
+Deno.test("upload: a precheck refusal stores nothing and never reaches submit", async () => {
+  for (
+    const code of [
+      "submission_rate_limited",
+      "slug_taken",
+      "kind_mismatch",
+      "listing_suspended",
+      "review_required",
+      "review_skip_not_allowed",
+      "restricted_disabled",
+      "agent_restriction_not_allowed",
+      "unknown_agent",
+      "http_connectors_disabled",
+      "script_connectors_disabled",
+      "bundles_disabled",
+    ]
+  ) {
+    const { call, log } = harness({ precheck: () => Promise.resolve({ error: code }) });
+    const r = await call("upload", zipReq());
+    assertEquals((await bodyOf(r)).error, code);
+    assertEquals(log.put, [], code);
+    assertEquals(log.submit, [], code);
+    assertEquals(log.remove, [], code);
+  }
+});
+
+Deno.test("upload: a refused submit removes the object this request created, and only that", async () => {
+  const refuse = () => Promise.resolve({ error: "submission_rate_limited" });
+  const mine = harness({ submit: refuse });
+  assertEquals((await mine.call("upload", zipReq())).status, 429);
+  assertEquals(mine.log.remove, mine.log.put);
+  assertEquals(mine.log.remove.length, 1);
+  // The object was already there (an earlier upload of the same bytes): keep it.
+  const kept = harness({ submit: refuse, put: () => Promise.resolve("exists") });
+  assertEquals((await kept.call("upload", zipReq())).status, 429);
+  assertEquals(kept.log.remove, []);
+  // A failed cleanup does not change the answer.
+  const broken = harness({
+    submit: refuse,
+    remove: () => Promise.reject(new Error("storage down")),
+  });
+  assertEquals((await broken.call("upload", zipReq())).status, 429);
+  // An accepted submit keeps its object.
+  const ok = harness();
+  await ok.call("upload", zipReq());
+  assertEquals(ok.log.remove, []);
 });
 
 Deno.test("upload: a backend failure is a 502 that leaks nothing", async () => {

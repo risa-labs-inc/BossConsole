@@ -15,6 +15,17 @@ export const LIMITS = {
   name: 255,
 } as const;
 
+/** What Max installs for a skill (its SkillFiles limits): refused here so a bundle never fails after the counted download. */
+export const SKILL_LIMITS = {
+  /** Entries other than boss.json and SKILL.md. */
+  supportingFiles: 64,
+  perFile: 262_144,
+  /** Every installed file together (boss.json is not installed). */
+  total: 2 * 1024 * 1024,
+  /** Path segments of a supporting file, the file name included. */
+  depth: 4,
+} as const;
+
 const invalid = (message: string): never => {
   throw new BundleError("invalid_bundle", message);
 };
@@ -124,6 +135,8 @@ function readEntries(zip: Uint8Array): Entry[] {
     const dir = name.endsWith("/");
     if (flags & 0x1 || flags & 0x40) invalid("encrypted entries are not allowed");
     if (method !== 0 && method !== 8) invalid("an entry uses an unsupported compression method");
+    // Java's ZipInputStream (what installers use) cannot read a stored entry whose sizes follow its data.
+    if (method === 0 && flags & 0x8) invalid("a stored entry uses a data descriptor");
     if (csize === 0xffffffff || size === 0xffffffff || diskStart !== 0) {
       invalid("zip64 entries are not supported");
     }
@@ -168,7 +181,62 @@ function readEntries(zip: Uint8Array): Entry[] {
     p = end;
   }
   if (p !== cdOff + cdSize) invalid("the central directory is damaged");
+  checkFileFolderClash(out);
   return out;
+}
+
+/** A file may not share its name with a folder the archive also needs (`refs` and `refs/x.md`), in any letter case. */
+function checkFileFolderClash(entries: Entry[]): void {
+  const folders = new Set<string>();
+  for (const e of entries) {
+    const parts = e.name.replace(/\/$/, "").split("/");
+    const upto = e.dir ? parts.length : parts.length - 1;
+    for (let i = 1; i <= upto; i++) folders.add(parts.slice(0, i).join("/").toLowerCase());
+  }
+  for (const e of entries) {
+    if (!e.dir && folders.has(e.name.toLowerCase())) {
+      invalid("a file has the same name as a folder");
+    }
+  }
+}
+
+const MAIN = "SKILL.md";
+
+/** A skill must fit what Max installs: file count, file size, total size and folder depth. */
+function checkSkillFits(files: Map<string, Entry>): void {
+  let supporting = 0;
+  let total = 0;
+  for (const [name, e] of files) {
+    if (name === "boss.json") continue;
+    total += e.size;
+    if (name === MAIN) {
+      if (e.size > SKILL_LIMITS.perFile) invalid("Skill files may be at most 256 KB each.");
+      continue;
+    }
+    supporting++;
+    if (e.size > SKILL_LIMITS.perFile) invalid("Skill files may be at most 256 KB each.");
+    if (name.split("/").length > SKILL_LIMITS.depth) {
+      invalid("Skill files may be at most 4 folders deep.");
+    }
+  }
+  if (supporting > SKILL_LIMITS.supportingFiles) {
+    invalid("A skill may have at most 64 supporting files.");
+  }
+  if (total > SKILL_LIMITS.total) invalid("A skill may be at most 2 MB in all.");
+}
+
+const UTF8 = new TextDecoder("utf-8", { fatal: true });
+
+/** Reviewers must be able to read every byte of a script connector: text only, no NUL. */
+function checkAllText(files: Map<string, Uint8Array>): void {
+  for (const data of files.values()) {
+    if (data.includes(0)) invalid("Script connectors may contain only text files.");
+    try {
+      UTF8.decode(data);
+    } catch {
+      invalid("Script connectors may contain only text files.");
+    }
+  }
 }
 
 export interface ValidatedBundle {
@@ -215,6 +283,10 @@ export function validateBundle(zip: Uint8Array): ValidatedBundle {
     const f = files.get(r.path);
     if (!f) invalid(`a file named in boss.json is missing from the bundle`);
     if (f!.size > r.maxBytes) invalid(`a file named in boss.json is too large`);
+  }
+  if (manifest.kind === "skill") checkSkillFits(files);
+  if (manifest.kind === "connector" && manifest.connector?.type === "scripts") {
+    checkAllText(new Map(Object.entries(extracted)));
   }
   return { manifest, files: new Map([...files].map(([n, e]) => [n, e.size])) };
 }
