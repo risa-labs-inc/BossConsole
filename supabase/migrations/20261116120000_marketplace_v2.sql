@@ -398,7 +398,7 @@ REVOKE ALL ON FUNCTION public.marketplace_restricted_to(text[]) FROM PUBLIC, ano
 -- Version JSON gains the bundle fields (manifest only with content).
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.marketplace_version_json(v public.marketplace_versions, p_with_content boolean)
-RETURNS jsonb LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
+RETURNS jsonb LANGUAGE sql STABLE SET search_path = '' AS $$
     SELECT pg_catalog.jsonb_strip_nulls(pg_catalog.jsonb_build_object(
         'id', v.id, 'version', v.version, 'name', v.name, 'summary', v.summary, 'description', v.description,
         'publisher_name', v.publisher_name, 'created_at', v.created_at, 'decision', v.decision, 'reason', v.reason,
@@ -406,6 +406,7 @@ RETURNS jsonb LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
         'connector_type', COALESCE(v.connector_type, CASE WHEN v.manifest IS NULL AND v.content ? 'url' THEN 'mcp' END),
         'bundle_sha256', v.bundle_sha256, 'bundle_size', v.bundle_size,
         'allowed_agents', pg_catalog.to_jsonb(v.allowed_agents),
+        'restricted_to', CASE WHEN pg_catalog.cardinality(v.allowed_agents) > 0 THEN public.marketplace_restricted_to(v.allowed_agents) END,
         'content', CASE WHEN p_with_content THEN v.content END,
         'manifest', CASE WHEN p_with_content THEN v.manifest END))
 $$;
