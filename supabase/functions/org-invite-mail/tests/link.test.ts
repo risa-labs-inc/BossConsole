@@ -27,6 +27,7 @@ function harness(
   const sent: MailMessage[] = [];
   const calls: unknown[][] = [];
   const failed: [string, boolean][] = [];
+  const sentIds: string[] = [];
   const db: Db = {
     user: (jwt) => Promise.resolve(jwt === "good-jwt" ? userId : null),
     prepare: () => Promise.reject(new Error("not an org invite")),
@@ -37,6 +38,10 @@ function harness(
     },
     mailFailed: (id, resend) => {
       failed.push([id, resend]);
+      return Promise.resolve();
+    },
+    mailSent: (id) => {
+      sentIds.push(id);
       return Promise.resolve();
     },
   };
@@ -52,7 +57,7 @@ function harness(
     baseDomain: opts.baseDomain === undefined ? "bossconsole.test" : opts.baseDomain,
     origins: platformOrigins("", "http://localhost:9000"),
   });
-  return { app, sent, calls, failed };
+  return { app, sent, calls, failed, sentIds };
 }
 
 const req = (body: unknown, jwt: string | null = "good-jwt", method = "POST") =>
@@ -285,6 +290,7 @@ Deno.test("link: a failing mailFailed does not change the answer", async () => {
       prepareAgent: () => Promise.reject(new Error("x")),
       prepareLink: () => Promise.resolve(facts),
       mailFailed: () => Promise.reject(new Error("db down")),
+      mailSent: () => Promise.reject(new Error("db down")),
     },
     mailer: () => Promise.reject(new Error("smtp")),
     baseDomain: "bossconsole.test",
@@ -294,4 +300,13 @@ Deno.test("link: a failing mailFailed does not change the answer", async () => {
   assertEquals(res.status, 503);
   assertEquals((await res.json()).error, "mail_unavailable");
   assertEquals(sent.length, 0);
+});
+
+Deno.test("link: a sent mail tells the database; a failed one does not", async () => {
+  const ok = harness();
+  assertEquals((await ok.app(req({ link_id: linkId }))).status, 200);
+  assertEquals(ok.sentIds, [linkId]);
+  const bad = harness(undefined, { mailFails: true });
+  await bad.app(req({ link_id: linkId }));
+  assertEquals(bad.sentIds, []);
 });

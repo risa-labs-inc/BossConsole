@@ -53,6 +53,8 @@ export interface Db {
    * its earlier last_sent_at back, and that send's mail-log rows are removed. Best effort: failures are swallowed.
    */
   mailFailed(linkId: string, resend: boolean): Promise<void>;
+  /** invite_link_mail_sent as the service role: the mail went out, so the saved previous token is dropped. Best effort. */
+  mailSent(linkId: string): Promise<void>;
 }
 
 export type Mailer = (msg: MailMessage) => Promise<void>;
@@ -202,6 +204,21 @@ export function restDb(): Db {
         });
         await r.body?.cancel();
       } catch { /* the send already failed; nothing more to report */ }
+    },
+    async mailSent(linkId) {
+      try {
+        const r = await fetch(`${url}/rest/v1/rpc/invite_link_mail_sent`, {
+          method: "POST",
+          headers: {
+            apikey: service,
+            Authorization: `Bearer ${service}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ p_link_id: linkId }),
+          signal: timeout(),
+        });
+        await r.body?.cancel();
+      } catch { /* the mail went out; the saved token is harmless until the next resend */ }
     },
   };
 }
@@ -431,6 +448,7 @@ export function createApp(
       await db.mailFailed(facts.link_id, "linkId" in req).catch(() => {});
       return json(503, { error: "mail_unavailable" });
     }
+    await db.mailSent(facts.link_id).catch(() => {});
     logLink(facts.link_id, "sent");
     return json(200, {
       sent: true,

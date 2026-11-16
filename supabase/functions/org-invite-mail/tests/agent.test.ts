@@ -34,6 +34,7 @@ function harness(
     prepare: () => Promise.reject(new Error("not an org invite")),
     prepareLink: () => Promise.reject(new Error("unused")),
     mailFailed: () => Promise.resolve(),
+    mailSent: () => Promise.resolve(),
     prepareAgent: (...a) => {
       calls.push(a);
       return prepareAgent(...a);
