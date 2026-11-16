@@ -148,3 +148,72 @@ export function agentInviteMail(
 </body></html>`;
   return { subject, text, html };
 }
+
+/** What invite_link_mail_prepare returns: the bound link just issued (or rotated), its target and who sent it. */
+export interface LinkInviteFacts {
+  link_id: string;
+  token: string;
+  target: string;
+  target_name: string;
+  agent_slug: string | null;
+  custom_host: string | null;
+  org_name: string | null;
+  inviter_name: string | null;
+  inviter_email: string | null;
+  recipient_email: string;
+  expires_at: string;
+}
+
+/** The email-invite email: one button to <origin>/i/<token>, the expiry date, nothing else. */
+export function linkInviteMail(
+  facts: Pick<LinkInviteFacts, "target_name" | "inviter_name" | "recipient_email" | "expires_at">,
+  link: string,
+): { subject: string; text: string; html: string } {
+  const flat = (s: string) => s.replace(/[\r\n]+/g, " ").trim();
+  const target = flat(facts.target_name) || "BOSS";
+  const first = flat(facts.inviter_name ?? "").split(/\s+/)[0] || "Someone";
+  const until = expiry(facts.expires_at);
+  const subject = `${first} invited you to ${target}`;
+  const text = [
+    `${first} invited you to ${target}.`,
+    "",
+    "Accept the invite (sign in with this email address):",
+    link,
+    "",
+    until ? `The link works once and expires ${until}.` : "The link works once.",
+    "If you were not expecting this, ignore this email.",
+  ].join("\n");
+  const html = `<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${
+    esc(subject)
+  }</title></head>
+<body style="margin:0;padding:24px;background:#f5f6f8;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1a1d21">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border:1px solid #e3e6ea;border-radius:12px">
+<tr><td style="padding:28px 28px 8px 28px">
+<h1 style="margin:0;font-size:20px;line-height:28px;font-weight:600">You're invited to ${
+    esc(target)
+  }</h1>
+<p style="margin:12px 0 0 0;font-size:15px;line-height:22px">${esc(first)} invited you to <strong>${
+    esc(target)
+  }</strong>.</p>
+</td></tr>
+<tr><td style="padding:20px 28px">
+<a href="${
+    esc(link)
+  }" style="display:inline-block;background:#1d5fd6;color:#ffffff;text-decoration:none;font-size:15px;font-weight:600;padding:11px 20px;border-radius:8px">Accept invite</a>
+</td></tr>
+<tr><td style="padding:0 28px 24px 28px;font-size:13px;line-height:20px;color:#5b6470">
+<p style="margin:0">${
+    until ? `The link works once and expires ${esc(until)}.` : "The link works once."
+  }</p>
+<p style="margin:12px 0 0 0;word-break:break-all">Or open: <a href="${
+    esc(link)
+  }" style="color:#1d5fd6">${esc(link)}</a></p>
+<p style="margin:12px 0 0 0">If you were not expecting this, ignore this email.</p>
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+  return { subject, text, html };
+}

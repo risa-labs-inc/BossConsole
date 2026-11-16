@@ -163,7 +163,7 @@ select pg_temp.mkk('pmax', 'max');
 select pg_temp.as_service();
 set local role anon;
 select is(public.invite_link_preview(pg_temp.tk('p1')), jsonb_build_object('valid', true, 'reason', null, 'target', 'ilinv',
-    'target_name', 'Inv Brand', 'inviter_name', 'Ann'), 'preview (as anon): valid, brand name, inviter first name only');
+    'target_name', 'Inv Brand', 'inviter_name', 'Ann', 'recipient_hint', null), 'preview (as anon): valid, brand name, inviter first name only');
 select is(public.invite_link_preview('nope')->>'reason', 'not_found', 'preview: unknown token');
 select is(public.invite_link_preview('nope')->'target', 'null'::jsonb, 'preview: nothing about the target for an unknown token');
 reset role;

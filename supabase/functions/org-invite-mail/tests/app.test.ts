@@ -27,6 +27,7 @@ function harness(prepare: Db["prepare"] = () => Promise.resolve(facts), mailFail
       return prepare(...a);
     },
     prepareAgent: () => Promise.reject(new Error("not an agent invite")),
+    prepareLink: () => Promise.reject(new Error("unused")),
   };
   const mailer: Mailer = (m) => {
     if (mailFails) return Promise.reject(new Error("smtp 535 bad credentials for user@x"));
@@ -153,6 +154,7 @@ Deno.test("without SMTP or a console URL the function answers 503 after validati
       user: () => Promise.resolve(userId),
       prepare: () => Promise.resolve(facts),
       prepareAgent: () => Promise.reject(new Error("unused")),
+      prepareLink: () => Promise.reject(new Error("unused")),
     },
     mailer: () => Promise.resolve(),
     consoleUrl: null,
