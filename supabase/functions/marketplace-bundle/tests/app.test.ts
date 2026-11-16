@@ -254,7 +254,7 @@ Deno.test("download: passes the user's JWT, adds a signed url, maps refusals", a
   const b = await bodyOf(r);
   assertEquals(b.url, "https://signed.example/x?token=t");
   assertEquals(b.slug, "my-skill");
-  assertEquals(log.install, [["good", "my-skill", "com.acme.agent"]]);
+  assertEquals(log.install, [["good", "my-skill", "com.acme.agent", false]]);
   assertEquals(log.sign, ["bundles/" + "a".repeat(64) + ".zip"]);
 
   for (
@@ -269,6 +269,25 @@ Deno.test("download: passes the user's JWT, adds a signed url, maps refusals", a
     assertEquals((await bodyOf(x)).error, code);
     assertEquals(h.log.sign.length, 0);
   }
+});
+
+Deno.test("download: auto_install routes to the fetch and needs an agent", async () => {
+  const { call, log } = harness();
+  const r = await call(
+    "download",
+    json({ slug: "my-skill", agent: "test.ai.optimist", auto_install: true }),
+  );
+  assertEquals(r.status, 200);
+  assertEquals(log.install, [["good", "my-skill", "test.ai.optimist", true]]);
+  assertEquals(
+    (await call("download", json({ slug: "my-skill", agent: null, auto_install: true }))).status,
+    400,
+  );
+  assertEquals(
+    (await call("download", json({ slug: "my-skill", agent: "a", auto_install: "yes" }))).status,
+    400,
+  );
+  assertEquals(log.install.length, 1);
 });
 
 Deno.test("download: no bundle path means no url; bad input; unauthorized from the database", async () => {

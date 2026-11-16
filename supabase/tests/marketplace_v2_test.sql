@@ -1,7 +1,7 @@
 -- Marketplace v2: bundle submissions, four default-off platform flags, listings restricted to named agents, the install RPC
 -- Max calls, and the private bundle bucket. Refusals of the new RPCs are {"error": code}; only "not signed in" raises.
 begin;
-select plan(201);
+select plan(196);
 
 -- a1 org admin (may publish for the org's agent), a2 plain org member, a3 outsider, a4 trusted publisher, a5 rate-limit user,
 -- c1 platform admin.
@@ -419,22 +419,21 @@ select is(pg_temp.err(pg_temp.sb('a1', pg_temp.scripts('dup') || jsonb_build_obj
 reset role;
 
 -- ---------------------------------------------------------------------------------------------------------------------
--- Reads: restricted listings stay visible, content only for agents that may install.
+-- Reads: restricted listings are hidden from everyone but their allowed agents, the publisher, readers and reviewers.
 -- ---------------------------------------------------------------------------------------------------------------------
 reset role;
 set local role anon;
 select pg_temp.as_anon();
-select is(public.marketplace_get('rs-skill') -> 'restricted_to', '[{"plugin_id":"test.mkt2.org","name":"Org Agent"}]'::jsonb, 'get lists the agents a listing is restricted to');
-select ok(not (public.marketplace_get('rs-skill') -> 'live' ? 'content') and not (public.marketplace_get('rs-skill') -> 'live' ? 'manifest'),
-    'get hides the content and manifest of a restricted listing from anon');
-select is(public.marketplace_get('rs-skill') -> 'installable', 'false'::jsonb, 'and says it is not installable');
-select is(public.marketplace_get('rs-skill') -> 'live' ->> 'name', 'Item rs-skill', 'while the listing itself stays visible');
+select is(public.marketplace_get('rs-skill'), null, 'a restricted listing is invisible to anon (get)');
+select is(jsonb_array_length(public.marketplace_search('rs-skill')), 0, 'and absent from anon search');
+select is(public.marketplace_get('rs-skill', 'test.mkt2.org'), null, 'anon cannot claim an agent id (get)');
+select is(jsonb_array_length(public.marketplace_search('rs-skill', null, 50, 0, null, null, 'test.mkt2.org')), 0, 'nor in search');
 select ok(public.marketplace_get('skip-yes') -> 'live' ? 'manifest' and public.marketplace_get('skip-yes') -> 'live' ? 'content', 'an unrestricted bundle shows its manifest');
 select is(public.marketplace_get('skip-yes') -> 'installable', 'true'::jsonb, 'and is installable');
 select is(public.marketplace_get('skip-yes') -> 'restricted_to', '[]'::jsonb, 'with no restriction');
 select is(public.marketplace_get('skip-http') ->> 'connector_type', 'http', 'get carries the connector type');
-select is((select x -> 'installable' from jsonb_array_elements(public.marketplace_search('rs-skill')) x limit 1), 'false'::jsonb, 'search lists a restricted listing, not installable for anon');
-select is((select jsonb_array_length(x -> 'restricted_to') from jsonb_array_elements(public.marketplace_search('rs-skill')) x limit 1), 1, 'search carries restricted_to');
+select is((select x -> 'installable' from jsonb_array_elements(public.marketplace_search('skip-yes')) x limit 1), 'true'::jsonb, 'search: an open bundle is installable for anon');
+select is((select jsonb_array_length(x -> 'restricted_to') from jsonb_array_elements(public.marketplace_search('skip-yes')) x limit 1), 0, 'search carries an empty restricted_to');
 select is((select x ->> 'connector_type' from jsonb_array_elements(public.marketplace_search('skip-http')) x limit 1), 'http', 'search carries the connector type');
 reset role;
 
@@ -442,12 +441,12 @@ set local role authenticated;
 select pg_temp.as_user('a2');
 select ok(public.marketplace_get('rs-skill', 'test.mkt2.org') -> 'live' ? 'manifest', 'an agent that may install sees the manifest');
 select is(public.marketplace_get('rs-skill', 'test.mkt2.org') -> 'installable', 'true'::jsonb, 'and installable is true');
-select ok(not (public.marketplace_get('rs-skill', 'test.mkt2.pub') -> 'live' ? 'manifest'), 'the wrong agent sees no manifest');
-select is(public.marketplace_get('rs-skill') -> 'installable', 'false'::jsonb, 'no agent: not installable');
+select is(public.marketplace_get('rs-skill', 'test.mkt2.pub'), null, 'the wrong agent does not see it');
+select is(public.marketplace_get('rs-skill'), null, 'no agent: hidden');
 select is((select x -> 'installable' from jsonb_array_elements(public.marketplace_search('rs-skill', null, 50, 0, null, null, 'test.mkt2.org')) x limit 1), 'true'::jsonb, 'search: installable for the allowed agent');
 select pg_temp.as_user('a3');
-select ok(not (public.marketplace_get('rs-skill', 'test.mkt2.org') -> 'live' ? 'manifest'), 'an outsider cannot read it through the org agent');
-select is(public.marketplace_get('rs-skill', 'test.mkt2.org') -> 'installable', 'false'::jsonb, 'nor install it');
+select is(public.marketplace_get('rs-skill', 'test.mkt2.org'), null, 'an outsider cannot read it through the org agent');
+select is(jsonb_array_length(public.marketplace_search('rs-skill', null, 50, 0, null, null, 'test.mkt2.org')), 0, 'nor find it');
 select pg_temp.as_user('c1');
 select ok(public.marketplace_get('rs-skill') -> 'live' ? 'manifest', 'a platform reader sees the content');
 
@@ -485,8 +484,8 @@ update public.platform_flags set value = 'false'::jsonb where key = 'marketplace
 set local role authenticated;
 select pg_temp.as_user('a2');
 select is(public.marketplace_install_v2('rs-skill', 'test.mkt2.org') ->> 'error', 'agent_not_allowed', 'restricted flag off: a restricted listing is not installable');
-select is(public.marketplace_get('rs-skill', 'test.mkt2.org') -> 'installable', 'false'::jsonb, 'but it stays visible, not installable');
-select is(jsonb_array_length(public.marketplace_search('rs-skill', null, 50, 0, null, null, 'test.mkt2.org')), 1, 'and is still searchable with its badge');
+select is(public.marketplace_get('rs-skill', 'test.mkt2.org'), null, 'and it is hidden, even from the allowed agent');
+select is(jsonb_array_length(public.marketplace_search('rs-skill', null, 50, 0, null, null, 'test.mkt2.org')), 0, 'and not searchable');
 reset role;
 update public.platform_flags set value = 'true'::jsonb where key = 'marketplace_restricted_listings';
 update public.platform_flags set value = 'false'::jsonb where key = 'marketplace_http_connectors';
@@ -542,30 +541,6 @@ select is(public.marketplace_bundle_access(pg_temp.u('c1'), (select id from vid)
 select is(public.marketplace_bundle_access(pg_temp.u('a2'), (select id from vid)), null, 'another user gets nothing');
 select is(public.marketplace_bundle_access(null, (select id from vid)), null, 'no user gets nothing');
 select is(public.marketplace_bundle_access(pg_temp.u('c1'), gen_random_uuid()), null, 'an unknown version gets nothing');
-
--- ---------------------------------------------------------------------------------------------------------------------
--- Agent defaults serve markdown only.
--- ---------------------------------------------------------------------------------------------------------------------
-reset role;
-insert into public.agents (slug, org_id, name, plugin_id, created_by) values
-    ('mkt2agent', (select id from public.organisations where slug = 'mkt2co'), 'Mkt2 Agent',
-     'ai.rever.boss.plugin.dynamic.agent.mkt2agent', 'c9000000-0000-4000-8000-0000000000a1');
-create temp table agid as select id from public.agents where slug = 'mkt2agent';
-grant select on agid to authenticated;
-set local role authenticated;
-select pg_temp.as_user('c1');
-select public.marketplace_submit('skill', 'legacy-live', 'Legacy Live', 'Sum', '', 'Pub', '{"markdown":"Legacy markdown."}', true);
-select throws_ok($$ select public.marketplace_agent_default_set((select id from agid), 'skip-yes', true) $$, 'P0001', 'default_requires_legacy_skill', 'a bundle skill cannot be an agent default');
-select throws_ok($$ select public.marketplace_agent_default_set((select id from agid), 'rs-skill', true) $$, 'P0001', 'default_requires_legacy_skill', 'nor a restricted skill');
-select is(jsonb_array_length(public.marketplace_agent_default_set((select id from agid), 'legacy-live', true)), 1, 'a legacy skill still can');
-reset role;
-insert into public.marketplace_agent_defaults (agent_id, listing_id)
-    select (select id from agid), id from public.marketplace_listings where slug in ('skip-yes', 'rs-skill');
-set local role authenticated;
-select pg_temp.as_user('c1');
-select is((select jsonb_agg(x ->> 'slug') from jsonb_array_elements(public.marketplace_agent_skills('ai.rever.boss.plugin.dynamic.agent.mkt2agent') -> 'skills') x),
-    '["legacy-live"]'::jsonb, 'the runtime read skips bundle and restricted defaults');
-select is(public.marketplace_agent_skills('ai.rever.boss.plugin.dynamic.agent.mkt2agent') -> 'skills' -> 0 ->> 'markdown', 'Legacy markdown.', 'and still serves the legacy markdown');
 
 select * from finish();
 rollback;

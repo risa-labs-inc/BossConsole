@@ -29,8 +29,8 @@ grant execute on function pg_temp.as_user(text), pg_temp.as_anon(), pg_temp.sub(
 
 -- ---- shape and access ----
 select ok(not has_table_privilege('authenticated', 'public.marketplace_categories', 'select'), 'categories table is closed to clients');
-select ok(has_function_privilege('anon', 'public.marketplace_categories()', 'EXECUTE')
-      and has_function_privilege('anon', 'public.marketplace_tags(integer)', 'EXECUTE')
+select ok(has_function_privilege('anon', 'public.marketplace_categories(text)', 'EXECUTE')
+      and has_function_privilege('anon', 'public.marketplace_tags(integer,text)', 'EXECUTE')
       and has_function_privilege('anon', 'public.marketplace_search(text,public.marketplace_kind,integer,integer,text,text,text)', 'EXECUTE'),
     'categories, tags and search are public');
 select ok(not has_function_privilege('anon', 'public.marketplace_category_set(text,text,text,integer)', 'EXECUTE')
