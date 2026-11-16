@@ -26,6 +26,7 @@ function harness(
 ) {
   const sent: MailMessage[] = [];
   const calls: unknown[][] = [];
+  const failed: [string, boolean][] = [];
   const db: Db = {
     user: (jwt) => Promise.resolve(jwt === "good-jwt" ? userId : null),
     prepare: () => Promise.reject(new Error("not an org invite")),
@@ -33,6 +34,10 @@ function harness(
     prepareLink: (...a) => {
       calls.push(a);
       return prepareLink(...a);
+    },
+    mailFailed: (id, resend) => {
+      failed.push([id, resend]);
+      return Promise.resolve();
     },
   };
   const mailer: Mailer = (m) => {
@@ -47,7 +52,7 @@ function harness(
     baseDomain: opts.baseDomain === undefined ? "bossconsole.test" : opts.baseDomain,
     origins: platformOrigins("", "http://localhost:9000"),
   });
-  return { app, sent, calls };
+  return { app, sent, calls, failed };
 }
 
 const req = (body: unknown, jwt: string | null = "good-jwt", method = "POST") =>
@@ -241,4 +246,52 @@ Deno.test("link: the mail has one button and no stray content; no inviter name f
   assertEquals((sent[0].html.match(/<a /g) ?? []).length, 2); // the button and the "Or open" fallback
   assert(!sent[0].text.includes("Acme Corp"));
   assert(!sent[0].text.includes("ada@acme.test"));
+});
+
+Deno.test("link: an smtp failure on a new invite asks the database to drop the link", async () => {
+  const { app, failed } = harness(undefined, { mailFails: true });
+  assertEquals((await app(req(body))).status, 503);
+  assertEquals(failed, [[linkId, false]]);
+});
+
+Deno.test("link: an smtp failure on a resend asks for the earlier state back", async () => {
+  const { app, failed } = harness(undefined, { mailFails: true });
+  assertEquals((await app(req({ link_id: linkId }))).status, 503);
+  assertEquals(failed, [[linkId, true]]);
+});
+
+Deno.test("link: a send that went out, or was refused, never calls mailFailed", async () => {
+  const ok = harness();
+  await ok.app(req(body));
+  const refused = harness(() => Promise.reject(new Refused(429, "rate_limited")), {
+    mailFails: true,
+  });
+  await refused.app(req(body));
+  assertEquals(ok.failed.length + refused.failed.length, 0);
+});
+
+Deno.test("link: facts that cannot be mailed also release the link", async () => {
+  const { app, failed } = harness(() => Promise.resolve({ ...facts, token: "short" }));
+  assertEquals((await app(req(body))).status, 503);
+  assertEquals(failed, [[linkId, false]]);
+});
+
+Deno.test("link: a failing mailFailed does not change the answer", async () => {
+  const sent: MailMessage[] = [];
+  const app = createApp({
+    db: {
+      user: () => Promise.resolve(userId),
+      prepare: () => Promise.reject(new Error("x")),
+      prepareAgent: () => Promise.reject(new Error("x")),
+      prepareLink: () => Promise.resolve(facts),
+      mailFailed: () => Promise.reject(new Error("db down")),
+    },
+    mailer: () => Promise.reject(new Error("smtp")),
+    baseDomain: "bossconsole.test",
+    origins: platformOrigins("", ""),
+  });
+  const res = await app(req(body));
+  assertEquals(res.status, 503);
+  assertEquals((await res.json()).error, "mail_unavailable");
+  assertEquals(sent.length, 0);
 });

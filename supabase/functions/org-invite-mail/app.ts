@@ -48,6 +48,11 @@ export interface Db {
     actor: string,
     req: { target: string; email: string; via: string } | { linkId: string },
   ): Promise<LinkInviteFacts>;
+  /**
+   * invite_link_mail_failed as the service role, when the mail did not go out: a new invite's link is deleted, a resend gets
+   * its earlier last_sent_at back, and that send's mail-log rows are removed. Best effort: failures are swallowed.
+   */
+  mailFailed(linkId: string, resend: boolean): Promise<void>;
 }
 
 export type Mailer = (msg: MailMessage) => Promise<void>;
@@ -182,6 +187,21 @@ export function restDb(): Db {
         throw new Refused(LINK_REFUSALS[code] ?? 503, code in LINK_REFUSALS ? code : "unavailable");
       }
       return out as LinkInviteFacts;
+    },
+    async mailFailed(linkId, resend) {
+      try {
+        const r = await fetch(`${url}/rest/v1/rpc/invite_link_mail_failed`, {
+          method: "POST",
+          headers: {
+            apikey: service,
+            Authorization: `Bearer ${service}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ p_link_id: linkId, p_resend: resend }),
+          signal: timeout(),
+        });
+        await r.body?.cancel();
+      } catch { /* the send already failed; nothing more to report */ }
     },
   };
 }
@@ -398,6 +418,7 @@ export function createApp(
     }
     if (!origin || !isAddress(facts.recipient_email) || !TOKEN_43.test(facts.token)) {
       logLink(facts.link_id, "no origin");
+      await db.mailFailed(facts.link_id, "linkId" in req).catch(() => {});
       return json(503, { error: "mail_unavailable" });
     }
     try {
@@ -407,6 +428,7 @@ export function createApp(
       });
     } catch {
       logLink(facts.link_id, "smtp failed");
+      await db.mailFailed(facts.link_id, "linkId" in req).catch(() => {});
       return json(503, { error: "mail_unavailable" });
     }
     logLink(facts.link_id, "sent");
