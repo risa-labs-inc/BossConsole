@@ -13,7 +13,8 @@ target.mkdir(exist_ok=True)
 # If a new migration is inserted before 20260909 that replaces this RPC, update
 # this fixture selection and the test include together. Later migrations do not
 # change the historical upgrade path this regression is intended to exercise.
-for name in ('20260907000000_secrets_paging_tiebreaker', '20260909000000_encrypt_totp'):
+for name in ('20260907000000_secrets_paging_tiebreaker', '20260909000000_encrypt_totp',
+             '20261111190100_seal_sensitive_secret_notes'):
     (target / (name + '.inc')).write_bytes(
         (root / 'supabase/migrations' / (name + '.sql')).read_bytes()
     )

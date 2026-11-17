@@ -1,7 +1,7 @@
 -- The broker schemas are operated outside this repository. Model their exact
 -- encrypted-column contract locally; no production keys or rows are used.
 begin;
-select plan(20);
+select plan(22);
 set local datestyle = 'ISO, YMD';
 create table public.qbo_token_state (
     id integer primary key, client_id_enc text, client_secret_enc text,
@@ -37,6 +37,9 @@ select set_config('request.jwt.claims',
 select public.create_secret('rotation.example', 'fixture', 'core-fixture',
     p_twofa_enabled => true, p_twofa_type => 'app',
     p_recovery_codes => array['recovery-one', 'recovery-two']);
+-- Card notes are sealed into secrets.notes_encrypted by trigger (20261111190000).
+select public.create_secret('rotation-card.example', 'fixture', '4242424242424242',
+    '{"name":"Ada"}', p_tags => array['kind:card']);
 update public.secret_metadata sm set twofa_secret = 'JBSWY3DPEHPK3PXP'
   from public.secrets sec where sec.id = sm.secret_id and sec.website = 'rotation.example';
 -- Existing broker rows remain legacy while new writes use v2. Exercise both
@@ -70,6 +73,10 @@ select is((select public.decrypt_text(private_key_enc) from public.google_token_
     'pem', 'Google key survives rotation');
 select is((select password from public.get_user_secrets(50,0) where website='rotation.example'),
     'core-fixture', 'core secret survives rotation from documented hex key');
+select is((select notes from public.get_user_secrets(50,0) where website='rotation-card.example'),
+    '{"name":"Ada"}', 'sealed card notes survive rotation');
+select ok((select notes is null and notes_encrypted is not null from public.secrets
+    where website = 'rotation-card.example'), 'rotation keeps card notes sealed');
 select ok(to_regclass('pg_temp.rot_fp') is null, 'rotation removes temporary fingerprints itself');
 select is(public.safe_decrypt_twofa_secret((select sm.twofa_secret from public.secret_metadata sm
       join public.secrets sec on sec.id = sm.secret_id where sec.website = 'rotation.example')),

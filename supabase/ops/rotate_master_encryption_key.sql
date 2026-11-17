@@ -52,6 +52,7 @@ declare
   -- something nobody relies on.
   cols text[][] := array[
     array['secrets','password_encrypted','id','','public.decrypt_text'],
+    array['secrets','notes_encrypted','id','','public.decrypt_text'],
     array['secret_metadata','recovery_codes_encrypted','id','','public.safe_decrypt_recovery_codes'],
     array['secret_metadata','twofa_secret','id','v1:','public.safe_decrypt_twofa_secret'],
     array['qbo_token_state','client_id_enc','id','','public.decrypt_text'],
@@ -64,7 +65,8 @@ declare
   -- BEFORE INSERT/UPDATE triggers on mapped tables that would rewrite what we
   -- store. Each must be disabled for the re-encryption and restored after.
   known_triggers text[][] := array[
-    array['secret_metadata','encrypt_twofa_secret_trigger']
+    array['secret_metadata','encrypt_twofa_secret_trigger'],
+    array['secrets','secrets_seal_notes_trigger']
   ];
   i int; n int; expected int; verified int; mismatched int;
   adapter text; trg record;
