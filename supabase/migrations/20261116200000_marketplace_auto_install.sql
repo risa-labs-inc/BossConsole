@@ -230,33 +230,46 @@ REVOKE ALL ON FUNCTION public.marketplace_bundle_access(uuid, uuid) FROM PUBLIC,
 GRANT EXECUTE ON FUNCTION public.marketplace_bundle_access(uuid, uuid) TO service_role;
 
 -- ----------------------------------------------------------------------------
--- Admin: replace the set of plugin ids a skill listing is auto-installed into. Refusals are {"ok":false,"reason":code}.
+-- Admin: change the set of plugin ids a skill listing is auto-installed into. Refusals are {"ok":false,"reason":code}.
+-- One internal apply serves both the replace (set) and the single-id toggle: it takes the listing row lock, then derives
+-- the new set (the given ids, or the current rows +/- one id), validates, writes and audits only a change.
+-- A toggle off skips the live/skill/restriction checks: removal must work on a listing that has since broken.
 -- ----------------------------------------------------------------------------
-CREATE FUNCTION public.marketplace_set_auto_install(p_slug text, p_plugin_ids text[])
+CREATE FUNCTION public.marketplace_auto_install_apply(p_slug text, p_plugin_ids text[], p_toggle_id text, p_on boolean)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
     l public.marketplace_listings%ROWTYPE;
     live public.marketplace_versions%ROWTYPE;
     ids text[];
+    tid text := pg_catalog.btrim(p_toggle_id);
+    removing boolean := p_toggle_id IS NOT NULL AND NOT COALESCE(p_on, false);
     before_ids text[];
     after_ids text[];
 BEGIN
-    IF auth.uid() IS NULL OR NOT public.is_user_admin(auth.uid()) THEN
-        RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
-    END IF;
     SELECT * INTO l FROM public.marketplace_listings WHERE slug = p_slug FOR UPDATE;
     IF NOT FOUND THEN
         RETURN pg_catalog.jsonb_build_object('ok', false, 'reason', 'not_found');
     END IF;
-    SELECT COALESCE(pg_catalog.array_agg(DISTINCT pg_catalog.btrim(x) ORDER BY pg_catalog.btrim(x)), '{}'::text[]) INTO ids
-        FROM pg_catalog.unnest(COALESCE(p_plugin_ids, '{}'::text[])) x WHERE x IS NOT NULL;
+    SELECT COALESCE(pg_catalog.array_agg(a.plugin_id ORDER BY a.plugin_id), '{}'::text[]) INTO before_ids
+        FROM public.marketplace_auto_installs a WHERE a.listing_id = l.id;
+    IF p_toggle_id IS NULL THEN
+        SELECT COALESCE(pg_catalog.array_agg(DISTINCT pg_catalog.btrim(x) ORDER BY pg_catalog.btrim(x)), '{}'::text[]) INTO ids
+            FROM pg_catalog.unnest(COALESCE(p_plugin_ids, '{}'::text[])) x WHERE x IS NOT NULL;
+    ELSE
+        IF tid IS NULL OR tid !~ '^[a-z0-9][a-z0-9._-]{1,127}$' THEN
+            RETURN pg_catalog.jsonb_build_object('ok', false, 'reason', 'invalid_plugin_id');
+        END IF;
+        SELECT COALESCE(pg_catalog.array_agg(x ORDER BY x), '{}'::text[]) INTO ids
+            FROM (SELECT x FROM pg_catalog.unnest(before_ids) x WHERE x <> tid
+                  UNION SELECT tid WHERE COALESCE(p_on, false)) s;
+    END IF;
     IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ids) x WHERE x !~ '^[a-z0-9][a-z0-9._-]{1,127}$') THEN
         RETURN pg_catalog.jsonb_build_object('ok', false, 'reason', 'invalid_plugin_id');
     END IF;
     IF pg_catalog.cardinality(ids) > 10 THEN
         RETURN pg_catalog.jsonb_build_object('ok', false, 'reason', 'too_many');
     END IF;
-    IF pg_catalog.cardinality(ids) > 0 THEN
+    IF pg_catalog.cardinality(ids) > 0 AND NOT removing THEN
         IF l.kind <> 'skill' THEN
             RETURN pg_catalog.jsonb_build_object('ok', false, 'reason', 'not_skill');
         END IF;
@@ -269,8 +282,6 @@ BEGIN
             RETURN pg_catalog.jsonb_build_object('ok', false, 'reason', 'not_allowed_agent');
         END IF;
     END IF;
-    SELECT COALESCE(pg_catalog.array_agg(a.plugin_id ORDER BY a.plugin_id), '{}'::text[]) INTO before_ids
-        FROM public.marketplace_auto_installs a WHERE a.listing_id = l.id;
     DELETE FROM public.marketplace_auto_installs a WHERE a.listing_id = l.id AND NOT (a.plugin_id = ANY (ids));
     INSERT INTO public.marketplace_auto_installs (listing_id, plugin_id, created_by)
         SELECT l.id, x, auth.uid() FROM pg_catalog.unnest(ids) x ON CONFLICT DO NOTHING;
@@ -284,8 +295,56 @@ BEGIN
     RETURN pg_catalog.jsonb_build_object('ok', true, 'auto_install', pg_catalog.to_jsonb(after_ids));
 END;
 $$;
+REVOKE ALL ON FUNCTION public.marketplace_auto_install_apply(text, text[], text, boolean) FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE FUNCTION public.marketplace_set_auto_install(p_slug text, p_plugin_ids text[])
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF auth.uid() IS NULL OR NOT public.is_user_admin(auth.uid()) THEN
+        RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
+    END IF;
+    RETURN public.marketplace_auto_install_apply(p_slug, p_plugin_ids, NULL, NULL);
+END;
+$$;
 REVOKE ALL ON FUNCTION public.marketplace_set_auto_install(text, text[]) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.marketplace_set_auto_install(text, text[]) TO authenticated, service_role;
+
+-- Admin: add or remove one plugin id (idempotent). Same refusals and audit as the set.
+CREATE FUNCTION public.marketplace_toggle_auto_install(p_slug text, p_plugin_id text, p_on boolean)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF auth.uid() IS NULL OR NOT public.is_user_admin(auth.uid()) THEN
+        RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
+    END IF;
+    RETURN public.marketplace_auto_install_apply(p_slug, NULL, COALESCE(p_plugin_id, ''), p_on);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.marketplace_toggle_auto_install(text, text, boolean) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.marketplace_toggle_auto_install(text, text, boolean) TO authenticated, service_role;
+
+-- Reverse view for an agent page: every listing auto-installed into one plugin id, in any status (admins see broken ones).
+CREATE FUNCTION public.marketplace_auto_installs_for(p_plugin_id text)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF auth.uid() IS NULL OR NOT public.is_platform_reader(auth.uid()) THEN
+        RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
+    END IF;
+    RETURN pg_catalog.jsonb_build_object('listings', COALESCE((
+        SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_strip_nulls(pg_catalog.jsonb_build_object(
+                   'slug', l.slug, 'name', COALESCE(v.name, l.slug), 'kind', l.kind, 'version', v.version,
+                   'status', l.status, 'reviewed', v.decision = 'approved',
+                   'restricted', pg_catalog.cardinality(COALESCE(v.allowed_agents, '{}'::text[])) > 0,
+                   'auto_install', (SELECT COALESCE(pg_catalog.jsonb_agg(a2.plugin_id ORDER BY a2.plugin_id), '[]'::jsonb)
+                                    FROM public.marketplace_auto_installs a2 WHERE a2.listing_id = l.id),
+                   'added_at', a.created_at)) ORDER BY COALESCE(v.name, l.slug), l.slug)
+        FROM public.marketplace_auto_installs a
+        JOIN public.marketplace_listings l ON l.id = a.listing_id
+        LEFT JOIN public.marketplace_versions v ON v.id = l.live_version_id
+        WHERE a.plugin_id = p_plugin_id), '[]'::jsonb));
+END;
+$$;
+REVOKE ALL ON FUNCTION public.marketplace_auto_installs_for(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.marketplace_auto_installs_for(text) TO authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
 -- Runtime: may the caller use this plugin id (an installed or editing person of a managed agent, anyone who may install the

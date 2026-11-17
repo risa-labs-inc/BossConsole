@@ -1,7 +1,7 @@
 -- Marketplace auto-install: per-plugin auto-install of skill listings, the runtime list and fetch, hidden restricted
 -- listings (search, get, category and tag counts), pruning when a new live version drops a plugin, reviewer access.
 begin;
-select plan(92);
+select plan(134);
 
 -- c1 platform admin, c2 platform viewer, c3 reviewer, a1 trusted publisher, a3 member with an installed agent,
 -- a4 plain signed-in user, a5 user whose agent install was removed.
@@ -126,6 +126,77 @@ select is(public.marketplace_set_auto_install('pub-bundle', array[]::text[]), '{
 select is(public.marketplace_set_auto_install('pub-bundle', null), '{"ok":true,"auto_install":[]}'::jsonb, 'null too');
 select is(public.marketplace_set_auto_install('a-connector', array[]::text[]) ->> 'ok', 'true', 'clearing a non-skill is fine');
 select is(public.marketplace_set_auto_install('pub-bundle', array['test.ai.draft']) ->> 'ok', 'true', 'draft plugin kept for the permission test');
+
+-- ---- marketplace_toggle_auto_install / marketplace_auto_installs_for ----
+-- State here: open-md, open-bundle, rs-bundle -> optimist; pub-bundle -> draft. Restored at the end of the block.
+select ok(not has_function_privilege('anon', 'public.marketplace_toggle_auto_install(text, text, boolean)', 'execute')
+      and not has_function_privilege('anon', 'public.marketplace_auto_installs_for(text)', 'execute')
+      and has_function_privilege('authenticated', 'public.marketplace_toggle_auto_install(text, text, boolean)', 'execute')
+      and has_function_privilege('authenticated', 'public.marketplace_auto_installs_for(text)', 'execute')
+      and not has_function_privilege('authenticated', 'public.marketplace_auto_install_apply(text, text[], text, boolean)', 'execute'),
+    'toggle and reverse-list grants; the shared apply is internal');
+select pg_temp.as_user('a4');
+select throws_ok($$ select public.marketplace_toggle_auto_install('open-md', 'test.ai.other', true) $$, '42501', 'Permission denied', 'toggle: a user cannot');
+select throws_ok($$ select public.marketplace_auto_installs_for('test.ai.optimist') $$, '42501', 'Permission denied', 'reverse list: a user cannot');
+select pg_temp.as_user('c3');
+select throws_ok($$ select public.marketplace_toggle_auto_install('open-md', 'test.ai.other', true) $$, '42501', 'Permission denied', 'toggle: a reviewer cannot');
+select throws_ok($$ select public.marketplace_auto_installs_for('test.ai.optimist') $$, '42501', 'Permission denied', 'reverse list: nor a reviewer');
+select pg_temp.as_user('c2');
+select throws_ok($$ select public.marketplace_toggle_auto_install('open-md', 'test.ai.other', true) $$, '42501', 'Permission denied', 'toggle: a platform viewer cannot');
+select is(pg_temp.slugs(public.marketplace_auto_installs_for('test.ai.optimist') -> 'listings'), '["open-bundle","open-md","rs-bundle"]'::jsonb, 'reverse list: a platform viewer can read');
+select pg_temp.as_anon();
+select throws_ok($$ select public.marketplace_toggle_auto_install('open-md', 'test.ai.other', true) $$, '42501', null, 'toggle: nor anon');
+select throws_ok($$ select public.marketplace_auto_installs_for('test.ai.optimist') $$, '42501', null, 'reverse list: nor anon');
+
+select pg_temp.as_user('c1');
+select is(public.marketplace_auto_installs_for('test.ai.nobody'), '{"listings":[]}'::jsonb, 'reverse list: a plugin with none is empty');
+select is(jsonb_path_query_array(public.marketplace_auto_installs_for('test.ai.optimist') -> 'listings', '$[*].slug'), '["open-bundle","rs-bundle","open-md"]'::jsonb, 'reverse list: ordered by name');
+select is((public.marketplace_auto_installs_for('test.ai.optimist') -> 'listings' -> 2) - 'added_at',
+    jsonb_build_object('slug', 'open-md', 'name', 'Open md', 'kind', 'skill', 'version', 1, 'status', 'live', 'reviewed', false,
+                       'restricted', false, 'auto_install', jsonb_build_array('test.ai.optimist')),
+    'reverse list: row shape');
+select ok((public.marketplace_auto_installs_for('test.ai.optimist') -> 'listings' -> 2 ->> 'added_at')::timestamptz <= now(), 'with added_at');
+select is(public.marketplace_auto_installs_for('test.ai.optimist') -> 'listings' -> 1 -> 'restricted', 'true'::jsonb, 'reverse list: a restricted listing is flagged');
+select is(pg_temp.slugs(public.marketplace_auto_installs_for('test.ai.draft') -> 'listings'), '["pub-bundle"]'::jsonb, 'reverse list: scoped to the plugin id');
+
+select is(public.marketplace_toggle_auto_install('open-md', 'test.ai.other', true), '{"ok":true,"auto_install":["test.ai.optimist","test.ai.other"]}'::jsonb, 'toggle on adds to the current set');
+select is(pg_temp.cnt($q$public.platform_audit_log where action = 'marketplace.auto_install_set' and detail ->> 'slug' = 'open-md'$q$), 4, 'toggle on is audited');
+select is(pg_temp.cnt($q$public.platform_audit_log where action = 'marketplace.auto_install_set' and detail @> '{"slug":"open-md","previous":["test.ai.optimist"],"plugin_ids":["test.ai.optimist","test.ai.other"]}'$q$), 1, 'with the previous set');
+select is(public.marketplace_toggle_auto_install('open-md', 'test.ai.other', true), '{"ok":true,"auto_install":["test.ai.optimist","test.ai.other"]}'::jsonb, 'toggle on again is idempotent');
+select is(pg_temp.cnt($q$public.platform_audit_log where action = 'marketplace.auto_install_set' and detail ->> 'slug' = 'open-md'$q$), 4, 'and not audited');
+select is(pg_temp.slugs(public.marketplace_auto_installs_for('test.ai.other') -> 'listings'), '["open-md"]'::jsonb, 'the reverse list sees the new row');
+select is(public.marketplace_auto_installs_for('test.ai.other') -> 'listings' -> 0 -> 'auto_install', '["test.ai.optimist","test.ai.other"]'::jsonb, 'and the listing''s full set');
+select is(public.marketplace_toggle_auto_install('open-md', '  test.ai.third ', true) -> 'auto_install', '["test.ai.optimist","test.ai.other","test.ai.third"]'::jsonb, 'the id is trimmed');
+select is(public.marketplace_toggle_auto_install('open-md', 'test.ai.third', false), '{"ok":true,"auto_install":["test.ai.optimist","test.ai.other"]}'::jsonb, 'toggle off removes it');
+select is(public.marketplace_toggle_auto_install('open-md', 'test.ai.other', false), '{"ok":true,"auto_install":["test.ai.optimist"]}'::jsonb, 'toggle off removes another');
+select is(pg_temp.cnt($q$public.platform_audit_log where action = 'marketplace.auto_install_set' and detail ->> 'slug' = 'open-md'$q$), 7, 'each change audited once');
+select is(public.marketplace_toggle_auto_install('open-md', 'test.ai.other', false), '{"ok":true,"auto_install":["test.ai.optimist"]}'::jsonb, 'toggle off of an absent id is idempotent');
+select is(pg_temp.cnt($q$public.platform_audit_log where action = 'marketplace.auto_install_set' and detail ->> 'slug' = 'open-md'$q$), 7, 'and not audited');
+
+select is(public.marketplace_toggle_auto_install('nope', 'test.ai.other', true), '{"ok":false,"reason":"not_found"}'::jsonb, 'toggle: unknown slug');
+select is(public.marketplace_toggle_auto_install('a-connector', 'test.ai.other', true), '{"ok":false,"reason":"not_skill"}'::jsonb, 'toggle: skills only');
+select is(public.marketplace_toggle_auto_install('a-pending', 'test.ai.other', true), '{"ok":false,"reason":"not_live"}'::jsonb, 'toggle: must be live');
+select is(public.marketplace_toggle_auto_install('open-md', 'Bad ID', true), '{"ok":false,"reason":"invalid_plugin_id"}'::jsonb, 'toggle on: malformed id');
+select is(public.marketplace_toggle_auto_install('open-md', 'Bad ID', false), '{"ok":false,"reason":"invalid_plugin_id"}'::jsonb, 'toggle off: malformed id');
+select is(public.marketplace_toggle_auto_install('open-md', null, true), '{"ok":false,"reason":"invalid_plugin_id"}'::jsonb, 'toggle: null id');
+select is(public.marketplace_toggle_auto_install('rs-bundle', 'test.ai.other', true), '{"ok":false,"reason":"not_allowed_agent"}'::jsonb, 'toggle: outside the restriction');
+select is(public.marketplace_auto_installs_for('test.ai.optimist') -> 'listings' -> 1 -> 'auto_install', '["test.ai.optimist"]'::jsonb, 'a refusal changes nothing');
+select is((select bool_and((public.marketplace_toggle_auto_install('open-bundle', 'p.id' || i, true) ->> 'ok')::boolean) from generate_series(1, 9) i), true, 'up to 10 ids');
+select is(public.marketplace_toggle_auto_install('open-bundle', 'p.id10', true), '{"ok":false,"reason":"too_many"}'::jsonb, 'toggle: an 11th id');
+select is(public.marketplace_set_auto_install('open-bundle', array['test.ai.optimist']), '{"ok":true,"auto_install":["test.ai.optimist"]}'::jsonb, 'set still replaces after toggles');
+
+-- A listing that is no longer live still shows (so admins can fix it) and can be removed from, not added to.
+reset role;
+insert into public.marketplace_auto_installs (listing_id, plugin_id)
+    select id, 'test.ai.other' from public.marketplace_listings where slug = 'a-pending';
+set local role authenticated;
+select pg_temp.as_user('c2');
+select is((public.marketplace_auto_installs_for('test.ai.other') -> 'listings' -> 0) - 'added_at', jsonb_build_object('slug', 'a-pending', 'name', 'a-pending',
+    'kind', 'skill', 'status', 'pending_review', 'restricted', false, 'auto_install', jsonb_build_array('test.ai.other')),
+    'reverse list: a non-live listing is included, without live fields');
+select pg_temp.as_user('c1');
+select is(public.marketplace_toggle_auto_install('a-pending', 'test.ai.other', false), '{"ok":true,"auto_install":[]}'::jsonb, 'a broken listing can be removed');
+select is(public.marketplace_auto_installs_for('test.ai.other'), '{"listings":[]}'::jsonb, 'and leaves the reverse list');
 
 -- ---- the runtime list ----
 select pg_temp.as_user('a4');
