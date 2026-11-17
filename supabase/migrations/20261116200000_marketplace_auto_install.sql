@@ -23,7 +23,6 @@ ON CONFLICT DO NOTHING;
 DROP FUNCTION public.marketplace_listing_agents(text);
 DROP FUNCTION public.marketplace_agent_default_set(uuid, text, boolean);
 DROP FUNCTION public.marketplace_agent_defaults(uuid);
-DROP FUNCTION public.marketplace_agent_skills(text);
 DROP TABLE public.marketplace_agent_defaults;
 
 -- ----------------------------------------------------------------------------
@@ -388,6 +387,33 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.marketplace_auto_install_skills(text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.marketplace_auto_install_skills(text) TO authenticated, service_role;
+
+-- Released Max (<= 1.2.29) still reads marketplace_agent_skills for managed agents. Kept, over the new table, with its old
+-- answer: single-file, unrestricted skills only, markdown inline. Drop once every pod runs a Max that reads the new RPC.
+CREATE OR REPLACE FUNCTION public.marketplace_agent_skills(p_plugin_id text)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    me uuid := auth.uid();
+BEGIN
+    IF me IS NULL THEN
+        RAISE EXCEPTION 'Not signed in' USING ERRCODE = '42501';
+    END IF;
+    IF NOT public.marketplace_can_use_plugin(me, p_plugin_id) THEN
+        RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
+    END IF;
+    RETURN pg_catalog.jsonb_build_object('skills', COALESCE((
+        SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+                   'slug', l.slug, 'name', v.name, 'summary', v.summary, 'version', v.version,
+                   'reviewed', v.decision = 'approved', 'markdown', v.content->>'markdown') ORDER BY l.slug)
+        FROM public.marketplace_auto_installs a
+        JOIN public.marketplace_listings l ON l.id = a.listing_id
+        JOIN public.marketplace_versions v ON v.id = l.live_version_id
+        WHERE a.plugin_id = p_plugin_id AND l.status = 'live' AND l.kind = 'skill'
+          AND v.bundle_path IS NULL AND pg_catalog.cardinality(v.allowed_agents) = 0), '[]'::jsonb));
+END;
+$$;
+REVOKE ALL ON FUNCTION public.marketplace_agent_skills(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.marketplace_agent_skills(text) TO authenticated, service_role;
 
 -- The fetch behind a bundle entry: same JSON as marketplace_install_v2 but nothing is recorded or counted.
 CREATE FUNCTION public.marketplace_auto_install_fetch(p_slug text, p_plugin_id text)

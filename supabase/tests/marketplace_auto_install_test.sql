@@ -1,7 +1,7 @@
 -- Marketplace auto-install: per-plugin auto-install of skill listings, the runtime list and fetch, hidden restricted
 -- listings (search, get, category and tag counts), pruning when a new live version drops a plugin, reviewer access.
 begin;
-select plan(134);
+select plan(137);
 
 -- c1 platform admin, c2 platform viewer, c3 reviewer, a1 trusted publisher, a3 member with an installed agent,
 -- a4 plain signed-in user, a5 user whose agent install was removed.
@@ -90,7 +90,8 @@ select ok(not has_function_privilege('authenticated', 'public.marketplace_restri
       and not has_function_privilege('authenticated', 'public.marketplace_can_use_plugin(uuid, text)', 'execute')
       and not has_function_privilege('authenticated', 'public.marketplace_auto_install_prune()', 'execute'), 'helpers are internal');
 select is(to_regclass('public.marketplace_agent_defaults'), null, 'the old table is gone');
-select is(to_regprocedure('public.marketplace_agent_skills(text)'), null, 'and the old runtime read');
+select ok(has_function_privilege('authenticated', 'public.marketplace_agent_skills(text)', 'execute')
+      and not has_function_privilege('anon', 'public.marketplace_agent_skills(text)', 'execute'), 'the old runtime read stays for released Max');
 select is(to_regprocedure('public.marketplace_agent_default_set(uuid, text, boolean)'), null, 'and the old setter');
 
 -- ---- marketplace_set_auto_install ----
@@ -221,6 +222,16 @@ select lives_ok($$ select public.marketplace_auto_install_skills('test.ai.draft'
 select is(pg_temp.slugs(public.marketplace_auto_install_skills('test.ai.draft') -> 'skills'), '["pub-bundle"]'::jsonb, 'and sees its list');
 select pg_temp.as_anon();
 select throws_ok($$ select public.marketplace_auto_install_skills('test.ai.optimist') $$, '42501', null, 'signed out is denied');
+
+-- ---- released Max (<= 1.2.29) reads marketplace_agent_skills: old shape, single-file unrestricted skills only ----
+select pg_temp.as_user('a4');
+select is(public.marketplace_agent_skills('test.ai.optimist'),
+    jsonb_build_object('skills', jsonb_build_array(jsonb_build_object('slug', 'open-md', 'name', 'Open md', 'summary', 'Sum', 'version', 1,
+        'reviewed', false, 'markdown', 'Hello md.'))),
+    'compat read: the old answer from the new table, without bundles or restricted listings');
+select throws_ok($$ select public.marketplace_agent_skills('test.ai.draft') $$, '42501', 'Permission denied', 'compat read: same permission as the new read');
+select pg_temp.as_user('a3');
+select lives_ok($$ select public.marketplace_agent_skills('ai.rever.boss.plugin.dynamic.agent.aiagent') $$, 'compat read: an installed person on the agent path');
 
 -- Bundles off: bundle entries leave the list (the install check refuses them), markdown stays.
 reset role;
