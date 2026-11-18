@@ -218,7 +218,7 @@ $$;
 REVOKE ALL ON FUNCTION public.marketplace_tags(int, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.marketplace_tags(int, text) TO anon, authenticated, service_role;
 
--- Bundle read for the version's creator, platform readers and reviewers (body from 20261116120000; reviewer added).
+-- Bundle read for the version's creator, platform readers and reviewers (body from 20261116195000; reviewer added).
 CREATE OR REPLACE FUNCTION public.marketplace_bundle_access(p_user uuid, p_version_id uuid)
 RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
     SELECT v.bundle_path FROM public.marketplace_versions v

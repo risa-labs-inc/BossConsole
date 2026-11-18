@@ -58,7 +58,7 @@ with intentionally_anon as (
     -- public host; no identity.
     'public.agent_unavailable(text)',
     -- Marketplace (20261030150000; search, categories and tags from 20261030180000; agent-aware search/get and the
-    -- flag read from 20261116120000; the agent argument on categories and tags from 20261116200000): skills and connectors are browsable before sign-in. All return live listings
+    -- flag read from 20261116195000; the agent argument on categories and tags from 20261116200000): skills and connectors are browsable before sign-in. All return live listings
     -- only, with the publisher's chosen display name and the display names of the agents a listing is restricted to;
     -- never an email or user id. marketplace_flags returns four booleans.
     'public.marketplace_search(text,public.marketplace_kind,integer,integer,text,text,text)', 'public.marketplace_get(text,text)',
