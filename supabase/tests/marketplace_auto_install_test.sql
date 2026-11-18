@@ -92,7 +92,7 @@ select ok(not has_function_privilege('authenticated', 'public.marketplace_restri
 select is(to_regclass('public.marketplace_agent_defaults'), null, 'the old table is gone');
 select ok(has_function_privilege('authenticated', 'public.marketplace_agent_skills(text)', 'execute')
       and not has_function_privilege('anon', 'public.marketplace_agent_skills(text)', 'execute'), 'the old runtime read stays for released Max');
-select is(to_regprocedure('public.marketplace_agent_default_set(uuid, text, boolean)'), null, 'and the old setter');
+select ok(to_regprocedure('public.marketplace_agent_default_set(uuid, text, boolean)') is not null, 'the old setter stays for the live console');
 
 -- ---- marketplace_set_auto_install ----
 select pg_temp.as_user('a4');

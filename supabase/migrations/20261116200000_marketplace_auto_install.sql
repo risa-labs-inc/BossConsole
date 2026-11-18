@@ -453,3 +453,106 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.marketplace_auto_install_fetch(text, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.marketplace_auto_install_fetch(text, text) TO authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- Compat for the live console (optimist main): the per-agent defaults RPCs, same signatures, shapes, permissions and
+-- refusal codes as before, over marketplace_auto_installs keyed by the agent's plugin id. Drop when console #111 is live.
+-- ----------------------------------------------------------------------------
+CREATE FUNCTION public.marketplace_agent_defaults(p_agent_id uuid)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF auth.uid() IS NULL OR NOT public.is_platform_reader(auth.uid()) THEN
+        RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
+    END IF;
+    RETURN COALESCE((
+        SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+                   'slug', l.slug, 'name', COALESCE(lv.name, pv.name), 'version', COALESCE(lv.version, pv.version),
+                   'reviewed', COALESCE(lv.decision = 'approved', false), 'status', l.status, 'added_at', ai.created_at)
+               ORDER BY l.slug)
+        FROM public.agents a
+        JOIN public.marketplace_auto_installs ai ON ai.plugin_id = a.plugin_id
+        JOIN public.marketplace_listings l ON l.id = ai.listing_id
+        LEFT JOIN public.marketplace_versions lv ON lv.id = l.live_version_id
+        LEFT JOIN public.marketplace_versions pv ON pv.id = l.pending_version_id
+        WHERE a.id = p_agent_id), '[]'::jsonb);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.marketplace_agent_defaults(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.marketplace_agent_defaults(uuid) TO authenticated, service_role;
+
+CREATE FUNCTION public.marketplace_agent_default_set(p_agent_id uuid, p_slug text, p_on boolean)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    a public.agents%ROWTYPE;
+    l public.marketplace_listings%ROWTYPE;
+    had boolean;
+    r jsonb;
+BEGIN
+    IF auth.uid() IS NULL OR NOT public.is_user_admin(auth.uid()) THEN
+        RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
+    END IF;
+    SELECT * INTO a FROM public.agents WHERE id = p_agent_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'agent_not_found' USING ERRCODE = 'P0001';
+    END IF;
+    SELECT * INTO l FROM public.marketplace_listings WHERE slug = p_slug FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'listing_not_found' USING ERRCODE = 'P0001';
+    END IF;
+    IF l.kind <> 'skill' THEN
+        RAISE EXCEPTION 'not_a_skill' USING ERRCODE = 'P0001';
+    END IF;
+    -- Auto-installs are keyed by plugin id; an agent without one never received defaults.
+    IF a.plugin_id IS NULL OR a.plugin_id !~ '^[a-z0-9][a-z0-9._-]{1,127}$' THEN
+        RAISE EXCEPTION 'agent_has_no_plugin' USING ERRCODE = 'P0001';
+    END IF;
+    had := EXISTS (SELECT 1 FROM public.marketplace_auto_installs WHERE listing_id = l.id AND plugin_id = a.plugin_id);
+    IF COALESCE(p_on, false) THEN
+        IF l.status <> 'live' THEN
+            RAISE EXCEPTION 'listing_not_live' USING ERRCODE = 'P0001';
+        END IF;
+        IF EXISTS (SELECT 1 FROM public.marketplace_versions v WHERE v.id = l.live_version_id
+                   AND (v.bundle_path IS NOT NULL OR pg_catalog.cardinality(v.allowed_agents) > 0)) THEN
+            RAISE EXCEPTION 'default_requires_legacy_skill' USING ERRCODE = 'P0001';
+        END IF;
+        IF NOT had AND (SELECT pg_catalog.count(*) FROM public.marketplace_auto_installs WHERE plugin_id = a.plugin_id) >= 50 THEN
+            RAISE EXCEPTION 'too_many_defaults' USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+    r := public.marketplace_auto_install_apply(l.slug, NULL, a.plugin_id, COALESCE(p_on, false));
+    IF NOT (r ->> 'ok')::boolean THEN
+        RAISE EXCEPTION '%', CASE r ->> 'reason' WHEN 'too_many' THEN 'too_many_defaults' WHEN 'not_live' THEN 'listing_not_live'
+                                 WHEN 'not_skill' THEN 'not_a_skill' WHEN 'not_found' THEN 'listing_not_found'
+                                 ELSE r ->> 'reason' END USING ERRCODE = 'P0001';
+    END IF;
+    IF had IS DISTINCT FROM COALESCE(p_on, false) THEN
+        INSERT INTO public.agent_audit_log (org_id, agent_id, actor, action, detail)
+            VALUES (a.org_id, a.id, auth.uid(),
+                    CASE WHEN COALESCE(p_on, false) THEN 'agent.marketplace_default_added' ELSE 'agent.marketplace_default_removed' END,
+                    pg_catalog.jsonb_build_object('slug', l.slug));
+    END IF;
+    RETURN public.marketplace_agent_defaults(a.id);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.marketplace_agent_default_set(uuid, text, boolean) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.marketplace_agent_default_set(uuid, text, boolean) TO authenticated, service_role;
+
+CREATE FUNCTION public.marketplace_listing_agents(p_slug text)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    IF auth.uid() IS NULL OR NOT public.is_platform_reader(auth.uid()) THEN
+        RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
+    END IF;
+    -- Managed agents only: other plugin ids (Optimist, Max) have no agent row for the old console to show.
+    RETURN COALESCE((
+        SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+                   'agent_id', a.id, 'slug', a.slug, 'name', a.name, 'org_id', a.org_id, 'added_at', ai.created_at)
+               ORDER BY a.slug)
+        FROM public.marketplace_listings l
+        JOIN public.marketplace_auto_installs ai ON ai.listing_id = l.id
+        JOIN public.agents a ON a.plugin_id = ai.plugin_id
+        WHERE l.slug = p_slug), '[]'::jsonb);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.marketplace_listing_agents(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.marketplace_listing_agents(text) TO authenticated, service_role;

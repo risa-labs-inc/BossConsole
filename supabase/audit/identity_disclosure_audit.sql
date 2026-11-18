@@ -66,7 +66,11 @@ with intentionally_anon as (
     'public.marketplace_categories(text)', 'public.marketplace_tags(integer,text)',
     -- The fluck-web function redeems a plugin-minted push ticket with the anon key (it holds no
     -- service-role key); the single-use 256-bit ticket is the whole credential (20261013100000; prune widened in 20261013200000).
-    'public.fluck_web_push_redeem(text)', 'public.fluck_web_push_prune(text,uuid[],uuid[])'
+    'public.fluck_web_push_redeem(text)', 'public.fluck_web_push_prune(text,uuid[],uuid[])',
+    -- Invite links (20261111150000, 20261116100000, 20261116110000): the invite landing page and the chat
+    -- server resolve a link before sign-in. They return only the target name, the inviter's first name, a masked
+    -- recipient hint, or an admits boolean; never an email or user id. The 256-bit token is the credential.
+    'public.invite_link_preview(text)', 'public.invite_link_admits(text,text)'
   ]) signature
 ),
 anon_callable as (
