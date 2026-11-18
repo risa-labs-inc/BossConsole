@@ -346,6 +346,22 @@ jobs:
       # --allow-net: the fake SMTP server on 127.0.0.1.
       - run: deno test --allow-env --allow-net
 
+  marketplace-bundle:
+    name: Marketplace bundle — check and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions/marketplace-bundle
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: find . -name "*.ts" -print0 | xargs -0 -r deno check
+      - run: deno lint
+      - run: deno fmt --check
+      - run: deno test --allow-env
+
   app-sharing:
     name: 'Application sharing: authorization and signaling'
     runs-on: ubuntu-latest

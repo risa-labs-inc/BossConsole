@@ -533,3 +533,11 @@ verify_jwt = false
 
 [functions.app-sharing-maintenance]
 verify_jwt = false
+
+[functions.marketplace-bundle]
+# false: the console calls it from the browser (the CORS preflight carries no Authorization) and Max with the user's
+# JWT. Every route verifies that JWT itself through auth/v1/user before doing anything. Optional env:
+# MARKETPLACE_PUBLIC_URL (the public Supabase origin signed URLs point at, when SUPABASE_URL is an internal one).
+verify_jwt = false
+import_map = "./functions/marketplace-bundle/deno.json"
+entrypoint = "./functions/marketplace-bundle/index.ts"
