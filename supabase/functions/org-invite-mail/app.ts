@@ -1,4 +1,11 @@
-import { type AgentInviteFacts, agentInviteMail, type InviteFacts, inviteMail } from "./mail.ts";
+import {
+  type AgentInviteFacts,
+  agentInviteMail,
+  type InviteFacts,
+  inviteMail,
+  type LinkInviteFacts,
+  linkInviteMail,
+} from "./mail.ts";
 import { isAddress, type MailMessage, sendMail, type SmtpConfig } from "./smtp.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -32,6 +39,23 @@ export interface Db {
    * invite exists and the agent is live; applies the rate limits and records the send.
    */
   prepareAgent(actor: string, agentId: string, email: string): Promise<AgentInviteFacts>;
+  /**
+   * invite_link_mail_prepare as the service role: a new email invite for `email` on `target` (policy, quotas and mail limits
+   * as create_invite_link plus the invite mail limits), or with `linkId` a resend that rotates the token. Throws Refused
+   * for the refusals the function returns.
+   */
+  prepareLink(
+    actor: string,
+    req: { target: string; email: string; via: string } | { linkId: string },
+  ): Promise<LinkInviteFacts>;
+  /**
+   * invite_link_mail_failed as the service role, when the mail did not go out: a new invite's link is deleted, a resend gets
+   * its earlier token and last_sent_at back, and that send's mail-log rows are removed. `token` is the one this send issued;
+   * the database ignores the report when it is no longer the link's current token. Best effort: failures are swallowed.
+   */
+  mailFailed(linkId: string, resend: boolean, token: string): Promise<void>;
+  /** invite_link_mail_sent as the service role: the mail went out, so the saved previous token is dropped (if `token` is current). Best effort. */
+  mailSent(linkId: string, token: string): Promise<void>;
 }
 
 export type Mailer = (msg: MailMessage) => Promise<void>;
@@ -139,8 +163,80 @@ export function restDb(): Db {
       }
       return await r.json() as AgentInviteFacts;
     },
+    async prepareLink(actor, req) {
+      const r = await fetch(`${url}/rest/v1/rpc/invite_link_mail_prepare`, {
+        method: "POST",
+        headers: {
+          apikey: service,
+          Authorization: `Bearer ${service}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(
+          "linkId" in req
+            ? { p_actor: actor, p_target: null, p_email: null, p_link_id: req.linkId }
+            : { p_actor: actor, p_target: req.target, p_email: req.email, p_via: req.via },
+        ),
+        signal: timeout(),
+      });
+      if (!r.ok) {
+        await r.body?.cancel();
+        throw new Error(`prepare ${r.status}`);
+      }
+      const out = await r.json() as
+        & { success?: boolean; error?: string }
+        & Partial<LinkInviteFacts>;
+      if (out.success !== true) {
+        const code = String(out.error ?? "");
+        throw new Refused(LINK_REFUSALS[code] ?? 503, code in LINK_REFUSALS ? code : "unavailable");
+      }
+      return out as LinkInviteFacts;
+    },
+    async mailFailed(linkId, resend, token) {
+      try {
+        const r = await fetch(`${url}/rest/v1/rpc/invite_link_mail_failed`, {
+          method: "POST",
+          headers: {
+            apikey: service,
+            Authorization: `Bearer ${service}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ p_link_id: linkId, p_resend: resend, p_token: token }),
+          signal: timeout(),
+        });
+        await r.body?.cancel();
+      } catch { /* the send already failed; nothing more to report */ }
+    },
+    async mailSent(linkId, token) {
+      try {
+        const r = await fetch(`${url}/rest/v1/rpc/invite_link_mail_sent`, {
+          method: "POST",
+          headers: {
+            apikey: service,
+            Authorization: `Bearer ${service}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ p_link_id: linkId, p_token: token }),
+          signal: timeout(),
+        });
+        await r.body?.cancel();
+      } catch { /* the mail went out; the saved token is harmless until the next resend */ }
+    },
   };
 }
+
+/** The RPC's refusals as HTTP answers. */
+const LINK_REFUSALS: Record<string, number> = {
+  bad_request: 400,
+  bad_email: 400,
+  not_allowed: 403,
+  invites_off: 403,
+  not_found: 404,
+  not_pending: 409,
+  resend_in_progress: 409,
+  too_many_active_links: 409,
+  rate_limited: 429,
+  quota_exceeded: 429,
+};
 
 const HOST =
   /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
@@ -160,6 +256,22 @@ export function agentSiteUrl(
   const custom = (facts.custom_host ?? "").toLowerCase();
   if (custom && HOST.test(custom)) return `https://${custom}/`;
   return SLUG.test(facts.agent_slug) ? `https://${facts.agent_slug}.${base}/` : null;
+}
+
+/** Where a link's /i/<token> page lives: https only (http for loopback), a bare origin. null when unset or malformed. */
+export function originFromEnv(raw: string): string | null {
+  return consoleUrlFromEnv(raw);
+}
+
+/** Origins of the platforms' own sites; overridable for local runs (INVITE_ORIGIN_OPTIMIST, INVITE_ORIGIN_MAX). */
+export function platformOrigins(
+  optimist = env("INVITE_ORIGIN_OPTIMIST"),
+  max = env("INVITE_ORIGIN_MAX"),
+): Record<string, string> {
+  return {
+    optimist: originFromEnv(optimist) ?? "https://askoptimist.com",
+    max: originFromEnv(max) ?? "https://evolvemax.com",
+  };
 }
 
 const CORS = {
@@ -183,6 +295,12 @@ function logAgent(agentId: string, outcome: string) {
   console.info(`org-invite-mail agent=${agentId} ${outcome}`);
 }
 
+/** Link ids and outcomes only; never the token or the address. */
+function logLink(ref: string, outcome: string) {
+  console.info(`org-invite-mail link=${ref} ${outcome}`);
+}
+const TOKEN_43 = /^[A-Za-z0-9_-]{43}$/;
+
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
@@ -199,6 +317,7 @@ export function createApp(
     consoleUrl?: string | null;
     baseDomain?: string | null;
     configured?: boolean;
+    origins?: Record<string, string>;
   } = {},
 ) {
   const smtp = options.mailer ? null : smtpFromEnv();
@@ -207,6 +326,7 @@ export function createApp(
   const db = options.db ?? restDb();
   const consoleUrl = options.consoleUrl !== undefined ? options.consoleUrl : consoleUrlFromEnv();
   const baseDomain = options.baseDomain !== undefined ? options.baseDomain : baseDomainFromEnv();
+  const origins = options.origins ?? platformOrigins();
 
   /**
    * POST /org-invite-mail/agent {agent_id, email}: someone with agents.access on the agent's org (their own JWT) asks for an
@@ -256,12 +376,101 @@ export function createApp(
     return json(200, { sent: true, email: facts.email });
   };
 
+  /**
+   * POST /org-invite-mail/link {target, email, via: "max"|"console"} or {link_id}: someone who may invite to the target (their
+   * own JWT) emails a single-use invite link bound to one address, or re-sends one (the token rotates, the earlier mail stops
+   * working). The link origin is built here from the target, never from the request.
+   * 200 {sent, id, recipient, expires_at} | 400 bad_request, bad_email | 401 | 403 not_allowed, invites_off | 404 not_found |
+   * 409 not_pending, resend_in_progress, too_many_active_links | 429 rate_limited, quota_exceeded | 503 mail_unavailable.
+   */
+  const linkInvite = async (request: Request): Promise<Response> => {
+    const auth = request.headers.get("Authorization") ?? "";
+    const jwt = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    if (!jwt) return json(401, { error: "Unauthorized" });
+    let req: { target: string; email: string; via: string } | { linkId: string };
+    try {
+      const text = await request.text();
+      if (text.length > MAX_BODY) throw new Error("body");
+      const b = JSON.parse(text);
+      if (!b || typeof b !== "object") throw new Error("body");
+      if (b.link_id !== undefined) {
+        if (typeof b.link_id !== "string" || !UUID.test(b.link_id)) throw new Error("body");
+        req = { linkId: b.link_id.toLowerCase() };
+      } else {
+        if (
+          typeof b.target !== "string" || !/^[a-z][a-z0-9-]{1,30}[a-z0-9]$/.test(b.target) ||
+          (b.via !== "max" && b.via !== "console") || typeof b.email !== "string"
+        ) throw new Error("body");
+        const email = b.email.trim().toLowerCase();
+        if (email.length > 320 || !EMAIL.test(email)) {
+          return json(400, { error: "bad_email" });
+        }
+        req = { target: b.target, email, via: b.via };
+      }
+    } catch {
+      return json(400, { error: "bad_request" });
+    }
+    // An agent link needs the base domain to be addressed; refuse before a link is issued that could not be mailed.
+    const platform = "target" in req && req.target in origins;
+    if (!mailer || (!platform && !baseDomain)) return json(503, { error: "mail_unavailable" });
+    let facts: LinkInviteFacts;
+    const ref = "linkId" in req ? req.linkId : req.target;
+    try {
+      const actor = await db.user(jwt);
+      if (!actor) return json(401, { error: "Unauthorized" });
+      facts = await db.prepareLink(actor, req);
+    } catch (e) {
+      if (e instanceof Refused) {
+        logLink(ref, `refused ${e.code}`);
+        return json(e.status, { error: e.code });
+      }
+      return json(503, { error: "mail_unavailable" });
+    }
+    let origin: string | null;
+    if (facts.agent_slug) {
+      const site = baseDomain
+        ? agentSiteUrl({ agent_slug: facts.agent_slug, custom_host: facts.custom_host }, baseDomain)
+        : null;
+      origin = site ? site.replace(/\/+$/, "") : null;
+    } else {
+      origin = origins[facts.target] ?? null;
+    }
+    if (!origin || !isAddress(facts.recipient_email) || !TOKEN_43.test(facts.token)) {
+      logLink(facts.link_id, "no origin");
+      await db.mailFailed(facts.link_id, "linkId" in req, facts.token).catch(() => {});
+      return json(503, { error: "mail_unavailable" });
+    }
+    try {
+      await mailer({
+        to: facts.recipient_email,
+        ...linkInviteMail(facts, `${origin}/i/${facts.token}`),
+      });
+    } catch {
+      logLink(facts.link_id, "smtp failed");
+      await db.mailFailed(facts.link_id, "linkId" in req, facts.token).catch(() => {});
+      return json(503, { error: "mail_unavailable" });
+    }
+    await db.mailSent(facts.link_id, facts.token).catch(() => {});
+    logLink(facts.link_id, "sent");
+    return json(200, {
+      sent: true,
+      id: facts.link_id,
+      recipient: facts.recipient_email,
+      expires_at: facts.expires_at,
+    });
+  };
+
   return async (request: Request): Promise<Response> => {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     const path = new URL(request.url).pathname.replace(/\/+$/, "");
     if (path.endsWith("/org-invite-mail/agent")) {
       return request.method === "POST"
         ? agentInvite(request)
+        : json(405, { error: "Method not allowed" });
+    }
+    if (path.endsWith("/org-invite-mail/link")) {
+      return request.method === "POST"
+        ? linkInvite(request)
         : json(405, { error: "Method not allowed" });
     }
     if (!path.endsWith("/org-invite-mail")) return json(404, { error: "Not found" });
