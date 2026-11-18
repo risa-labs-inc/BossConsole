@@ -77,7 +77,7 @@ select pg_temp.as_user('b1');
 select throws_ok($$ select public.marketplace_suspend('rev-one', true, 'x') $$, '42501', null, 'cannot suspend');
 select throws_ok($$ select public.marketplace_mark_reviewed('rev-one') $$, '42501', null, 'cannot mark reviewed');
 select throws_ok($$ select public.marketplace_trust_set('publisher@mrev.test', true) $$, '42501', null, 'cannot set a trusted publisher');
-select throws_ok($$ select public.marketplace_agent_default_set(gen_random_uuid(), 'rev-one', true) $$, '42501', null, 'cannot set agent defaults');
+select throws_ok($$ select public.marketplace_set_auto_install('rev-one', array['test.rev.plugin']) $$, '42501', null, 'cannot set auto-install');
 select throws_ok($$ select public.marketplace_set_metadata('rev-one', null, array['x']) $$, '42501', null, 'cannot set metadata');
 select throws_ok($$ select public.marketplace_category_set('mrev-cat', 'Cat') $$, '42501', null, 'cannot edit categories');
 select throws_ok($$ select public.platform_set_marketplace_reviewer('plain@mrev.test', true) $$, '42501', null, 'cannot grant the role');

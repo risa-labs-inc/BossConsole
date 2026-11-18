@@ -1,7 +1,7 @@
 /**
  * marketplace-bundle: zip bundles for the marketplace.
  *   POST /marketplace-bundle/upload    raw zip (application/zip), ?skip_review=1  -> precheck, store, marketplace_submit_bundle
- *   POST /marketplace-bundle/download  {slug, agent}                              -> marketplace_install_v2 + signed URL
+ *   POST /marketplace-bundle/download  {slug, agent[, auto_install]}                 -> marketplace_install_v2 (or marketplace_auto_install_fetch when auto_install) + signed URL
  *   POST /marketplace-bundle/review    {version_id}                               -> signed URL for the creator or a platform reader
  * Every answer is JSON. Errors are {error, message} with a 4xx/5xx; zip contents and stack traces are never echoed.
  */
@@ -43,8 +43,16 @@ export interface Deps {
   remove(path: string): Promise<void>;
   /** marketplace_submit_bundle as the service role. Returns the RPC's JSON. */
   submit(a: SubmitArgs): Promise<Record<string, unknown>>;
-  /** marketplace_install_v2 as the user (anon key + the user's JWT). */
-  install(jwt: string, slug: string, agent: string | null): Promise<Record<string, unknown>>;
+  /**
+   * marketplace_install_v2 as the user (anon key + the user's JWT). With autoInstall it calls
+   * marketplace_auto_install_fetch(slug, agent) instead: same JSON, nothing recorded or counted.
+   */
+  install(
+    jwt: string,
+    slug: string,
+    agent: string | null,
+    autoInstall: boolean,
+  ): Promise<Record<string, unknown>>;
   /** A 120 second download URL for a stored bundle. */
   sign(path: string): Promise<string>;
   /** marketplace_bundle_access as the service role: the path, or null. */
@@ -214,13 +222,16 @@ export function createApp(deps: Deps): (req: Request) => Promise<Response> {
     const body = await readJson(req);
     const slug = body?.slug;
     const agent = body?.agent ?? null;
+    const autoInstall = body?.auto_install === true;
     if (
       typeof slug !== "string" || !SLUG.test(slug) ||
-      (agent !== null && (typeof agent !== "string" || agent.length > 128))
+      (agent !== null && (typeof agent !== "string" || agent.length > 128)) ||
+      (body?.auto_install !== undefined && typeof body.auto_install !== "boolean") ||
+      (autoInstall && agent === null)
     ) {
       return fail(400, "invalid_request", "slug and agent are required.");
     }
-    const r = await deps.install(jwt, slug, agent as string | null);
+    const r = await deps.install(jwt, slug, agent as string | null, autoInstall);
     const refused = refusal(r);
     if (refused) return refused;
     const path = typeof r.bundle_path === "string" ? r.bundle_path : null;

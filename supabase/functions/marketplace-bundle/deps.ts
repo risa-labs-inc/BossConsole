@@ -108,14 +108,11 @@ export function restDeps(): Deps {
       }
       return await r.json() as Record<string, unknown>;
     },
-    async install(jwt, slug, agent) {
-      const r = await rpc("marketplace_install_v2", {
-        apikey: anon,
-        Authorization: `Bearer ${jwt}`,
-      }, {
-        p_slug: slug,
-        p_agent: agent,
-      });
+    async install(jwt, slug, agent, autoInstall) {
+      const headers = { apikey: anon, Authorization: `Bearer ${jwt}` };
+      const r = autoInstall
+        ? await rpc("marketplace_auto_install_fetch", headers, { p_slug: slug, p_plugin_id: agent })
+        : await rpc("marketplace_install_v2", headers, { p_slug: slug, p_agent: agent });
       if (r.status === 401 || r.status === 403) {
         await r.body?.cancel();
         throw new Unauthorized();

@@ -58,12 +58,12 @@ with intentionally_anon as (
     -- public host; no identity.
     'public.agent_unavailable(text)',
     -- Marketplace (20261030150000; search, categories and tags from 20261030180000; agent-aware search/get and the
-    -- flag read from 20261116195000): skills and connectors are browsable before sign-in. All return live listings
+    -- flag read from 20261116195000; the agent argument on categories and tags from 20261116200000): skills and connectors are browsable before sign-in. All return live listings
     -- only, with the publisher's chosen display name and the display names of the agents a listing is restricted to;
     -- never an email or user id. marketplace_flags returns four booleans.
     'public.marketplace_search(text,public.marketplace_kind,integer,integer,text,text,text)', 'public.marketplace_get(text,text)',
     'public.marketplace_flags()',
-    'public.marketplace_categories()', 'public.marketplace_tags(integer)',
+    'public.marketplace_categories(text)', 'public.marketplace_tags(integer,text)',
     -- The fluck-web function redeems a plugin-minted push ticket with the anon key (it holds no
     -- service-role key); the single-use 256-bit ticket is the whole credential (20261013100000; prune widened in 20261013200000).
     'public.fluck_web_push_redeem(text)', 'public.fluck_web_push_prune(text,uuid[],uuid[])',

@@ -1,7 +1,7 @@
 -- Marketplace trust and defaults: publishing without review (trusted publishers and admins), unreviewed live versions,
--- mark-reviewed, trust administration, per-agent default skills and their runtime read.
+-- mark-reviewed, trust administration, per-plugin auto-install lives in marketplace_auto_install_test.sql.
 begin;
-select plan(107);
+select plan(71);
 
 -- a1 untrusted publisher, a2 trusted publisher, a3 installed person, a4 agent org owner, a5 outsider, c1 platform admin,
 -- c2 platform viewer.
@@ -53,8 +53,8 @@ insert into ids select 'other', id from public.agents where slug = 'trustother';
 
 -- ---- closed tables, constraint ----
 select ok(not has_table_privilege('authenticated', 'public.marketplace_trusted_publishers', 'select')
-      and not has_table_privilege('authenticated', 'public.marketplace_agent_defaults', 'select'), 'new tables closed to clients');
-select ok(not has_function_privilege('anon', 'public.marketplace_agent_skills(text)', 'EXECUTE')
+      and not has_table_privilege('authenticated', 'public.marketplace_auto_installs', 'select'), 'new tables closed to clients');
+select ok(not has_function_privilege('anon', 'public.marketplace_auto_install_skills(text)', 'EXECUTE')
       and not has_function_privilege('anon', 'public.marketplace_can_skip_review()', 'EXECUTE')
       and not has_function_privilege('anon', 'public.marketplace_submit(public.marketplace_kind,text,text,text,text,text,jsonb,boolean,text,text[])', 'EXECUTE'),
     'not anon-callable');
@@ -178,87 +178,15 @@ select is(public.marketplace_submit('skill', 'admin-skill', 'Admin skill', 'By a
     'live', 'admin skip goes live');
 select public.marketplace_mark_reviewed('admin-skill');
 
--- ---- agent defaults ----
-select pg_temp.as_user('a2');
-select throws_ok($$ select public.marketplace_agent_default_set((select id from ids where k = 'agent'), 'fast-skill', true) $$,
-    '42501', 'Permission denied', 'defaults are admin only');
-select throws_ok($$ select public.marketplace_agent_defaults((select id from ids where k = 'agent')) $$, '42501', 'Permission denied', 'reading defaults too');
-select throws_ok($$ select public.marketplace_listing_agents('fast-skill') $$, '42501', 'Permission denied', 'and the reverse lookup');
-select pg_temp.as_user('c1');
-select throws_ok($$ select public.marketplace_agent_default_set(gen_random_uuid(), 'fast-skill', true) $$, 'P0001', 'agent_not_found', 'unknown agent');
-select throws_ok($$ select public.marketplace_agent_default_set((select id from ids where k = 'agent'), 'nope', true) $$, 'P0001', 'listing_not_found', 'unknown listing');
-select throws_ok($$ select public.marketplace_agent_default_set((select id from ids where k = 'agent'), 'fast-conn', true) $$, 'P0001', 'not_a_skill', 'connectors cannot be defaults');
-select throws_ok($$ select public.marketplace_agent_default_set((select id from ids where k = 'agent'), 'normal', true) $$, 'P0001', 'listing_not_live', 'not live');
-select is(jsonb_array_length(public.marketplace_agent_default_set((select id from ids where k = 'agent'), 'fast-skill', true)), 1, 'added');
-select is(jsonb_array_length(public.marketplace_agent_default_set((select id from ids where k = 'agent'), 'fast-skill', true)), 1, 'adding twice is a no-op');
-select public.marketplace_agent_default_set((select id from ids where k = 'agent'), 'admin-skill', true);
-select public.marketplace_agent_default_set((select id from ids where k = 'other'), 'admin-skill', true);
-select is(pg_temp.cnt('public.agent_audit_log where action = ''agent.marketplace_default_added'' and agent_id = (select id from ids where k = ''agent'')'),
-    2, 'adds audited once each');
-select is(public.marketplace_agent_defaults((select id from ids where k = 'agent')) -> 0 ->> 'slug', 'admin-skill', 'defaults ordered by slug');
-select is(public.marketplace_agent_defaults((select id from ids where k = 'agent')) -> 1 ->> 'reviewed', 'false', 'with reviewed flags');
-select is(public.marketplace_agent_defaults((select id from ids where k = 'agent')) -> 1 ->> 'version', '3', 'and the live version');
-select is(jsonb_array_length(public.marketplace_listing_agents('admin-skill')), 2, 'listing_agents finds both agents');
-select is(public.marketplace_listing_agents('fast-skill') -> 0 ->> 'slug', 'trustagent', 'with the agent slug');
-select is(jsonb_array_length(public.marketplace_listing_agents('nothing-here')), 0, 'unknown slug is empty');
-
--- The cap: 50 per agent.
-reset role;
-insert into public.marketplace_listings (kind, slug, publisher_id, status)
-    select 'skill', 'zcap-' || n, pg_temp.u('a1'), 'live' from generate_series(1, 49) n;
-insert into public.marketplace_agent_defaults (agent_id, listing_id)
-    select (select id from ids where k = 'other'), id from public.marketplace_listings where slug like 'zcap-%';
-insert into public.marketplace_agent_defaults (agent_id, listing_id)
-    select (select id from ids where k = 'agent'), id from public.marketplace_listings where slug like 'zcap-%' and slug <> 'zcap-49';
-set local role authenticated;
-select pg_temp.as_user('c1');
-select throws_ok($$ select public.marketplace_agent_default_set((select id from ids where k = 'other'), 'fast-skill', true) $$,
-    'P0001', 'too_many_defaults', 'the 51st default is refused');
-select is(jsonb_array_length(public.marketplace_agent_default_set((select id from ids where k = 'other'), 'admin-skill', true)), 50,
-    're-adding an existing one at the cap is fine');
-
--- ---- runtime read ----
-select pg_temp.as_user('a3');
-select is(jsonb_array_length(public.marketplace_agent_skills('ai.rever.boss.plugin.dynamic.agent.trustagent') -> 'skills'), 2,
-    'an installed person reads the defaults');
-select is(public.marketplace_agent_skills('ai.rever.boss.plugin.dynamic.agent.trustagent') -> 'skills' -> 0 ->> 'slug', 'admin-skill', 'ordered by slug');
-select is(public.marketplace_agent_skills('ai.rever.boss.plugin.dynamic.agent.trustagent') -> 'skills' -> 1 ->> 'markdown', 'fast v3', 'with the markdown');
-select is(public.marketplace_agent_skills('ai.rever.boss.plugin.dynamic.agent.trustagent') -> 'skills' -> 0 ->> 'reviewed', 'true', 'and reviewed');
-select throws_ok($$ select public.marketplace_agent_skills('ai.rever.boss.plugin.dynamic.agent.missing') $$, 'P0001', 'agent_not_found', 'unknown agent');
-select pg_temp.as_user('a4');
-select is(jsonb_array_length(public.marketplace_agent_skills('ai.rever.boss.plugin.dynamic.agent.trustagent') -> 'skills'), 2, 'an agent editor reads them');
-select pg_temp.as_user('c1');
-select is(jsonb_array_length(public.marketplace_agent_skills('ai.rever.boss.plugin.dynamic.agent.trustagent') -> 'skills'), 2, 'a platform admin reads them');
-select pg_temp.as_user('a5');
-select throws_ok($$ select public.marketplace_agent_skills('ai.rever.boss.plugin.dynamic.agent.trustagent') $$, '42501', 'Permission denied',
-    'a removed install and no other access is denied');
-select pg_temp.as_anon();
-select throws_ok($$ select public.marketplace_agent_skills('ai.rever.boss.plugin.dynamic.agent.trustagent') $$, '42501', null, 'signed out is denied');
-
--- Suspending a default drops it from the runtime; the admin view still shows it.
-select pg_temp.as_user('c1');
-select public.marketplace_suspend('fast-skill', true, 'Reported');
-select is(public.marketplace_agent_defaults((select id from ids where k = 'agent')) -> 1 ->> 'status', 'suspended', 'admin sees the suspended default');
-select pg_temp.as_user('a3');
-select is(jsonb_array_length(public.marketplace_agent_skills('ai.rever.boss.plugin.dynamic.agent.trustagent') -> 'skills'), 1, 'it disappears from the runtime');
-select pg_temp.as_user('c1');
-select throws_ok($$ select public.marketplace_agent_default_set((select id from ids where k = 'agent'), 'fast-skill', true) $$, 'P0001', 'listing_not_live', 'a suspended listing cannot be added');
-select is(jsonb_array_length(public.marketplace_agent_default_set((select id from ids where k = 'agent'), 'fast-skill', false)), 49, 'but a default can still be removed');
-select is(jsonb_array_length(public.marketplace_agent_default_set((select id from ids where k = 'agent'), 'fast-skill', false)), 49, 'removing twice is a no-op');
-select is(pg_temp.cnt('public.agent_audit_log where action = ''agent.marketplace_default_removed'''), 1, 'removal audited once');
-
 -- ---- a platform viewer reads every review surface and changes nothing ----
 select pg_temp.as_user('c2');
 select lives_ok($$ select public.marketplace_pending() $$, 'viewer reads the review queue');
 select lives_ok($$ select public.marketplace_unreviewed() $$, 'viewer reads unreviewed versions');
 select lives_ok($$ select public.marketplace_trusted_list() $$, 'viewer reads trusted publishers');
-select is(jsonb_array_length(public.marketplace_agent_defaults((select id from ids where k = 'agent'))), 49, 'viewer reads an agent''s defaults');
-select lives_ok($$ select public.marketplace_listing_agents('fast-skill') $$, 'viewer reads which agents have a skill');
 select is(public.marketplace_can_skip_review(), false, 'viewer cannot skip review');
 select throws_ok($$ select public.marketplace_review(gen_random_uuid(), true, null) $$, '42501', null, 'viewer cannot review');
 select throws_ok($$ select public.marketplace_mark_reviewed('fast-skill') $$, '42501', null, 'viewer cannot mark reviewed');
 select throws_ok($$ select public.marketplace_trust_set('untrusted@trust.test', true, null) $$, '42501', null, 'viewer cannot trust');
-select throws_ok($$ select public.marketplace_agent_default_set((select id from ids where k = 'agent'), 'fast-skill', false) $$, '42501', null, 'viewer cannot change defaults');
 select throws_ok($$ select public.marketplace_suspend('fast-skill', false, null) $$, '42501', null, 'viewer cannot suspend');
 
 select * from finish();
