@@ -1152,7 +1152,9 @@ Deno.test("an error after the state verified offers Back to chat and never redir
 
 Deno.test("a page with no verified state is fixed and carries nothing from the request", async () => {
   const h = harness()
-  const tampered = (await state({ an: "Max", ru: BACK })).replace(/.$/, "A")
+  // Change the signature's first character: its last one carries 4 unused bits, so changing that can decode to the same bytes.
+  const [payload, sig] = (await state({ an: "Max", ru: BACK })).split(".")
+  const tampered = `${payload}.${sig[0] === "A" ? "B" : "A"}${sig.slice(1)}`
   for (
     const query of [
       `code=abc&state=${tampered}`,
