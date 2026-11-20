@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "@std/assert"
-import { createHandler } from "../app.ts"
+import { createHandler, Dependencies } from "../app.ts"
 import { mintToken, signingKey } from "../auth.ts"
 import { Connection, Obj, StreamAdapter } from "../wire.ts"
 
@@ -37,6 +37,7 @@ function live(signal: AbortSignal) {
 async function fixture(
   connection: Connection,
   drive: (u: ReturnType<typeof live>) => Promise<void>,
+  options: Partial<Dependencies> = {},
 ) {
   const calls: { name: string; params: Obj }[] = []
   const audits: string[] = []
@@ -69,6 +70,7 @@ async function fixture(
       }
       return Promise.resolve(null)
     },
+    ...options,
     fetch(_url, init) {
       requestBytes = String(init!.body).length
       const u = live(init!.signal!)
@@ -207,4 +209,146 @@ Deno.test("OpenRouter reasoning deltas pass through the adapter and count as out
     delta: { role: "assistant", reasoning_content: "​" },
     finish_reason: null,
   })
+})
+
+// Stream timeouts, scaled down: the answer deadline (upstreamTimeoutMs) is far shorter than the
+// streams below, which must not matter once the upstream answered.
+const timeouts: Partial<Dependencies> = {
+  upstreamTimeoutMs: 100,
+  streamFirstByteTimeoutMs: 120,
+  streamIdleTimeoutMs: 120,
+  streamTimeLimitMs: 10_000,
+}
+type Upstream = ReturnType<typeof live>
+const textStart = (u: Upstream) => {
+  u.send({ type: "message_start", message: { usage: { input_tokens: 40, output_tokens: 1 } } })
+  u.send({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })
+}
+const text = (u: Upstream, t: string) =>
+  u.send({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: t } })
+const end = (u: Upstream, output: number) => {
+  u.send({
+    type: "message_delta",
+    delta: { stop_reason: "end_turn" },
+    usage: { output_tokens: output },
+  })
+  u.send({ type: "message_stop" })
+  u.done()
+}
+// Sends a chunk every `every` ms for `until` ms; false once the gateway closed the upstream.
+async function steadily(u: Upstream, every: number, until: number, t = "x") {
+  const start = Date.now()
+  try {
+    while (Date.now() - start < until) {
+      text(u, t)
+      await sleep(every)
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+const errorsOf = (chunks: Obj[]) => chunks.filter((c) => c.error).map((c) => c.error as Obj)
+
+Deno.test("a long stream with steady chunks is never cut for its length", async () => {
+  const f = await fixture(anthropic, async (u) => {
+    textStart(u)
+    // 700 ms: 7x the answer deadline and ~6x the idle timeout, with a chunk every 20 ms.
+    if (await steadily(u, 20, 700)) end(u, 35)
+  }, timeouts)
+  const body = await f.response.text()
+  assert(body.endsWith("data: [DONE]\n\n"), body.slice(-300))
+  assertEquals(errorsOf(parse(body)), [])
+  assert(deltas(parse(body)).filter((d) => d.content === "x").length >= 20)
+  assert(!f.audits.some((a) => a.startsWith("stream_")), f.audits.join(","))
+  assertEquals(f.settles(), [75])
+})
+
+Deno.test("upstream comments count as activity while a reply is pending", async () => {
+  const f = await fixture(openai, async (u) => {
+    // 400 ms of OpenRouter-style processing comments only, then the answer.
+    const start = Date.now()
+    while (Date.now() - start < 400) {
+      u.raw(": OPENROUTER PROCESSING\n\n")
+      await sleep(30)
+    }
+    u.send({ choices: [{ index: 0, delta: { content: "ok" }, finish_reason: "stop" }] })
+    u.send({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 1, total_tokens: 6 } })
+    u.raw("data: [DONE]\n\n")
+    u.done()
+  }, timeouts)
+  const body = await f.response.text()
+  assert(body.endsWith("data: [DONE]\n\n"), body.slice(-300))
+  assert(!f.audits.includes("stream_failed"), f.audits.join(","))
+})
+
+Deno.test("a stream that stalls mid-answer is cut by the idle timeout and settled on an estimate", async () => {
+  const started = Date.now()
+  const f = await fixture(anthropic, async (u) => {
+    textStart(u)
+    text(u, "a".repeat(300))
+    await sleep(2_000) // silent upstream; the gateway's own keepalives (every 20 ms) must not hide it
+  }, timeouts)
+  const body = await f.response.text()
+  const elapsed = Date.now() - started
+  assert(elapsed < 1_500, `cut after ${elapsed} ms`)
+  assertEquals(errorsOf(parse(body)), [{
+    code: "stream_failed",
+    message: "The model stopped sending output mid-answer. Please retry.",
+  }])
+  assert(f.audits.includes("stream_failed") && f.audits.includes("stream_idle"))
+  assertEquals(f.settles(), [40 + 100])
+  const cut = f.logs.find((l) => l.event === "stream_cut")!
+  assertEquals([cut.reason, cut.streamed_chars], ["idle", 300])
+})
+
+Deno.test("a stream that answers but never sends a byte is cut by the first-byte timeout", async () => {
+  const started = Date.now()
+  const f = await fixture(anthropic, async () => {
+    await sleep(2_000)
+  }, timeouts)
+  const body = await f.response.text()
+  assert(Date.now() - started < 1_500)
+  assertEquals(errorsOf(parse(body)), [{
+    code: "stream_failed",
+    message: "The model accepted the request but sent no output in time. Please retry.",
+  }])
+  assert(f.audits.includes("stream_first_byte"))
+  assert(!f.audits.includes("stream_idle"))
+  assertEquals(f.settles(), [Math.ceil(f.requestBytes() / 3)])
+})
+
+Deno.test("a stream still running at the wall-clock limit ends with stream_time_limit", async () => {
+  const f = await fixture(anthropic, async (u) => {
+    textStart(u)
+    await steadily(u, 20, 5_000, "y".repeat(30))
+  }, { ...timeouts, streamTimeLimitMs: 300 })
+  const chunks = parse(await f.response.text())
+  const errors = errorsOf(chunks)
+  assertEquals(errors.map((e) => e.code), ["stream_time_limit"])
+  assert(String(errors[0].message).includes("Continue from the partial answer"))
+  assert(deltas(chunks.filter((c) => !c.error)).some((d) => d.content))
+  assert(f.audits.includes("stream_time_limit"))
+  assert(!f.audits.includes("stream_failed"))
+  const [settled] = f.settles() as number[]
+  assert(settled > 40 && settled < RESERVED, String(settled))
+  assertEquals(f.logs.find((l) => l.event === "timing")?.status, 504)
+})
+
+Deno.test("a client that stops reading is not mistaken for a silent upstream", async () => {
+  const f = await fixture(anthropic, async (u) => {
+    textStart(u)
+    if (await steadily(u, 10, 300)) end(u, 50)
+  }, timeouts)
+  const reader = f.response.body!.getReader()
+  await reader.read()
+  await sleep(500) // longer than the idle timeout: upstream bytes back up behind the client
+  let body = ""
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    body += new TextDecoder().decode(value)
+  }
+  assert(!f.audits.includes("stream_idle"), f.audits.join(","))
+  assert(body.endsWith("data: [DONE]\n\n"), body.slice(-300))
 })

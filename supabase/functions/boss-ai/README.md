@@ -247,10 +247,25 @@ whenever a fallback is a cheaper model than the tier.
 
 - The primary is tried first, then each fallback in order, on a network error, an upstream timeout
   before any response (streaming requests only: non-final routes get `attemptTimeoutMs`, 90 s, to
-  answer, since a non-stream upstream answers only after generating; the 4 minute request deadline
-  still applies) and any non-2xx status. A client cancel or the overall deadline ends the request. A
-  route whose request cannot be built (for example routing on a non-OpenRouter connection) is
-  skipped.
+  answer, since a non-stream upstream answers only after generating; the 4 minute answer deadline
+  `upstreamTimeoutMs` still applies) and any non-2xx status. A client cancel or the overall deadline
+  ends the request. A route whose request cannot be built (for example routing on a non-OpenRouter
+  connection) is skipped.
+- Stream timeouts. The 4 minute deadline covers only the wait for an upstream to answer (and the
+  whole call for non-stream requests, whose reply arrives only at the end). Once a stream answered
+  it is never cut for its length, only for silence or the platform clock:
+  `streamFirstByteTimeoutMs` (120 s) until the first upstream byte, then `streamIdleTimeoutMs`
+  (90 s) between bytes. Any byte counts, comments and pings included; the gateway's own keepalives
+  do not, and the clock runs only while a read is waiting on the upstream, so a slow client is not
+  taken for a silent model. Either cut ends the stream with `stream_failed` and a message naming the
+  stall, audits `stream_failed` plus `stream_idle`/`stream_first_byte`, and logs a `stream_cut`
+  line (reason, elapsed, streamed characters). Supabase stops a worker after 400 s of wall clock on
+  paid plans (150 s free), counted per worker, which may serve several requests. So a stream still
+  running `streamTimeLimitMs` (380 s) after its request arrived is ended on purpose with
+  `{"error":{"code":"stream_time_limit",...}}`: it settles on the usual estimate and audits
+  `stream_time_limit` (not `stream_failed`), timing status 504. A client should not resend the same
+  request after it: the reply will stop at the same point. Continue from the partial output or ask
+  for the work in smaller replies.
 - Nothing falls back once the upstream has answered 2xx: a stream that breaks afterwards ends with
   the usual `stream_failed` frame. The request keeps one reservation and settles with the measured
   tokens of the route that served. A failed attempt keeps the existing refund rule (400/401/402/403/
