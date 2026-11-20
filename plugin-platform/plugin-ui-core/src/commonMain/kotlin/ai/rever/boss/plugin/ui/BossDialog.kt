@@ -21,6 +21,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.isUnspecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -576,7 +577,13 @@ internal fun anchorRectInDp(
     sizePx: IntSize,
     density: Float,
 ): IntRect {
-    if (density <= 0f || !positionPx.isValid()) return IntRect.Zero
+    // Guard against the Unspecified/NaN offset a detached or not-yet-placed layout reports.
+    val positionUnusable =
+        density <= 0f ||
+            positionPx.isUnspecified ||
+            positionPx.x.isNaN() ||
+            positionPx.y.isNaN()
+    if (positionUnusable) return IntRect.Zero
     val left = (positionPx.x / density).roundToInt()
     val top = (positionPx.y / density).roundToInt()
     return IntRect(
@@ -586,9 +593,6 @@ internal fun anchorRectInDp(
         bottom = top + (sizePx.height / density).roundToInt(),
     )
 }
-
-/** Guards against the Unspecified/NaN offset a detached or not-yet-placed layout reports. */
-private fun Offset.isValid(): Boolean = !x.isNaN() && !y.isNaN()
 
 /**
  * Where a [BossPopup] places itself on the heavyweight path.
