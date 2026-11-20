@@ -253,15 +253,15 @@ whenever a fallback is a cheaper model than the tier.
   connection) is skipped.
 - Stream timeouts. The 4 minute deadline covers only the wait for an upstream to answer (and the
   whole call for non-stream requests, whose reply arrives only at the end). Once a stream answered
-  it is never cut for its length, only for silence or the platform clock:
-  `streamFirstByteTimeoutMs` (120 s) until the first upstream byte, then `streamIdleTimeoutMs`
-  (90 s) between bytes. Any byte counts, comments and pings included; the gateway's own keepalives
-  do not, and the clock runs only while a read is waiting on the upstream, so a slow client is not
-  taken for a silent model. Either cut ends the stream with `stream_failed` and a message naming the
-  stall, audits `stream_failed` plus `stream_idle`/`stream_first_byte`, and logs a `stream_cut`
-  line (reason, elapsed, streamed characters). Supabase stops a worker after 400 s of wall clock on
-  paid plans (150 s free), counted per worker, which may serve several requests. So a stream still
-  running `streamTimeLimitMs` (380 s) after its request arrived is ended on purpose with
+  it is never cut for its length, only for silence or the platform clock: `streamFirstByteTimeoutMs`
+  (120 s) until the first upstream byte, then `streamIdleTimeoutMs` (90 s) between bytes. Any byte
+  counts, comments and pings included; the gateway's own keepalives do not, and the clock runs only
+  while a read is waiting on the upstream, so a slow client is not taken for a silent model. Either
+  cut ends the stream with `stream_failed` and a message naming the stall, audits `stream_failed`
+  plus `stream_idle`/`stream_first_byte`, and logs a `stream_cut` line (reason, elapsed, streamed
+  characters). Supabase stops a worker after 400 s of wall clock on paid plans (150 s free), counted
+  per worker, which may serve several requests. So a stream still running `streamTimeLimitMs` (380
+  s) after its request arrived is ended on purpose with
   `{"error":{"code":"stream_time_limit",...}}`: it settles on the usual estimate and audits
   `stream_time_limit` (not `stream_failed`), timing status 504. A client should not resend the same
   request after it: the reply will stop at the same point. Continue from the partial output or ask
