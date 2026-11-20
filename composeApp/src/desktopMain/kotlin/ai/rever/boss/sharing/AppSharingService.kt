@@ -1,5 +1,6 @@
 package ai.rever.boss.sharing
 
+import ai.rever.boss.plugin.ui.menu.RemoteViewState
 import ai.rever.boss.services.supabase.AuthService
 import ai.rever.boss.utils.DeepLinkHandler
 import ai.rever.boss.utils.logging.BossLogger
@@ -290,6 +291,9 @@ internal object AppSharingService {
                     synchronized(lifecycle) {
                         check(serial.get() == attempt && targets.all { windows[it.windowId] === it.awtWindow })
                         active = host
+                        // A viewer never receives OS-owned windows such as native menus. Owned in the
+                        // region that publishes `active`; a bag already retired closes it at once.
+                        host.resources.own(RemoteViewState.begin())
                     }
                     targets.forEach { target ->
                         startMedia(host, target, publication.identity.hostConfig(host.peerId, target.windowId))

@@ -198,6 +198,9 @@ class SandboxedPluginContext(
     override val screenCaptureProvider: ScreenCaptureProvider?
         get() = delegate.screenCaptureProvider
 
+    override val remoteViewProvider: ai.rever.boss.plugin.api.RemoteViewProvider?
+        get() = delegate.remoteViewProvider
+
     // WebRTC peer provider for co-browse - delegate to underlying context
     override val coBrowseRtcProvider: ai.rever.boss.plugin.api.CoBrowseRtcProvider?
         get() = delegate.coBrowseRtcProvider
