@@ -124,7 +124,16 @@ export function checkEngineJar(jar: Uint8Array, expectCommit: string): { version
   if (!props) throw new EngineCheckError("the engine does not carry its source");
   const commit = /^commit=([0-9a-f]{40})$/m.exec(strFromU8(props))?.[1];
   if (!commit || commit !== expectCommit) throw new EngineCheckError("the engine was not built from the run's commit");
-  if (!meta["META-INF/agent-adapter-template.jar"]) throw new EngineCheckError("the engine carries no adapter template");
+  const template = meta["META-INF/agent-adapter-template.jar"];
+  if (!template) throw new EngineCheckError("the engine carries no adapter template");
+  let capabilities: unknown;
+  try {
+    const files = unzipSync(template, {filter: f => f.name === "META-INF/max-agent-capabilities.json" && f.originalSize < 8192});
+    capabilities = JSON.parse(strFromU8(files["META-INF/max-agent-capabilities.json"])).capabilities;
+  } catch { capabilities = null; }
+  if (!Array.isArray(capabilities) || !capabilities.includes("repo-engine-pin-v1")) {
+    throw new EngineCheckError("rebase onto a newer Max: this adapter does not enforce repository engine pins");
+  }
   return { version: manifest.version, commit };
 }
 

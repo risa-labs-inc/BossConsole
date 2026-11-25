@@ -24,7 +24,7 @@ function engineJar(commit = SHA, pluginId = "ai.rever.boss.plugin.dynamic.max", 
     "META-INF/boss-plugin/plugin.json": strToU8(JSON.stringify({ pluginId, version: "1.2.33" })),
     "META-INF/max-source.properties": strToU8(`version=1.2.33\ncommit=${commit}\n`),
   };
-  if (template) files["META-INF/agent-adapter-template.jar"] = zipSync({ "x": strToU8("t") });
+  if (template) files["META-INF/agent-adapter-template.jar"] = zipSync({ "META-INF/max-agent-capabilities.json": strToU8(JSON.stringify({capabilities:["repo-engine-pin-v1"]})) });
   return zipSync(files);
 }
 
