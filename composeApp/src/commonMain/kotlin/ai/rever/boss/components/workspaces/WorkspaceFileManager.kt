@@ -5,8 +5,9 @@ package ai.rever.boss.components.workspaces
  */
 expect class WorkspaceFileManager(
     /**
-     * Directory to store workspaces in. Defaults to the per-user documents
-     * location; overridden by tests so they never write to a real home directory.
+     * Directory to store workspaces in. Defaults to `~/.boss/workspaces` so every durable record
+     * is part of the portable BOSS state root. Overridden by tests so they never write to a real
+     * home directory.
      */
     directoryOverride: String? = null,
 ) {
@@ -109,10 +110,12 @@ data class WorkspaceFileInfo(
  * Common workspace file manager functionality
  */
 object WorkspaceFileManagerCommon {
-    /**
-     * Get the default workspace directory name
-     */
-    fun getDefaultWorkspaceDirectoryName(): String = "BOSS/workspaces"
+    /** Legacy desktop location, read only for migration into the state root. */
+    const val LEGACY_WORKSPACE_DIRECTORY_NAME = "BOSS/workspaces"
+
+    /** Kept for already-compiled callers; new code should use [LEGACY_WORKSPACE_DIRECTORY_NAME]. */
+    @Deprecated("Legacy path only; durable workspace state now lives under BossDirectories")
+    fun getDefaultWorkspaceDirectoryName(): String = LEGACY_WORKSPACE_DIRECTORY_NAME
 
     /**
      * The file a Space is written to: its ID.
