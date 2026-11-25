@@ -1,6 +1,8 @@
 package ai.rever.boss.service.auth
 
+import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.auth.Auth
+import io.github.jan.supabase.auth.SessionManager
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.exception.AuthErrorCode
 import io.github.jan.supabase.auth.exception.AuthRestException
@@ -8,6 +10,7 @@ import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.auth.providers.builtin.OTP
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.exceptions.RestException
+import io.ktor.client.engine.HttpClientEngine
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -21,19 +24,38 @@ import kotlin.time.TimeSource
  *
  * Reads SUPABASE_URL and SUPABASE_ANON_KEY from environment variables at construction time.
  * Uses CIO as the Ktor HTTP engine (added to boss-service-auth dependencies).
+ *
+ * The engine and session manager are injectable only so tests can drive the real refresh path.
  */
-class SupabaseAuthClient(
-    supabaseUrl: String = System.getenv("SUPABASE_URL") ?: "https://api.risaboss.com",
-    supabaseAnonKey: String = System.getenv("SUPABASE_ANON_KEY") ?: "",
+@OptIn(SupabaseInternal::class)
+class SupabaseAuthClient internal constructor(
+    supabaseUrl: String,
+    supabaseAnonKey: String,
+    httpEngine: HttpClientEngine?,
+    sessionManager: SessionManager?,
 ) {
+    constructor(
+        supabaseUrl: String = System.getenv("SUPABASE_URL") ?: "https://api.risaboss.com",
+        supabaseAnonKey: String = System.getenv("SUPABASE_ANON_KEY") ?: "",
+    ) : this(supabaseUrl, supabaseAnonKey, httpEngine = null, sessionManager = null)
+
     private val logger = LoggerFactory.getLogger(SupabaseAuthClient::class.java)
 
-    private val client =
+    internal val client =
         createSupabaseClient(
             supabaseUrl = supabaseUrl,
             supabaseKey = supabaseAnonKey,
         ) {
-            install(Auth)
+            install(Auth) {
+                sessionManager?.let { this.sessionManager = it }
+            }
+            httpEngine?.let { this.httpEngine = it }
+            // Keep the session when a token refresh gets 408/429/5xx (supabase-kt would clear it on
+            // 429 or Cloudflare 525), with a cooldown so retries don't storm GoTrue's per-IP limit.
+            // httpConfig is @SupabaseInternal in 3.8.0; it is the only hook onto the Ktor pipeline.
+            httpConfig {
+                install(AuthRefreshRetry)
+            }
         }
 
     /** Signs in with email + password. Returns [AuthResult.Success] on success. */

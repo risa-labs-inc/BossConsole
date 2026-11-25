@@ -28,6 +28,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -100,25 +101,39 @@ class AuthRefreshRetryTest {
             val (client, sessions, requests) =
                 clientAnswering(emptyList(), fallback = { throw java.io.IOException("Connect timeout has expired") })
 
-            awaitRequests(requests, 2 * MAX_ATTEMPTS)
+            awaitRequests(requests, MAX_ATTEMPTS)
+            // supabase-kt keeps retrying every RETRY_DELAY; the cooldown answers those locally.
+            delay(RETRY_DELAY * 5)
 
+            assertEquals(MAX_ATTEMPTS, requests.get(), "the cooldown must keep later ticks off the server")
             assertNotNotAuthenticated(client)
             assertEquals(OLD_REFRESH_TOKEN, sessions.loadSession().refreshToken)
+        }
+
+    @Test
+    fun `after the cooldown a 400 invalid_grant still clears the session`(): Unit =
+        runBlocking {
+            val clock = AtomicLong(Clock.System.now().toEpochMilliseconds())
+            val (client, sessions, requests) =
+                clientAnswering(listOf(status(429), status(429), invalidGrant()), clock = clock)
+
+            awaitRequests(requests, MAX_ATTEMPTS)
+            delay(RETRY_DELAY * 3)
+            assertEquals(MAX_ATTEMPTS, requests.get(), "still cooling down")
+            assertNotNotAuthenticated(client)
+
+            clock.addAndGet(16.seconds.inWholeMilliseconds) // past the first 15s cooldown
+            client.awaitStatus { it is SessionStatus.NotAuthenticated }
+
+            assertEquals(MAX_ATTEMPTS + 1, requests.get())
+            assertNull(runCatching { sessions.loadSession() }.getOrNull(), "session store must be cleared")
         }
 
     @Test
     fun `400 invalid_grant still clears the session`(): Unit =
         runBlocking {
             val (client, sessions, requests) =
-                clientAnswering(
-                    listOf(
-                        json(
-                            HttpStatusCode.BadRequest,
-                            """{"code":400,"error_code":"refresh_token_not_found",""" +
-                                """"msg":"Invalid Refresh Token: Refresh Token Not Found"}""",
-                        ),
-                    ),
-                )
+                clientAnswering(listOf(invalidGrant()))
 
             client.awaitStatus { it is SessionStatus.NotAuthenticated }
 
@@ -172,6 +187,86 @@ class AuthRefreshRetryTest {
         }
 
     @Test
+    fun `the cooldown blocks network calls until it passes, and success resets it`(): Unit =
+        runBlocking {
+            val clock = AtomicLong(1_000_000L)
+            val answers = ArrayDeque(listOf(429, 503, 200, 429, 429, 200))
+            val requests = AtomicInteger()
+            val http =
+                HttpClient(
+                    MockEngine {
+                        requests.incrementAndGet()
+                        respond("{}", HttpStatusCode.fromValue(answers.removeFirst()))
+                    },
+                ) {
+                    install(AuthRefreshRetry) {
+                        sleep = {}
+                        jitter = { it }
+                        nowMillis = { clock.get() }
+                    }
+                }
+
+            suspend fun refresh() = runCatching { http.post("$URL/auth/v1/token?grant_type=refresh_token") }
+
+            // 429 then 503: both attempts spent, 15s cooldown starts.
+            assertIs<TransientAuthRefreshException>(refresh().exceptionOrNull())
+            assertEquals(2, requests.get())
+
+            // Inside the cooldown nothing is sent.
+            clock.addAndGet(14_000)
+            assertIs<TransientAuthRefreshException>(refresh().exceptionOrNull())
+            assertEquals(2, requests.get(), "refused locally during the cooldown")
+
+            // Past it, the refresh goes out and succeeds, which resets the backoff.
+            clock.addAndGet(2_000)
+            assertEquals(HttpStatusCode.OK, refresh().getOrThrow().status)
+            assertEquals(3, requests.get())
+
+            // A new failure starts again from the first 15s step, not 30s.
+            assertIs<TransientAuthRefreshException>(refresh().exceptionOrNull())
+            assertEquals(5, requests.get())
+            clock.addAndGet(15_001)
+            assertEquals(HttpStatusCode.OK, refresh().getOrThrow().status)
+            assertEquals(6, requests.get())
+            http.close()
+        }
+
+    @Test
+    fun `the cooldown doubles per consecutive failure, caps at 5 minutes, honours Retry-After and resets`() {
+        val now = AtomicLong(0L)
+        val config =
+            AuthRefreshRetryConfig().apply {
+                jitter = { it }
+                nowMillis = { now.get() }
+            }
+        val cooldown = RefreshCooldown(config)
+
+        val steps = (1..7).map { cooldown.onTransientFailure(retryAfter = null) }
+        assertEquals(listOf(15, 30, 60, 120, 240, 300, 300).map { it.seconds }, steps)
+        assertEquals(300_000L, cooldown.remainingMs())
+
+        cooldown.onAnswer()
+        assertEquals(0L, cooldown.remainingMs())
+        assertEquals(15.seconds, cooldown.onTransientFailure(retryAfter = null), "reset to the first step")
+
+        // A longer Retry-After wins over the computed step; a shorter one does not shorten it.
+        assertEquals(120.seconds, cooldown.onTransientFailure(retryAfter = 120.seconds))
+        assertEquals(60.seconds, cooldown.onTransientFailure(retryAfter = 5.seconds))
+
+        // Full jitter: the wait is drawn from 0..ceiling.
+        val ceilings = mutableListOf<Long>()
+        val jittered =
+            RefreshCooldown(
+                AuthRefreshRetryConfig().apply {
+                    jitter = { ceiling -> ceiling.also { ceilings += it } / 4 }
+                    nowMillis = { 0L }
+                },
+            )
+        assertEquals(3_750.milliseconds, jittered.onTransientFailure(retryAfter = null))
+        assertEquals(listOf(15_000L), ceilings)
+    }
+
+    @Test
     fun `Retry-After parses delta-seconds and HTTP-dates and is capped`() {
         val now = 1_700_000_000_000L // 2023-11-14T22:13:20Z
         val config = AuthRefreshRetryConfig().apply { nowMillis = { now } }
@@ -187,9 +282,11 @@ class AuthRefreshRetryTest {
         runBlocking {
             val (client, sessions, requests) = clientAnswering(emptyList(), fallback = status(code))
 
-            // Two full rounds: the plugin's attempts, then supabase-kt's own retry after RETRY_DELAY.
-            awaitRequests(requests, 2 * MAX_ATTEMPTS)
+            awaitRequests(requests, MAX_ATTEMPTS)
+            // supabase-kt keeps retrying every RETRY_DELAY; the cooldown answers those locally.
+            delay(RETRY_DELAY * 5)
 
+            assertEquals(MAX_ATTEMPTS, requests.get(), "HTTP $code: the cooldown must keep later ticks off the server")
             assertNotNotAuthenticated(client)
             assertEquals(
                 OLD_REFRESH_TOKEN,
@@ -209,6 +306,7 @@ class AuthRefreshRetryTest {
         responses: List<MockRequestHandleScope.() -> HttpResponseData>,
         fallback: (MockRequestHandleScope.() -> HttpResponseData)? = null,
         installPlugin: Boolean = true,
+        clock: AtomicLong? = null,
     ): Harness {
         val requests = AtomicInteger()
         val sessions = MemorySessionManager(expiredSession())
@@ -234,6 +332,8 @@ class AuthRefreshRetryTest {
                         install(AuthRefreshRetry) {
                             maxAttempts = MAX_ATTEMPTS
                             sleep = {}
+                            jitter = { it } // deterministic: always the full cooldown
+                            if (clock != null) nowMillis = { clock.get() }
                         }
                     }
                 }
@@ -268,7 +368,7 @@ class AuthRefreshRetryTest {
         const val OLD_REFRESH_TOKEN = "old-refresh-token-must-never-be-logged"
         const val NEW_REFRESH_TOKEN = "new-refresh-token"
         const val NEW_ACCESS_TOKEN = "new-access-token"
-        const val MAX_ATTEMPTS = 3
+        const val MAX_ATTEMPTS = 2
         val RETRY_DELAY = 50.milliseconds
 
         /** Past its expiry, so supabase-kt refreshes it as soon as it loads it from storage. */
@@ -309,6 +409,13 @@ class AuthRefreshRetryTest {
         ): MockRequestHandleScope.() -> HttpResponseData = { respond(body, status, JSON_HEADERS) }
 
         val JSON_HEADERS = headersOf(HttpHeaders.ContentType, "application/json")
+
+        fun invalidGrant() =
+            json(
+                HttpStatusCode.BadRequest,
+                """{"code":400,"error_code":"refresh_token_not_found",""" +
+                    """"msg":"Invalid Refresh Token: Refresh Token Not Found"}""",
+            )
 
         fun success() =
             json(
