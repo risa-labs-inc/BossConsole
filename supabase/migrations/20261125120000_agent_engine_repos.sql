@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS public.agent_engine_repos (
     repo_name    text NOT NULL CHECK (repo_name ~ '^[A-Za-z0-9._-]{1,100}$' AND repo_name NOT IN ('.', '..')),
     repo_id      bigint NOT NULL CHECK (repo_id > 0),
     state        text NOT NULL DEFAULT 'seeding' CHECK (state IN ('seeding', 'ready', 'error')),
+    engine_required boolean NOT NULL DEFAULT false,
     base_version text CHECK (base_version ~ '^[0-9]+\.[0-9]+\.[0-9]+$'),
     detail       text CHECK (char_length(detail) <= 300),
     created_by   uuid REFERENCES auth.users(id) ON DELETE SET NULL,
@@ -253,7 +254,7 @@ BEGIN
         JOIN public.agent_engine_repos r ON r.agent_id = a.id
         LEFT JOIN public.agent_version_engines v ON v.agent_id = a.id AND v.version = a.live_version
         LEFT JOIN public.agent_engine_builds b ON b.id = v.build_id
-        WHERE a.id = ANY (p_agent_ids) AND a.status = 'live';
+        WHERE a.id = ANY (p_agent_ids) AND a.status = 'live' AND (b.id IS NOT NULL OR r.engine_required);
 END;
 $$;
 REVOKE ALL ON FUNCTION public.agent_live_engines(uuid[]) FROM PUBLIC, anon;
@@ -316,9 +317,12 @@ BEGIN
             RAISE EXCEPTION 'engine_pin_required' USING ERRCODE = 'P0001';
         END IF;
     END IF;
+    IF NEW.status = 'live' AND EXISTS (SELECT 1 FROM public.agent_version_engines v WHERE v.agent_id = NEW.id AND v.version = NEW.live_version) THEN
+        UPDATE public.agent_engine_repos SET engine_required = true WHERE agent_id = NEW.id AND NOT engine_required;
+    END IF;
     RETURN NEW;
 END;
 $$;
 REVOKE ALL ON FUNCTION public.require_agent_engine_pin() FROM PUBLIC, anon, authenticated;
-CREATE TRIGGER require_agent_engine_pin BEFORE UPDATE OF live_version, pending_version ON public.agents
+CREATE TRIGGER require_agent_engine_pin BEFORE UPDATE OF live_version, pending_version, status ON public.agents
 FOR EACH ROW EXECUTE FUNCTION public.require_agent_engine_pin();

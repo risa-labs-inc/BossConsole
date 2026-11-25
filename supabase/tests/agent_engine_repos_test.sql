@@ -1,6 +1,6 @@
 -- Agents built from the org's own Max: agents.github, engine repos/builds RLS, version pins, provisioner read, audit.
 begin;
-select plan(24);
+select plan(27);
 
 -- a1 owner, a2 agent manager (publish, no github), a3 agent editor (view only here), b1 owner of another org, p1 provisioner.
 insert into auth.users (id, email, email_confirmed_at) values
@@ -101,7 +101,12 @@ select throws_ok($$ select public.agent_engine_overview(pg_temp.id('agent')) $$,
 
 -- ---- provisioner ----
 reset role;
-update public.agents set live_version = '1.0.1', status = 'live' where id = pg_temp.id('agent');
+select throws_ok($$ update public.agents set live_version = '1.0.2', status = 'live' where id = pg_temp.id('agent') $$,
+    'P0001', 'engine_pin_required', 'a direct publication cannot bypass the engine pin');
+select throws_ok($$ update public.agents set pending_version = '1.0.2' where id = pg_temp.id('agent') $$,
+    'P0001', 'engine_pin_required', 'review candidates need pins too');
+update public.agents set live_version = '1.0.1', status = 'live'  where id = pg_temp.id('agent');
+select ok((select engine_required from public.agent_engine_repos where agent_id = pg_temp.id('agent')), 'first live pinned version permanently requires a pin');
 set local role authenticated;
 select pg_temp.as_user('c1');
 select is((select commit_sha from public.agent_live_engines(array[pg_temp.id('agent')])), repeat('a', 40),
