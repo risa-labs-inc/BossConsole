@@ -58,21 +58,22 @@ object PluginStoreClient {
         page: Int = 1,
         pageSize: Int = 20,
         sortBy: String = "downloads",
-    ): PluginListResponse = publicReads.read(listOf("list", page, pageSize, sortBy)) {
-        val response =
-            httpClient.get(endpoint("list")) {
-                parameter("page", page)
-                parameter("pageSize", pageSize)
-                parameter("sortBy", sortBy)
-                header("apikey", PluginStoreConfig.anonKey)
+    ): PluginListResponse =
+        publicReads.read(listOf("list", page, pageSize, sortBy)) {
+            val response =
+                httpClient.get(endpoint("list")) {
+                    parameter("page", page)
+                    parameter("pageSize", pageSize)
+                    parameter("sortBy", sortBy)
+                    header("apikey", PluginStoreConfig.anonKey)
+                }
+
+            if (!response.status.isSuccess()) {
+                throw PluginStoreException("Failed to list plugins: ${response.status}")
             }
 
-        if (!response.status.isSuccess()) {
-            throw PluginStoreException("Failed to list plugins: ${response.status}")
+            json.decodeFromString<PluginListResponse>(response.bodyAsText())
         }
-
-        json.decodeFromString<PluginListResponse>(response.bodyAsText())
-    }
 
     /**
      * POST /plugin-store/search - Search plugins
@@ -107,22 +108,23 @@ object PluginStoreClient {
     /**
      * GET /plugin-store/:pluginId - Get plugin details
      */
-    suspend fun getPlugin(pluginId: String): PluginDetailResponse? = publicReads.read(listOf("detail", pluginId)) {
-        val response =
-            httpClient.get(endpoint(pluginId)) {
-                header("apikey", PluginStoreConfig.anonKey)
+    suspend fun getPlugin(pluginId: String): PluginDetailResponse? =
+        publicReads.read(listOf("detail", pluginId)) {
+            val response =
+                httpClient.get(endpoint(pluginId)) {
+                    header("apikey", PluginStoreConfig.anonKey)
+                }
+
+            if (response.status == HttpStatusCode.NotFound) {
+                return@read null
             }
 
-        if (response.status == HttpStatusCode.NotFound) {
-            return@read null
-        }
+            if (!response.status.isSuccess()) {
+                throw PluginStoreException("Failed to get plugin: ${response.status}")
+            }
 
-        if (!response.status.isSuccess()) {
-            throw PluginStoreException("Failed to get plugin: ${response.status}")
+            json.decodeFromString<PluginDetailResponse>(response.bodyAsText())
         }
-
-        json.decodeFromString<PluginDetailResponse>(response.bodyAsText())
-    }
 
     /**
      * GET /plugin-store/tags/popular - Get popular tags
