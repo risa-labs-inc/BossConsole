@@ -38,6 +38,26 @@ export interface PluginVersion {
   dependencies: PluginDependency[]
   publishedAt: string
   downloadCount?: number
+  /** Release channel (stable | beta | test). Absent on rows read before the channel migration: treat as stable. */
+  channel?: ReleaseChannel
+  /** approved | pending_review | rejected. Absent: treat as approved (the column default). */
+  reviewStatus?: ReviewStatus
+  /** The reviewer's note on a rejected version (only shown to callers with channel access). */
+  reviewNote?: string | null
+  /** What a reviewer is shown for a Max app version (services/max-app.ts MaxAppReviewMeta). */
+  reviewMeta?: Record<string, unknown> | null
+}
+
+/** plugins.kind */
+export type PluginKind = 'plugin' | 'max-app'
+/** plugin_versions.channel, lowest first: a channel includes the ones below it. */
+export const RELEASE_CHANNELS = ['stable', 'beta', 'test'] as const
+export type ReleaseChannel = typeof RELEASE_CHANNELS[number]
+export type ReviewStatus = 'approved' | 'pending_review' | 'rejected'
+
+/** The channels a caller asking for `channel` gets: stable for stable, stable+beta for beta, all three for test. */
+export function channelsUpTo(channel: ReleaseChannel): ReleaseChannel[] {
+  return RELEASE_CHANNELS.slice(0, RELEASE_CHANNELS.indexOf(channel) + 1)
 }
 
 export interface PluginDependency {

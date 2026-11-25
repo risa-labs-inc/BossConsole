@@ -99,6 +99,7 @@ const MESSAGES: Record<string, string> = {
   too_many_tags: "At most 8 tags.",
   connector_requires_public_https: "Connector hosts must be public https hosts.",
   invalid_connector: "The connector settings are not valid.",
+  invalid_theme: "theme.json is not a valid Max theme.",
 };
 const message = (code: string) => MESSAGES[code] ?? "The request was refused.";
 

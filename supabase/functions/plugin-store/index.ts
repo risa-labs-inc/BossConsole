@@ -31,6 +31,15 @@
  * - POST   /plugin-store/admin/:pluginId/publish - Enable/disable a plugin
  * - DELETE /plugin-store/admin/:pluginId         - Delete a plugin
  * - POST   /plugin-store/admin/:pluginId/verify  - Verify/unverify a plugin
+ *
+ * Max app review (permission plugins.review; platform admins hold every permission):
+ * - GET    /plugin-store/admin/review/queue                - Max app versions waiting for review
+ * - POST   /plugin-store/admin/review/:versionId/approve   - Approve: sign it, make it eligible for latest
+ * - POST   /plugin-store/admin/review/:versionId/reject    - Reject with a note {note} for the publisher
+ *
+ * Kinds and channels: POST /publish takes kind (plugin | max-app, fixed at creation); POST /:pluginId/version takes
+ * channel (stable | beta | test). /list, /search take ?kind= and ?channel=; /:pluginId and both download routes take
+ * ?channel=. Without them every route answers exactly as before.
  */
 
 import { OpenAPIHono } from "@hono/zod-openapi"

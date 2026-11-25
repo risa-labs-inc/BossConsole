@@ -5,6 +5,7 @@
  */
 import { unzipSync } from "fflate";
 import { BundleError, type Manifest, validateManifest } from "./manifest.ts";
+import { FONT_PATH, parseTheme } from "./theme.ts";
 
 export const LIMITS = {
   compressed: 10 * 1024 * 1024,
@@ -232,6 +233,28 @@ function checkSkillFits(files: Map<string, Entry>): void {
   if (total > SKILL_LIMITS.total) invalid("A skill may be at most 2 MB in all.");
 }
 
+/** Files a theme may carry besides boss.json (design 2.1): theme.json, an optional art.svg, at most two fonts. */
+const THEME_MAX_FONTS = 2;
+
+/**
+ * A theme is theme.json, an optional art.svg and up to two fonts/NAME.woff2, nothing else; theme.json must pass the
+ * port of Max's ThemePackage validator (theme.ts), with its id equal to the slug.
+ */
+function checkTheme(manifest: Manifest, files: Map<string, Uint8Array>): void {
+  let fonts = 0;
+  for (const name of files.keys()) {
+    if (name === "boss.json" || name === "theme.json" || name === "art.svg") continue;
+    if (FONT_PATH.test(name)) {
+      fonts++;
+      continue;
+    }
+    invalid("A theme may contain only theme.json, art.svg and fonts/NAME.woff2 files.");
+  }
+  if (fonts > THEME_MAX_FONTS) invalid("A theme may carry at most two fonts.");
+  const text = new TextDecoder("utf-8").decode(files.get("theme.json"));
+  parseTheme(text, files, manifest.slug);
+}
+
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 
 /** Reviewers must be able to read every byte of a script connector: text only, no NUL. */
@@ -292,6 +315,7 @@ export function validateBundle(zip: Uint8Array): ValidatedBundle {
     if (f!.size > r.maxBytes) invalid(`a file named in boss.json is too large`);
   }
   if (manifest.kind === "skill") checkSkillFits(files);
+  if (manifest.kind === "theme") checkTheme(manifest, new Map(Object.entries(extracted)));
   if (manifest.kind === "connector" && manifest.connector?.type === "scripts") {
     checkAllText(new Map(Object.entries(extracted)));
   }

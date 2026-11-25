@@ -42,7 +42,7 @@ export const publicHost = (h: string): boolean =>
 
 export interface Manifest {
   schema: 1;
-  kind: "skill" | "connector";
+  kind: "skill" | "connector" | "theme";
   slug: string;
   name: string;
   summary: string;
@@ -53,7 +53,13 @@ export interface Manifest {
   visibility?: { agents?: string[] };
   skill?: { entry: string };
   connector?: Obj;
+  theme?: { entry: "theme.json" };
 }
+
+/** A theme's slug is its theme.json id (Max installs it as skin x-<slug> and checks the id): ThemePackage.ID. */
+const THEME_SLUG = /^[a-z][a-z0-9-]{1,30}$/;
+/** ThemePackage.MAX_JSON */
+const THEME_JSON_MAX = 32 * 1024;
 
 /** Files the zip must contain for this manifest (besides boss.json), with a size cap each. */
 export interface RequiredFile {
@@ -196,9 +202,12 @@ export function validateManifest(raw: unknown): { manifest: Manifest; required: 
     "visibility",
     "skill",
     "connector",
+    "theme",
   ], "manifest");
   if (m.schema !== 1) bad("schema: must be 1");
-  if (m.kind !== "skill" && m.kind !== "connector") bad("kind: skill or connector");
+  if (m.kind !== "skill" && m.kind !== "connector" && m.kind !== "theme") {
+    bad("kind: skill, connector or theme");
+  }
 
   if (typeof m.slug !== "string" || !SLUG.test(m.slug)) {
     throw new BundleError(
@@ -262,6 +271,23 @@ export function validateManifest(raw: unknown): { manifest: Manifest; required: 
   }
 
   const required: RequiredFile[] = [];
+  if (m.kind === "theme") {
+    if ("skill" in m) bad("skill: not allowed in a theme");
+    if ("connector" in m) bad("connector: not allowed in a theme");
+    const t = m.theme;
+    if (!isObj(t)) return bad("theme: required for a theme bundle");
+    only(t, ["entry"], "theme");
+    if (t.entry !== "theme.json") bad("theme.entry: must be theme.json");
+    if (!THEME_SLUG.test(m.slug as string)) {
+      throw new BundleError(
+        "invalid_slug",
+        "slug: a theme's slug is its id: 2 to 31 lowercase letters, digits and dashes, starting with a letter",
+      );
+    }
+    required.push({ path: "theme.json", maxBytes: THEME_JSON_MAX });
+    return { manifest: m as unknown as Manifest, required };
+  }
+  if ("theme" in m) bad("theme: only in a theme bundle");
   if (m.kind === "skill") {
     if ("connector" in m) bad("connector: not allowed in a skill");
     const s = m.skill;

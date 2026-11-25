@@ -6,6 +6,29 @@ import { z } from "zod"
 
 export const PluginTypeSchema = z.enum(['panel', 'tab', 'hybrid', 'mixed', 'service'])
 
+/**
+ * plugins.kind. A `max-app` is a content-only jar carrying a Max app (META-INF/max-app/): finalize checks it holds
+ * no code beyond one inert stub class and every version waits for review before it is signed or served.
+ */
+export const PluginKindSchema = z.enum(['plugin', 'max-app'])
+
+/** plugin_versions.channel. beta and test are served only to callers plugin_channel_access allows. */
+export const ReleaseChannelSchema = z.enum(['stable', 'beta', 'test'])
+
+/**
+ * ?kind= and ?channel= on the catalogue routes. Both optional with NO default: their absence is what keeps a route on
+ * its old RPC, so a default here would change every existing caller's answer.
+ */
+export const CatalogueFilterQuerySchema = z.object({
+  kind: PluginKindSchema.optional(),
+  channel: ReleaseChannelSchema.optional()
+})
+
+/** ?channel= on the detail and download routes; absent = stable, exactly as before. */
+export const ChannelQuerySchema = z.object({
+  channel: ReleaseChannelSchema.optional()
+})
+
 // ============================================================================
 // Browse Route Schemas
 // ============================================================================
@@ -20,7 +43,9 @@ export const CATALOGUE_PAGE_SIZE_MAX = 100
 export const ListPluginsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).max(CATALOGUE_PAGE_MAX).default(1),
   pageSize: z.coerce.number().int().min(1).max(CATALOGUE_PAGE_SIZE_MAX).default(20),
-  sortBy: z.enum(['name', 'downloads', 'rating', 'newest', 'updated']).optional().default('downloads')
+  sortBy: z.enum(['name', 'downloads', 'rating', 'newest', 'updated']).optional().default('downloads'),
+  kind: PluginKindSchema.optional(),
+  channel: ReleaseChannelSchema.optional()
 })
 
 export const SearchPluginsRequestSchema = z.object({
@@ -64,7 +89,11 @@ export const PluginListItemSchema = z.object({
   downloadCount: z.number(),
   tags: z.array(z.string()),
   updatedAt: z.string(),
-  requiredPermissions: z.array(z.string()).optional().default([])
+  requiredPermissions: z.array(z.string()).optional().default([]),
+  // Additive (20261125120100): absent from older rows' JSON, so optional.
+  kind: PluginKindSchema.optional(),
+  /** Only when a non-stable ?channel= was asked for: the channel `version` came from. */
+  versionChannel: ReleaseChannelSchema.nullable().optional()
 })
 
 export const PluginListResponseSchema = z.object({
@@ -96,7 +125,11 @@ export const PluginVersionSchema = z.object({
     versionRange: z.string()
   })),
   publishedAt: z.string(),
-  downloadCount: z.number()
+  downloadCount: z.number(),
+  // Only with an explicit ?channel= (get_plugin_versions_channel).
+  channel: ReleaseChannelSchema.optional(),
+  reviewStatus: z.enum(['approved', 'pending_review', 'rejected']).optional(),
+  reviewNote: z.string().nullable().optional()
 })
 
 export const PluginDetailResponseSchema = z.object({
@@ -139,7 +172,10 @@ export const DownloadInfoResponseSchema = z.object({
   size: z.number(),
   versionId: z.string().uuid(),
   minIpcVersion: z.string().default('1.0.0'),
-  requiredPermissions: z.array(z.string()).optional().default([])
+  requiredPermissions: z.array(z.string()).optional().default([]),
+  /** Only when the served version is not on stable, or not approved (served only to who may have it). */
+  channel: ReleaseChannelSchema.optional(),
+  reviewStatus: z.enum(['approved', 'pending_review', 'rejected']).optional()
 })
 
 // ============================================================================
@@ -182,6 +218,8 @@ export const PublishPluginRequestSchema = z.object({
   iconUrl: z.union([z.string().url(), z.literal('')]).optional().default(''),
   type: PluginTypeSchema.optional().default('panel'),
   apiVersion: z.string().optional().default('1.0'),
+  /** Set once at creation and never changed afterwards: making a reviewed app a 'plugin' would skip review. */
+  kind: PluginKindSchema.optional().default('plugin'),
   tags: z.array(z.string().max(50)).max(10).optional().default([]),
   // Permissions the plugin requires (gated host-side) and the NEW ones it
   // introduces (auto-registered ungranted at publish). Optional; the GitHub
@@ -213,7 +251,9 @@ export const PublishVersionRequestSchema = z.object({
   // Optional (no default): when present, refreshes the plugin's install gate to
   // this version's manifest value ("latest wins"). Absent ⇒ leave unchanged, so
   // older clients that don't send it don't wipe an existing gate.
-  requiredPermissions: z.array(z.string().max(64)).max(50).optional()
+  requiredPermissions: z.array(z.string().max(64)).max(50).optional(),
+  /** Release channel. stable is what everybody gets; beta and test only the publisher's org and testers. */
+  channel: ReleaseChannelSchema.optional().default('stable')
 })
 
 export const PublishVersionResponseSchema = z.object({
@@ -231,7 +271,11 @@ export const FinalizeVersionRequestSchema = z.object({
 
 export const FinalizeVersionResponseSchema = z.object({
   success: z.boolean(),
-  error: z.string().optional()
+  error: z.string().optional(),
+  /** Machine-readable refusal (Max app content check), e.g. max_app_extra_class. */
+  code: z.string().optional(),
+  /** approved (signed) for a plugin; pending_review (unsigned) for a Max app until a reviewer approves it. */
+  reviewStatus: z.enum(['approved', 'pending_review']).optional()
 })
 
 // ============================================================================
