@@ -488,6 +488,14 @@ verify_jwt = true
 import_map = "./functions/agent-domains/deno.json"
 entrypoint = "./functions/agent-domains/index.ts"
 
+[functions.agent-github]
+# false: GitHub's install redirect (/connect/callback) is a header-less browser GET; its single-use state is
+# the proof. Every POST route reads the caller's JWT itself (auth/v1/user) and decides with
+# user_has_org_permission; writes use the service role. Design: optimist docs/custom-max-agents.md.
+verify_jwt = false
+import_map = "./functions/agent-github/deno.json"
+entrypoint = "./functions/agent-github/index.ts"
+
 [functions.boss-ai]
 enabled = true
 # The handler validates BOSS sessions at /auth/token and its own audience-scoped
