@@ -287,3 +287,10 @@ Deno.test("connect refuses a spoofed installation id without installer OAuth pro
   assertMatch(r.headers.get("location")!, /reason=installer/);
   assertEquals(w.state.connection, null);
 });
+
+Deno.test("local build authorization checks Evolve without minting GitHub credentials", async () => {
+  const w = world(); await readyRepo(w);
+  assertEquals((await w.post("/authorize", {agent_id:AGENT}, OUTSIDER)).status, 404);
+  assertEquals((await w.post("/authorize", {agent_id:AGENT}, EDITOR)).status, 200);
+  assertEquals(w.state.tokens.length, 0);
+});

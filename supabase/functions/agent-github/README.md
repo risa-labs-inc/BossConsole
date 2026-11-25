@@ -41,3 +41,7 @@ workflow, event, successful result and embedded source commit; it bounds archive
 and stores by SHA-256 in a private bucket. Publishing pins before changing the live version.
 
 Existing repository linking and automatic upstream release notifications are follow-ups.
+
+Repositories are configured for merge commits only (squash/rebase merging disabled). Upstream PRs
+carry a baseline commit in their ancestry; keep that merge policy so future updates retain the merge
+base. Evolve build requests use /authorize to refresh org authorization without minting GitHub tokens.

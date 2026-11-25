@@ -171,6 +171,15 @@ export function createApp(options: AppOptions = {}) {
       if (r === "taken") fail(409, "repo_exists");
       return json(201, { repo: `${repo.owner}/${repo.name}`, url: repo.htmlUrl, state: "seeding" });
     },
+    // Fresh authorization for local build/test work, without minting an unused GitHub token.
+    async "/authorize"(req, user) {
+      const o = await body(req);
+      const a = await agentFor(user, uuidOf(o, "agent_id"), "agents.evolve");
+      const r = await db.repo(a.id) ?? fail(404, "no_repo");
+      if (r.state !== "ready") fail(409, "repo_not_ready");
+      await activeConnection(a.org_id);
+      return json(200, { repo: `${r.repo_owner}/${r.repo_name}`, state: r.state, base_version: r.base_version });
+    },
     // Max's token for one repository: seeding pushes stock and main before protection exists; evolving pushes max/* branches.
     async "/token"(req, user) {
       const o = await body(req);

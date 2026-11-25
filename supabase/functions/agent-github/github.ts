@@ -274,7 +274,7 @@ export function restGitHub(cfg: AppConfig, fetchImpl: Fetch = fetch): GitHubApp 
       if (!path) throw new GitHubError("create repo: not an organisation", 400);
       const r = await call("create repo", token, path, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, description, private: true, auto_init: false, has_wiki: false, has_projects: false, delete_branch_on_merge: true }),
+        body: JSON.stringify({ name, description, private: true, auto_init: false, has_wiki: false, has_projects: false, delete_branch_on_merge: true, allow_merge_commit: true, allow_squash_merge: false, allow_rebase_merge: false }),
       }, [201, 422]);
       if (r.status === 422) { await r.body?.cancel(); throw new GitHubError("create repo: name taken", 409); }
       return repoOf(await r.json());
