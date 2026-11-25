@@ -4,6 +4,7 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import com.russhwolf.settings.Settings
 import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.SettingsCodeVerifierCache
 import io.github.jan.supabase.auth.SettingsSessionManager
@@ -47,6 +48,8 @@ object SupabaseConfig {
      *   instead of in a parameter default. Injectable so tests can pin what Auth actually
      *   receives without touching the real data directory.
      */
+    // httpConfig is @SupabaseInternal in 3.8.0; it is the only hook onto the client's Ktor pipeline.
+    @OptIn(SupabaseInternal::class)
     fun initialize(
         url: String,
         anonKey: String,
@@ -114,6 +117,14 @@ object SupabaseConfig {
                             endpoint.socketTimeout = 30_000 // 30s socket idle
                             endpoint.maxConnectionsPerRoute = 20 // Per-host limit
                         }
+                    // supabase-kt's scheduled refresh clears the session on any refresh error
+                    // status outside its short 5xx list, so a 429 or Cloudflare 525 under load
+                    // signed users out (2026-11-25). Retry those and hand the library a
+                    // network-style failure instead, so it keeps the session. See AuthRefreshRetry;
+                    // AuthRefreshRetryTest pins this against the real library.
+                    httpConfig {
+                        install(AuthRefreshRetry)
+                    }
                 }
 
             _isInitialized.value = true

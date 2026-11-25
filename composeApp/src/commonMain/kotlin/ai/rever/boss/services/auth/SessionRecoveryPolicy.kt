@@ -43,10 +43,17 @@ internal object SessionRecoveryPolicy {
 
     fun actionForStatus(statusCode: Int): Action =
         when {
-            statusCode == 408 || statusCode == 429 -> Action.Retry
+            isTransientStatus(statusCode) -> Action.Retry
             statusCode in 400..499 -> Action.ClearSession
             else -> Action.Retry
         }
+
+    /**
+     * HTTP statuses that say nothing about the refresh token: 408, 429 and every 5xx, Cloudflare's
+     * 520-530 included. Shared with [ai.rever.boss.services.supabase.AuthRefreshRetry], which keeps
+     * supabase-kt's own scheduled refresh from clearing the session on these.
+     */
+    fun isTransientStatus(statusCode: Int): Boolean = statusCode == 408 || statusCode == 429 || statusCode in 500..599
 
     /**
      * True when the current session is no longer the one recovery diagnosed: a sign-in or a

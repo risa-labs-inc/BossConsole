@@ -28,6 +28,20 @@ class SessionRecoveryPolicyTest {
         assertEquals(SessionRecoveryPolicy.Action.Retry, SessionRecoveryPolicy.actionForStatus(502))
         assertEquals(SessionRecoveryPolicy.Action.Retry, SessionRecoveryPolicy.actionForStatus(520))
         assertEquals(SessionRecoveryPolicy.Action.Retry, SessionRecoveryPolicy.actionForStatus(530))
+        // supabase-kt 3.8.0's own list stops at 524 and skips 501/505+; ours covers every 5xx.
+        assertEquals(SessionRecoveryPolicy.Action.Retry, SessionRecoveryPolicy.actionForStatus(501))
+        assertEquals(SessionRecoveryPolicy.Action.Retry, SessionRecoveryPolicy.actionForStatus(525))
+        assertEquals(SessionRecoveryPolicy.Action.Retry, SessionRecoveryPolicy.actionForStatus(526))
+    }
+
+    @Test
+    fun `transient statuses are exactly 408, 429 and 5xx`() {
+        for (code in listOf(408, 429, 500, 501, 503, 520, 525, 527, 530, 599)) {
+            assertTrue(SessionRecoveryPolicy.isTransientStatus(code), "$code")
+        }
+        for (code in listOf(200, 302, 400, 401, 403, 404, 409, 422)) {
+            assertFalse(SessionRecoveryPolicy.isTransientStatus(code), "$code")
+        }
     }
 
     @Test
