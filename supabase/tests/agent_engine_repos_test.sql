@@ -1,6 +1,6 @@
 -- Agents built from the org's own Max: agents.github, engine repos/builds RLS, version pins, provisioner read, audit.
 begin;
-select plan(27);
+select plan(29);
 
 -- a1 owner, a2 agent manager (publish, no github), a3 agent editor (view only here), b1 owner of another org, p1 provisioner.
 insert into auth.users (id, email, email_confirmed_at) values
@@ -39,8 +39,8 @@ grant execute on function pg_temp.id(text), pg_temp.u(text), pg_temp.as_user(tex
 insert into public.organisation_members (org_id, user_id, status, joined_at, join_source)
     select pg_temp.id('org'), pg_temp.u(x), 'active', now(), 'admin' from unnest(array['a2', 'a3']) x;
 insert into public.user_roles (user_id, role_id) values (pg_temp.u('a2'), pg_temp.id('manager')), (pg_temp.u('a3'), pg_temp.id('editor'));
-insert into public.agents (slug, org_id, name, plugin_id, created_by) values
-    ('engagent', pg_temp.id('org'), 'Eng', 'ai.rever.boss.plugin.dynamic.agent.engagent', pg_temp.u('a1'));
+insert into public.agents (slug, org_id, name, plugin_id, created_by, live_version, status) values
+    ('engagent', pg_temp.id('org'), 'Eng', 'ai.rever.boss.plugin.dynamic.agent.engagent', pg_temp.u('a1'), '0.9.0', 'live');
 insert into ids select 'agent', id from public.agents where slug = 'engagent';
 
 -- What the edge function writes with the service role.
@@ -57,6 +57,15 @@ insert into public.agent_engine_builds (id, agent_id, org_id, repo, commit_sha, 
            ('ce000000-0000-4000-8000-00000000bb02', pg_temp.id('agent'), pg_temp.id('org'), 'eng-inc/engagent-max', repeat('b', 40), 901,
             'https://github.com/eng-inc/engagent-max/actions/runs/901', '1.2.33', 'Second', repeat('d', 64), 36000000,
             'x/y/z.jar', pg_temp.u('a2'));
+
+-- Repo setup does not interrupt an already-live standard agent before its first pinned publication.
+set local role authenticated;
+select pg_temp.as_user('c1');
+select is((select count(*)::int from public.agent_live_engines(array[pg_temp.id('agent')])), 0,
+    'existing stock version is not marked as requiring an engine during setup');
+reset role;
+select ok(not (select engine_required from public.agent_engine_repos where agent_id = pg_temp.id('agent')),
+    'setup has not yet made the engine pin mandatory for the existing live version');
 
 -- ---- permission ----
 select ok('agents.github' = any (public.agents_permission_catalog()), 'agents.github is in the catalog');
