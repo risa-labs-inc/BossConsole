@@ -33,6 +33,15 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - name: Test and bundle web chat
+        working-directory: webchat
+        run: |
+          bun install --frozen-lockfile
+          bun run test --maxWorkers=2
+          bun run build
       - name: Download boss-plugin-api
         run: |
           set -euo pipefail
@@ -48,7 +57,7 @@ jobs:
       - name: Build the engine
         env:
           CI: 'true'
-        run: ./gradlew test buildPluginJar :agent-adapter:test --no-daemon
+        run: ./gradlew test buildPluginJar :agent-adapter:test --no-daemon --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process
       - name: Check the engine
         run: |
           set -euo pipefail
