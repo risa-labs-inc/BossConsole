@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertMatch, assertThrows } from "@std/assert";
-import { strToU8, zipSync } from "fflate";
+import { strToU8, zipSync, unzipSync } from "fflate";
 import { createApp, EVOLVE_PERMISSIONS } from "../app.ts";
 import type { BuildInsert, BuildRow, Connection, Db, RepoRow } from "../db.ts";
 import { checkEngineJar, EngineCheckError, WORKFLOW_PATH, WORKFLOW_YAML } from "../engine.ts";
@@ -293,4 +293,11 @@ Deno.test("local build authorization checks Evolve without minting GitHub creden
   assertEquals((await w.post("/authorize", {agent_id:AGENT}, OUTSIDER)).status, 404);
   assertEquals((await w.post("/authorize", {agent_id:AGENT}, EDITOR)).status, 200);
   assertEquals(w.state.tokens.length, 0);
+});
+
+Deno.test("old engine adapters without pin enforcement cannot be imported", () => {
+  const files = unzipSync(engineJar());
+  files["META-INF/agent-adapter-template.jar"] = zipSync({"META-INF/max-agent-capabilities.json": strToU8(JSON.stringify({capabilities:[]}))});
+  const e = assertThrows(() => checkEngineJar(zipSync(files), SHA), EngineCheckError);
+  assert(e.message.includes("newer Max"));
 });
