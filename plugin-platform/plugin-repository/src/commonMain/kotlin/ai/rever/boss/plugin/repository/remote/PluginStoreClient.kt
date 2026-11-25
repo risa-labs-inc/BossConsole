@@ -21,6 +21,10 @@ import kotlinx.serialization.json.Json
  * Handles all communication with the /plugin-store endpoints.
  */
 object PluginStoreClient {
+    private val publicReads = PublicCatalogReads()
+
+    internal fun invalidatePublicReads() = publicReads.invalidate()
+
     // Internal, not private, so a test can decode a real store payload through the SAME instance
     // the client uses. An equivalent Json rebuilt in the test would be free to drift from this one,
     // and the bug this guards against was precisely "the real client cannot decode a real response".
@@ -54,7 +58,7 @@ object PluginStoreClient {
         page: Int = 1,
         pageSize: Int = 20,
         sortBy: String = "downloads",
-    ): PluginListResponse {
+    ): PluginListResponse = publicReads.read(listOf("list", page, pageSize, sortBy)) {
         val response =
             httpClient.get(endpoint("list")) {
                 parameter("page", page)
@@ -67,7 +71,7 @@ object PluginStoreClient {
             throw PluginStoreException("Failed to list plugins: ${response.status}")
         }
 
-        return json.decodeFromString(response.bodyAsText())
+        json.decodeFromString<PluginListResponse>(response.bodyAsText())
     }
 
     /**
@@ -103,21 +107,21 @@ object PluginStoreClient {
     /**
      * GET /plugin-store/:pluginId - Get plugin details
      */
-    suspend fun getPlugin(pluginId: String): PluginDetailResponse? {
+    suspend fun getPlugin(pluginId: String): PluginDetailResponse? = publicReads.read(listOf("detail", pluginId)) {
         val response =
             httpClient.get(endpoint(pluginId)) {
                 header("apikey", PluginStoreConfig.anonKey)
             }
 
         if (response.status == HttpStatusCode.NotFound) {
-            return null
+            return@read null
         }
 
         if (!response.status.isSuccess()) {
             throw PluginStoreException("Failed to get plugin: ${response.status}")
         }
 
-        return json.decodeFromString(response.bodyAsText())
+        json.decodeFromString<PluginDetailResponse>(response.bodyAsText())
     }
 
     /**
