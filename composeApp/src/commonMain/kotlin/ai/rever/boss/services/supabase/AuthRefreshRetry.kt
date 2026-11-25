@@ -98,14 +98,21 @@ internal val AuthRefreshRetry =
                     call = proceed(request.copyForAttempt())
                 } catch (e: CancellationException) {
                     throw e
-                } catch (e: Throwable) {
+                } catch (
+                    // Whatever the engine throws for a failed attempt (IOExceptions, but also e.g.
+                    // UnresolvedAddressException, an IllegalArgumentException) is a network-level
+                    // failure worth another attempt; the last one is rethrown unchanged below.
+                    @Suppress("TooGenericExceptionCaught") e: Exception,
+                ) {
                     failure = e
                 }
 
                 val status = call?.response?.status?.value
                 if (call != null && !SessionRecoveryPolicy.isTransientStatus(status!!)) return@on call
                 // The outer request was cancelled (supabase-kt's request timeout): stop here.
-                if (!request.executionContext.isActive) throw failure ?: TransientAuthRefreshException(status, "cancelled")
+                if (!request.executionContext.isActive) {
+                    throw failure ?: TransientAuthRefreshException(status, "cancelled")
+                }
 
                 val retryAfter =
                     call
@@ -128,7 +135,9 @@ internal val AuthRefreshRetry =
                     // Non-HTTP failures (timeouts, connect errors) already take supabase-kt's retry path.
                     throw failure ?: TransientAuthRefreshException(
                         statusCode = status,
-                        message = "Supabase token refresh got transient HTTP $status after $attempt attempt(s); session kept",
+                        message =
+                            "Supabase token refresh got transient HTTP $status " +
+                                "after $attempt attempt(s); session kept",
                     )
                 }
                 logger.info(

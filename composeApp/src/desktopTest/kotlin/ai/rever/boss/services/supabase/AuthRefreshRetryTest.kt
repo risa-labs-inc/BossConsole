@@ -74,7 +74,8 @@ class AuthRefreshRetryTest {
         runBlocking {
             val (client, sessions, requests) = clientAnswering(listOf(status(429), success()))
 
-            val status = client.awaitStatus { it is SessionStatus.Authenticated && it.session.accessToken == NEW_ACCESS_TOKEN }
+            val status =
+                client.awaitStatus { it is SessionStatus.Authenticated && it.session.accessToken == NEW_ACCESS_TOKEN }
 
             assertIs<SessionStatus.Authenticated>(status)
             assertEquals(2, requests.get(), "one 429, then the retried refresh")
@@ -113,7 +114,8 @@ class AuthRefreshRetryTest {
                     listOf(
                         json(
                             HttpStatusCode.BadRequest,
-                            """{"code":400,"error_code":"refresh_token_not_found","msg":"Invalid Refresh Token: Refresh Token Not Found"}""",
+                            """{"code":400,"error_code":"refresh_token_not_found",""" +
+                                """"msg":"Invalid Refresh Token: Refresh Token Not Found"}""",
                         ),
                     ),
                 )
@@ -189,7 +191,11 @@ class AuthRefreshRetryTest {
             awaitRequests(requests, 2 * MAX_ATTEMPTS)
 
             assertNotNotAuthenticated(client)
-            assertEquals(OLD_REFRESH_TOKEN, sessions.loadSession().refreshToken, "HTTP $code must not clear the stored session")
+            assertEquals(
+                OLD_REFRESH_TOKEN,
+                sessions.loadSession().refreshToken,
+                "HTTP $code must not clear the stored session",
+            )
         }
 
     private data class Harness(
@@ -281,7 +287,9 @@ class AuthRefreshRetryTest {
         ): MockRequestHandleScope.() -> HttpResponseData =
             {
                 respond(
-                    content = """{"code":$code,"error_code":"over_request_rate_limit","msg":"Request rate limit reached"}""",
+                    content =
+                        """{"code":$code,"error_code":"over_request_rate_limit",""" +
+                            """"msg":"Request rate limit reached"}""",
                     status = HttpStatusCode.fromValue(code),
                     headers =
                         if (retryAfter == null) {
@@ -298,12 +306,15 @@ class AuthRefreshRetryTest {
         fun json(
             status: HttpStatusCode,
             body: String,
-        ): MockRequestHandleScope.() -> HttpResponseData = { respond(body, status, headersOf(HttpHeaders.ContentType, "application/json")) }
+        ): MockRequestHandleScope.() -> HttpResponseData = { respond(body, status, JSON_HEADERS) }
+
+        val JSON_HEADERS = headersOf(HttpHeaders.ContentType, "application/json")
 
         fun success() =
             json(
                 HttpStatusCode.OK,
-                """{"access_token":"$NEW_ACCESS_TOKEN","refresh_token":"$NEW_REFRESH_TOKEN","expires_in":3600,"token_type":"bearer"}""",
+                """{"access_token":"$NEW_ACCESS_TOKEN","refresh_token":"$NEW_REFRESH_TOKEN",""" +
+                    """"expires_in":3600,"token_type":"bearer"}""",
             )
     }
 }
