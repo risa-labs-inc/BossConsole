@@ -132,7 +132,8 @@ reset role;
 select pg_temp.as_service();
 select is((pg_temp.mpk('e1', 'a5', 'ilinv', ' Bo@Other-IL.test ') - 'token' - 'link_id' - 'expires_at'),
     jsonb_build_object('success', true, 'target', 'ilinv', 'target_name', 'Inv Brand', 'agent_slug', 'ilinv', 'custom_host', null,
-        'org_name', 'Acme IL', 'inviter_name', 'Ann Smith', 'inviter_email', 'ann@other-il.test', 'recipient_email', 'bo@other-il.test'),
+        'org_name', 'Acme IL', 'inviter_name', 'Ann Smith', 'inviter_email', 'ann@other-il.test', 'recipient_email', 'bo@other-il.test',
+        'budget_ms', null),
     'new email invite: the facts the mail needs, address normalised');
 select is(length(pg_temp.tk('e1')), 43, 'the token is 43 characters');
 select is((select max_uses || '/' || recipient_email::text || '/' || via || '/' || (last_sent_at is not null)
@@ -246,7 +247,8 @@ select is(pg_temp.mp('a4', 'ilq', 'q4@other-il.test')->>'error', 'quota_exceeded
 -- ---- 6. platform email invite ----
 select is((pg_temp.mpk('pm', 'a5', 'max', 'pm@other-il.test') - 'token' - 'link_id' - 'expires_at'),
     jsonb_build_object('success', true, 'target', 'max', 'target_name', 'Max', 'agent_slug', null, 'custom_host', null, 'org_name', null,
-        'inviter_name', 'Ann Smith', 'inviter_email', 'ann@other-il.test', 'recipient_email', 'pm@other-il.test'), 'platform email invite: no agent or org facts');
+        'inviter_name', 'Ann Smith', 'inviter_email', 'ann@other-il.test', 'recipient_email', 'pm@other-il.test',
+        'budget_ms', null), 'platform email invite: no agent or org facts');
 select is((select actor from public.platform_audit_log where action = 'invite_link.create' and detail->>'link_id' = pg_temp.lid('pm')::text),
     pg_temp.u('a5'), 'platform audit names the sender, not the service role');
 select is(pg_temp.mp('a5', null, null, pg_temp.lid('pm'))->>'success', 'true', 'platform resend');

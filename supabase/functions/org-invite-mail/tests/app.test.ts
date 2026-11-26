@@ -139,13 +139,15 @@ Deno.test("the database's refusals map to 403, 404, 409 and 429 and send nothing
   }
 });
 
-Deno.test("an unreachable database is 503; a failing mail server is 502 without its text", async () => {
+Deno.test("an unreachable database is 503; a failing mail server is 503 mail_failed (never a 502) without its text", async () => {
   const down = harness(() => Promise.reject(new Error("fetch failed")));
   assertEquals((await down.app(req(good))).status, 503);
   const smtp = harness(undefined, true);
   const { value: r, out } = await quietly(() => smtp.app(req(good)));
-  assertEquals(r.status, 502);
+  // Not 502: the gateway answers a function's 502 itself, without CORS, and the browser loses the code.
+  assertEquals(r.status, 503);
   const body = await r.text();
+  assertEquals(JSON.parse(body), { error: "mail_failed" });
   assert(!body.includes("535") && !body.includes("user@x"));
   assert(!out.includes("535") && !out.includes(token));
 });

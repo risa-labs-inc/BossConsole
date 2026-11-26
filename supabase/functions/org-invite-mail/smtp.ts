@@ -42,12 +42,22 @@ export class SmtpError extends Error {
   }
 }
 
-const ADDRESS_IN_TEXT = /[^\s<>()",;:\\@]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+/**
+ * Anything shaped like local@domain in a server's text: a dotted name, a bare host (root@mailhost,
+ * user@localhost) or an address literal (user@[10.0.0.1], user@[IPv6:::1]).
+ */
+const ADDRESS_IN_TEXT = /[^\s<>()",;:\\@]+@(?:\[[^\]\s]{1,64}\]|[A-Za-z0-9.-]+)/g;
+/** C0 and C1 control characters (ESC and NUL included) and the Unicode line separators. */
+// deno-lint-ignore no-control-regex
+const CONTROL_IN_TEXT = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
 
-/** Reply or error text made safe for a log line: one line, no address, no quotes, at most 200 characters. */
+/**
+ * Reply or error text made safe for a log line: one line, no control characters (a server cannot
+ * start a new log line or send terminal escapes), no address, no quotes, at most 200 characters.
+ */
 function logText(s: string): string {
-  return s.replace(/[\r\n\t]+/g, " ").replace(ADDRESS_IN_TEXT, "<address>").replace(/"/g, "'")
-    .trim().slice(0, 200);
+  return s.replace(CONTROL_IN_TEXT, " ").replace(ADDRESS_IN_TEXT, "<address>").replace(/"/g, "'")
+    .replace(/ {2,}/g, " ").trim().slice(0, 200);
 }
 
 /**

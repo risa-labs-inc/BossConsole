@@ -137,11 +137,12 @@ Deno.test("agent invite: no JWT, a bad JWT, a bad body; GET is not allowed", asy
   assertEquals(calls.length, 0);
 });
 
-Deno.test("agent invite: a mail server failure is a 502 with nothing secret in the answer or the log", async () => {
+Deno.test("agent invite: a mail server failure is 503 mail_failed (never a 502) with nothing secret in the answer or the log", async () => {
   const { app } = harness(undefined, true);
   const { value: r, out } = await quietly(() => app(req(good)));
-  assertEquals(r.status, 502);
+  assertEquals(r.status, 503);
   const body = await r.text();
+  assertEquals(JSON.parse(body), { error: "mail_failed" });
   assert(!body.includes("535") && !out.includes("535") && !out.includes("bob@"), out);
 });
 

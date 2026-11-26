@@ -180,6 +180,44 @@ Deno.test("a refused recipient is an SmtpError with the code, not the server tex
   await s.done.catch(() => undefined);
 });
 
+Deno.test("smtpFailure strips every control character a server could send, not only line breaks", () => {
+  const hostile =
+    "5.7.1 denied\x1b[2J\x1b[31m\x00\x07\x08\v\f\x7f\x85\u2028\u2029next line\r\n250 fake";
+  const out = smtpFailure(new SmtpError("data", 554, hostile, 587));
+  assertEquals(
+    out,
+    `stage=data port=587 code=554 detail="5.7.1 denied [2J [31m next line 250 fake"`,
+  );
+  // deno-lint-ignore no-control-regex
+  assert(!/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(out));
+});
+
+Deno.test("smtpFailure masks every address form: bare hosts and address literals as well as dotted names", () => {
+  const said = (text: string) => smtpFailure(new SmtpError("rcpt_to", 550, text, 25));
+  for (
+    const address of [
+      "bob@other.test",
+      "root@mailhost",
+      "user@localhost",
+      "user@[10.0.0.1]",
+      "user@[IPv6:2001:db8::1]",
+      "first.last+tag@sub.example.co.uk",
+    ]
+  ) {
+    const out = said(`5.1.1 <${address}>: no such user, try postmaster@relay`);
+    assertEquals(
+      out,
+      `stage=rcpt_to port=25 code=550 detail="5.1.1 <<address>>: no such user, try <address>"`,
+    );
+    assert(!out.includes(address.split("@")[0] + "@"), out);
+  }
+  // Text with no address in it is left alone.
+  assertEquals(
+    said("4.7.0 try again at 10:30"),
+    `stage=rcpt_to port=25 code=550 detail="4.7.0 try again at 10:30"`,
+  );
+});
+
 Deno.test("smtpFailure masks addresses, flattens the text and never prints a foreign error's message", () => {
   assertEquals(
     smtpFailure(new SmtpError("rcpt_to", 550, '5.1.1 <bob@other.test>: "unknown"\r\nuser', 465)),
