@@ -145,6 +145,16 @@ Deno.test("link: a different repository is refused once builds exist", async () 
   const r = await w.link({ repo: "acme-inc/other", repo_id: 5555 });
   assertEquals(r.status, 409);
   assertEquals(r.body.error, "repo_exists");
+  // Max's pre-flight check says so before it creates anything on GitHub.
+  assertEquals((await w.post("/repos/link", { agent_id: AGENT, check: true }, EDITOR)).body.error, "repo_exists");
+});
+
+Deno.test("link check: permission pre-flight without writing", async () => {
+  const w = world();
+  assertEquals((await w.post("/repos/link", { agent_id: AGENT, check: true }, VIEWER)).status, 403);
+  const r = await w.post("/repos/link", { agent_id: AGENT, check: true }, EDITOR);
+  assertEquals(r.body, { ok: true, repo: null });
+  assertEquals(w.state.repo, null);
 });
 
 Deno.test("authorize: needs agents.evolve and a linked repo; returns only the repo", async () => {

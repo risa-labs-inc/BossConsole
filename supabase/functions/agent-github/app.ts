@@ -95,6 +95,12 @@ export function createApp(options: AppOptions = {}) {
     async "/repos/link"(req, user) {
       const o = await body(req);
       const a = await agentFor(user, uuidOf(o, "agent_id"), "agents.evolve");
+      // Max asks first, before it creates anything on GitHub.
+      if (o.check === true) {
+        const have = await db.repo(a.id);
+        if (have && (await db.builds(a.id)).length > 0) fail(409, "repo_exists");
+        return json(200, { ok: true, repo: have ? repoView(have) : null });
+      }
       const [owner, name] = match(o, "repo", /^[^/]+\/[^/]+$/).split("/");
       if (!OWNER.test(owner) || !REPO_NAME.test(name) || name === "." || name === ".." || name.endsWith(".git")) fail(400, "invalid_repo");
       const repoId = typeof o.repo_id === "number" && Number.isSafeInteger(o.repo_id) && o.repo_id > 0 ? o.repo_id : fail(400, "invalid_repo_id");
