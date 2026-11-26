@@ -9,6 +9,7 @@ import {
   verifyClaims,
 } from "./auth.ts"
 import { CACHE_TTL_SECONDS } from "./anthropic.ts"
+import { CatalogCache, CatalogCacheOptions } from "./catalog_cache.ts"
 import { LiveKit, liveKitClients, LiveKitConfig } from "./livekit.ts"
 import {
   capped,
@@ -110,6 +111,8 @@ export interface Dependencies {
   keepaliveMs?: number
   /** LiveKit clients for /v1/voice/live; tests inject fakes. */
   livekit?: (config: LiveKitConfig) => LiveKit
+  /** Overrides for the /v1/models and /v1/usage catalog cache (defaults in catalog_cache.ts). */
+  catalogCache?: Pick<CatalogCacheOptions, "ttlMs" | "maxStaleMs" | "maxEntries" | "staleWaitMs">
 }
 const AUDIO_PATHS = ["/v1/audio/transcriptions", "/v1/audio/speech"]
 const LIVE_AGENT = "max-voice-agent"
@@ -413,6 +416,18 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
   const cooldown = new Map<string, number>()
   const allowLocal = deps.secret("BOSS_AI_ALLOW_LOCAL_AGENT") === "1"
   const now = deps.now ?? Date.now
+  // One per handler, so per worker: nothing is shared across workers or survives one.
+  const catalogCache = new CatalogCache({
+    ...deps.catalogCache,
+    now,
+    onStale: (reason) => {
+      try {
+        const entry = { event: "catalog_stale_served", reason }
+        if (deps.log) deps.log(entry)
+        else console.warn(JSON.stringify(entry))
+      } catch { /* Observability must not change the response. */ }
+    },
+  })
   const startLiveCall = async (
     request: Request,
     user: string,
@@ -766,7 +781,12 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       }
       if (request.method === "GET" && (path === "/v1/models" || path === "/v1/usage")) {
         phase = "catalog"
-        const data = await deps.rpc("boss_ai_catalog", { p_user_id: user })
+        // Keyed by the token's verified user, the query's only input. Listing only: every
+        // inference still runs its own live lookup and reservation.
+        const data = await catalogCache.get(
+          user,
+          () => deps.rpc("boss_ai_catalog", { p_user_id: user }),
+        )
         return json(
           {
             object: "list",

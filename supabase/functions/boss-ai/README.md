@@ -58,6 +58,23 @@ required deployment inputs. Plugin bundling is outside this change.
 4. `/v1/models` supplies permission-filtered models, capabilities, limits, defaults and allowances.
    Inference independently enforces live authorization and usage policy.
 
+### Catalog cache
+
+`GET /v1/models` and `GET /v1/usage` read `boss_ai_catalog`, which every client polls and which was
+the database's largest single cost. `catalog_cache.ts` keeps each caller's answer in the worker's
+memory for `CATALOG_CACHE_TTL_MS` (5 minutes), keyed by the verified user id, the query's only
+input. Consequences to know:
+
+- A new grant, a revoked permission, a ban or freshly spent allowance can take up to 5 minutes to
+  show in `/v1/models` and `/v1/usage`. Inference is not cached: lookup, reservation and settlement
+  run live on every request, so a revoked caller is refused at once whatever the list says.
+- If the database fails, or takes longer than `CATALOG_CACHE_STALE_WAIT_MS` (3 s), an expired answer
+  up to `CATALOG_CACHE_MAX_STALE_MS` (30 minutes) old is served and a `catalog_stale_served` line is
+  logged. With nothing cached the caller gets the 503 as before.
+- Concurrent requests for one user share one database call. The cache holds at most
+  `CATALOG_CACHE_MAX_ENTRIES` users and drops the least recently used.
+- It is per worker. A new worker starts empty, so the saving depends on how long workers live.
+
 Tickets expire after 60 seconds, are stored only as SHA-256 hashes, and are consumed atomically.
 Each user may hold at most eight pending tickets; issuance removes their expired tickets. The edge
 function alone can redeem them. Ban and permission checks run again at redemption. No BOSS login
@@ -780,8 +797,9 @@ broker scope as `/v1/models`.
 
 AI credentials last an hour and renew after 50 minutes. BOSS sign-out clears the client cache. A
 copied token may remain usable until expiry; this mechanism authenticates a BOSS-issued session, not
-the executable making the request. Live permissions and bans are checked on catalog/inference
-requests. App attestation and device-bound signing are not implemented.
+the executable making the request. Live permissions and bans are checked on every inference request;
+the catalog routes may answer from the cache above for up to 5 minutes. App attestation and
+device-bound signing are not implemented.
 
 No inference content or credentials are logged. Errors use owned messages. Diagnostics contain only
 owned event/phase names, numeric upstream statuses, request UUIDs, and validated database SQLSTATE
