@@ -34,8 +34,10 @@ object PluginStoreConfig {
     var accessToken: String?
         get() = _accessToken
         set(value) {
+            PluginStoreClient.invalidatePublicReads()
             _accessToken = value
             _isAdmin = decodeIsAdmin(value)
+            PluginStoreClient.invalidatePublicReads()
         }
 
     /**
@@ -81,20 +83,24 @@ object PluginStoreConfig {
         anonKey: String,
         accessToken: String? = null,
     ) {
+        PluginStoreClient.invalidatePublicReads()
         _functionUrl = functionUrl.removeSuffix("/")
         _anonKey = anonKey
         _accessToken = accessToken
         _isAdmin = decodeIsAdmin(accessToken)
+        PluginStoreClient.invalidatePublicReads()
     }
 
     /**
      * Clear the configuration (for testing or logout)
      */
     fun clear() {
+        PluginStoreClient.invalidatePublicReads()
         _functionUrl = null
         _anonKey = null
         _accessToken = null
         _isAdmin = false
+        PluginStoreClient.invalidatePublicReads()
     }
 
     /**
