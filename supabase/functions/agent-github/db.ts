@@ -1,38 +1,37 @@
 /** boss-main as agent-github sees it: the caller's identity from their JWT, every decision and write with the service role. */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const BUCKET = "agent-engines";
 
 export interface AgentRef { id: string; org_id: string; slug: string; name: string }
-export interface Connection { org_id: string; installation_id: number; account_login: string; account_id: number; status: "active" | "removed" }
 export interface RepoRow {
   agent_id: string; org_id: string; repo_owner: string; repo_name: string; repo_id: number;
-  state: "seeding" | "ready" | "error"; base_version: string | null; detail: string | null;
+  state: "seeding" | "ready" | "error"; main_protected: boolean; base_version: string | null; detail: string | null;
 }
 export interface BuildRow {
-  id: string; agent_id: string; org_id: string; repo: string; commit_sha: string; run_id: number; run_url: string;
-  engine_version: string; message: string; jar_sha256: string; jar_size: number; storage_path: string; imported_at: string;
+  id: string; agent_id: string; org_id: string; repo: string; commit_sha: string; source: "max" | "ci";
+  run_id: number | null; run_url: string | null; engine_version: string; message: string; jar_sha256: string; jar_size: number;
+  storage_path: string; imported_at: string;
 }
-export type BuildInsert = Omit<BuildRow, "id" | "imported_at"> & { imported_by: string };
+export type BuildInsert = Omit<BuildRow, "id" | "imported_at" | "run_id" | "run_url"> & { imported_by: string };
 
 export interface Db {
   user(jwt: string): Promise<string | null>;
   can(userId: string, orgId: string, permission: string): Promise<boolean>;
   agent(id: string): Promise<AgentRef | null>;
-  connection(orgId: string): Promise<Connection | null>;
-  /** "taken": the installation is already another org's. */
-  upsertConnection(c: Omit<Connection, "status">, by: string): Promise<"ok" | "taken">;
-  setConnectionStatus(orgId: string, status: Connection["status"]): Promise<void>;
-  addState(nonce: string, orgId: string, userId: string, expiresAt: string): Promise<void>;
-  /** Deletes and returns the state (single use); null when unknown. */
-  takeState(nonce: string): Promise<{ org_id: string; user_id: string; expires_at: string } | null>;
   repo(agentId: string): Promise<RepoRow | null>;
-  insertRepo(r: Omit<RepoRow, "detail" | "base_version">, by: string): Promise<"ok" | "taken">;
-  updateRepo(agentId: string, patch: Partial<Pick<RepoRow, "state" | "base_version" | "detail">>): Promise<void>;
+  /** "taken": another agent already links this GitHub repository. */
+  upsertRepo(r: Omit<RepoRow, "detail">, by: string): Promise<"ok" | "taken">;
   builds(agentId: string): Promise<BuildRow[]>;
   build(id: string): Promise<BuildRow | null>;
-  buildByRun(agentId: string, runId: number): Promise<BuildRow | null>;
+  buildBySha(agentId: string, sha256: string): Promise<BuildRow | null>;
   insertBuild(b: BuildInsert): Promise<BuildRow>;
+  /** A one-time URL Max PUTs the jar to (no service key leaves the function). */
+  signedUploadUrl(path: string): Promise<string>;
+  /** The uploaded object, or null when absent; refuses (DbError 413) past `maxBytes`. */
+  getJar(path: string, maxBytes: number): Promise<Uint8Array | null>;
   putJar(path: string, jar: Uint8Array): Promise<void>;
+  removeJar(path: string): Promise<void>;
   signedJarUrl(path: string, seconds: number): Promise<string>;
 }
 
@@ -48,9 +47,11 @@ export function restDb(env: (k: string) => string): Db {
   const service = env("SUPABASE_SERVICE_ROLE_KEY");
   const svc = { apikey: service, Authorization: `Bearer ${service}`, "Content-Type": "application/json" };
   const t = () => AbortSignal.timeout(10_000);
+  const pub = () => env("AGENT_GITHUB_PUBLIC_SUPABASE_URL") || url;
+  const absolute = (rel: string) => rel.startsWith("http") ? rel : `${pub()}/storage/v1${rel.startsWith("/") ? rel : `/${rel}`}`;
 
   async function call(op: string, path: string, init: RequestInit = {}, ok = [200]): Promise<Response> {
-    const r = await fetch(`${url}${path}`, { ...init, headers: { ...svc, ...init.headers }, signal: t(), redirect: "error" });
+    const r = await fetch(`${url}${path}`, { ...init, headers: { ...svc, ...init.headers }, signal: init.signal ?? t(), redirect: "error" });
     if (!ok.includes(r.status)) {
       await r.body?.cancel();
       throw new DbError(op, r.status);
@@ -77,47 +78,15 @@ export function restDb(env: (k: string) => string): Db {
       if (!UUID.test(id)) return null;
       return (await rows<AgentRef>("agent", `/rest/v1/agents?id=${eq(id)}&select=id,org_id,slug,name`))[0] ?? null;
     },
-    async connection(orgId) {
-      return (await rows<Connection>("connection", `/rest/v1/org_github_connections?org_id=${eq(orgId)}&select=org_id,installation_id,account_login,account_id,status`))[0] ?? null;
-    },
-    async upsertConnection(c, by) {
-      const r = await call("connection upsert", "/rest/v1/org_github_connections?on_conflict=org_id", {
-        method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-        body: JSON.stringify({ ...c, status: "active", connected_by: by, connected_at: new Date().toISOString() }),
-      }, [201, 204, 409]);
-      return r.status === 409 ? "taken" : "ok";
-    },
-    async setConnectionStatus(orgId, status) {
-      await call("connection status", `/rest/v1/org_github_connections?org_id=${eq(orgId)}`, {
-        method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ status }),
-      }, [200, 204]);
-    },
-    async addState(nonce, orgId, userId, expiresAt) {
-      await call("state add", "/rest/v1/github_connect_states", {
-        method: "POST", headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({ nonce, org_id: orgId, user_id: userId, expires_at: expiresAt }),
-      }, [201]);
-    },
-    async takeState(nonce) {
-      const r = await call("state take", `/rest/v1/github_connect_states?nonce=${eq(nonce)}`, {
-        method: "DELETE", headers: { Prefer: "return=representation" },
-      }, [200]);
-      const got = await r.json() as { org_id: string; user_id: string; expires_at: string }[];
-      return got[0] ?? null;
-    },
     async repo(agentId) {
-      return (await rows<RepoRow>("repo", `/rest/v1/agent_engine_repos?agent_id=${eq(agentId)}&select=agent_id,org_id,repo_owner,repo_name,repo_id,state,base_version,detail`))[0] ?? null;
+      return (await rows<RepoRow>("repo", `/rest/v1/agent_engine_repos?agent_id=${eq(agentId)}&select=agent_id,org_id,repo_owner,repo_name,repo_id,state,main_protected,base_version,detail`))[0] ?? null;
     },
-    async insertRepo(r, by) {
-      const res = await call("repo insert", "/rest/v1/agent_engine_repos", {
-        method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ ...r, created_by: by }),
-      }, [201, 409]);
+    async upsertRepo(r, by) {
+      const res = await call("repo upsert", "/rest/v1/agent_engine_repos?on_conflict=agent_id", {
+        method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({ ...r, detail: null, created_by: by }),
+      }, [200, 201, 204, 409]);
       return res.status === 409 ? "taken" : "ok";
-    },
-    async updateRepo(agentId, patch) {
-      await call("repo update", `/rest/v1/agent_engine_repos?agent_id=${eq(agentId)}`, {
-        method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify(patch),
-      }, [200, 204]);
     },
     async builds(agentId) {
       return await rows<BuildRow>("builds", `/rest/v1/agent_engine_builds?agent_id=${eq(agentId)}&select=*&order=imported_at.desc&limit=50`);
@@ -126,8 +95,8 @@ export function restDb(env: (k: string) => string): Db {
       if (!UUID.test(id)) return null;
       return (await rows<BuildRow>("build", `/rest/v1/agent_engine_builds?id=${eq(id)}&select=*`))[0] ?? null;
     },
-    async buildByRun(agentId, runId) {
-      return (await rows<BuildRow>("build by run", `/rest/v1/agent_engine_builds?agent_id=${eq(agentId)}&run_id=${eq(runId)}&select=*`))[0] ?? null;
+    async buildBySha(agentId, sha) {
+      return (await rows<BuildRow>("build by sha", `/rest/v1/agent_engine_builds?agent_id=${eq(agentId)}&jar_sha256=${eq(sha)}&select=*`))[0] ?? null;
     },
     async insertBuild(b) {
       const r = await call("build insert", "/rest/v1/agent_engine_builds?on_conflict=agent_id,jar_sha256", {
@@ -140,21 +109,52 @@ export function restDb(env: (k: string) => string): Db {
       if (!have) throw new DbError("build insert", 409);
       return have;
     },
+    async signedUploadUrl(path) {
+      const r = await call("upload sign", `/storage/v1/object/upload/sign/${BUCKET}/${path}`, { method: "POST", body: "{}" });
+      const o = await r.json() as { url?: unknown };
+      if (typeof o.url !== "string") throw new DbError("upload sign", 502);
+      return absolute(o.url);
+    },
+    async getJar(path, maxBytes) {
+      const r = await fetch(`${url}/storage/v1/object/authenticated/${BUCKET}/${path}`, {
+        headers: { apikey: service, Authorization: `Bearer ${service}` }, signal: AbortSignal.timeout(120_000), redirect: "error",
+      });
+      if (r.status === 400 || r.status === 404) { await r.body?.cancel(); return null; }
+      if (!r.ok || !r.body) { await r.body?.cancel(); throw new DbError("jar read", r.status); }
+      const declared = Number(r.headers.get("content-length") ?? "0");
+      if (declared > maxBytes) { await r.body.cancel(); throw new DbError("jar read", 413); }
+      const parts: Uint8Array[] = [];
+      let n = 0;
+      for await (const chunk of r.body) {
+        n += chunk.length;
+        if (n > maxBytes) throw new DbError("jar read", 413);
+        parts.push(chunk);
+      }
+      const out = new Uint8Array(n);
+      let o = 0;
+      for (const p of parts) { out.set(p, o); o += p.length; }
+      return out;
+    },
     async putJar(path, jar) {
-      const r = await fetch(`${url}/storage/v1/object/agent-engines/${path}`, {
+      const r = await fetch(`${url}/storage/v1/object/${BUCKET}/${path}`, {
         method: "POST", headers: { apikey: service, Authorization: `Bearer ${service}`, "Content-Type": "application/java-archive", "x-upsert": "true" },
         body: jar as BodyInit, signal: AbortSignal.timeout(120_000),
       });
       if (!r.ok) { await r.body?.cancel(); throw new DbError("jar upload", r.status); }
       await r.body?.cancel();
     },
+    async removeJar(path) {
+      const r = await fetch(`${url}/storage/v1/object/${BUCKET}`, {
+        method: "DELETE", headers: svc, body: JSON.stringify({ prefixes: [path] }), signal: t(),
+      });
+      await r.body?.cancel();
+    },
     async signedJarUrl(path, seconds) {
-      const r = await call("jar sign", `/storage/v1/object/sign/agent-engines/${path}`, { method: "POST", body: JSON.stringify({ expiresIn: seconds }) });
+      const r = await call("jar sign", `/storage/v1/object/sign/${BUCKET}/${path}`, { method: "POST", body: JSON.stringify({ expiresIn: seconds }) });
       const o = await r.json() as { signedURL?: unknown; signedUrl?: unknown };
       const rel = typeof o.signedURL === "string" ? o.signedURL : typeof o.signedUrl === "string" ? o.signedUrl : null;
       if (!rel) throw new DbError("jar sign", 502);
-      const pub = env("AGENT_GITHUB_PUBLIC_SUPABASE_URL") || url;
-      return rel.startsWith("http") ? rel : `${pub}/storage/v1${rel.startsWith("/") ? rel : `/${rel}`}`;
+      return absolute(rel);
     },
   };
 }

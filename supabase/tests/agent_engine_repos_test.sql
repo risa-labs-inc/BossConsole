@@ -1,8 +1,8 @@
--- Agents built from the org's own Max: agents.github, engine repos/builds RLS, version pins, provisioner read, audit.
+-- Agents built from the org's own Max (no GitHub App): engine repos/builds RLS, Max-built uploads, version pins, provisioner read, audit.
 begin;
-select plan(29);
+select plan(30);
 
--- a1 owner, a2 agent manager (publish, no github), a3 agent editor (view only here), b1 owner of another org, p1 provisioner.
+-- a1 owner, a2 agent manager (publish), a3 agent editor (view only here), b1 owner of another org, p1 provisioner.
 insert into auth.users (id, email, email_confirmed_at) values
     ('ce000000-0000-4000-8000-0000000000a1', 'owner@eng.test', now()),
     ('ce000000-0000-4000-8000-0000000000a2', 'manager@eng.test', now()),
@@ -44,10 +44,8 @@ insert into public.agents (slug, org_id, name, plugin_id, created_by, live_versi
 insert into ids select 'agent', id from public.agents where slug = 'engagent';
 
 -- What the edge function writes with the service role.
-insert into public.org_github_connections (org_id, installation_id, account_login, account_id, connected_by)
-    values (pg_temp.id('org'), 101, 'eng-inc', 77, pg_temp.u('a1'));
-insert into public.agent_engine_repos (agent_id, org_id, repo_owner, repo_name, repo_id, created_by)
-    values (pg_temp.id('agent'), pg_temp.id('org'), 'eng-inc', 'engagent-max', 4242, pg_temp.u('a1'));
+insert into public.agent_engine_repos (agent_id, org_id, repo_owner, repo_name, repo_id, state, created_by)
+    values (pg_temp.id('agent'), pg_temp.id('org'), 'eng-inc', 'engagent-max', 4242, 'seeding', pg_temp.u('a1'));
 update public.agent_engine_repos set state = 'ready', base_version = '1.2.33' where agent_id = pg_temp.id('agent');
 insert into public.agent_engine_builds (id, agent_id, org_id, repo, commit_sha, run_id, run_url, engine_version, message,
     jar_sha256, jar_size, storage_path, imported_by)
@@ -67,29 +65,35 @@ reset role;
 select ok(not (select engine_required from public.agent_engine_repos where agent_id = pg_temp.id('agent')),
     'setup has not yet made the engine pin mandatory for the existing live version');
 
--- ---- permission ----
-select ok('agents.github' = any (public.agents_permission_catalog()), 'agents.github is in the catalog');
-select ok(public.user_has_org_permission(pg_temp.u('a1'), pg_temp.id('org'), 'agents.github'), 'the org owner holds it');
-select ok(not public.user_has_org_permission(pg_temp.u('a2'), pg_temp.id('org'), 'agents.github'), 'an agent manager does not');
+-- ---- no GitHub App: no new permission, no connection tables ----
+select ok(not ('agents.github' = any (public.agents_permission_catalog())), 'no agents.github permission: repo work needs agents.evolve');
+select is(to_regclass('public.org_github_connections'), null, 'no GitHub App connection table');
+select ok(not (select main_protected from public.agent_engine_repos where agent_id = pg_temp.id('agent')),
+    'main protection is recorded as unknown/false until Max reports it');
 
 -- ---- constraints ----
 select throws_ok($$ insert into public.agent_engine_repos (agent_id, org_id, repo_owner, repo_name, repo_id)
     values (pg_temp.id('agent'), pg_temp.id('org'), 'eng-inc', '..', 1) $$, '23514', null, 'a dot-dot repo name is refused');
 select throws_ok($$ update public.agent_engine_builds set commit_sha = 'nope' where run_id = 900 $$, '23514', null,
     'a commit must be a full sha');
+select throws_ok($$ update public.agent_engine_builds set source = 'laptop' where run_id = 900 $$, '23514', null,
+    'a build source is max or ci');
+select lives_ok($$ insert into public.agent_engine_builds (id, agent_id, org_id, repo, commit_sha, engine_version, message,
+    jar_sha256, jar_size, storage_path, imported_by) values ('ce000000-0000-4000-8000-00000000bb03', pg_temp.id('agent'), pg_temp.id('org'),
+    'eng-inc/engagent-max', repeat('f', 40), '1.2.33', 'Max-built', repeat('f', 64), 35000000, 'o/a/f.jar', pg_temp.u('a2')) $$,
+    'a Max-built upload needs no CI run');
 
 -- ---- reads ----
 set local role authenticated;
 select pg_temp.as_user('a3');
 select is((select count(*)::int from public.agent_engine_repos), 1, 'an editor (agents.view) reads the repo');
-select is((select count(*)::int from public.agent_engine_builds), 2, 'and the builds');
-select is((select account_login from public.org_github_connections), 'eng-inc', 'and the connection');
+select is((select count(*)::int from public.agent_engine_builds), 3, 'and the builds');
 select throws_ok($$ insert into public.agent_engine_builds (agent_id, org_id, repo, commit_sha, run_id, run_url, engine_version,
     jar_sha256, jar_size, storage_path) values (pg_temp.id('agent'), pg_temp.id('org'), 'a/b', repeat('e', 40), 1, 'https://github.com/x',
     '1.0.0', repeat('e', 64), 1, 'p') $$, '42501', null, 'clients cannot write builds');
-select throws_ok($$ select count(*) from public.github_connect_states $$, '42501', null, 'install states are service-only');
 select is((public.agent_engine_overview(pg_temp.id('agent'))->'repo'->>'state'), 'ready', 'the overview shows the repo');
-select is(jsonb_array_length(public.agent_engine_overview(pg_temp.id('agent'))->'builds'), 2, 'and the builds');
+select is(jsonb_array_length(public.agent_engine_overview(pg_temp.id('agent'))->'builds'), 3, 'and the builds');
+select is((public.agent_engine_overview(pg_temp.id('agent'))->'builds'->0->>'source'), 'max', 'with where each came from');
 
 -- ---- pins ----
 select throws_ok($$ select public.record_agent_version_engine(pg_temp.id('agent'), '1.0.1', 'ce000000-0000-4000-8000-00000000bb01') $$,
@@ -127,8 +131,8 @@ select throws_ok($$ select * from public.agent_live_engines(array[pg_temp.id('ag
 -- ---- audit ----
 reset role;
 select is((select count(*)::int from public.agent_audit_log where org_id = pg_temp.id('org')
-           and action in ('github.connect', 'engine.repo_create', 'engine.repo_state', 'engine.build_import', 'engine.version_pin')), 6,
-    'connection, repo, state, two imports and the pin are audited');
+           and action in ('engine.repo_create', 'engine.repo_state', 'engine.build_import', 'engine.version_pin')), 6,
+    'repo, state, three imports and the pin are audited');
 select is((select actor from public.agent_audit_log where action = 'engine.repo_create' and org_id = pg_temp.id('org')), pg_temp.u('a1'),
     'a service-role write is attributed to the person it acted for');
 select is((select actor from public.agent_audit_log where action = 'engine.version_pin' and org_id = pg_temp.id('org')), pg_temp.u('a2'),

@@ -1,47 +1,45 @@
-# Agent GitHub engines
+# Agent engine repositories (no GitHub App)
 
-Deploy with the companion migration and updated optimist console/provisioner and Max host.
+Deploy with the companion migration, the optimist console/provisioner and the Max host.
 This feature branch does not deploy any service or modify production data.
 
-Register a dedicated GitHub App. Required repository permissions: Administration write,
-Contents write, Pull requests write, Workflows write, Actions read, Checks read and Metadata read.
-Add organisation **Members read** permission to verify the connecting GitHub user is an active org owner.
-Select **Request user authorization (OAuth) during installation**. Set the OAuth callback
-URL to `<supabase>/functions/v1/agent-github/connect/callback` and use the same setup URL.
-The callback requires both the single-use state and OAuth `code`; it exchanges the code
-and verifies the requested installation appears in `GET /user/installations`, then requires
-active admin membership of that GitHub organisation. A bare
-installation ID is never accepted. See [GitHub's setup URL guidance](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/about-the-setup-url).
+There is **no GitHub App and no GitHub credential on the platform**. The person's own Max does the
+GitHub work with the person's own GitHub sign-in (`gh`, already connected on their pod):
 
-Configure edge-function secrets (never in source):
+1. `engine_repo_create` (Max): creates a private repo under the person's account or an org they
+   belong to, pushes clean `stock` and `main` snapshots of their committed Max source, protects main
+   if GitHub allows it, then calls `POST /repos/link` here.
+2. `engine_checkout` / `engine_build` / `engine_propose` (Max): work on `max/*` branches and open
+   draft PRs with `gh`. People review and merge on GitHub.
+3. `engine_import` (Max): fetches `origin/main`, builds and tests the chosen commit **from a clean
+   checkout**, then `POST /builds/upload` (a one-time storage upload URL), PUTs the jar and calls
+   `POST /builds/import`.
 
-- BOSS_AGENTS_GH_APP_ID
-- BOSS_AGENTS_GH_APP_SLUG
-- BOSS_AGENTS_GH_APP_PRIVATE_KEY (PKCS#1 or PKCS#8 PEM)
-- BOSS_AGENTS_GH_APP_CLIENT_ID
-- BOSS_AGENTS_GH_APP_CLIENT_SECRET
-- AGENTS_CONSOLE_URL (console origin)
+Routes (every call carries the caller's BOSS JWT; decided with `user_has_org_permission`):
 
-No webhook is required in v1. Tokens are minted per request, repository-restricted and expire
-in an hour. Max receives no workflows or administration permission. Main requires a review
-and CI including for admins, stock is locked, and the tool pushes only max/* branches.
-Private repository protection needs a GitHub plan that supports it; setup fails closed if
-GitHub refuses protection. Local test token mode never relaxes protection.
+| Route | Needs | Does |
+|---|---|---|
+| `/repos/link` | agents.evolve | Records `owner/name`, GitHub repo id, base version, whether main is protected. Same repo refreshes; a different repo is refused once builds exist; a repo another agent links is refused. |
+| `/authorize` | agents.evolve | Fresh check before each Max repo operation. Returns the repo only. |
+| `/builds` | agents.view | Repo and imported builds. |
+| `/builds/upload` | agents.publish | One-time upload URL under `<org>/<agent>/incoming/<uuid>.jar` (≤100 MB). Known SHA-256 returns the existing build. |
+| `/builds/import` | agents.publish | Reads the upload, recomputes SHA-256 (must equal the claim), checks the jar is a Max engine whose packed source is the claimed commit and whose adapter template enforces pins (`repo-engine-pin-v1`), stores it at `<org>/<agent>/<sha256>.jar`, deletes the incoming object. |
+| `/builds/url` | agents.publish | Short-lived download URL for the console's publish. |
 
-For local tests only, AGENT_GITHUB_TEST_MODE=1, AGENT_GITHUB_TEST_TOKEN,
-AGENT_GITHUB_TEST_ACCOUNT, AGENT_GITHUB_TEST_ACCOUNT_TYPE and AGENT_GITHUB_PUBLIC_URL
-can stand in for an App. SUPABASE_URL must be loopback or a named local-stack container.
-This mode tests repository APIs, but does not prove the real App installation or OAuth flow.
-Never configure it on a production deployment.
+Safety that remains: the console bundles the exact stored bytes into the adapter with their SHA-256
+pin; `record_agent_version_engine` binds version → build once; `require_agent_engine_pin` refuses
+unpinned publications of repo-backed agents; the provisioner writes the pin into `agents.json`; the
+host and adapter refuse mismatching bytes before unloading the running version.
 
-Run `deno test --config deno.json --allow-env --allow-net tests/` here and
+Trust change versus the App design: the platform no longer independently proves a build came from a
+CI run on main. It trusts the publisher's own Max (an `agents.publish` holder, who could publish any
+persona anyway) to build a commit of main from a clean checkout; the commit packed in the jar is
+verified and shown on every version, so reviewers can audit the exact source.
+
+Tests: `deno test --config deno.json --allow-env --allow-net tests/` here, and
 `supabase test db supabase/tests/agent_engine_repos_test.sql` against a disposable local stack.
-The workflow builds/tests the whole engine without store credentials. Import checks main,
-workflow, event, successful result and embedded source commit; it bounds archive expansion
-and stores by SHA-256 in a private bucket. Publishing pins before changing the live version.
+No secrets are needed beyond the standard SUPABASE_URL / anon / service-role keys.
+`AGENT_GITHUB_PUBLIC_SUPABASE_URL` optionally rewrites signed URLs for local stacks.
 
-Existing repository linking and automatic upstream release notifications are follow-ups.
-
-Repositories are configured for merge commits only (squash/rebase merging disabled). Upstream PRs
-carry a baseline commit in their ancestry; keep that merge policy so future updates retain the merge
-base. Evolve build requests use /authorize to refresh org authorization without minting GitHub tokens.
+Follow-ups: sweep `incoming/` objects that were never imported; optional CI provenance (`source = 'ci'`)
+if an org later wants GitHub Actions builds.

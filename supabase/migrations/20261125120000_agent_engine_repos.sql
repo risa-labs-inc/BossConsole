@@ -1,65 +1,29 @@
 -- ============================================================================
--- Agents built from the org's own Max: a GitHub App installed on the organisation, one engine repo per
--- agent (created by the platform, seeded by the person's Max), builds imported from that repo's CI on
--- main, and the build each published adapter version bundles (its pin). Design: optimist
--- docs/custom-max-agents.md.
+-- Agents built from the org's own Max: one engine repo per agent, created and seeded by the person's own
+-- Max with their own GitHub sign-in (gh), engine builds of that repo's main branch that Max built and
+-- uploaded, and the build each published adapter version bundles (its pin). No GitHub App and no GitHub
+-- credential on the platform. Design: optimist docs/custom-max-agents.md.
 --
 -- Every write goes through the agent-github edge function (service role) or a definer RPC here; clients
--- only read, under agents.view on the agent's organisation. No GitHub credential is ever stored: the App's
--- key is an edge-function secret and installation tokens are minted per call.
+-- only read, under agents.view on the agent's organisation. Linking a repo needs agents.evolve; importing
+-- a build needs agents.publish. The platform verifies every uploaded jar (Max plugin id, the claimed
+-- commit embedded in its packed source, a pin-enforcing adapter template) and pins it by SHA-256.
 -- ============================================================================
-
--- ----------------------------------------------------------------------------
--- 1. Permission: connect the org's GitHub and create or link engine repos. Org admins hold it.
--- ----------------------------------------------------------------------------
-INSERT INTO public.permissions (name, description, is_system) VALUES
-    ('agents.github', 'Connect the organisation''s GitHub and create or link agent engine repositories', true)
-ON CONFLICT (name) DO UPDATE SET is_system = true, description = EXCLUDED.description;
-
--- Appended so existing positions keep their order.
-CREATE OR REPLACE FUNCTION public.agents_permission_catalog() RETURNS text[]
-    LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
-    SELECT ARRAY['agents.view', 'agents.edit', 'agents.publish', 'agents.evolve', 'agents.access', 'agents.domains',
-                 'agents.capabilities', 'agents.github'];
-$$;
-
-INSERT INTO public.role_permissions (role_id, permission_id)
-    SELECT orl.role_id, p.id FROM public.organisation_roles orl CROSS JOIN public.permissions p
-    WHERE orl.kind = 'admin' AND p.name = 'agents.github'
-    ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- ----------------------------------------------------------------------------
 -- 2. Tables.
 -- ----------------------------------------------------------------------------
--- The org's installation of the platform GitHub App (one per org). installation_id is not a secret.
-CREATE TABLE IF NOT EXISTS public.org_github_connections (
-    org_id          uuid PRIMARY KEY REFERENCES public.organisations(id) ON DELETE CASCADE,
-    installation_id bigint NOT NULL UNIQUE CHECK (installation_id > 0),
-    account_login   text NOT NULL CHECK (account_login ~ '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$'),
-    account_id      bigint NOT NULL CHECK (account_id > 0),
-    status          text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'removed')),
-    connected_by    uuid REFERENCES auth.users(id) ON DELETE SET NULL,
-    connected_at    timestamptz NOT NULL DEFAULT now(),
-    updated_at      timestamptz NOT NULL DEFAULT now()
-);
-
--- Single-use state for the install redirect: binds the GitHub callback to the org and person who started it.
-CREATE TABLE IF NOT EXISTS public.github_connect_states (
-    nonce      text PRIMARY KEY CHECK (nonce ~ '^[A-Za-z0-9_-]{32,64}$'),
-    org_id     uuid NOT NULL REFERENCES public.organisations(id) ON DELETE CASCADE,
-    user_id    uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    expires_at timestamptz NOT NULL
-);
-
--- An agent's engine repository. seeding: created, waiting for the person's Max to push stock and main;
--- ready: CI workflow written and main protected.
+-- An agent's engine repository on GitHub, created and seeded by the person's Max (their own gh sign-in),
+-- then linked here. ready: stock and main pushed. main_protected: whether GitHub accepted main's protection
+-- (private repos on free plans cannot have it); imports only ever take commits on main either way.
 CREATE TABLE IF NOT EXISTS public.agent_engine_repos (
     agent_id     uuid PRIMARY KEY REFERENCES public.agents(id) ON DELETE CASCADE,
     org_id       uuid NOT NULL REFERENCES public.organisations(id) ON DELETE CASCADE,
     repo_owner   text NOT NULL CHECK (repo_owner ~ '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$'),
     repo_name    text NOT NULL CHECK (repo_name ~ '^[A-Za-z0-9._-]{1,100}$' AND repo_name NOT IN ('.', '..')),
     repo_id      bigint NOT NULL CHECK (repo_id > 0),
-    state        text NOT NULL DEFAULT 'seeding' CHECK (state IN ('seeding', 'ready', 'error')),
+    state        text NOT NULL DEFAULT 'ready' CHECK (state IN ('seeding', 'ready', 'error')),
+    main_protected boolean NOT NULL DEFAULT false,
     engine_required boolean NOT NULL DEFAULT false,
     base_version text CHECK (base_version ~ '^[0-9]+\.[0-9]+\.[0-9]+$'),
     detail       text CHECK (char_length(detail) <= 300),
@@ -70,15 +34,17 @@ CREATE TABLE IF NOT EXISTS public.agent_engine_repos (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_engine_repos_org ON public.agent_engine_repos (org_id);
 
--- A CI build of the engine repo's main branch, verified and copied into the private agent-engines bucket.
+-- A build of a commit on the engine repo's main branch. source 'max': built by the person's Max from a clean
+-- checkout and uploaded; the platform verified the jar and stored it by SHA-256 in the private bucket.
 CREATE TABLE IF NOT EXISTS public.agent_engine_builds (
     id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     agent_id     uuid NOT NULL REFERENCES public.agents(id) ON DELETE CASCADE,
     org_id       uuid NOT NULL REFERENCES public.organisations(id) ON DELETE CASCADE,
     repo         text NOT NULL CHECK (repo ~ '^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$'),
     commit_sha   text NOT NULL CHECK (commit_sha ~ '^[0-9a-f]{40}$'),
-    run_id       bigint NOT NULL CHECK (run_id > 0),
-    run_url      text NOT NULL CHECK (run_url ~ '^https://github\.com/'),
+    source       text NOT NULL DEFAULT 'max' CHECK (source IN ('max', 'ci')),
+    run_id       bigint CHECK (run_id > 0),
+    run_url      text CHECK (run_url ~ '^https://github\.com/'),
     engine_version text NOT NULL CHECK (engine_version ~ '^[0-9]+\.[0-9]+\.[0-9]+$'),
     message      text NOT NULL DEFAULT '' CHECK (char_length(message) <= 200),
     jar_sha256   text NOT NULL CHECK (jar_sha256 ~ '^[0-9a-f]{64}$'),
@@ -109,22 +75,17 @@ GRANT UPDATE (running_engine_commit) ON public.agent_installs TO authenticated;
 -- ----------------------------------------------------------------------------
 -- 3. Row-level security: read with agents.view on the org; no client writes.
 -- ----------------------------------------------------------------------------
-ALTER TABLE public.org_github_connections ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.github_connect_states ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_engine_repos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_engine_builds ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_version_engines ENABLE ROW LEVEL SECURITY;
 
-REVOKE ALL ON public.org_github_connections, public.github_connect_states, public.agent_engine_repos,
+REVOKE ALL ON public.agent_engine_repos,
     public.agent_engine_builds, public.agent_version_engines FROM PUBLIC, anon, authenticated;
-GRANT ALL ON public.org_github_connections, public.github_connect_states, public.agent_engine_repos,
+GRANT ALL ON public.agent_engine_repos,
     public.agent_engine_builds, public.agent_version_engines TO service_role;
-GRANT SELECT ON public.org_github_connections, public.agent_engine_repos, public.agent_engine_builds,
+GRANT SELECT ON public.agent_engine_repos, public.agent_engine_builds,
     public.agent_version_engines TO authenticated;
 
-DROP POLICY IF EXISTS "org_github_connections view" ON public.org_github_connections;
-CREATE POLICY "org_github_connections view" ON public.org_github_connections
-    FOR SELECT TO authenticated USING ((SELECT public.has_org_permission(org_id, 'agents.view')));
 DROP POLICY IF EXISTS "agent_engine_repos view" ON public.agent_engine_repos;
 CREATE POLICY "agent_engine_repos view" ON public.agent_engine_repos
     FOR SELECT TO authenticated USING ((SELECT public.has_org_permission(org_id, 'agents.view')));
@@ -144,37 +105,27 @@ CREATE OR REPLACE FUNCTION public.agent_engine_audit() RETURNS trigger
 DECLARE
     actor uuid := public.agent_audit_actor();
 BEGIN
-    IF TG_TABLE_NAME = 'org_github_connections' THEN
-        IF TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND (OLD.status IS DISTINCT FROM NEW.status
-                                                     OR OLD.installation_id IS DISTINCT FROM NEW.installation_id)) THEN
-            INSERT INTO public.agent_audit_log (org_id, agent_id, actor, action, detail)
-                VALUES (NEW.org_id, NULL, COALESCE(actor, NEW.connected_by),
-                        CASE WHEN NEW.status = 'active' THEN 'github.connect' ELSE 'github.disconnect' END,
-                        jsonb_build_object('account', NEW.account_login, 'installation_id', NEW.installation_id));
-        END IF;
-    ELSIF TG_TABLE_NAME = 'agent_engine_repos' THEN
+    IF TG_TABLE_NAME = 'agent_engine_repos' THEN
         IF TG_OP = 'INSERT' THEN
             INSERT INTO public.agent_audit_log (org_id, agent_id, actor, action, detail)
                 VALUES (NEW.org_id, NEW.agent_id, COALESCE(actor, NEW.created_by), 'engine.repo_create',
                         jsonb_build_object('repo', NEW.repo_owner || '/' || NEW.repo_name));
-        ELSIF OLD.state IS DISTINCT FROM NEW.state THEN
+        ELSIF OLD.state IS DISTINCT FROM NEW.state OR OLD.repo_id IS DISTINCT FROM NEW.repo_id THEN
             INSERT INTO public.agent_audit_log (org_id, agent_id, actor, action, detail)
                 VALUES (NEW.org_id, NEW.agent_id, actor, 'engine.repo_state',
-                        jsonb_build_object('repo', NEW.repo_owner || '/' || NEW.repo_name, 'from', OLD.state, 'to', NEW.state));
+                        jsonb_build_object('repo', NEW.repo_owner || '/' || NEW.repo_name, 'from', OLD.state, 'to', NEW.state,
+                                           'repo_id', NEW.repo_id));
         END IF;
     ELSIF TG_TABLE_NAME = 'agent_engine_builds' THEN
         INSERT INTO public.agent_audit_log (org_id, agent_id, actor, action, detail)
             VALUES (NEW.org_id, NEW.agent_id, COALESCE(actor, NEW.imported_by), 'engine.build_import',
-                    jsonb_build_object('repo', NEW.repo, 'commit', NEW.commit_sha, 'run_id', NEW.run_id, 'sha256', NEW.jar_sha256));
+                    jsonb_build_object('repo', NEW.repo, 'commit', NEW.commit_sha, 'source', NEW.source, 'sha256', NEW.jar_sha256));
     END IF;
     RETURN NULL;
 END;
 $$;
 REVOKE ALL ON FUNCTION public.agent_engine_audit() FROM PUBLIC, anon, authenticated;
 
-DROP TRIGGER IF EXISTS org_github_connections_audit ON public.org_github_connections;
-CREATE TRIGGER org_github_connections_audit AFTER INSERT OR UPDATE ON public.org_github_connections
-    FOR EACH ROW EXECUTE FUNCTION public.agent_engine_audit();
 DROP TRIGGER IF EXISTS agent_engine_repos_audit ON public.agent_engine_repos;
 CREATE TRIGGER agent_engine_repos_audit AFTER INSERT OR UPDATE ON public.agent_engine_repos
     FOR EACH ROW EXECUTE FUNCTION public.agent_engine_audit();
@@ -189,9 +140,6 @@ BEGIN
     RETURN NEW;
 END;
 $$;
-DROP TRIGGER IF EXISTS org_github_connections_touch ON public.org_github_connections;
-CREATE TRIGGER org_github_connections_touch BEFORE UPDATE ON public.org_github_connections
-    FOR EACH ROW EXECUTE FUNCTION public.agent_engine_touch();
 DROP TRIGGER IF EXISTS agent_engine_repos_touch ON public.agent_engine_repos;
 CREATE TRIGGER agent_engine_repos_touch BEFORE UPDATE ON public.agent_engine_repos
     FOR EACH ROW EXECUTE FUNCTION public.agent_engine_touch();
@@ -260,7 +208,7 @@ $$;
 REVOKE ALL ON FUNCTION public.agent_live_engines(uuid[]) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.agent_live_engines(uuid[]) TO authenticated;
 
--- The console's Engine tab in one read: connection, repo, recent builds, which version pins which build and
+-- The console's Engine tab in one read: repo, recent builds, which version pins which build and
 -- how many installs run each commit.
 CREATE OR REPLACE FUNCTION public.agent_engine_overview(p_agent_id uuid) RETURNS jsonb
     LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
@@ -272,12 +220,10 @@ BEGIN
         RAISE EXCEPTION 'Permission denied' USING ERRCODE = '42501';
     END IF;
     RETURN jsonb_build_object(
-        'connection', (SELECT jsonb_build_object('account', c.account_login, 'status', c.status, 'connected_at', c.connected_at)
-                       FROM public.org_github_connections c WHERE c.org_id = a.org_id),
         'repo', (SELECT jsonb_build_object('owner', r.repo_owner, 'name', r.repo_name, 'state', r.state,
-                                           'base_version', r.base_version, 'detail', r.detail, 'created_at', r.created_at)
+                                           'main_protected', r.main_protected, 'base_version', r.base_version, 'detail', r.detail, 'created_at', r.created_at)
                  FROM public.agent_engine_repos r WHERE r.agent_id = a.id),
-        'builds', COALESCE((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'commit', b.commit_sha, 'run_id', b.run_id,
+        'builds', COALESCE((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'commit', b.commit_sha, 'source', b.source, 'run_id', b.run_id,
                                     'run_url', b.run_url, 'engine_version', b.engine_version, 'message', b.message,
                                     'sha256', b.jar_sha256, 'size', b.jar_size, 'imported_at', b.imported_at)
                                     ORDER BY b.imported_at DESC)

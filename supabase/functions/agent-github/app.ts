@@ -1,30 +1,28 @@
 import { type Db, DbError, restDb } from "./db.ts";
-import { ARTIFACT_NAME, EngineCheckError, engineFromArtifact, engineJson, MAX_ARTIFACT_BYTES, sha256Hex, WORKFLOW_FILE, WORKFLOW_PATH, WORKFLOW_YAML } from "./engine.ts";
-import { type GitHubApp, GitHubError, localStack, restGitHub } from "./github.ts";
+import { checkEngineJar, EngineCheckError, MAX_ENGINE_BYTES, sha256Hex } from "./engine.ts";
 
 /**
- * agent-github: the org's GitHub App connection, agent engine repos and their CI builds (design: optimist
- * docs/custom-max-agents.md). Every POST carries the caller's own BOSS/Supabase JWT and is decided here
- * against user_has_org_permission; writes use the service role. GitHub tokens are minted per call and never
- * stored; only /token hands one out, to an agents.evolve holder, for one repository and one hour.
+ * agent-github: agent engine repos and their builds (design: optimist docs/custom-max-agents.md).
+ *
+ * There is no GitHub App and no GitHub credential here. The person's own Max creates and seeds the repo with
+ * their own GitHub sign-in (gh), links it, and later builds a commit of main from a clean checkout and uploads
+ * the jar. The platform decides every call against user_has_org_permission with the caller's BOSS JWT,
+ * verifies each uploaded jar (Max plugin id, the claimed commit packed in its source, a pin-enforcing adapter
+ * template) and stores it by SHA-256. Publishing pins that SHA-256; the provisioner and host enforce it.
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const REPO_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+const REPO_NAME = /^[A-Za-z0-9._-]{1,100}$/;
 const SEMVER = /^\d+\.\d+\.\d+$/;
+const SHA1 = /^[0-9a-f]{40}$/;
+const SHA256 = /^[0-9a-f]{64}$/;
 const MAX_BODY = 4096;
-const STATE_TTL_MS = 10 * 60_000;
 const SIGNED_URL_SECONDS = 600;
-
-/** Max's token: one repository, push branches and open pull requests; read CI. Never workflows or administration. */
-export const EVOLVE_PERMISSIONS = { contents: "write", pull_requests: "write", actions: "read", checks: "read", metadata: "read" } as const;
-/** The platform's own: create repos, write the workflow, protect branches. Never leaves this function. */
-const ADMIN_PERMISSIONS = { administration: "write", contents: "write", workflows: "write", metadata: "read" } as const;
-const READ_PERMISSIONS = { actions: "read", contents: "read", metadata: "read" } as const;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
 };
 
@@ -39,46 +37,12 @@ const fail = (status: number, code: string): never => { throw new HttpError(stat
 
 export interface AppOptions {
   db?: Db;
-  github?: GitHubApp | null;
-  /** The console's origin, where the install callback sends the browser back. */
-  consoleUrl?: string;
-  now?: () => number;
   random?: () => string;
 }
 
-function env(k: string): string {
-  return Deno.env.get(k) ?? "";
-}
-
-/** The App from the function's secrets; test mode only on a local stack. null: not configured. */
-export function githubFromEnv(): GitHubApp | null {
-  const testToken = env("AGENT_GITHUB_TEST_MODE") === "1" ? env("AGENT_GITHUB_TEST_TOKEN") : "";
-  if (testToken) {
-    if (!localStack(env("SUPABASE_URL"))) return null;
-    return restGitHub({
-      appId: "test", appSlug: "test", privateKeyPem: "", testToken, testAccount: env("AGENT_GITHUB_TEST_ACCOUNT"),
-      testAccountType: env("AGENT_GITHUB_TEST_ACCOUNT_TYPE") === "User" ? "User" : "Organization",
-      callbackUrl: `${env("AGENT_GITHUB_PUBLIC_URL")}/connect/callback`,
-    });
-  }
-  const appId = env("BOSS_AGENTS_GH_APP_ID");
-  const appSlug = env("BOSS_AGENTS_GH_APP_SLUG");
-  const key = env("BOSS_AGENTS_GH_APP_PRIVATE_KEY");
-  if (!appId || !appSlug || !key || !env("BOSS_AGENTS_GH_APP_CLIENT_ID") || !env("BOSS_AGENTS_GH_APP_CLIENT_SECRET")) return null;
-  return restGitHub({ appId, appSlug, privateKeyPem: key.replace(/\\n/g, "\n"), clientId: env("BOSS_AGENTS_GH_APP_CLIENT_ID"), clientSecret: env("BOSS_AGENTS_GH_APP_CLIENT_SECRET") });
-}
-
-function randomNonce(): string {
-  const b = crypto.getRandomValues(new Uint8Array(32));
-  return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
 export function createApp(options: AppOptions = {}) {
-  const db = options.db ?? restDb(env);
-  const gh = options.github !== undefined ? options.github : githubFromEnv();
-  const consoleUrl = (options.consoleUrl ?? env("AGENTS_CONSOLE_URL")).replace(/\/$/, "");
-  const now = options.now ?? Date.now;
-  const nonce = options.random ?? randomNonce;
+  const db = options.db ?? restDb((k) => Deno.env.get(k) ?? "");
+  const uploadId = options.random ?? (() => crypto.randomUUID());
 
   async function body(req: Request): Promise<Record<string, unknown>> {
     const text = await req.text();
@@ -96,6 +60,10 @@ export function createApp(options: AppOptions = {}) {
     const v = o[k];
     return typeof v === "string" && UUID.test(v) ? v.toLowerCase() : fail(400, `invalid_${k}`);
   };
+  const match = (o: Record<string, unknown>, k: string, re: RegExp) => {
+    const v = o[k];
+    return typeof v === "string" && re.test(v) ? v : fail(400, `invalid_${k}`);
+  };
 
   async function caller(req: Request): Promise<string> {
     const auth = req.headers.get("Authorization") ?? "";
@@ -104,178 +72,102 @@ export function createApp(options: AppOptions = {}) {
     const id = await db.user(jwt);
     return id ?? fail(401, "unauthorized");
   }
-  async function need(userId: string, orgId: string, ...perms: string[]) {
-    for (const p of perms) if (!(await db.can(userId, orgId, p))) fail(403, "permission_denied");
-  }
   /** The agent, with the caller holding `perms` in its org; an agent they cannot see is 404. */
   async function agentFor(userId: string, agentId: string, ...perms: string[]) {
     const a = await db.agent(agentId);
     if (!a || !(await db.can(userId, a.org_id, "agents.view"))) fail(404, "agent_not_found");
-    await need(userId, a!.org_id, ...perms);
+    for (const p of perms) if (!(await db.can(userId, a!.org_id, p))) fail(403, "permission_denied");
     return a!;
   }
-  const app = () => gh ?? fail(503, "github_not_configured");
-  async function activeConnection(orgId: string) {
-    const c = await db.connection(orgId);
-    if (!c || c.status !== "active") fail(409, "github_not_connected");
-    return c!;
+  async function readyRepo(agentId: string) {
+    const r = await db.repo(agentId) ?? fail(404, "no_repo");
+    if (r.state !== "ready") fail(409, "repo_not_ready");
+    return r;
   }
-  async function adminToken(installationId: number, repoId?: number) {
-    return (await app().token(installationId, { permissions: ADMIN_PERMISSIONS, ...(repoId ? { repositoryIds: [repoId] } : {}) })).token;
-  }
+  const incoming = (orgId: string, agentId: string, id: string) => `${orgId}/${agentId}/incoming/${id}.jar`;
+  const repoView = (r: { repo_owner: string; repo_name: string; state: string; main_protected: boolean; base_version: string | null }) => ({
+    repo: `${r.repo_owner}/${r.repo_name}`, url: `https://github.com/${r.repo_owner}/${r.repo_name}`, state: r.state,
+    main_protected: r.main_protected, base_version: r.base_version,
+  });
 
   const routes: Record<string, (req: Request, user: string) => Promise<Response>> = {
-    // An org admin starts the install; the state binds GitHub's redirect back to them and the org.
-    async "/connect/start"(req, user) {
+    // After the person's Max created the repo with their own gh and pushed stock and main.
+    async "/repos/link"(req, user) {
       const o = await body(req);
-      const orgId = uuidOf(o, "org_id");
-      await need(user, orgId, "agents.github");
-      app();
-      const n = nonce();
-      await db.addState(n, orgId, user, new Date(now() + STATE_TTL_MS).toISOString());
-      return json(200, { url: app().installUrl(n) });
+      const a = await agentFor(user, uuidOf(o, "agent_id"), "agents.evolve");
+      const [owner, name] = match(o, "repo", /^[^/]+\/[^/]+$/).split("/");
+      if (!OWNER.test(owner) || !REPO_NAME.test(name) || name === "." || name === ".." || name.endsWith(".git")) fail(400, "invalid_repo");
+      const repoId = typeof o.repo_id === "number" && Number.isSafeInteger(o.repo_id) && o.repo_id > 0 ? o.repo_id : fail(400, "invalid_repo_id");
+      const base = match(o, "base_version", SEMVER);
+      const mainProtected = o.main_protected === true;
+      const have = await db.repo(a.id);
+      // One repo per agent: re-linking the same repository refreshes it, a different one is refused once builds exist.
+      if (have && have.repo_id !== repoId && (await db.builds(a.id)).length > 0) fail(409, "repo_exists");
+      const r = {
+        agent_id: a.id, org_id: a.org_id, repo_owner: owner, repo_name: name, repo_id: repoId, state: "ready" as const,
+        main_protected: mainProtected, base_version: base,
+      };
+      if (await db.upsertRepo(r, user) === "taken") fail(409, "repo_linked_elsewhere");
+      return json(200, repoView(r));
     },
-    async "/connection"(req, user) {
-      const o = await body(req);
-      const orgId = uuidOf(o, "org_id");
-      await need(user, orgId, "agents.view");
-      const c = await db.connection(orgId);
-      if (!c) return json(200, { connected: false, configured: !!gh, test_mode: gh?.testMode ?? false });
-      let reachable: boolean | null = null;
-      if (gh && c.status === "active") {
-        try { reachable = (await gh.installation(c.installation_id)) !== null; } catch { reachable = null; }
-        if (reachable === false) await db.setConnectionStatus(orgId, "removed");
-      }
-      const status = reachable === false ? "removed" : c.status;
-      return json(200, { connected: status === "active", status, account: c.account_login, reachable, configured: !!gh, test_mode: gh?.testMode ?? false });
-    },
-    async "/connection/remove"(req, user) {
-      const o = await body(req);
-      const orgId = uuidOf(o, "org_id");
-      await need(user, orgId, "agents.github");
-      if (await db.connection(orgId)) await db.setConnectionStatus(orgId, "removed");
-      return json(200, { connected: false });
-    },
-    // Creates the agent's private engine repo in the org's account, empty: the person's Max seeds it.
-    async "/repos"(req, user) {
-      const o = await body(req);
-      const a = await agentFor(user, uuidOf(o, "agent_id"), "agents.github", "agents.evolve");
-      const name = typeof o.name === "string" && REPO_NAME.test(o.name) && !o.name.endsWith(".git") ? o.name : fail(400, "invalid_name");
-      if (await db.repo(a.id)) fail(409, "repo_exists");
-      const c = await activeConnection(a.org_id);
-      const inst = await app().installation(c.installation_id);
-      if (!inst) { await db.setConnectionStatus(a.org_id, "removed"); fail(409, "github_not_connected"); }
-      const token = await adminToken(c.installation_id);
-      const repo = await app().createRepo(token, inst!.account, name, `${a.name}: a Max engine for the BOSS agent ${a.slug}`);
-      const r = await db.insertRepo({ agent_id: a.id, org_id: a.org_id, repo_owner: repo.owner, repo_name: repo.name, repo_id: repo.id, state: "seeding" }, user);
-      if (r === "taken") fail(409, "repo_exists");
-      return json(201, { repo: `${repo.owner}/${repo.name}`, url: repo.htmlUrl, state: "seeding" });
-    },
-    // Fresh authorization for local build/test work, without minting an unused GitHub token.
+    // Fresh authorization before each of Max's repo operations: the repo it may work on, nothing else.
     async "/authorize"(req, user) {
       const o = await body(req);
       const a = await agentFor(user, uuidOf(o, "agent_id"), "agents.evolve");
-      const r = await db.repo(a.id) ?? fail(404, "no_repo");
-      if (r.state !== "ready") fail(409, "repo_not_ready");
-      await activeConnection(a.org_id);
-      return json(200, { repo: `${r.repo_owner}/${r.repo_name}`, state: r.state, base_version: r.base_version });
+      return json(200, repoView(await readyRepo(a.id)));
     },
-    // Max's token for one repository: seeding pushes stock and main before protection exists; evolving pushes max/* branches.
-    async "/token"(req, user) {
-      const o = await body(req);
-      const a = await agentFor(user, uuidOf(o, "agent_id"), "agents.evolve");
-      const purpose = o.purpose === "seed" || o.purpose === "evolve" ? o.purpose : fail(400, "invalid_purpose");
-      const r = await db.repo(a.id) ?? fail(404, "no_repo");
-      if (purpose === "seed" && r.state !== "seeding" && r.state !== "error") fail(409, "repo_already_seeded");
-      if (purpose === "evolve" && r.state !== "ready") fail(409, "repo_not_ready");
-      const c = await activeConnection(a.org_id);
-      const t = await app().token(c.installation_id, { repositoryIds: [r.repo_id], permissions: { ...EVOLVE_PERMISSIONS } });
-      return json(200, {
-        token: t.token, expires_at: t.expiresAt, repo: `${r.repo_owner}/${r.repo_name}`,
-        clone_url: `https://github.com/${r.repo_owner}/${r.repo_name}.git`, state: r.state, base_version: r.base_version,
-      });
-    },
-    // After Max pushed stock and main: the platform's workflow and engine.json on main, then branch protection.
-    async "/repos/finalize"(req, user) {
-      const o = await body(req);
-      const a = await agentFor(user, uuidOf(o, "agent_id"), "agents.evolve");
-      const base = typeof o.base_version === "string" && SEMVER.test(o.base_version) ? o.base_version : fail(400, "invalid_base_version");
-      const r = await db.repo(a.id) ?? fail(404, "no_repo");
-      if (r.state === "ready") return json(200, { state: "ready" });
-      const c = await activeConnection(a.org_id);
-      const token = await adminToken(c.installation_id, r.repo_id);
-      const g = app();
-      if (!(await g.branchSha(token, r.repo_owner, r.repo_name, "main")) || !(await g.branchSha(token, r.repo_owner, r.repo_name, "stock"))) {
-        fail(409, "not_seeded");
-      }
-      try {
-        await g.putFile(token, r.repo_owner, r.repo_name, ".boss/engine.json", engineJson(a.id, base), "main", "BOSS agents platform: engine metadata");
-        await g.putFile(token, r.repo_owner, r.repo_name, WORKFLOW_PATH, WORKFLOW_YAML, "main", "BOSS agents platform: engine CI");
-        await g.setDefaultBranch(token, r.repo_owner, r.repo_name);
-        await g.protect(token, r.repo_owner, r.repo_name, "main", "main");
-        await g.protect(token, r.repo_owner, r.repo_name, "stock", "stock");
-      } catch (e) {
-        await db.updateRepo(a.id, { state: "error", detail: e instanceof GitHubError ? e.message.slice(0, 300) : "finalize failed" });
-        throw e;
-      }
-      await db.updateRepo(a.id, { state: "ready", base_version: base, detail: null });
-      return json(200, { state: "ready" });
-    },
-    // Recent push-to-main runs of the platform workflow, with which are imported.
     async "/builds"(req, user) {
       const o = await body(req);
       const a = await agentFor(user, uuidOf(o, "agent_id"));
       const r = await db.repo(a.id);
-      if (!r || r.state !== "ready") return json(200, { runs: [], imported: await db.builds(a.id) });
-      const c = await activeConnection(a.org_id);
-      const token = (await app().token(c.installation_id, { repositoryIds: [r.repo_id], permissions: { ...READ_PERMISSIONS } })).token;
-      const runs = (await app().runs(token, r.repo_owner, r.repo_name, WORKFLOW_FILE, "main")).filter((x) => x.event === "push" && x.repoId === r.repo_id);
-      const imported = await db.builds(a.id);
-      const byRun = new Map(imported.map((b) => [b.run_id, b.id]));
-      return json(200, {
-        runs: runs.map((x) => ({
-          run_id: x.id, commit: x.headSha, message: x.message, status: x.status, conclusion: x.conclusion, url: x.htmlUrl,
-          created_at: x.createdAt, build_id: byRun.get(x.id) ?? null,
-        })),
-        imported,
-      });
+      return json(200, { repo: r ? repoView(r) : null, imported: await db.builds(a.id) });
     },
-    // Verifies one successful push-to-main run and copies its engine jar into the private bucket.
+    // Step 1 of an import: a one-time upload URL for the jar Max built from a commit on main.
+    async "/builds/upload"(req, user) {
+      const o = await body(req);
+      const a = await agentFor(user, uuidOf(o, "agent_id"), "agents.publish");
+      await readyRepo(a.id);
+      const sha = match(o, "sha256", SHA256);
+      const size = typeof o.size === "number" && Number.isSafeInteger(o.size) && o.size > 0 ? o.size : fail(400, "invalid_size");
+      if (size > MAX_ENGINE_BYTES) fail(413, "engine_too_large");
+      const done = await db.buildBySha(a.id, sha);
+      if (done) return json(200, { build: done, upload_id: null, url: null });
+      const id = uploadId();
+      return json(200, { upload_id: id, url: await db.signedUploadUrl(incoming(a.org_id, a.id, id)) });
+    },
+    // Step 2: verify what arrived and record the build. Idempotent per jar SHA-256.
     async "/builds/import"(req, user) {
       const o = await body(req);
       const a = await agentFor(user, uuidOf(o, "agent_id"), "agents.publish");
-      const runId = typeof o.run_id === "number" && Number.isSafeInteger(o.run_id) && o.run_id > 0 ? o.run_id : fail(400, "invalid_run_id");
-      const r = await db.repo(a.id) ?? fail(404, "no_repo");
-      if (r.state !== "ready") fail(409, "repo_not_ready");
-      const done = await db.buildByRun(a.id, runId);
+      const r = await readyRepo(a.id);
+      const id = uuidOf(o, "upload_id");
+      const commit = match(o, "commit", SHA1);
+      const claimed = match(o, "sha256", SHA256);
+      const message = typeof o.message === "string" ? o.message.replace(/\p{Cc}/gu, " ").slice(0, 200) : "";
+      const done = await db.buildBySha(a.id, claimed);
       if (done) return json(200, { build: done, imported: false });
-      const c = await activeConnection(a.org_id);
-      const g = app();
-      const token = (await g.token(c.installation_id, { repositoryIds: [r.repo_id], permissions: { ...READ_PERMISSIONS } })).token;
-      const run = await g.run(token, r.repo_owner, r.repo_name, runId) ?? fail(404, "run_not_found");
-      if (run.repoId !== r.repo_id) fail(404, "run_not_found");
-      if (run.path !== WORKFLOW_PATH && !run.path.startsWith(`${WORKFLOW_PATH}@`)) fail(422, "not_the_engine_workflow");
-      if (run.event !== "push" || run.headBranch !== "main") fail(422, "not_a_main_build");
-      if (run.status !== "completed" || run.conclusion !== "success") fail(422, "build_not_successful");
-      if (!(await g.onBranch(token, r.repo_owner, r.repo_name, run.headSha, "main"))) fail(422, "commit_not_on_main");
-      const art = (await g.artifacts(token, r.repo_owner, r.repo_name, runId)).find((x) => x.name === ARTIFACT_NAME && !x.expired)
-        ?? fail(422, "artifact_missing");
-      if (art.sizeInBytes > MAX_ARTIFACT_BYTES) fail(413, "artifact_too_large");
-      const zip = await g.download(token, art.archiveDownloadUrl, MAX_ARTIFACT_BYTES);
-      let facts;
-      try { facts = engineFromArtifact(zip, run.headSha); } catch (e) {
-        if (e instanceof EngineCheckError) return json(422, { error: "engine_check_failed", detail: e.message });
-        throw e;
+      const path = incoming(a.org_id, a.id, id);
+      const jar = await db.getJar(path, MAX_ENGINE_BYTES) ?? fail(404, "upload_missing");
+      try {
+        const sha = await sha256Hex(jar);
+        if (sha !== claimed) return json(422, { error: "checksum_mismatch" });
+        let facts;
+        try {
+          facts = checkEngineJar(jar, commit);
+        } catch (e) {
+          if (e instanceof EngineCheckError) return json(422, { error: "engine_check_failed", detail: e.message });
+          throw e;
+        }
+        const final = `${a.org_id}/${a.id}/${sha}.jar`;
+        await db.putJar(final, jar);
+        const build = await db.insertBuild({
+          agent_id: a.id, org_id: a.org_id, repo: `${r.repo_owner}/${r.repo_name}`, commit_sha: commit, source: "max",
+          engine_version: facts.version, message, jar_sha256: sha, jar_size: jar.length, storage_path: final, imported_by: user,
+        });
+        return json(201, { build, imported: true });
+      } finally {
+        await db.removeJar(path);
       }
-      const sha = await sha256Hex(facts.jar);
-      const path = `${a.org_id}/${a.id}/${sha}.jar`;
-      await db.putJar(path, facts.jar);
-      const build = await db.insertBuild({
-        agent_id: a.id, org_id: a.org_id, repo: `${r.repo_owner}/${r.repo_name}`, commit_sha: run.headSha, run_id: run.id,
-        run_url: run.htmlUrl.startsWith("https://github.com/") ? run.htmlUrl : `https://github.com/${r.repo_owner}/${r.repo_name}/actions/runs/${run.id}`,
-        engine_version: facts.version, message: run.message, jar_sha256: sha, jar_size: facts.jar.length, storage_path: path, imported_by: user,
-      });
-      return json(201, { build, imported: true });
     },
     // A short-lived URL of an imported engine jar, for the console's publish (it bundles the jar into the adapter).
     async "/builds/url"(req, user) {
@@ -286,32 +178,11 @@ export function createApp(options: AppOptions = {}) {
     },
   };
 
-  /** GitHub sends the browser here after the install (no JWT: the single-use state is the proof). */
-  async function callback(url: URL): Promise<Response> {
-    const back = (q: string, org?: string) => Response.redirect(`${consoleUrl}${org ? `/orgs/${org}/github` : "/"}?${q}`, 302);
-    const state = url.searchParams.get("state") ?? "";
-    const instId = Number(url.searchParams.get("installation_id"));
-    if (!/^[A-Za-z0-9_-]{32,64}$/.test(state)) return back("github=error&reason=state");
-    const s = await db.takeState(state);
-    if (!s) return back("github=error&reason=state");
-    if (Date.parse(s.expires_at) < now()) return back("github=error&reason=expired", s.org_id);
-    if (!Number.isSafeInteger(instId) || instId <= 0) return back("github=error&reason=installation", s.org_id);
-    if (!(await db.can(s.user_id, s.org_id, "agents.github"))) return back("github=error&reason=permission", s.org_id);
-    if (!(await app().verifyInstaller(url.searchParams.get("code") ?? "", instId))) return back("github=error&reason=installer", s.org_id);
-    const inst = await app().installation(instId);
-    if (!inst) return back("github=error&reason=installation", s.org_id);
-    if (inst.account.type !== "Organization" && !app().testMode) return back("github=error&reason=not_an_organization", s.org_id);
-    const r = await db.upsertConnection({ org_id: s.org_id, installation_id: inst.id, account_login: inst.account.login, account_id: inst.account.id }, s.user_id);
-    if (r === "taken") return back("github=error&reason=installation_in_use", s.org_id);
-    return back("github=connected", s.org_id);
-  }
-
   return async (req: Request): Promise<Response> => {
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     const url = new URL(req.url);
     const path = url.pathname.replace(/^.*\/agent-github/, "") || "/";
     try {
-      if (path === "/connect/callback" && req.method === "GET") return await callback(url);
       const handler = Object.hasOwn(routes, path) ? routes[path] : undefined;
       if (!handler) return json(404, { error: "not_found" });
       if (req.method !== "POST") return json(405, { error: "method_not_allowed" });
@@ -319,11 +190,7 @@ export function createApp(options: AppOptions = {}) {
       return await handler(req, user);
     } catch (e) {
       if (e instanceof HttpError) return json(e.status, { error: e.code });
-      if (e instanceof GitHubError) {
-        const status = e.status === 409 ? 409 : e.status === 413 ? 413 : 502;
-        return json(status, { error: status === 409 ? "repo_name_taken" : "github_unavailable", detail: e.op });
-      }
-      if (e instanceof DbError) return json(503, { error: "unavailable" });
+      if (e instanceof DbError) return json(e.status === 413 ? 413 : 503, { error: e.status === 413 ? "engine_too_large" : "unavailable" });
       console.error("agent-github", e instanceof Error ? e.name : "error");
       return json(500, { error: "internal" });
     }
