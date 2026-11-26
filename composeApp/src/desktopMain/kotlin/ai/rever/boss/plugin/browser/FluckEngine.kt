@@ -2422,6 +2422,7 @@ object FluckEngine {
                 .apply {
                     if (capabilityIsTrue(ChromiumFlagKeys.DISABLE_SANDBOX) || inContainer) disableSandbox()
                 }.apply { applyRemoteDebuggingPort(this) }
+                .apply { BrowserLocationProvider.apiKey?.let { googleApiKey(it) } }
 
         // Add user agent if configured
         BrowserSettings.userAgent?.let { ua ->
@@ -2512,6 +2513,10 @@ object FluckEngine {
 
                     // Auto-grant camera and microphone permissions for video conferencing
                     when (permissionType) {
+                        PermissionType.GEOLOCATION, PermissionType.GEOLOCATION_APPROXIMATE -> {
+                            BrowserLocationPermission.request(params, action)
+                        }
+
                         PermissionType.VIDEO_CAPTURE -> {
                             logger.info(LogCategory.BROWSER, "Granting VIDEO_CAPTURE permission")
                             action.grant()
