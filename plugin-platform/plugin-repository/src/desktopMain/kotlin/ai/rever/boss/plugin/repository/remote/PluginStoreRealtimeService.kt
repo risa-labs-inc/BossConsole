@@ -281,6 +281,7 @@ class PluginStoreRealtimeService {
     }
 
     private fun triggerRefresh() {
+        PluginStoreClient.invalidatePublicReads()
         scope.launch {
             try {
                 onRefreshRequested?.invoke()

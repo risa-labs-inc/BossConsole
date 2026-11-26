@@ -83,7 +83,22 @@ export interface Dependencies {
   rpc(name: string, params: Obj): Promise<unknown>
   secret(name: string): string | undefined
   fetch: typeof fetch
+  /**
+   * Deadline until an upstream answers (every route together; 240 s). A non-streamed reply arrives
+   * only when generation ends, so for those it bounds the whole call. A stream stops being under
+   * it once it answered: the stream timeouts below apply instead, never a cap on its length.
+   */
   upstreamTimeoutMs?: number
+  /** Once a stream answered, the wait for its first body byte (default 120 s). */
+  streamFirstByteTimeoutMs?: number
+  /** Longest silence between upstream body bytes once a stream is flowing (default 90 s). */
+  streamIdleTimeoutMs?: number
+  /**
+   * Wall clock from the request's arrival after which a still-running stream is ended with
+   * `stream_time_limit` (default 380 s), so it settles and tells the client before the platform's
+   * 400 s worker limit kills it without either.
+   */
+  streamTimeLimitMs?: number
   settlementTimeoutMs?: number
   audit?: (event: string, requestId: string) => void
   /** Sink for per-attempt upstream error lines; defaults to console.warn(JSON). */
@@ -1314,8 +1329,50 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         cleanup()
         throw new Error("Missing stream")
       }
+      // The answer-deadline no longer applies: a long answer that keeps streaming is never cut for
+      // its length, only for silence (first byte, then between bytes) or the platform's wall clock.
+      clearTimeout(timeout)
+      const firstByteMs = deps.streamFirstByteTimeoutMs ?? 120_000
+      const idleMs = deps.streamIdleTimeoutMs ?? 90_000
+      let cut: "first_byte" | "idle" | "time_limit" | undefined
+      const cutOff = (why: NonNullable<typeof cut>) => {
+        cut ??= why
+        abort.abort()
+      }
+      // Any byte counts as activity, comments and pings included (events() drops those).
+      let lastByte = performance.now()
+      let gotByte = false
+      const body = upstream.body.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            lastByte = performance.now()
+            gotByte = true
+            controller.enqueue(chunk)
+          },
+        }),
+      )
+      // Armed only while a read is waiting on the upstream, so a slow client (backpressure) is
+      // never mistaken for a silent upstream.
+      let watchdog: ReturnType<typeof setTimeout> | undefined
+      const arm = () => {
+        clearTimeout(watchdog)
+        const left = lastByte + (gotByte ? idleMs : firstByteMs) - performance.now()
+        watchdog = setTimeout(() => {
+          const window = gotByte ? idleMs : firstByteMs
+          if (performance.now() - lastByte >= window) cutOff(gotByte ? "idle" : "first_byte")
+          else arm()
+        }, Math.max(0, left))
+      }
+      const limit = setTimeout(
+        () => cutOff("time_limit"),
+        Math.max(0, (deps.streamTimeLimitMs ?? 380_000) - (performance.now() - t0)),
+      )
+      const stopTimers = () => {
+        clearTimeout(watchdog)
+        clearTimeout(limit)
+      }
       const adapter = new StreamAdapter(input.model, served.connection.api_type, requestId)
-      const iterator = events(upstream.body, abort.signal)[Symbol.asyncIterator]()
+      const iterator = events(body, abort.signal)[Symbol.asyncIterator]()
       const encoder = new TextEncoder()
       const frame = (data: unknown) =>
         encoder.encode(`data: ${typeof data === "string" ? data : JSON.stringify(data)}\n\n`)
@@ -1327,6 +1384,7 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
         closed = true
         stage.upstream_total_ms = lap(attemptStart)
         abort.abort()
+        stopTimers()
         cleanup()
         await iterator.return?.(undefined).catch(() => {})
         if (adapter.finished) cacheMiss(adapter.usage)
@@ -1369,7 +1427,12 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           try {
             // A pull that enqueues nothing is never called again: keep reading until a frame is out.
             while (true) {
-              pending ??= iterator.next()
+              if (!pending) {
+                pending = iterator.next()
+                arm()
+                // Settled reads disarm; a later read re-arms from the last byte seen.
+                pending.then(() => clearTimeout(watchdog), () => clearTimeout(watchdog))
+              }
               let timer: ReturnType<typeof setTimeout> | undefined
               const next = await Promise.race([
                 pending,
@@ -1403,18 +1466,38 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
               if (chunks.length) return
             }
           } catch {
-            audit("stream_failed")
-            streamStatus = clientCancelled ? 499 : 502
+            // The platform's wall clock gets its own code: a resend of the same request stops at
+            // the same point. A stall keeps stream_failed (a retry can help), with its own message.
+            const reason = clientCancelled ? undefined : cut
+            const error = reason === "time_limit"
+              ? {
+                code: "stream_time_limit",
+                message:
+                  "The response reached the gateway's time limit before it finished. Continue from the partial answer or split the work into smaller replies; resending the same request will stop at the same point.",
+              }
+              : {
+                code: "stream_failed",
+                message: reason === "idle"
+                  ? "The model stopped sending output mid-answer. Please retry."
+                  : reason === "first_byte"
+                  ? "The model accepted the request but sent no output in time. Please retry."
+                  : "The model response was interrupted. Please retry.",
+              }
+            if (reason !== "time_limit") audit("stream_failed")
+            if (reason) audit(`stream_${reason}`)
+            if (reason) {
+              logLine({
+                event: "stream_cut",
+                request_id: requestId,
+                reason,
+                elapsed_ms: lap(t0),
+                streamed_chars: adapter.streamedChars,
+              })
+            }
+            streamStatus = clientCancelled ? 499 : reason === "time_limit" ? 504 : 502
             await finish(adapter.tokens)
             if (clientCancelled) return
-            controller.enqueue(
-              frame({
-                error: {
-                  code: "stream_failed",
-                  message: "The model response was interrupted. Please retry.",
-                },
-              }),
-            )
+            controller.enqueue(frame({ error }))
             controller.close()
           }
         },
