@@ -26,7 +26,15 @@ import {
   getVersionById,
   deleteStalePendingVersion,
 } from "../services/versions.ts"
-import { checkMaxAppJar, fetchJarBytes, MaxAppJarError, sha256Hex } from "../services/max-app.ts"
+import {
+  checkMaxAppJar,
+  fetchJarBytes,
+  MaxAppJarError,
+  sha256Hex,
+  maxAppEntryInZip,
+  MAX_APP_IN_PLUGIN_CODE,
+  MAX_APP_IN_PLUGIN_ERROR
+} from "../services/max-app.ts"
 import { getSignedUploadUrl, getSignedDownloadUrl, generateJarPath, uploadJar } from "../services/storage.ts"
 import { getAuthenticatedUser, getUserDisplayName, logApiKeyAction } from "../utils/auth.ts"
 import {
@@ -593,12 +601,17 @@ publish.openapi(finalizeVersionRoute, async (ctx) => {
     // spurious "tampered" rejection on users' machines. (The GitHub publish
     // path already derives the version straight from the manifest.)
     try {
-      const { manifest: jarManifest } = await extractManifestFromRemoteJar(jarUrl)
+      const { manifest: jarManifest, maxAppEntry } = await extractManifestFromRemoteJar(jarUrl)
       if (jarManifest.pluginId !== plugin.pluginId || jarManifest.version !== version.version) {
         return ctx.json({
           success: false,
           error: `Manifest identity mismatch: JAR declares ${jarManifest.pluginId}@${jarManifest.version} but the version row is ${plugin.pluginId}@${version.version}. The stored version string must match the manifest verbatim.`
         }, 400)
+      }
+      // A plain plugin must not carry a Max app: it would reach Max's App drawer signed, without the check or review.
+      if (plugin.kind !== 'max-app' && maxAppEntry) {
+        console.log(`finalize refused: version=${body.versionId} code=${MAX_APP_IN_PLUGIN_CODE}`)
+        return ctx.json({ success: false, code: MAX_APP_IN_PLUGIN_CODE, error: MAX_APP_IN_PLUGIN_ERROR }, 400)
       }
     } catch (e) {
       return ctx.json({
@@ -779,6 +792,11 @@ publish.openapi(publishFromGitHubRoute, async (ctx) => {
     const { manifest, jarData, jarSize, sha256, releaseNotes, version } = githubResult
 
     console.log(`Extracted manifest: ${manifest.pluginId} v${version}`)
+
+    // Max apps never publish here (refused below for an existing one), so a jar carrying one is refused outright.
+    if (maxAppEntryInZip(new Uint8Array(jarData))) {
+      return ctx.json({ success: false, code: MAX_APP_IN_PLUGIN_CODE, error: MAX_APP_IN_PLUGIN_ERROR }, 400)
+    }
 
     // Reject dangling required permissions before creating any rows.
     const permCheck = await validateDeclaredPermissions(supabase, manifest)
@@ -1088,14 +1106,20 @@ publish.openapi(publishFromGitHubMetadataRoute, async (ctx) => {
     // version, type, etc. Trusting a client-provided manifest would let a
     // publish-scoped caller register a plugin under any pluginId.
     let manifest: Awaited<ReturnType<typeof extractManifestFromRemoteJar>>['manifest']
+    let maxAppEntry: string | null = null
     try {
       const extracted = await extractManifestFromRemoteJar(jarAsset.browser_download_url)
       manifest = extracted.manifest
+      maxAppEntry = extracted.maxAppEntry
     } catch (e) {
       return ctx.json({
         success: false,
         error: `Failed to extract manifest from JAR: ${(e as Error).message}`
       }, 400)
+    }
+    // Max apps never publish here (refused below for an existing one), so a jar carrying one is refused outright.
+    if (maxAppEntry) {
+      return ctx.json({ success: false, code: MAX_APP_IN_PLUGIN_CODE, error: MAX_APP_IN_PLUGIN_ERROR }, 400)
     }
 
     // Compute the authoritative SHA-256 by streaming the remote JAR. This is

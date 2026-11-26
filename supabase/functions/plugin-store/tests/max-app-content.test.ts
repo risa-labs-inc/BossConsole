@@ -6,7 +6,9 @@
 import { assert, assertEquals, assertRejects } from "@std/assert"
 import {
   checkMaxAppJar,
+  isMaxAppEntryName,
   MAX_CLASS_BYTES,
+  maxAppEntryInZip,
   MaxAppJarError,
   parseClass,
   referenceAllowed,
@@ -251,3 +253,28 @@ function dropLastCentralRecord(z: Uint8Array): Uint8Array {
   o.setUint32(e + 12, last - cdOff, true)
   return out
 }
+
+// ----------------------------------------------------------------------------
+// Plain plugins must not carry a Max app (the finalize and GitHub routes refuse them)
+// ----------------------------------------------------------------------------
+
+const APP_FILES = ["META-INF/max-app/app.json", "META-INF/max-app/index.html", "META-INF/max-app/SKILL.md", "META-INF/max-app/icon.svg"]
+
+Deno.test("max-app entry names: the folder and anything in it, whatever the case or slashes", () => {
+  for (const n of ["META-INF/max-app/app.json", "META-INF/max-app/", "META-INF/max-app", "meta-inf/MAX-APP/index.html", "META-INF\\max-app\\app.json", "/META-INF/max-app/x"]) {
+    assert(isMaxAppEntryName(n), n)
+  }
+  for (const n of ["META-INF/boss-plugin/plugin.json", "META-INF/max-apps/app.json", "max-app/app.json", "META-INF/MANIFEST.MF"]) {
+    assert(!isMaxAppEntryName(n), n)
+  }
+})
+
+Deno.test("maxAppEntryInZip finds the app in the sample, and nothing in a plain plugin jar", async () => {
+  assert(maxAppEntryInZip(sampleJar())?.startsWith("META-INF/max-app/"))
+  const plain = await sampleVariant(Object.fromEntries([...APP_FILES, "META-INF/max-app/"].map((n) => [n, null])))
+  assertEquals(maxAppEntryInZip(plain), null)
+  // A single, oddly-cased entry is enough.
+  const sneaky = await sampleVariant({ ...Object.fromEntries([...APP_FILES, "META-INF/max-app/"].map((n) => [n, null])), "Meta-Inf/Max-App/app.json": text("{}") })
+  assertEquals(maxAppEntryInZip(sneaky), "Meta-Inf/Max-App/app.json")
+  assertEquals(maxAppEntryInZip(new Uint8Array(10)), null)
+})

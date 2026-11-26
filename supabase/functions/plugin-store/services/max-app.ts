@@ -835,3 +835,55 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const d = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as unknown as BufferSource))
   return [...d].map((x) => x.toString(16).padStart(2, "0")).join("")
 }
+
+/**
+ * Plain plugins (kind 'plugin') must not carry a Max app. Max lists the app of every store-signed jar it finds under
+ * META-INF/max-app/, so a plugin published without the Max app kind would put its page in Max's App drawer without the
+ * content-only check or a review. The finalize and GitHub publish routes refuse such a jar: publish it as kind max-app.
+ */
+export const MAX_APP_IN_PLUGIN_CODE = "max_app_in_plugin"
+export const MAX_APP_IN_PLUGIN_ERROR =
+  "This jar carries a Max app (META-INF/max-app/). Publish it as a plugin of kind max-app, where it is checked and reviewed."
+
+/** Whether a zip entry name is (inside) META-INF/max-app/. Case-insensitive and with backslashes read as slashes. */
+export function isMaxAppEntryName(name: string): boolean {
+  const n = name.replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase()
+  return n === "meta-inf/max-app" || n.startsWith("meta-inf/max-app/")
+}
+
+/**
+ * The first entry of a central directory (the bytes from its first record to the end of its last) that lies under
+ * META-INF/max-app/, or null. Walks the records only; a damaged directory stops the walk (the caller's own zip reader
+ * refuses it elsewhere).
+ */
+export function maxAppEntryInCentralDirectory(cd: Uint8Array): string | null {
+  const dv = new DataView(cd.buffer, cd.byteOffset, cd.byteLength)
+  const dec = new TextDecoder("utf-8")
+  let p = 0
+  while (p + 46 <= cd.length && dv.getUint32(p, true) === 0x02014b50) {
+    const nameLen = dv.getUint16(p + 28, true)
+    const extraLen = dv.getUint16(p + 30, true)
+    const commentLen = dv.getUint16(p + 32, true)
+    if (p + 46 + nameLen > cd.length) break
+    const name = dec.decode(cd.subarray(p + 46, p + 46 + nameLen))
+    if (isMaxAppEntryName(name)) return name
+    p += 46 + nameLen + extraLen + commentLen
+  }
+  return null
+}
+
+/** The same for a whole jar in memory (the GitHub publish path): finds the central directory through the EOCD record. */
+export function maxAppEntryInZip(zip: Uint8Array): string | null {
+  if (zip.length < 22) return null
+  const dv = new DataView(zip.buffer, zip.byteOffset, zip.byteLength)
+  for (let i = zip.length - 22; i >= Math.max(0, zip.length - 22 - 0xffff); i--) {
+    if (dv.getUint32(i, true) !== 0x06054b50) continue
+    const cdSize = dv.getUint32(i + 12, true)
+    const cdOff = dv.getUint32(i + 16, true)
+    // A zip64 or damaged directory: scan from the record before the EOCD backwards is not worth it; the in-memory
+    // manifest reader already refuses zip64, and a damaged directory fails its manifest read.
+    if (cdOff === 0xffffffff || cdOff + cdSize > i) return null
+    return maxAppEntryInCentralDirectory(zip.subarray(cdOff, cdOff + cdSize))
+  }
+  return null
+}

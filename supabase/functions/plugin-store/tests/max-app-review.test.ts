@@ -361,6 +361,46 @@ Deno.test("finalize: a Max app version already reviewed is not re-opened", async
   assertEquals((await res2.json()).code, "max_app_already_reviewed")
 })
 
+Deno.test("finalize: a plain plugin jar carrying META-INF/max-app/ is refused; one without is signed as before", async () => {
+  const plainDb = () => {
+    const db = new FakeDb()
+    db.plugins.push({
+      id: APP_UUID, plugin_id: SAMPLE_PLUGIN_ID, author_id: AUTHOR, published: true, kind: "plugin", org_id: null,
+      required_permissions: [], display_name: "Habits", author_name: "author",
+    })
+    db.versions.push({
+      id: crypto.randomUUID(), plugin_id: APP_UUID, version: "1.0.0", jar_path: "plugins/1.0.0.jar", jar_size: 0,
+      sha256: "pending", signature: null, channel: "stable", review_status: "approved", changelog: "",
+      min_boss_version: "1.0.0", min_ipc_version: "1.0.0", min_api_version: "", dependencies: [], published_at: "2026-11-01T00:00:00Z",
+    })
+    return db
+  }
+  const finalize = async (db: FakeDb, jar: Uint8Array) => {
+    db.storage.set(db.versions[0].jar_path as string, jar)
+    return await withStorageFetch(db, async () =>
+      await mount(db).request("/version/finalize", {
+        method: "POST",
+        headers: { ...bearer(AUTHOR, { user_permissions: ["plugins.create"] }), "Content-Type": "application/json" },
+        body: JSON.stringify({ versionId: db.versions[0].id, sha256: await sha256Hex(jar), jarSize: jar.length }),
+      }))
+  }
+  // The sample Max app jar published as kind 'plugin': it would be signed and approved with no check or review, and
+  // Max lists every signed jar's META-INF/max-app/.
+  const sneaky = plainDb()
+  const res = await finalize(sneaky, sampleJar())
+  assertEquals(res.status, 400)
+  assertEquals((await res.json()).code, "max_app_in_plugin")
+  assertEquals(sneaky.versions[0].sha256, "pending")
+  assertEquals(sneaky.versions[0].signature, null)
+
+  const appFiles = ["META-INF/max-app/", "META-INF/max-app/app.json", "META-INF/max-app/index.html", "META-INF/max-app/SKILL.md", "META-INF/max-app/icon.svg"]
+  const plain = plainDb()
+  const ok = await finalize(plain, await sampleVariant(Object.fromEntries(appFiles.map((n) => [n, null]))))
+  assertEquals(ok.status, 200, await ok.clone().text())
+  assertEquals(plain.versions[0].review_status, "approved")
+  assert(typeof plain.versions[0].signature === "string")
+})
+
 // ----------------------------------------------------------------------------
 // Review routes
 // ----------------------------------------------------------------------------
@@ -550,4 +590,11 @@ Deno.test("both GitHub publish paths refuse to version a Max app (they would sig
   // Those routes need a real GitHub release to reach the check, so the wiring is pinned on the source.
   const src = Deno.readTextFileSync(new URL("../routes/publish.ts", import.meta.url))
   assertEquals(src.match(/existingPlugin\.kind === 'max-app'/g)?.length, 2)
+})
+
+Deno.test("both GitHub publish paths refuse a jar that carries a Max app (it would be signed as a plain plugin)", () => {
+  const src = Deno.readTextFileSync(new URL("../routes/publish.ts", import.meta.url))
+  assert(/if \(maxAppEntryInZip\(new Uint8Array\(jarData\)\)\)/.test(src), "/github")
+  assert(/maxAppEntry = extracted\.maxAppEntry/.test(src) && /if \(maxAppEntry\) \{/.test(src), "/github-metadata")
+  assertEquals(src.match(/MAX_APP_IN_PLUGIN_CODE, error: MAX_APP_IN_PLUGIN_ERROR/g)?.length, 3)
 })

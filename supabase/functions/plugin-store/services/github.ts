@@ -6,6 +6,7 @@
 
 import { PluginManifest } from "../types/plugin.ts"
 import { createHash } from "node:crypto"
+import { maxAppEntryInCentralDirectory } from "./max-app.ts"
 
 /**
  * Hosts permitted to serve externally-hosted plugin JARs.
@@ -512,7 +513,7 @@ async function downloadRange(
  */
 export async function extractManifestFromRemoteJar(
   downloadUrl: string
-): Promise<{ manifest: PluginManifest; totalSize: number }> {
+): Promise<{ manifest: PluginManifest; totalSize: number; maxAppEntry: string | null }> {
   const tailSize = 65_536
 
   // Step 1: HEAD for size (redirects are followed by default).
@@ -658,6 +659,9 @@ export async function extractManifestFromRemoteJar(
     cdData = data
     cdBaseOffset = 0
   }
+
+  // Any entry under META-INF/max-app/: the publish routes refuse it in a jar that is not a Max app.
+  const maxAppEntry = maxAppEntryInCentralDirectory(cdData)
 
   // Walk the central directory looking for plugin.json
   const cdView = new DataView(cdData.buffer, cdData.byteOffset, cdData.byteLength)
@@ -814,7 +818,7 @@ export async function extractManifestFromRemoteJar(
 
     const manifest = JSON.parse(content) as PluginManifest
     validateManifest(manifest)
-    return { manifest, totalSize }
+    return { manifest, totalSize, maxAppEntry }
   }
 
   throw new Error(
