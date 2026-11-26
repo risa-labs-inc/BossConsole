@@ -15,6 +15,11 @@ export const CATALOG_CACHE_MAX_STALE_MS = 30 * 60_000
 export const CATALOG_CACHE_MAX_ENTRIES = 2_000
 /** With an expired answer in hand, how long to wait for a fresh one before serving the old one. */
 export const CATALOG_CACHE_STALE_WAIT_MS = 3_000
+/**
+ * Oldest cached answer GET /v1/usage may reuse. Usage reports current consumption, so it gets a far
+ * shorter window than the model list and never the expired-answer fallback.
+ */
+export const USAGE_MAX_AGE_MS = 30_000
 
 export interface CatalogCacheOptions {
   ttlMs?: number
@@ -22,8 +27,25 @@ export interface CatalogCacheOptions {
   maxEntries?: number
   staleWaitMs?: number
   now?: () => number
-  /** Called when an expired answer is served because the refresh failed or was slow. */
-  onStale?: (reason: "error" | "timeout") => void
+}
+
+/** Per-call limits: the two routes share entries but not their tolerance for age. */
+export interface CatalogGetOptions {
+  /** Oldest cached answer this call accepts without a load (default: the cache's TTL). */
+  maxAgeMs?: number
+  /** Whether an expired answer may be served when the load fails or is slow (default true). */
+  allowStale?: boolean
+}
+
+export interface CatalogAnswer {
+  /** Deep-frozen: one object is shared by every caller, so none of them may change it. */
+  value: unknown
+  /** Age of the answer when served; 0 for one loaded by (or joined by) this call. */
+  ageMs: number
+  /** True when an expired answer was served because the load failed or was slow. */
+  stale: boolean
+  /** Why the expired answer was served; present only when `stale`. */
+  reason?: "error" | "timeout"
 }
 
 interface Entry {
@@ -33,6 +55,14 @@ interface Entry {
 
 class StaleWaitElapsed extends Error {}
 
+/** Freezes a JSON-shaped value in place, so the one stored object can be handed to every caller. */
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value
+  Object.freeze(value)
+  for (const child of Object.values(value)) deepFreeze(child)
+  return value
+}
+
 export class CatalogCache {
   readonly #entries = new Map<string, Entry>()
   readonly #inflight = new Map<string, Promise<unknown>>()
@@ -41,7 +71,6 @@ export class CatalogCache {
   readonly #maxEntries: number
   readonly #staleWaitMs: number
   readonly #now: () => number
-  readonly #onStale?: (reason: "error" | "timeout") => void
 
   constructor(options: CatalogCacheOptions = {}) {
     this.#ttlMs = options.ttlMs ?? CATALOG_CACHE_TTL_MS
@@ -49,7 +78,6 @@ export class CatalogCache {
     this.#maxEntries = options.maxEntries ?? CATALOG_CACHE_MAX_ENTRIES
     this.#staleWaitMs = options.staleWaitMs ?? CATALOG_CACHE_STALE_WAIT_MS
     this.#now = options.now ?? Date.now
-    this.#onStale = options.onStale
   }
 
   get size(): number {
@@ -57,34 +85,44 @@ export class CatalogCache {
   }
 
   /**
-   * The catalog for `user`: the cached answer while it is fresh, otherwise `load()`. Concurrent
-   * calls for one user share a single `load()`. When the load fails, or outlasts the stale wait,
-   * an expired answer no older than the stale limit is served instead; with none, the caller gets
-   * the load's own outcome, as before the cache existed.
+   * The catalog for `user`: the cached answer while it is younger than `maxAgeMs`, otherwise
+   * `load()`. Concurrent calls for one user share a single `load()`, and its answer is live for all
+   * of them. When the load fails, or outlasts the stale wait, a call that allows it is served an
+   * expired answer no older than the stale limit; otherwise, or with none, the caller gets the
+   * load's own outcome, as before the cache existed.
    */
-  async get(user: string, load: () => Promise<unknown>): Promise<unknown> {
-    if (!user) return await load()
+  async get(
+    user: string,
+    load: () => Promise<unknown>,
+    options: CatalogGetOptions = {},
+  ): Promise<CatalogAnswer> {
+    if (!user) return { value: deepFreeze(await load()), ageMs: 0, stale: false }
+    // A call may ask for a fresher answer than the TTL, never an older one.
+    const maxAgeMs = Math.min(options.maxAgeMs ?? this.#ttlMs, this.#ttlMs)
     const cached = this.#entries.get(user)
     const age = cached ? this.#now() - cached.at : Infinity
-    if (cached && age >= 0 && age < this.#ttlMs) {
+    if (cached && age >= 0 && age < maxAgeMs) {
       this.#touch(user, cached)
-      return cached.data
+      return { value: cached.data, ageMs: age, stale: false }
     }
     const fresh = this.#refresh(user, load)
-    if (!cached || age < 0 || age >= this.#maxStaleMs) return await fresh
+    if (options.allowStale === false || !cached || age < 0 || age >= this.#maxStaleMs) {
+      return { value: await fresh, ageMs: 0, stale: false }
+    }
 
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      return await Promise.race([
+      const value = await Promise.race([
         fresh,
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new StaleWaitElapsed()), this.#staleWaitMs)
         }),
       ])
+      return { value, ageMs: 0, stale: false }
     } catch (error) {
       // A slow load keeps running and stores its answer for the next caller.
-      this.#onStale?.(error instanceof StaleWaitElapsed ? "timeout" : "error")
-      return cached.data
+      const reason = error instanceof StaleWaitElapsed ? "timeout" : "error"
+      return { value: cached.data, ageMs: age, stale: true, reason }
     } finally {
       clearTimeout(timer)
     }
@@ -95,7 +133,7 @@ export class CatalogCache {
     if (running) return running
     const started = (async () => {
       try {
-        const data = await load()
+        const data = deepFreeze(await load())
         this.#store(user, data)
         return data
       } finally {
