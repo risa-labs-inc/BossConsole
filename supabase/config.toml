@@ -477,6 +477,9 @@ entrypoint = "./functions/user-settings/index.ts"
 # sending. Env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_ADMIN_EMAIL, SMTP_SENDER_NAME (the
 # same values as the project's Auth SMTP settings), SMTP_ALLOW_PLAINTEXT (local Mailpit only) and
 # CONSOLE_URL (the agents console origin the join link points at).
+# These are copies: rotating the mailbox's app password in Auth > SMTP does not change SMTP_PASS
+# here, and the dashboard never shows the Auth one back, so set both from the same source. A stale
+# copy shows in this function's log as "smtp failed stage=auth ... code=535".
 verify_jwt = true
 import_map = "./functions/org-invite-mail/deno.json"
 entrypoint = "./functions/org-invite-mail/index.ts"

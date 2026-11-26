@@ -6,7 +6,7 @@ import {
   type LinkInviteFacts,
   linkInviteMail,
 } from "./mail.ts";
-import { isAddress, type MailMessage, sendMail, type SmtpConfig } from "./smtp.ts";
+import { isAddress, type MailMessage, sendMail, type SmtpConfig, smtpFailure } from "./smtp.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Invite tokens are `boss_inv_` + 43 url-safe base64 characters (create_organisation_invite). */
@@ -19,6 +19,22 @@ export class Refused extends Error {
     super(code);
     this.name = "Refused";
   }
+}
+
+/**
+ * How long invite_link_mail_prepare may take before its work is thrown away. The deadline travels
+ * with the request (X-Invite-Deadline, epoch ms) and the database rolls the call back once it has
+ * passed, so a call this function has stopped waiting for never leaves a link behind.
+ */
+export const PREPARE_BUDGET_MS = 5000;
+/** How long this function waits for that call: the budget plus room for the answer and clock skew. */
+export const PREPARE_WAIT_MS = 8000;
+
+/** Why a database or auth call failed, for the log: "timeout", or the error's own short text. Never an address or a token. */
+export function dbFailure(e: unknown): string {
+  if (!(e instanceof Error)) return "error";
+  if (e.name === "TimeoutError" || e.name === "AbortError") return "timeout";
+  return e.message.replace(/\s+/g, " ").replace(/[^\s@]+@[^\s@]+/g, "<address>").slice(0, 120);
 }
 
 export interface Db {
@@ -42,7 +58,8 @@ export interface Db {
   /**
    * invite_link_mail_prepare as the service role: a new email invite for `email` on `target` (policy, quotas and mail limits
    * as create_invite_link plus the invite mail limits), or with `linkId` a resend that rotates the token. Throws Refused
-   * for the refusals the function returns.
+   * for the refusals the function returns. The call carries a deadline (PREPARE_BUDGET_MS): past it the database rolls the
+   * call back, so a timeout here means no link was made and no token was rotated.
    */
   prepareLink(
     actor: string,
@@ -51,7 +68,8 @@ export interface Db {
   /**
    * invite_link_mail_failed as the service role, when the mail did not go out: a new invite's link is deleted, a resend gets
    * its earlier token and last_sent_at back, and that send's mail-log rows are removed. `token` is the one this send issued;
-   * the database ignores the report when it is no longer the link's current token. Best effort: failures are swallowed.
+   * the database ignores the report when it is no longer the link's current token. Best effort: tried twice, failures are
+   * logged (link id only) and swallowed.
    */
   mailFailed(linkId: string, resend: boolean, token: string): Promise<void>;
   /** invite_link_mail_sent as the service role: the mail went out, so the saved previous token is dropped (if `token` is current). Best effort. */
@@ -170,17 +188,21 @@ export function restDb(): Db {
           apikey: service,
           Authorization: `Bearer ${service}`,
           "Content-Type": "application/json",
+          "X-Invite-Deadline": String(Date.now() + PREPARE_BUDGET_MS),
         },
         body: JSON.stringify(
           "linkId" in req
             ? { p_actor: actor, p_target: null, p_email: null, p_link_id: req.linkId }
             : { p_actor: actor, p_target: req.target, p_email: req.email, p_via: req.via },
         ),
-        signal: timeout(),
+        signal: AbortSignal.timeout(PREPARE_WAIT_MS),
       });
       if (!r.ok) {
-        await r.body?.cancel();
-        throw new Error(`prepare ${r.status}`);
+        const e = await r.json().catch(() => ({})) as { message?: string };
+        // 504 deadline_exceeded: the database gave the work up (see PREPARE_BUDGET_MS).
+        throw new Error(
+          e.message === "deadline_exceeded" ? "prepare deadline_exceeded" : `prepare ${r.status}`,
+        );
       }
       const out = await r.json() as
         & { success?: boolean; error?: string }
@@ -192,19 +214,32 @@ export function restDb(): Db {
       return out as LinkInviteFacts;
     },
     async mailFailed(linkId, resend, token) {
-      try {
-        const r = await fetch(`${url}/rest/v1/rpc/invite_link_mail_failed`, {
-          method: "POST",
-          headers: {
-            apikey: service,
-            Authorization: `Bearer ${service}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ p_link_id: linkId, p_resend: resend, p_token: token }),
-          signal: timeout(),
-        });
-        await r.body?.cancel();
-      } catch { /* the send already failed; nothing more to report */ }
+      // Twice: this is what keeps a link whose mail never left from counting against the sender's cap.
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        let why: string;
+        try {
+          const r = await fetch(`${url}/rest/v1/rpc/invite_link_mail_failed`, {
+            method: "POST",
+            headers: {
+              apikey: service,
+              Authorization: `Bearer ${service}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ p_link_id: linkId, p_resend: resend, p_token: token }),
+            signal: timeout(),
+          });
+          await r.body?.cancel();
+          if (r.ok) return;
+          why = `http ${r.status}`;
+        } catch (e) {
+          why = dbFailure(e);
+        }
+        console.error(
+          `org-invite-mail link=${linkId} cleanup failed (${why}) attempt=${attempt}/2${
+            attempt === 2 ? ": the link may still be active" : ""
+          }`,
+        );
+      }
     },
     async mailSent(linkId, token) {
       try {
@@ -287,7 +322,10 @@ function json(status: number, body: unknown): Response {
   });
 }
 
-/** Log lines carry the invite (or agent) id and the outcome; never the token, the address or SMTP details. */
+/**
+ * Log lines carry the invite (or agent) id and the outcome; never the token, the address or a credential.
+ * A failed send adds why (smtpFailure: stage, port, reply code and text with addresses masked).
+ */
 function log(inviteId: string, outcome: string) {
   console.info(`org-invite-mail invite=${inviteId} ${outcome}`);
 }
@@ -362,14 +400,15 @@ export function createApp(
         logAgent(agentId, `refused ${e.code}`);
         return json(e.status, { error: e.code });
       }
+      logAgent(agentId, `unavailable ${dbFailure(e)}`);
       return json(503, { error: "Unavailable" });
     }
     const link = agentSiteUrl(facts, baseDomain);
     if (!isAddress(facts.email) || !link) return json(409, { error: "invite_not_email" });
     try {
       await mailer({ to: facts.email, ...agentInviteMail(facts, link) });
-    } catch {
-      logAgent(agentId, "smtp failed");
+    } catch (e) {
+      logAgent(agentId, `smtp failed ${smtpFailure(e)}`);
       return json(502, { error: "mail_failed" });
     }
     logAgent(agentId, "sent");
@@ -381,7 +420,12 @@ export function createApp(
    * own JWT) emails a single-use invite link bound to one address, or re-sends one (the token rotates, the earlier mail stops
    * working). The link origin is built here from the target, never from the request.
    * 200 {sent, id, recipient, expires_at} | 400 bad_request, bad_email | 401 | 403 not_allowed, invites_off | 404 not_found |
-   * 409 not_pending, resend_in_progress, too_many_active_links | 429 rate_limited, quota_exceeded | 503 mail_unavailable.
+   * 409 not_pending, resend_in_progress, too_many_active_links | 429 rate_limited, quota_exceeded |
+   * 503 mail_failed (the mail server did not take the mail; the link is dropped, a resend gets its earlier token back) |
+   * 503 service_unavailable (sign-in check or database did not answer in time; nothing was made) |
+   * 503 mail_unavailable (mail is not set up here, or the link could not be addressed).
+   * The three 503s differ by code only: a 502 from this function does not reach the console (the gateway in front of the
+   * project answers it without the CORS headers, so the browser reports a failed fetch and the code is lost).
    */
   const linkInvite = async (request: Request): Promise<Response> => {
     const auth = request.headers.get("Authorization") ?? "";
@@ -424,7 +468,8 @@ export function createApp(
         logLink(ref, `refused ${e.code}`);
         return json(e.status, { error: e.code });
       }
-      return json(503, { error: "mail_unavailable" });
+      logLink(ref, `unavailable ${dbFailure(e)}`);
+      return json(503, { error: "service_unavailable" });
     }
     let origin: string | null;
     if (facts.agent_slug) {
@@ -445,10 +490,10 @@ export function createApp(
         to: facts.recipient_email,
         ...linkInviteMail(facts, `${origin}/i/${facts.token}`),
       });
-    } catch {
-      logLink(facts.link_id, "smtp failed");
+    } catch (e) {
+      logLink(facts.link_id, `smtp failed ${smtpFailure(e)}`);
       await db.mailFailed(facts.link_id, "linkId" in req, facts.token).catch(() => {});
-      return json(503, { error: "mail_unavailable" });
+      return json(503, { error: "mail_failed" });
     }
     await db.mailSent(facts.link_id, facts.token).catch(() => {});
     logLink(facts.link_id, "sent");
@@ -507,6 +552,7 @@ export function createApp(
         log(inviteId, `refused ${e.code}`);
         return json(e.status, { error: e.code });
       }
+      log(inviteId, `unavailable ${dbFailure(e)}`);
       return json(503, { error: "Unavailable" });
     }
     if (!isAddress(facts.email)) return json(409, { error: "invite_not_email" });
@@ -515,8 +561,8 @@ export function createApp(
     const mail = inviteMail(facts, link);
     try {
       await mailer({ to: facts.email, ...mail });
-    } catch {
-      log(inviteId, "smtp failed");
+    } catch (e) {
+      log(inviteId, `smtp failed ${smtpFailure(e)}`);
       return json(502, { error: "mail_failed" });
     }
     log(inviteId, "sent");

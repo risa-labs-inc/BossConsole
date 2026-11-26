@@ -5,6 +5,7 @@ import {
   sendMail,
   type SmtpConfig,
   SmtpError,
+  smtpFailure,
   type Transport,
 } from "../smtp.ts";
 
@@ -171,7 +172,66 @@ Deno.test("a refused recipient is an SmtpError with the code, not the server tex
   );
   assertEquals((e as SmtpError).code, 550);
   assert(!(e as Error).message.includes("no such user"));
+  // The reply text is kept for the log, with the port it happened on.
+  assertEquals(
+    smtpFailure(e),
+    `stage=rcpt_to port=${s.port} code=550 detail="no such user"`,
+  );
   await s.done.catch(() => undefined);
+});
+
+Deno.test("smtpFailure masks addresses, flattens the text and never prints a foreign error's message", () => {
+  assertEquals(
+    smtpFailure(new SmtpError("rcpt_to", 550, '5.1.1 <bob@other.test>: "unknown"\r\nuser', 465)),
+    `stage=rcpt_to port=465 code=550 detail="5.1.1 <<address>>: 'unknown' user"`,
+  );
+  assertEquals(smtpFailure(new SmtpError("tls_required", null)), "stage=tls_required");
+  assertEquals(smtpFailure(new Error("password hunter2")), "stage=unknown kind=Error");
+  assertEquals(smtpFailure("x"), "stage=unknown kind=string");
+  assert(smtpFailure(new SmtpError("io", null, "x".repeat(900))).length < 240);
+});
+
+/** A transport where plain connects fail (a blocked port) and 465 reaches the fake. */
+function blockedTransport(fakePort: number, seen: string[]): Transport {
+  return {
+    connect: (o) => {
+      seen.push(`connect:${o.port}`);
+      return Promise.reject(new Deno.errors.PermissionDenied("port is not allowed"));
+    },
+    connectTls: (o) => {
+      seen.push(`connectTls:${o.port}`);
+      return Deno.connect({ hostname: o.hostname, port: fakePort });
+    },
+    startTls: (c) => Promise.resolve(c),
+  };
+}
+
+Deno.test("a connection that cannot be opened is stage connect with the socket error and the port", async () => {
+  const e = await assertRejects(
+    () => sendMail(cfg(587), msg, blockedTransport(1, [])),
+    SmtpError,
+    "connect",
+  );
+  assertEquals(
+    smtpFailure(e),
+    'stage=connect port=587 detail="PermissionDenied: port is not allowed"',
+  );
+});
+
+Deno.test("a connection that never opens fails as stage connect after the timeout", async () => {
+  let closed = false;
+  let open: (c: Deno.Conn) => void = () => {};
+  const t: Transport = {
+    connect: () => new Promise<Deno.Conn>((res) => (open = res)),
+    connectTls: () => Promise.reject(new Error("unused")),
+    startTls: (c) => Promise.resolve(c),
+  };
+  const e = await assertRejects(() => sendMail(cfg(587), msg, t, 30), SmtpError, "connect");
+  assertStringIncludes(smtpFailure(e), "no connection within 30 ms");
+  // A socket that arrives late is closed, not leaked.
+  open({ close: () => (closed = true) } as unknown as Deno.Conn);
+  await new Promise((r) => setTimeout(r, 0));
+  assert(closed);
 });
 
 Deno.test("addresses with header or SMTP metacharacters are refused before connecting", async () => {
