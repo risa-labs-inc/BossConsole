@@ -1,7 +1,19 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { createApp, type Db, type Mailer, platformOrigins, Refused, restDb } from "../app.ts";
+import {
+  BUDGET_HEADER,
+  createApp,
+  type Db,
+  dbFailure,
+  type Mailer,
+  platformOrigins,
+  PREPARE_BUDGET_MS,
+  PREPARE_WAIT_MS,
+  Refused,
+  restDb,
+  type RestDbOptions,
+} from "../app.ts";
 import type { LinkInviteFacts } from "../mail.ts";
-import type { MailMessage } from "../smtp.ts";
+import { type MailMessage, SmtpError } from "../smtp.ts";
 
 const userId = "99999999-8888-4777-8666-555555555555";
 const linkId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
@@ -187,17 +199,74 @@ Deno.test("link: the refusals map to their statuses", async () => {
   }
 });
 
-Deno.test("link: an unexpected database failure is mail_unavailable", async () => {
-  const { app, sent } = harness(() => Promise.reject(new Error("connect ECONNREFUSED")));
-  const res = await app(req(body));
+/** Runs `fn` with console.info/warn/error captured. */
+async function logged<T>(fn: () => Promise<T>): Promise<{ value: T; lines: string[] }> {
+  const lines: string[] = [];
+  const orig = { info: console.info, warn: console.warn, error: console.error };
+  const take = (...a: unknown[]) => void lines.push(a.join(" "));
+  console.info = console.warn = console.error = take;
+  try {
+    return { value: await fn(), lines };
+  } finally {
+    Object.assign(console, orig);
+  }
+}
+
+Deno.test("link: a database failure is service_unavailable, not a mail error, and the log says why", async () => {
+  const { app, sent, failed } = harness(() => Promise.reject(new Error("prepare 500")));
+  const { value: res, lines } = await logged(() => app(req(body)));
   assertEquals(res.status, 503);
-  assertEquals((await res.json()).error, "mail_unavailable");
+  assertEquals((await res.json()).error, "service_unavailable");
   assertEquals(sent.length, 0);
+  assertEquals(failed.length, 0);
+  assert(lines.some((l) => l.includes("link=acme unavailable prepare 500")), lines.join("\n"));
+});
+
+Deno.test("link: a database or sign-in timeout is service_unavailable and logged as a timeout", async () => {
+  const timeout = () => Promise.reject(new DOMException("Signal timed out.", "TimeoutError"));
+  const slowDb = harness(timeout);
+  const a = await logged(() => slowDb.app(req(body)));
+  assertEquals(a.value.status, 503);
+  assertEquals((await a.value.json()).error, "service_unavailable");
+  assert(a.lines.some((l) => l.includes("unavailable timeout")), a.lines.join("\n"));
+  assertEquals(slowDb.sent.length, 0);
+
+  const sent: MailMessage[] = [];
+  const slowAuth = createApp({
+    db: {
+      user: timeout,
+      prepare: () => Promise.reject(new Error("x")),
+      prepareAgent: () => Promise.reject(new Error("x")),
+      prepareLink: () => Promise.reject(new Error("must not be reached")),
+      mailFailed: () => Promise.resolve(),
+      mailSent: () => Promise.resolve(),
+    },
+    mailer: (m) => {
+      sent.push(m);
+      return Promise.resolve();
+    },
+    baseDomain: "bossconsole.test",
+    origins: platformOrigins("", ""),
+  });
+  const b = await logged(() => slowAuth(req(body)));
+  assertEquals(b.value.status, 503);
+  assertEquals((await b.value.json()).error, "service_unavailable");
+  assertEquals(sent.length, 0);
+});
+
+Deno.test("dbFailure: a timeout by name, otherwise short text with no address", () => {
+  assertEquals(dbFailure(new DOMException("x", "TimeoutError")), "timeout");
+  assertEquals(dbFailure(new DOMException("x", "AbortError")), "timeout");
+  assertEquals(dbFailure(new Error("prepare 504")), "prepare 504");
+  assertEquals(dbFailure(new Error("no route for bob@other.test")), "no route for <address>");
+  assertEquals(dbFailure("nope"), "error");
+  assertEquals(dbFailure(new Error("x".repeat(500))).length, 120);
 });
 
 Deno.test("link: not configured -> 503 before anything is issued", async () => {
   const a = harness(undefined, { noMailer: true });
-  assertEquals((await a.app(req(body))).status, 503);
+  const unset = await a.app(req(body));
+  assertEquals([unset.status, (await unset.json()).error], [503, "mail_unavailable"]);
   assertEquals(a.calls.length, 0);
   const b = harness(undefined, { baseDomain: null });
   const res = await b.app(req(body));
@@ -211,7 +280,7 @@ Deno.test("link: not configured -> 503 before anything is issued", async () => {
   assertEquals((await c.app(req({ ...body, target: "max" }))).status, 200);
 });
 
-Deno.test("link: an smtp failure is mail_unavailable and leaks nothing", async () => {
+Deno.test("link: an smtp failure is mail_failed (503, its own code) and the answer and log leak nothing", async () => {
   const lines: string[] = [];
   const orig = console.info;
   console.info = (...a: unknown[]) => void lines.push(a.join(" "));
@@ -219,7 +288,9 @@ Deno.test("link: an smtp failure is mail_unavailable and leaks nothing", async (
     const { app } = harness(undefined, { mailFails: true });
     const res = await app(req(body));
     assertEquals(res.status, 503);
-    const text = JSON.stringify(await res.json());
+    const out = await res.json();
+    assertEquals(out.error, "mail_failed");
+    const text = JSON.stringify(out);
     assert(!text.includes("535") && !text.includes("user@x"));
     await harness().app(req(body));
   } finally {
@@ -227,8 +298,52 @@ Deno.test("link: an smtp failure is mail_unavailable and leaks nothing", async (
   }
   assert(lines.length >= 2);
   for (const l of lines) {
+    // An error that did not come from the SMTP client is logged by kind only, never its text.
     assert(!l.includes(TOKEN) && !l.includes("bob@other.test") && !l.includes("535"), l);
   }
+  assert(lines.some((l) => l.includes("smtp failed stage=unknown kind=Error")), lines.join("\n"));
+});
+
+Deno.test("link: the log carries the real SMTP failure (stage, port, code, reply) but never the answer", async () => {
+  const sent: MailMessage[] = [];
+  const failed: string[] = [];
+  const app = createApp({
+    db: {
+      user: () => Promise.resolve(userId),
+      prepare: () => Promise.reject(new Error("x")),
+      prepareAgent: () => Promise.reject(new Error("x")),
+      prepareLink: () => Promise.resolve(facts),
+      mailFailed: (id) => {
+        failed.push(id);
+        return Promise.resolve();
+      },
+      mailSent: () => Promise.resolve(),
+    },
+    mailer: () =>
+      Promise.reject(
+        new SmtpError(
+          "auth",
+          535,
+          "5.7.8 Username and Password not accepted for bob@other.test",
+          465,
+        ),
+      ),
+    baseDomain: "bossconsole.test",
+    origins: platformOrigins("", ""),
+  });
+  const { value: res, lines } = await logged(() => app(req(body)));
+  assertEquals(res.status, 503);
+  const text = await res.text();
+  assertEquals(JSON.parse(text), { error: "mail_failed" });
+  assert(!text.includes("535") && !text.includes("5.7.8"));
+  const line = lines.find((l) => l.includes("smtp failed"));
+  assertEquals(
+    line,
+    `org-invite-mail link=${linkId} smtp failed stage=auth port=465 code=535 ` +
+      `detail="5.7.8 Username and Password not accepted for <address>"`,
+  );
+  assertEquals(failed, [linkId]);
+  assertEquals(sent.length, 0);
 });
 
 Deno.test("link: facts that cannot be mailed are refused, not sent", async () => {
@@ -240,7 +355,9 @@ Deno.test("link: facts that cannot be mailed are refused, not sent", async () =>
     ]
   ) {
     const { app, sent } = harness(() => Promise.resolve(f));
-    assertEquals((await app(req(body))).status, 503);
+    const res = await app(req(body));
+    // Unchanged code: this is the one older consoles already know.
+    assertEquals([res.status, (await res.json()).error], [503, "mail_unavailable"]);
     assertEquals(sent.length, 0);
   }
 });
@@ -299,7 +416,7 @@ Deno.test("link: a failing mailFailed does not change the answer", async () => {
   });
   const res = await app(req(body));
   assertEquals(res.status, 503);
-  assertEquals((await res.json()).error, "mail_unavailable");
+  assertEquals((await res.json()).error, "mail_failed");
   assertEquals(sent.length, 0);
 });
 
@@ -315,8 +432,7 @@ Deno.test("link: a sent mail tells the database; a failed one does not", async (
 Deno.test("restDb: resend_in_progress is a 409, and the outcome calls carry the issued token", async () => {
   const real = globalThis.fetch;
   const bodies: Record<string, unknown>[] = [];
-  Deno.env.set("SUPABASE_URL", "http://db.test");
-  Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", "svc");
+  const restore = withEnv({ SUPABASE_URL: "http://db.test", SUPABASE_SERVICE_ROLE_KEY: "svc" });
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (init?.body) bodies.push(JSON.parse(String(init.body)));
@@ -338,5 +454,236 @@ Deno.test("restDb: resend_in_progress is a 409, and the outcome calls carry the 
     ]);
   } finally {
     globalThis.fetch = real;
+    restore();
   }
+});
+
+/** Sets env for one test and puts back what was there. */
+function withEnv(vars: Record<string, string>): () => void {
+  const before = Object.keys(vars).map((k) => [k, Deno.env.get(k)] as const);
+  for (const [k, v] of Object.entries(vars)) Deno.env.set(k, v);
+  return () => {
+    for (const [k, v] of before) v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
+  };
+}
+
+/** restDb against a scripted fetch; returns what was asked. The env it sets is restored. */
+async function withFetch<T>(
+  answer: (url: string, init: RequestInit) => Response | Promise<Response>,
+  fn: (db: Db) => Promise<T>,
+  options: RestDbOptions = {},
+): Promise<{ value: T; calls: { url: string; init: RequestInit }[] }> {
+  const real = globalThis.fetch;
+  const calls: { url: string; init: RequestInit }[] = [];
+  const restore = withEnv({ SUPABASE_URL: "http://db.test", SUPABASE_SERVICE_ROLE_KEY: "svc" });
+  globalThis.fetch = ((input: string | URL | Request, init: RequestInit = {}) => {
+    calls.push({ url: String(input), init });
+    return Promise.resolve(answer(String(input), init));
+  }) as typeof fetch;
+  try {
+    return { value: await fn(restDb(options)), calls };
+  } finally {
+    globalThis.fetch = real;
+    restore();
+  }
+}
+
+const newInvite = { target: "acme", email: "bob@other.test", via: "console" };
+const prepared = (extra: Record<string, unknown> = { budget_ms: PREPARE_BUDGET_MS }) =>
+  new Response(JSON.stringify({ success: true, ...facts, ...extra }), { status: 200 });
+
+Deno.test("restDb: prepareLink carries a relative budget shorter than its own wait, and no clock reading", async () => {
+  assert(PREPARE_BUDGET_MS < PREPARE_WAIT_MS);
+  const realNow = Date.now;
+  // A host clock that is hours wrong must not change what is sent: the budget is a duration.
+  const sentAt: Record<string, string>[] = [];
+  try {
+    for (const skewMs of [0, 6 * 3600_000, -6 * 3600_000]) {
+      Date.now = () => realNow() + skewMs;
+      const { calls } = await withFetch(
+        () => prepared(),
+        (db) => db.prepareLink(userId, newInvite),
+      );
+      sentAt.push(calls[0].init.headers as Record<string, string>);
+      assert(calls[0].init.signal instanceof AbortSignal);
+    }
+  } finally {
+    Date.now = realNow;
+  }
+  for (const headers of sentAt) {
+    assertEquals(headers[BUDGET_HEADER], String(PREPARE_BUDGET_MS));
+    assertEquals(BUDGET_HEADER, "X-Invite-Budget-Ms");
+    // No header carries a time of day (the retired X-Invite-Deadline did).
+    assertEquals(headers["X-Invite-Deadline"], undefined);
+    for (const v of Object.values(headers)) assert(!/^\d{10,}$/.test(v), v);
+  }
+});
+
+Deno.test("restDb: a budget the database enforced is an error, never a refusal or a link", async () => {
+  const { value: err } = await withFetch(
+    () =>
+      new Response(JSON.stringify({ code: "PT504", message: "budget_exceeded" }), { status: 504 }),
+    (db) => db.prepareLink(userId, newInvite).catch((e) => e),
+  );
+  assert(err instanceof Error && !(err instanceof Refused));
+  assertEquals(err.message, "prepare budget_exceeded");
+  assertEquals(dbFailure(err), "prepare budget_exceeded");
+});
+
+Deno.test("restDb: a prepare whose answer does not confirm the budget says so in the log; a confirmed one is silent", async () => {
+  const warned = async (answer: () => Response) => {
+    const lines: string[] = [];
+    const orig = console.warn;
+    console.warn = (...a: unknown[]) => void lines.push(a.join(" "));
+    try {
+      const { value } = await withFetch(answer, (db) => db.prepareLink(userId, newInvite));
+      assertEquals(value.link_id, linkId);
+    } finally {
+      console.warn = orig;
+    }
+    return lines;
+  };
+  assertEquals(await warned(() => prepared()), []);
+  // A database without the migration answers no budget_ms at all: the invite still goes through.
+  const unmigrated = await warned(() => prepared({}));
+  assertEquals(unmigrated, [
+    `org-invite-mail link=${linkId} prepare ran without a budget (database answered budget_ms=none, sent ${PREPARE_BUDGET_MS})`,
+  ]);
+  // The header was dropped or rejected on the way: the migrated database answers null.
+  assertEquals((await warned(() => prepared({ budget_ms: null }))).length, 1);
+  const other = await warned(() => prepared({ budget_ms: 100 }));
+  assert(other[0].includes("budget_ms=100"), other[0]);
+  for (const l of [...unmigrated, ...other]) assert(!l.includes(TOKEN) && !l.includes("bob@"), l);
+});
+
+Deno.test("restDb: an error answer that is not JSON is consumed, and is still an error", async () => {
+  const answers: Response[] = [];
+  const page = () => {
+    const r = new Response("<html>502 Bad Gateway</html>", { status: 502 });
+    answers.push(r);
+    return r;
+  };
+  for (
+    const call of [
+      (db: Db) => db.prepareLink(userId, newInvite),
+      (db: Db) => db.prepare(userId, userId, linkId, "boss_inv_" + "a".repeat(43)),
+      (db: Db) => db.prepareAgent(userId, linkId, "bob@other.test"),
+    ]
+  ) {
+    const { value: err } = await withFetch(page, (db) => call(db).catch((e) => e));
+    assert(err instanceof Error && !(err instanceof Refused));
+    assertEquals(err.message, "prepare 502");
+  }
+  assertEquals(answers.length, 3);
+  for (const r of answers) assert(r.bodyUsed);
+  // A body that breaks off mid-read is cancelled rather than left open.
+  let cancelled = 0;
+  const broken = () =>
+    new Response(
+      new ReadableStream<Uint8Array>({
+        pull(c) {
+          c.enqueue(new TextEncoder().encode("{"));
+        },
+        cancel() {
+          cancelled++;
+        },
+      }, { highWaterMark: 0 }),
+      { status: 500 },
+    );
+  const real = Response.prototype.text;
+  Response.prototype.text = function () {
+    return Promise.reject(new TypeError("body broke off"));
+  };
+  try {
+    const { value: err } = await withFetch(
+      broken,
+      (db) => db.prepareLink(userId, newInvite).catch((e) => e),
+    );
+    assertEquals((err as Error).message, "prepare 500");
+  } finally {
+    Response.prototype.text = real;
+  }
+  assertEquals(cancelled, 1);
+});
+
+Deno.test("restDb: a failed cleanup answers after one attempt and retries once in the background", async () => {
+  let n = 0;
+  const work: Promise<unknown>[] = [];
+  const first = await logged(() =>
+    withFetch(
+      () => {
+        n++;
+        return new Response("{}", { status: 503 });
+      },
+      async (db) => {
+        await db.mailFailed(linkId, false, TOKEN);
+        // The caller has its answer now: exactly one attempt was made on its time.
+        const onCallersTime = n;
+        await Promise.all(work);
+        return onCallersTime;
+      },
+      { retryDelayMs: 5, background: (p) => void work.push(p) },
+    )
+  );
+  assertEquals(first.value.value, 1);
+  assertEquals(n, 2);
+  assertEquals(work.length, 1);
+  assertEquals(first.lines.length, 2);
+  assert(
+    first.lines[0].includes(`link=${linkId} cleanup failed (http 503) attempt=1/2`),
+    first.lines[0],
+  );
+  assert(
+    first.lines[1].includes(`link=${linkId} cleanup failed (http 503) attempt=2/2`),
+    first.lines[1],
+  );
+  assert(first.lines[1].includes("the link may still be active"));
+  assert(first.lines.every((l) => !l.includes(TOKEN)));
+});
+
+Deno.test("restDb: the background retry can land, a cleanup that lands needs none, and nothing throws", async () => {
+  let n = 0;
+  const work: Promise<unknown>[] = [];
+  const opts = { retryDelayMs: 5, background: (p: Promise<unknown>) => void work.push(p) };
+  const recovered = await logged(() =>
+    withFetch(
+      () => {
+        n++;
+        return new Response("{}", { status: n === 1 ? 500 : 200 });
+      },
+      async (db) => {
+        await db.mailFailed(linkId, true, TOKEN);
+        await Promise.all(work);
+      },
+      opts,
+    )
+  );
+  assertEquals(n, 2);
+  assertEquals(recovered.lines.length, 1);
+
+  n = 0;
+  work.length = 0;
+  const clean = await logged(() =>
+    withFetch(() => {
+      n++;
+      return new Response("{}", { status: 200 });
+    }, (db) =>
+      db.mailFailed(linkId, true, TOKEN), opts)
+  );
+  assertEquals([n, work.length, clean.lines.length], [1, 0, 0]);
+
+  // The network itself failing is logged as a timeout or its short text, twice, and never thrown.
+  work.length = 0;
+  const down = await logged(() =>
+    withFetch(
+      () => Promise.reject(new DOMException("x", "TimeoutError")),
+      async (db) => {
+        await db.mailFailed(linkId, false, TOKEN);
+        await Promise.all(work);
+      },
+      opts,
+    )
+  );
+  assertEquals(down.lines.length, 2);
+  assert(down.lines.every((l) => l.includes("cleanup failed (timeout)")), down.lines.join("\n"));
 });

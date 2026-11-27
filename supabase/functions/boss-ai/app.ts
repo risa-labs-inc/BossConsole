@@ -9,6 +9,7 @@ import {
   verifyClaims,
 } from "./auth.ts"
 import { CACHE_TTL_SECONDS } from "./anthropic.ts"
+import { CatalogCache, type CatalogCacheOptions, USAGE_MAX_AGE_MS } from "./catalog_cache.ts"
 import { LiveKit, liveKitClients, LiveKitConfig } from "./livekit.ts"
 import {
   capped,
@@ -110,6 +111,8 @@ export interface Dependencies {
   keepaliveMs?: number
   /** LiveKit clients for /v1/voice/live; tests inject fakes. */
   livekit?: (config: LiveKitConfig) => LiveKit
+  /** Overrides for the /v1/models and /v1/usage catalog cache (defaults in catalog_cache.ts). */
+  catalogCache?: Pick<CatalogCacheOptions, "ttlMs" | "maxStaleMs" | "maxEntries" | "staleWaitMs">
 }
 const AUDIO_PATHS = ["/v1/audio/transcriptions", "/v1/audio/speech"]
 const LIVE_AGENT = "max-voice-agent"
@@ -413,6 +416,8 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
   const cooldown = new Map<string, number>()
   const allowLocal = deps.secret("BOSS_AI_ALLOW_LOCAL_AGENT") === "1"
   const now = deps.now ?? Date.now
+  // One per handler, so per worker: nothing is shared across workers or survives one.
+  const catalogCache = new CatalogCache({ ...deps.catalogCache, now })
   const startLiveCall = async (
     request: Request,
     user: string,
@@ -766,7 +771,26 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
       }
       if (request.method === "GET" && (path === "/v1/models" || path === "/v1/usage")) {
         phase = "catalog"
-        const data = await deps.rpc("boss_ai_catalog", { p_user_id: user })
+        // Keyed by the token's verified user, the query's only input. Listing only: every
+        // inference still runs its own live lookup and reservation. Usage reports consumption, so
+        // it accepts only a very recent answer and never an expired one: a database failure there
+        // is the 503 it always was.
+        const catalog = await catalogCache.get(
+          user,
+          () => deps.rpc("boss_ai_catalog", { p_user_id: user }),
+          path === "/v1/usage" ? { maxAgeMs: USAGE_MAX_AGE_MS, allowStale: false } : {},
+        )
+        if (catalog.stale) {
+          logLine({
+            event: "catalog_stale_served",
+            request_id: requestId,
+            user,
+            path,
+            reason: catalog.reason,
+            age_ms: catalog.ageMs,
+          })
+        }
+        const data = catalog.value
         return json(
           {
             object: "list",
@@ -785,6 +809,8 @@ export function createHandler(deps: Dependencies): (request: Request) => Promise
           },
           200,
           requestId,
+          // Whole seconds since the database answered: 0 is a live read, anything else was cached.
+          { "X-Catalog-Age": String(Math.floor(catalog.ageMs / 1000)) },
         )
       }
       if (request.method === "POST" && path === "/v1/voice/live") {

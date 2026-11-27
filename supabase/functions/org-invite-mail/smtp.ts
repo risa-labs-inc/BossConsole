@@ -1,7 +1,8 @@
 /**
  * A minimal SMTP submission client: EHLO, STARTTLS (or implicit TLS on 465), AUTH PLAIN/LOGIN, one
  * message. No dependency, so it runs in the edge runtime and is testable against a local fake.
- * Credentials and message bodies are never logged or put in an error message.
+ * Credentials and message bodies are never logged or put in an error message. What the server said
+ * when it refused (stage, port, reply code and text) is kept on the SmtpError for the function log.
  */
 
 export interface SmtpConfig {
@@ -26,10 +27,55 @@ export interface MailMessage {
 }
 
 export class SmtpError extends Error {
-  constructor(readonly stage: string, readonly code: number | null) {
+  /**
+   * `detail` is the server's reply text or the socket error, for the log only (see smtpFailure).
+   * It is never part of the message, and never holds what this client sent.
+   */
+  constructor(
+    readonly stage: string,
+    readonly code: number | null,
+    readonly detail: string | null = null,
+    readonly port: number | null = null,
+  ) {
     super(`smtp ${stage} failed${code ? ` (${code})` : ""}`);
     this.name = "SmtpError";
   }
+}
+
+/**
+ * Anything shaped like local@domain in a server's text: a dotted name, a bare host (root@mailhost,
+ * user@localhost) or an address literal (user@[10.0.0.1], user@[IPv6:::1]).
+ */
+const ADDRESS_IN_TEXT = /[^\s<>()",;:\\@]+@(?:\[[^\]\s]{1,64}\]|[A-Za-z0-9.-]+)/g;
+/** C0 and C1 control characters (ESC and NUL included) and the Unicode line separators. */
+// deno-lint-ignore no-control-regex
+const CONTROL_IN_TEXT = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
+
+/**
+ * Reply or error text made safe for a log line: one line, no control characters (a server cannot
+ * start a new log line or send terminal escapes), no address, no quotes, at most 200 characters.
+ */
+function logText(s: string): string {
+  return s.replace(CONTROL_IN_TEXT, " ").replace(ADDRESS_IN_TEXT, "<address>").replace(/"/g, "'")
+    .replace(/ {2,}/g, " ").trim().slice(0, 200);
+}
+
+/**
+ * Why a send failed, for the function log: the stage, the port, the server's reply code and its
+ * text (or the socket error). Addresses are masked; credentials and the message never reach an
+ * SmtpError, so they cannot appear here. Never put this in an HTTP answer.
+ */
+export function smtpFailure(e: unknown): string {
+  if (e instanceof SmtpError) {
+    return [
+      `stage=${e.stage}`,
+      e.port ? `port=${e.port}` : "",
+      e.code ? `code=${e.code}` : "",
+      e.detail ? `detail="${logText(e.detail)}"` : "",
+    ].filter(Boolean).join(" ");
+  }
+  // Not from this client: only its kind, since nothing is known about what its text holds.
+  return `stage=unknown kind=${e instanceof Error ? logText(e.name) : typeof e}`;
 }
 
 export interface Transport {
@@ -156,7 +202,7 @@ class Session {
   ): Promise<{ code: number; lines: string[] }> {
     await this.write(`${line}\r\n`);
     const r = await this.reply();
-    if (!expect.includes(r.code)) throw new SmtpError(stage, r.code);
+    if (!expect.includes(r.code)) throw new SmtpError(stage, r.code, r.lines.join(" "));
     return r;
   }
 
@@ -173,14 +219,49 @@ export async function sendMail(
   timeoutMs = 15_000,
 ): Promise<void> {
   if (!isAddress(msg.to) || !isAddress(cfg.from)) throw new SmtpError("address", null);
+  try {
+    await deliver(cfg, msg, transport, timeoutMs);
+  } catch (e) {
+    // Every failure names the port it happened on, so the log tells a blocked port from a refusal.
+    if (e instanceof SmtpError) throw new SmtpError(e.stage, e.code, e.detail, cfg.port);
+    const err = e instanceof Error ? e : new Error(String(e));
+    throw new SmtpError("io", null, `${err.name}: ${err.message}`, cfg.port);
+  }
+}
+
+/** Opens the connection; a refusal, a blocked port or no answer within the timeout is stage "connect". */
+async function open(cfg: SmtpConfig, transport: Transport, timeoutMs: number): Promise<Deno.Conn> {
+  const pending = cfg.port === 465
+    ? transport.connectTls({ hostname: cfg.host, port: cfg.port })
+    : transport.connect({ hostname: cfg.host, port: cfg.port });
+  let t: ReturnType<typeof setTimeout> | undefined;
+  const timer = new Promise<never>((_, rej) => {
+    t = setTimeout(() => rej(new Error(`no connection within ${timeoutMs} ms`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([pending, timer]);
+  } catch (e) {
+    // A connection that lands after the timeout must not stay open.
+    pending.then((c) => c.close()).catch(() => undefined);
+    const err = e instanceof Error ? e : new Error(String(e));
+    throw new SmtpError("connect", null, `${err.name}: ${err.message}`);
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function deliver(
+  cfg: SmtpConfig,
+  msg: MailMessage,
+  transport: Transport,
+  timeoutMs: number,
+): Promise<void> {
   const implicitTls = cfg.port === 465;
-  const conn = implicitTls
-    ? await transport.connectTls({ hostname: cfg.host, port: cfg.port })
-    : await transport.connect({ hostname: cfg.host, port: cfg.port });
+  const conn = await open(cfg, transport, timeoutMs);
   const s = new Session(conn, timeoutMs);
   try {
     const greet = await s.reply();
-    if (greet.code !== 220) throw new SmtpError("greeting", greet.code);
+    if (greet.code !== 220) throw new SmtpError("greeting", greet.code, greet.lines.join(" "));
     const helo = cfg.helo ?? "localhost";
     let caps = (await s.cmd(`EHLO ${helo}`, [250], "ehlo")).lines.map((l) => l.toUpperCase());
     let secure = implicitTls;
@@ -210,7 +291,7 @@ export async function sendMail(
     const body = buildMessage(cfg, msg).replace(/\r\n\./g, "\r\n..");
     await s.write(`${body}\r\n.\r\n`);
     const done = await s.reply();
-    if (done.code !== 250) throw new SmtpError("message", done.code);
+    if (done.code !== 250) throw new SmtpError("message", done.code, done.lines.join(" "));
     await s.cmd("QUIT", [221], "quit").catch(() => undefined);
   } finally {
     try {

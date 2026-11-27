@@ -58,6 +58,36 @@ required deployment inputs. Plugin bundling is outside this change.
 4. `/v1/models` supplies permission-filtered models, capabilities, limits, defaults and allowances.
    Inference independently enforces live authorization and usage policy.
 
+### Catalog cache
+
+`GET /v1/models` and `GET /v1/usage` read `boss_ai_catalog`, which every client polls and which was
+the database's largest single cost. `catalog_cache.ts` keeps each caller's answer in the worker's
+memory for `CATALOG_CACHE_TTL_MS` (5 minutes), keyed by the verified user id, the query's only
+input. Consequences to know:
+
+- A new grant, a revoked permission or a ban can take up to 5 minutes to show in `/v1/models`.
+  Inference is not cached: lookup, reservation and settlement run live on every request, so a
+  revoked caller is refused at once whatever the list says.
+- `/v1/usage` reports consumption, so it reuses a cached answer only while it is younger than
+  `USAGE_MAX_AGE_MS` (30 seconds). Past that it reads the database, and that read also refreshes the
+  entry `/v1/models` serves. Freshly spent allowance therefore shows in `/v1/usage` within 30
+  seconds, and in `/v1/models` within 5 minutes or as soon as the caller's usage is next read.
+- If the database fails, or takes longer than `CATALOG_CACHE_STALE_WAIT_MS` (3 s), `/v1/models`
+  serves an expired answer up to `CATALOG_CACHE_MAX_STALE_MS` (30 minutes) old. With nothing cached
+  the caller gets the 503 as before. `/v1/usage` never gets this fallback: it waits for the database
+  and a failure is the 503 it was before the cache existed.
+- Both routes answer with `X-Catalog-Age`: whole seconds since the database produced the answer. `0`
+  is a live read, anything else came from memory, and a value of 300 or more is an expired answer
+  served during a database failure. Error responses do not carry it. The function sends no CORS
+  headers, so there is no `Access-Control-Expose-Headers` list to add it to.
+- Each expired answer served logs one `catalog_stale_served` line with `request_id` (the response's
+  `X-Request-ID`), `user`, `path`, `reason` (`error` or `timeout`) and `age_ms`.
+- The stored answer is deep-frozen and shared by every request that reads it. Code handling it must
+  copy before changing anything; a write throws.
+- Concurrent requests for one user share one database call. The cache holds at most
+  `CATALOG_CACHE_MAX_ENTRIES` users and drops the least recently used.
+- It is per worker. A new worker starts empty, so the saving depends on how long workers live.
+
 Tickets expire after 60 seconds, are stored only as SHA-256 hashes, and are consumed atomically.
 Each user may hold at most eight pending tickets; issuance removes their expired tickets. The edge
 function alone can redeem them. Ban and permission checks run again at redemption. No BOSS login
@@ -780,8 +810,9 @@ broker scope as `/v1/models`.
 
 AI credentials last an hour and renew after 50 minutes. BOSS sign-out clears the client cache. A
 copied token may remain usable until expiry; this mechanism authenticates a BOSS-issued session, not
-the executable making the request. Live permissions and bans are checked on catalog/inference
-requests. App attestation and device-bound signing are not implemented.
+the executable making the request. Live permissions and bans are checked on every inference request;
+the catalog routes may answer from the cache above (`/v1/models` for up to 5 minutes, `/v1/usage`
+for up to 30 seconds). App attestation and device-bound signing are not implemented.
 
 No inference content or credentials are logged. Errors use owned messages. Diagnostics contain only
 owned event/phase names, numeric upstream statuses, request UUIDs, and validated database SQLSTATE
