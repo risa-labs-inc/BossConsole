@@ -11,15 +11,17 @@ ALTER TABLE public.platform_limits ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.platform_limits FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.platform_limits TO anon, authenticated, service_role;
 CREATE POLICY "numeric limits read" ON public.platform_limits FOR SELECT TO anon, authenticated USING (true);
+-- Values are those in force when written (Optimist main after #147/#148 plus live optimist-config), so applying this changes no budget.
 INSERT INTO public.platform_limits (key, value, default_value) VALUES
-  ('magicLinkPerIp', '[[100, 900000], [1000, 86400000]]'::jsonb, '[[100, 900000], [1000, 86400000]]'::jsonb),
-  ('magicLinkPerEmail', '[[10, 900000], [50, 86400000]]'::jsonb, '[[10, 900000], [50, 86400000]]'::jsonb),
-  ('oauthStartPerIp', '[[20, 300000]]'::jsonb, '[[20, 300000]]'::jsonb),
-  ('oauthReturnPerIp', '[[20, 300000]]'::jsonb, '[[20, 300000]]'::jsonb),
-  ('handoffPerIp', '[[20, 300000]]'::jsonb, '[[20, 300000]]'::jsonb),
-  ('waitlistPerIp', '[[5, 600000], [30, 86400000]]'::jsonb, '[[5, 600000], [30, 86400000]]'::jsonb),
+  ('magicLinkPerIp', '[[300, 3600000], [3000, 86400000]]'::jsonb, '[[300, 3600000], [3000, 86400000]]'::jsonb),
+  ('magicLinkPerEmail', '[[3, 900000], [10, 86400000]]'::jsonb, '[[3, 900000], [10, 86400000]]'::jsonb),
+  ('oauthPerIp', '[[200, 300000]]'::jsonb, '[[200, 300000]]'::jsonb),
+  ('passwordPerIp', '[[60, 300000]]'::jsonb, '[[60, 300000]]'::jsonb),
+  ('passwordFailuresPerIp', '[[20, 900000]]'::jsonb, '[[20, 900000]]'::jsonb),
+  ('waitlistPerIp', '[[100, 600000], [1000, 86400000]]'::jsonb, '[[100, 600000], [1000, 86400000]]'::jsonb),
   ('invitePerIp', '[[30, 300000], [300, 86400000]]'::jsonb, '[[30, 300000], [300, 86400000]]'::jsonb),
-  ('signupPerIp', '[[60, 3600000], [300, 86400000]]'::jsonb, '[[60, 3600000], [300, 86400000]]'::jsonb),
+  -- Seeded with the live optimist-config override (OPTIMIST_SIGNUP_PER_IP_HOUR/DAY = 120/2500); default is the compiled one.
+  ('signupPerIp', '[[120, 3600000], [2500, 86400000]]'::jsonb, '[[60, 3600000], [300, 86400000]]'::jsonb),
   ('portalPushPerAccount', '[[20, 60000], [100, 3600000]]'::jsonb, '[[20, 60000], [100, 3600000]]'::jsonb),
   ('setupRetryPerAccount', '[[10, 600000]]'::jsonb, '[[10, 600000]]'::jsonb),
   ('webApiPerAccount', '[[120, 60000], [3000, 3600000]]'::jsonb, '[[120, 60000], [3000, 3600000]]'::jsonb),
@@ -29,7 +31,7 @@ INSERT INTO public.platform_limits (key, value, default_value) VALUES
   ('loginFailureWindowMs', '900000'::jsonb, '900000'::jsonb),
   ('loginLockMs', '900000'::jsonb, '900000'::jsonb),
   ('loginFailuresPerEmail', '5'::jsonb, '5'::jsonb),
-  ('loginFailuresPerIp', '20'::jsonb, '20'::jsonb),
+  ('loginFailuresPerIp', '100'::jsonb, '100'::jsonb),
   ('orgsPerOwner', '3'::jsonb, '3'::jsonb),
   ('orgRequestsPerDay', '5'::jsonb, '5'::jsonb),
   ('marketplaceSubmissionsPerDay', '20'::jsonb, '20'::jsonb),

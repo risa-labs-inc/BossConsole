@@ -10,7 +10,7 @@ select ok(not has_table_privilege('authenticated','public.platform_limits','UPDA
 select ok(not has_function_privilege('anon','public.set_platform_limit(text,jsonb,bigint)','EXECUTE'),'anonymous cannot write');
 select ok(not has_function_privilege('authenticated','public.platform_limit_number(text,integer)','EXECUTE'),'internal numeric helper is not an RPC');
 set local role anon;
-select is((select value from public.platform_limits where key='magicLinkPerEmail'),'[[10,900000],[50,86400000]]'::jsonb,'anonymous runtime reader sees numeric policy');
+select is((select value from public.platform_limits where key='magicLinkPerEmail'),'[[3,900000],[10,86400000]]'::jsonb,'anonymous runtime reader sees numeric policy');
 reset role;
 set local role authenticated;
 select set_config('request.jwt.claim.sub','f0260000-0000-4000-8000-000000000002',true);
@@ -25,7 +25,7 @@ select throws_ok($q$select public.set_platform_limit('magicLinkPerEmail','[[20,8
 select throws_ok($q$select public.set_platform_limit('loginLockMs','0',1)$q$,'22023','invalid_limit','zero lock duration refused');
 select throws_ok($q$select public.set_platform_limit('unknown','1',1)$q$,'22023','unknown_limit','unknown key refused');
 select lives_ok($q$select public.set_platform_limit('orgsPerOwner','25',1)$q$,'database budget editable');
-select ok(exists(select 1 from public.platform_settings_history(100,null) where key='limit.magicLinkPerEmail' and from_value='[[10,900000],[50,86400000]]'::jsonb and to_value='[[20,900000]]'::jsonb),'change visible in existing settings history');
+select ok(exists(select 1 from public.platform_settings_history(100,null) where key='limit.magicLinkPerEmail' and from_value='[[3,900000],[10,86400000]]'::jsonb and to_value='[[20,900000]]'::jsonb),'change visible in existing settings history');
 reset role;
 select is(public.platform_limit_number('orgsPerOwner',3),25,'database functions see new value immediately');
 select * from finish();
