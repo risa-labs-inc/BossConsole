@@ -1,8 +1,10 @@
 import { createRoute, z } from "@hono/zod-openapi"
 import {
+  ChannelQuerySchema,
   DownloadInfoResponseSchema,
   ErrorResponseSchema
 } from "../types/schemas.ts"
+import { channelsUpTo, type PluginVersion, type ReleaseChannel } from "../types/plugin.ts"
 import { getPluginForDownload } from "../services/plugins.ts"
 import { getLatestVersion, getVersion } from "../services/versions.ts"
 import { getSignedDownloadUrl } from "../services/storage.ts"
@@ -78,6 +80,60 @@ async function canInstall(
 }
 
 /**
+ * Release gates (20261125120100), asked only when a version is not plain stable-and-approved or the caller asked for
+ * a non-stable ?channel=, so the old path makes no extra call.
+ *
+ *   plugin_channel_access     beta and test: the plugin's author, its (non-system) organisation's members, holders of
+ *                             plugins.channel.test (admins hold every permission)
+ *   plugin_unreviewed_access  a version pending review or rejected: author, organisation members, plugins.review
+ *
+ * FAILS CLOSED, like canInstall: an error or anything but `true` denies.
+ */
+async function releaseAccess(
+  supabase: SupabaseClient,
+  gate: 'plugin_channel_access' | 'plugin_unreviewed_access',
+  userId: string | null,
+  pluginRowId: string
+): Promise<boolean> {
+  if (!userId) return false
+  const { data, error } = await supabase.rpc(gate, { p_user_id: userId, p_plugin_uuid: pluginRowId })
+  if (error) {
+    console.error(`${gate} failed:`, error.message)
+    return false
+  }
+  return data === true
+}
+
+/**
+ * May this caller have this exact version? A version that is not approved needs plugin_unreviewed_access; one not on
+ * stable needs plugin_channel_access. Anyone refused gets the same 404 a missing version gets.
+ */
+async function mayHaveVersion(
+  supabase: SupabaseClient,
+  version: PluginVersion,
+  userId: string | null,
+  pluginRowId: string
+): Promise<boolean> {
+  if ((version.reviewStatus ?? 'approved') !== 'approved' &&
+    !await releaseAccess(supabase, 'plugin_unreviewed_access', userId, pluginRowId)) {
+    return false
+  }
+  if ((version.channel ?? 'stable') !== 'stable' &&
+    !await releaseAccess(supabase, 'plugin_channel_access', userId, pluginRowId)) {
+    return false
+  }
+  return true
+}
+
+/** The release fields of a download answer: present only when the version is not plain stable and approved. */
+function releaseFields(version: PluginVersion): { channel?: ReleaseChannel; reviewStatus?: 'pending_review' | 'rejected' } {
+  const out: { channel?: ReleaseChannel; reviewStatus?: 'pending_review' | 'rejected' } = {}
+  if (version.channel && version.channel !== 'stable') out.channel = version.channel
+  if (version.reviewStatus && version.reviewStatus !== 'approved') out.reviewStatus = version.reviewStatus
+  return out
+}
+
+/**
  * The caller's user id for the visibility gate, from a JWT or a plugin API key.
  *
  * `getUserFromToken` resolves user JWTs only, so an API-key caller - CI, the publish tooling -
@@ -109,11 +165,14 @@ const downloadLatestRoute = createRoute({
   path: '/{pluginId}/download',
   tags: ['Download'],
   summary: 'Download latest plugin version',
-  description: 'Get a signed download URL for the latest version of a plugin',
+  description: 'Get a signed download URL for the latest version of a plugin. ?channel=beta|test resolves latest '
+    + 'across that channel and the ones below it, for callers who may test the plugin; anyone else gets stable. '
+    + 'Only approved versions are ever latest.',
   request: {
     params: z.object({
       pluginId: z.string()
-    })
+    }),
+    query: ChannelQuerySchema
   },
   responses: {
     429: {
@@ -213,8 +272,14 @@ download.openapi(downloadLatestRoute, async (ctx) => {
       return ctx.json({ error: gateError }, 403)
     }
 
-    // Get latest version
-    const version = await getLatestVersion(supabase, plugin.id)
+    // Get latest version. Approved only; stable unless the caller asked for a channel and may test this plugin (then
+    // that channel and the ones below it). Asked without access, it is stable: the same as the catalogue's answer.
+    const { channel } = ctx.req.valid('query')
+    const channels: ReleaseChannel[] =
+      channel && channel !== 'stable' && await releaseAccess(supabase, 'plugin_channel_access', gateUserId, plugin.id)
+        ? channelsUpTo(channel)
+        : ['stable']
+    const version = await getLatestVersion(supabase, plugin.id, channels)
     if (!version) {
       return ctx.json({ error: 'No versions available' }, 404)
     }
@@ -263,7 +328,8 @@ download.openapi(downloadLatestRoute, async (ctx) => {
       // decode rather than one field - which on a strict client would turn a null floor into a
       // failed install.
       minBossVersion: version.minBossVersion ?? '',
-      requiredPermissions: plugin.requiredPermissions
+      requiredPermissions: plugin.requiredPermissions,
+      ...releaseFields(version)
     }, 200)
   } catch (error) {
     console.error('Error generating download URL:', error)
@@ -280,12 +346,14 @@ const downloadVersionRoute = createRoute({
   path: '/{pluginId}/download/{version}',
   tags: ['Download'],
   summary: 'Download specific plugin version',
-  description: 'Get a signed download URL for a specific version of a plugin',
+  description: 'Get a signed download URL for a specific version of a plugin. A beta or test version is served only '
+    + 'to callers who may test the plugin; one pending review or rejected only to its publisher and reviewers.',
   request: {
     params: z.object({
       pluginId: z.string(),
       version: z.string()
-    })
+    }),
+    query: ChannelQuerySchema
   },
   responses: {
     429: {
@@ -388,6 +456,12 @@ download.openapi(downloadVersionRoute, async (ctx) => {
       return ctx.json({ error: 'Version not found' }, 404)
     }
 
+    // Release gate: a version in review (or rejected), or on beta/test, only for who may have it - else the same
+    // 404 as a version that does not exist.
+    if (!await mayHaveVersion(supabase, version, gateUserId, plugin.id)) {
+      return ctx.json({ error: 'Version not found' }, 404)
+    }
+
     // Generate download URL — externally-hosted (GitHub) URLs are returned
     // directly, but only if they're on an allowed host.
     const isExternal = version.jarPath.startsWith('https://')
@@ -430,7 +504,8 @@ download.openapi(downloadVersionRoute, async (ctx) => {
       // decode rather than one field - which on a strict client would turn a null floor into a
       // failed install.
       minBossVersion: version.minBossVersion ?? '',
-      requiredPermissions: plugin.requiredPermissions
+      requiredPermissions: plugin.requiredPermissions,
+      ...releaseFields(version)
     }, 200)
   } catch (error) {
     console.error('Error generating download URL:', error)

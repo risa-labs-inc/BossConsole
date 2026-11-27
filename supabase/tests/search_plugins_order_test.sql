@@ -79,10 +79,10 @@ select is(
     (select array_agg(k order by k) from public.search_plugins_internal(
         p_viewer_id => null, p_query => 'test.order', p_sort_by => 'name', p_page_size => 1) s,
         jsonb_object_keys(s.plugins->0) k),
-    array['apiVersion', 'author', 'description', 'displayName', 'downloadCount', 'iconUrl', 'id', 'orgId', 'orgSlug',
+    array['apiVersion', 'author', 'description', 'displayName', 'downloadCount', 'iconUrl', 'id', 'kind', 'orgId', 'orgSlug',
           'pluginId', 'rating', 'ratingCount', 'requiredPermissions', 'tags', 'type', 'updatedAt', 'url', 'verified',
           'version', 'visibility'],
-    'each entry carries exactly the keys it did before');
+    'each entry carries exactly the keys it did before, plus kind (20261125120100)');
 select is(pg_temp.page_ids('name', 3, 2), array['test.order.a'],
     'the last page holds what is left');
 select is(pg_temp.page_ids('name', 4, 2), '{}'::text[],

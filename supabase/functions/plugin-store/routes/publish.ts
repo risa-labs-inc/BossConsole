@@ -18,7 +18,23 @@ import {
   authorizeNewPluginPublish,
   preflightPublishAuthz,
 } from "../services/publish-authz.ts"
-import { createVersion, versionExists, finalizeVersion, getVersionById, deleteStalePendingVersion } from "../services/versions.ts"
+import {
+  createVersion,
+  versionExists,
+  finalizeVersion,
+  finalizeVersionForReview,
+  getVersionById,
+  deleteStalePendingVersion,
+} from "../services/versions.ts"
+import {
+  checkMaxAppJar,
+  fetchJarBytes,
+  MaxAppJarError,
+  sha256Hex,
+  maxAppEntryInZip,
+  MAX_APP_IN_PLUGIN_CODE,
+  MAX_APP_IN_PLUGIN_ERROR
+} from "../services/max-app.ts"
 import { getSignedUploadUrl, getSignedDownloadUrl, generateJarPath, uploadJar } from "../services/storage.ts"
 import { getAuthenticatedUser, getUserDisplayName, logApiKeyAction } from "../utils/auth.ts"
 import {
@@ -168,7 +184,10 @@ publish.openapi(publishPluginRoute, async (ctx) => {
       authz.orgId,
       // An organisation publishing for itself lands on its own shelf. A `plugins.create` publish
       // keeps the column default ('public'), which is what every existing publisher gets.
-      authz.orgScoped ? 'org' : null
+      authz.orgScoped ? 'org' : null,
+      // Set once, here. Nothing updates it afterwards: a reviewed Max app turned into a 'plugin'
+      // would publish its next versions without review.
+      body.kind
     )
 
     // Auto-register the permissions this plugin introduces (ungranted; admin grants later).
@@ -350,7 +369,12 @@ publish.openapi(publishVersionRoute, async (ctx) => {
       body.minIpcVersion,
       body.dependencies,
       jarPath,
-      body.minApiVersion
+      body.minApiVersion,
+      {
+        channel: body.channel,
+        // A Max app version waits for review from its first moment: the column default would approve it.
+        ...(plugin.kind === 'max-app' ? { reviewStatus: 'pending_review' as const } : {})
+      }
     )
 
     // Generate upload URL
@@ -397,7 +421,9 @@ const finalizeVersionRoute = createRoute({
   path: '/version/finalize',
   tags: ['Publish'],
   summary: 'Finalize version after JAR upload',
-  description: 'Update version metadata after JAR has been uploaded. Requires authentication.',
+  description: 'Update version metadata after JAR has been uploaded. Requires authentication. For a Max app '
+    + '(kind max-app) the JAR must be content-only (META-INF/max-app/ files and one inert stub class); the version '
+    + 'then waits for review, unsigned, and is signed when a reviewer approves it.',
   request: {
     body: {
       content: {
@@ -450,6 +476,14 @@ const finalizeVersionRoute = createRoute({
     },
     500: {
       description: 'Internal server error',
+      content: {
+        'application/json': {
+          schema: ErrorResponseSchema
+        }
+      }
+    },
+    409: {
+      description: 'Max app only: the version was already reviewed, or the JAR changed during the check',
       content: {
         'application/json': {
           schema: ErrorResponseSchema
@@ -567,18 +601,63 @@ publish.openapi(finalizeVersionRoute, async (ctx) => {
     // spurious "tampered" rejection on users' machines. (The GitHub publish
     // path already derives the version straight from the manifest.)
     try {
-      const { manifest: jarManifest } = await extractManifestFromRemoteJar(jarUrl)
+      const { manifest: jarManifest, maxAppEntry } = await extractManifestFromRemoteJar(jarUrl)
       if (jarManifest.pluginId !== plugin.pluginId || jarManifest.version !== version.version) {
         return ctx.json({
           success: false,
           error: `Manifest identity mismatch: JAR declares ${jarManifest.pluginId}@${jarManifest.version} but the version row is ${plugin.pluginId}@${version.version}. The stored version string must match the manifest verbatim.`
         }, 400)
       }
+      // A plain plugin must not carry a Max app: it would reach Max's App drawer signed, without the check or review.
+      if (plugin.kind !== 'max-app' && maxAppEntry) {
+        console.log(`finalize refused: version=${body.versionId} code=${MAX_APP_IN_PLUGIN_CODE}`)
+        return ctx.json({ success: false, code: MAX_APP_IN_PLUGIN_CODE, error: MAX_APP_IN_PLUGIN_ERROR }, 400)
+      }
     } catch (e) {
       return ctx.json({
         success: false,
         error: `Failed to read JAR manifest for identity check: ${(e as Error).message}`
       }, 502)
+    }
+
+    // A Max app: the content-only check on the bytes just hashed, then pending_review and UNSIGNED. It is signed only
+    // when a plugins.review holder approves it (routes/admin.ts). A plugin keeps today's path exactly: signed, approved.
+    if (plugin.kind === 'max-app') {
+      // A version already decided (approved or rejected) is never re-opened by re-finalizing it: publish a new one.
+      if ((version.reviewStatus ?? 'approved') !== 'pending_review') {
+        return ctx.json({
+          success: false,
+          code: 'max_app_already_reviewed',
+          error: 'This Max app version has already been reviewed. Publish a new version instead.'
+        }, 409)
+      }
+      let reviewMeta: Record<string, unknown>
+      try {
+        const bytes = await fetchJarBytes(jarUrl)
+        // The check must judge the very bytes that were hashed (and that the reviewer will approve and sign).
+        if (await sha256Hex(bytes) !== computedSha256) {
+          return ctx.json({
+            success: false,
+            code: 'max_app_jar_changed',
+            error: 'The JAR changed while it was being checked. Upload it again and finalize.'
+          }, 409)
+        }
+        reviewMeta = { ...await checkMaxAppJar(bytes, { pluginId: plugin.pluginId, version: version.version }) }
+      } catch (e) {
+        if (e instanceof MaxAppJarError) {
+          console.log(`finalize max-app refused: version=${body.versionId} code=${e.code}`)
+          return ctx.json({ success: false, code: e.code, error: e.message }, 400)
+        }
+        return ctx.json({
+          success: false,
+          error: `Failed to read the JAR for the Max app check: ${(e as Error).message}`
+        }, 502)
+      }
+      await finalizeVersionForReview(supabase, body.versionId, computedSha256, observedBytes, reviewMeta)
+      if (user.apiKeyId) {
+        await logApiKeyAction(supabase, user.apiKeyId, 'finalize', plugin.pluginId, ctx.req.raw, true)
+      }
+      return ctx.json({ success: true, reviewStatus: 'pending_review' as const }, 200)
     }
 
     // Finalize version
@@ -714,6 +793,11 @@ publish.openapi(publishFromGitHubRoute, async (ctx) => {
 
     console.log(`Extracted manifest: ${manifest.pluginId} v${version}`)
 
+    // Max apps never publish here (refused below for an existing one), so a jar carrying one is refused outright.
+    if (maxAppEntryInZip(new Uint8Array(jarData))) {
+      return ctx.json({ success: false, code: MAX_APP_IN_PLUGIN_CODE, error: MAX_APP_IN_PLUGIN_ERROR }, 400)
+    }
+
     // Reject dangling required permissions before creating any rows.
     const permCheck = await validateDeclaredPermissions(supabase, manifest)
     if (!permCheck.ok) {
@@ -738,6 +822,15 @@ publish.openapi(publishFromGitHubRoute, async (ctx) => {
       )
       if (!authz.ok) {
         return ctx.json({ success: false, error: authz.error }, authz.status)
+      }
+
+      // Max apps publish only through POST /{pluginId}/version and /version/finalize, where the jar is checked for
+      // content-only and the version waits for review. This path would finalize and sign it on the spot.
+      if (existingPlugin.kind === 'max-app') {
+        return ctx.json({
+          success: false,
+          error: 'This plugin is a Max app. Publish its versions with POST /{pluginId}/version and /version/finalize, where they are checked and reviewed.'
+        }, 400)
       }
 
       pluginUuid = existingPlugin.id
@@ -1013,14 +1106,20 @@ publish.openapi(publishFromGitHubMetadataRoute, async (ctx) => {
     // version, type, etc. Trusting a client-provided manifest would let a
     // publish-scoped caller register a plugin under any pluginId.
     let manifest: Awaited<ReturnType<typeof extractManifestFromRemoteJar>>['manifest']
+    let maxAppEntry: string | null = null
     try {
       const extracted = await extractManifestFromRemoteJar(jarAsset.browser_download_url)
       manifest = extracted.manifest
+      maxAppEntry = extracted.maxAppEntry
     } catch (e) {
       return ctx.json({
         success: false,
         error: `Failed to extract manifest from JAR: ${(e as Error).message}`
       }, 400)
+    }
+    // Max apps never publish here (refused below for an existing one), so a jar carrying one is refused outright.
+    if (maxAppEntry) {
+      return ctx.json({ success: false, code: MAX_APP_IN_PLUGIN_CODE, error: MAX_APP_IN_PLUGIN_ERROR }, 400)
     }
 
     // Compute the authoritative SHA-256 by streaming the remote JAR. This is
@@ -1073,6 +1172,15 @@ publish.openapi(publishFromGitHubMetadataRoute, async (ctx) => {
       )
       if (!authz.ok) {
         return ctx.json({ success: false, error: authz.error }, authz.status)
+      }
+
+      // Max apps publish only through POST /{pluginId}/version and /version/finalize, where the jar is checked for
+      // content-only and the version waits for review. This path would finalize and sign it on the spot.
+      if (existingPlugin.kind === 'max-app') {
+        return ctx.json({
+          success: false,
+          error: 'This plugin is a Max app. Publish its versions with POST /{pluginId}/version and /version/finalize, where they are checked and reviewed.'
+        }, 400)
       }
 
       pluginUuid = existingPlugin.id

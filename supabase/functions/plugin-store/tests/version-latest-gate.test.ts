@@ -81,6 +81,10 @@ function stubClient(read: StubResult, deleted: StubResult = { data: null, error:
       recorded.filters.push({ op: "lt", column, value })
       return chain()
     },
+    in: (column: string, value: unknown) => {
+      recorded.filters.push({ op: "in", column, value })
+      return chain()
+    },
     or: (expr: string) => {
       recorded.filters.push({ op: "or", column: "", value: expr })
       return chain()
@@ -132,12 +136,15 @@ Deno.test("getLatestVersion resolves only finalized rows and falls back, never f
 
   const latest = await getLatestVersion(client, PLUGIN_UUID)
 
-  // THE GATE: both halves must be present in the query.
+  // THE GATE: both halves must be present in the query, and the release gate (20261125120100): approved only, and
+  // stable when no channel was asked for - a Max app version in review is never anybody's latest.
   assertEquals(recorded.table, "plugin_versions")
   assertEquals(recorded.filters, [
     { op: "eq", column: "plugin_id", value: PLUGIN_UUID },
     { op: "neq", column: "sha256", value: PENDING_SHA256 },
     { op: "gt", column: "jar_size", value: 0 },
+    { op: "eq", column: "review_status", value: "approved" },
+    { op: "eq", column: "channel", value: "stable" },
   ])
   // Ordering among the survivors is unchanged healthy behaviour.
   assertEquals(recorded.order, [{ column: "published_at", ascending: false }])
@@ -222,4 +229,18 @@ Deno.test("the reap surfaces storage failures instead of silently reporting succ
   const failing = stubClient({ data: null, error: null }, { data: null, error: { message: "boom" } })
 
   await assertRejects(() => deleteStalePendingVersion(failing.client, PLUGIN_UUID, "2.0.0"))
+})
+
+Deno.test("with channels, latest is the newest APPROVED version across them, never one in review", async () => {
+  const { client, recorded } = stubClient({ data: finalizedRow, error: null })
+
+  await getLatestVersion(client, PLUGIN_UUID, ["stable", "beta"])
+
+  assertEquals(recorded.filters, [
+    { op: "eq", column: "plugin_id", value: PLUGIN_UUID },
+    { op: "neq", column: "sha256", value: PENDING_SHA256 },
+    { op: "gt", column: "jar_size", value: 0 },
+    { op: "eq", column: "review_status", value: "approved" },
+    { op: "in", column: "channel", value: ["stable", "beta"] },
+  ])
 })

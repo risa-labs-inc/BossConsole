@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "id": "ember",
+  "name": "Ember",
+  "summary": "Warm sand by day, a low campfire glow by night: terracotta bubbles and soft clay panels.",
+  "author": { "name": "BOSS samples", "url": "https://github.com/risa-labs-inc/boss-plugin-max" },
+  "tokens": {
+    "light": {
+      "bg": "#f6efe6",
+      "surface": "#fffaf4",
+      "surface-2": "#f1e6d8",
+      "surface-3": "#e8d9c6",
+      "border": "#e4d3bf",
+      "border-strong": "#cdb69c",
+      "text": "#2a1d14",
+      "text-2": "#5a4535",
+      "text-3": "#6e5848",
+      "accent": "#a8441f",
+      "accent-hover": "#8c3517",
+      "accent-soft": "#f6e1d6",
+      "accent-soft-2": "#eecab8",
+      "on-accent": "#ffffff",
+      "focus": "#a8441f",
+      "link-them": "#8c3517",
+      "bubble-me": "#b04a22",
+      "on-bubble-me": "#ffffff",
+      "bubble-them": "#efe2d2",
+      "on-bubble-them": "#2a1d14",
+      "danger": "#b3261e",
+      "warning": "#7a5200",
+      "success": "#2f6b3a"
+    },
+    "dark": {
+      "bg": "#16100c",
+      "surface": "#211813",
+      "surface-2": "#2c211a",
+      "surface-3": "#3a2c22",
+      "border": "#33261d",
+      "border-strong": "#4e3a2c",
+      "text": "#f6ece2",
+      "text-2": "#d9c7b6",
+      "text-3": "#ad9886",
+      "accent": "#e98a5d",
+      "accent-hover": "#f2a47f",
+      "accent-soft": "#33211a",
+      "accent-soft-2": "#4a2c20",
+      "on-accent": "#1a0f0a",
+      "focus": "#f2a47f",
+      "link-them": "#f2a47f",
+      "bubble-me": "#9a3e1c",
+      "on-bubble-me": "#ffffff",
+      "bubble-them": "#2e231c",
+      "on-bubble-them": "#f6ece2",
+      "danger": "#f2877d",
+      "warning": "#e8bd62",
+      "success": "#7fcf95"
+    }
+  },
+  "backdrop": {
+    "light": "radial-gradient(80% 50% at 50% -10%, rgba(255, 236, 214, 0.9), rgba(255, 236, 214, 0) 70%), linear-gradient(to bottom, #f8f1e8 0%, #f1e4d4 100%)",
+    "dark": "radial-gradient(60% 45% at 50% 110%, rgba(214, 98, 46, 0.28), rgba(214, 98, 46, 0) 70%), linear-gradient(to bottom, #1b130e 0%, #110b08 100%)"
+  },
+  "radius": "soft",
+  "preview": {
+    "light": {
+      "page": "linear-gradient(to bottom, #f8f1e8, #f1e4d4)",
+      "sent": "#b04a22",
+      "received": "#efe2d2"
+    },
+    "dark": {
+      "page": "linear-gradient(to bottom, #1b130e, #110b08)",
+      "sent": "#9a3e1c",
+      "received": "#2e231c"
+    }
+  }
+}

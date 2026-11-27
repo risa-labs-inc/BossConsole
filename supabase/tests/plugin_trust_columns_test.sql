@@ -107,8 +107,8 @@ select is(
     (select array_agg(a.attname::text order by a.attname) from pg_attribute a
      where a.attrelid = 'public.plugins'::regclass and a.attnum > 0 and not a.attisdropped
        and not has_column_privilege('authenticated', 'public.plugins', a.attname, 'UPDATE')),
-    array['org_id', 'verified'],
-    'exactly verified and org_id are closed to an authenticated UPDATE');
+    array['kind', 'org_id', 'verified'],
+    'exactly kind, verified and org_id are closed to an authenticated UPDATE (kind: set once on INSERT, 20261125120100)');
 select is(
     (select array_agg(a.attname::text order by a.attname) from pg_attribute a
      where a.attrelid = 'public.plugins'::regclass and a.attnum > 0 and not a.attisdropped
@@ -119,8 +119,8 @@ select is(
     (select array_agg(a.attname::text order by a.attname) from pg_attribute a
      where a.attrelid = 'public.plugins'::regclass and a.attnum > 0 and not a.attisdropped
        and not has_column_privilege('anon', 'public.plugins', a.attname, 'UPDATE')),
-    array['org_id', 'verified'],
-    'and the same two for anon UPDATE');
+    array['kind', 'org_id', 'verified'],
+    'and the same three for anon UPDATE');
 select is(
     (select array_agg(a.attname::text order by a.attname) from pg_attribute a
      where a.attrelid = 'public.plugins'::regclass and a.attnum > 0 and not a.attisdropped

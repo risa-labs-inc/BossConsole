@@ -6,9 +6,11 @@ import {
   PluginDetailResponseSchema,
   PopularTagsQuerySchema,
   PopularTagsResponseSchema,
-  ErrorResponseSchema
+  ErrorResponseSchema,
+  CatalogueFilterQuerySchema,
+  ChannelQuerySchema
 } from "../types/schemas.ts"
-import { listPlugins, searchPlugins, getPlugin, getPopularTags } from "../services/plugins.ts"
+import { listPlugins, searchPlugins, searchPluginsChannel, getPlugin, getPopularTags } from "../services/plugins.ts"
 import { getPluginVersions } from "../services/versions.ts"
 import { clientKey, rateLimit } from "../utils/rate-limit.ts"
 import { newRouter } from "../utils/router.ts"
@@ -92,7 +94,7 @@ browse.openapi(listRoute, async (ctx) => {
     }
 
     const supabase = ctx.get("supabase")
-    const { page, pageSize, sortBy } = ctx.req.valid('query')
+    const { page, pageSize, sortBy, kind, channel } = ctx.req.valid('query')
 
     // OPTIONAL auth. Browsing the store signed out must keep working, so a missing or unusable
     // token is not an error here - it simply yields the public catalogue, which is what every
@@ -100,7 +102,12 @@ browse.openapi(listRoute, async (ctx) => {
     // user_can_view_plugin_row says this reader may see.
     const viewer = await optionalViewer(ctx)
 
-    const result = await listPlugins(supabase, page, pageSize, sortBy, viewer)
+    // ?kind= / ?channel= go to search_plugins_channel; without either, the call is exactly what it always was.
+    const result = kind || channel
+      ? await searchPluginsChannel(supabase, viewer, {
+        page, pageSize, sortBy, kind: kind ?? null, channel: channel ?? 'stable'
+      })
+      : await listPlugins(supabase, page, pageSize, sortBy, viewer)
 
     // PRIVATE when the answer depends on who asked. The same URL now returns different rows per
     // reader, so a shared cache holding one reader's copy would serve somebody else's
@@ -128,8 +135,10 @@ const searchRoute = createRoute({
   path: '/search',
   tags: ['Browse'],
   summary: 'Search plugins',
-  description: 'Search plugins with filters and sorting options',
+  description: 'Search plugins with filters and sorting options. Optional ?kind=plugin|max-app and '
+    + '?channel=stable|beta|test (a non-stable channel applies only to plugins the signed-in caller may test).',
   request: {
+    query: CatalogueFilterQuerySchema,
     body: {
       content: {
         'application/json': {
@@ -192,6 +201,31 @@ browse.openapi(searchRoute, async (ctx) => {
 
     const supabase = ctx.get("supabase")
     const body = ctx.req.valid('json')
+    const { kind, channel } = ctx.req.valid('query')
+
+    if (kind || channel) {
+      // The channel filter depends on who asks, so this path names its viewer (the old one never did).
+      const viewer = await optionalViewer(ctx)
+      const filtered = await searchPluginsChannel(supabase, viewer, {
+        query: body.query,
+        type: body.type || null,
+        tags: body.tags || null,
+        minRating: body.minRating,
+        verifiedOnly: body.verifiedOnly,
+        page: body.page,
+        pageSize: body.pageSize,
+        sortBy: body.sortBy,
+        kind: kind ?? null,
+        channel: channel ?? 'stable'
+      })
+      ctx.header("Cache-Control", "private, no-store")
+      return ctx.json({
+        plugins: filtered.plugins,
+        totalCount: filtered.totalCount,
+        page: body.page,
+        pageSize: body.pageSize
+      }, 200)
+    }
 
     const result = await searchPlugins(
       supabase,
@@ -230,7 +264,8 @@ const getPluginRoute = createRoute({
   request: {
     params: z.object({
       pluginId: z.string()
-    })
+    }),
+    query: ChannelQuerySchema
   },
   responses: {
     200: {
@@ -264,6 +299,7 @@ browse.openapi(getPluginRoute, async (ctx) => {
   try {
     const supabase = ctx.get("supabase")
     const { pluginId } = ctx.req.valid('param')
+    const { channel } = ctx.req.valid('query')
 
     // OPTIONAL auth, the same quiet rule as /list: a missing or unusable
     // token answers the public catalogue, a valid one additionally unlocks
@@ -281,7 +317,8 @@ browse.openapi(getPluginRoute, async (ctx) => {
     }
 
     // Get all versions
-    const versions = await getPluginVersions(supabase, pluginId, viewer)
+    // With ?channel=, a viewer who may test this plugin also sees its beta/test versions and those in review.
+    const versions = await getPluginVersions(supabase, pluginId, viewer, channel ?? null)
 
     // PRIVATE when the answer depends on who asked - the same reason and the
     // same header as /list: a shared cache holding one reader's copy would
@@ -320,7 +357,10 @@ browse.openapi(getPluginRoute, async (ctx) => {
         sha256: v.sha256,
         dependencies: v.dependencies,
         publishedAt: v.publishedAt,
-        downloadCount: v.downloadCount || 0
+        downloadCount: v.downloadCount || 0,
+        ...(v.channel ? { channel: v.channel } : {}),
+        ...(v.reviewStatus ? { reviewStatus: v.reviewStatus } : {}),
+        ...(v.reviewNote !== undefined ? { reviewNote: v.reviewNote } : {})
       }))
     }, 200)
   } catch (error) {

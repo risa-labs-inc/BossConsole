@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
-import type { PluginListItem, PluginWithStats } from "../types/plugin.ts"
+import type { PluginKind, PluginListItem, PluginWithStats, ReleaseChannel } from "../types/plugin.ts"
 
 /**
  * Get list of plugins with pagination and sorting
@@ -100,6 +100,54 @@ export async function searchPlugins(
 }
 
 /**
+ * The catalogue with a kind filter and/or a release channel: search_plugins_channel (20261125120100). Used only when
+ * the caller passes ?kind= or ?channel=; without them the routes keep calling search_plugins(_for_viewer), unchanged.
+ * The viewer decides which plugins are visible (user_can_view_plugin_row) and whether a non-stable channel applies
+ * to each plugin (plugin_channel_access); everywhere else the latest version stays the stable one.
+ */
+export async function searchPluginsChannel(
+  supabase: SupabaseClient,
+  viewerId: string | null,
+  filters: {
+    query?: string
+    type?: string | null
+    tags?: string[] | null
+    minRating?: number
+    verifiedOnly?: boolean
+    page: number
+    pageSize: number
+    sortBy: string
+    kind: PluginKind | null
+    channel: ReleaseChannel
+  }
+): Promise<{ plugins: PluginListItem[], totalCount: number }> {
+  const { data, error } = await supabase.rpc('search_plugins_channel', {
+    p_viewer_id: viewerId,
+    p_query: filters.query ?? '',
+    p_type: filters.type ?? null,
+    p_tags: filters.tags ?? null,
+    p_min_rating: filters.minRating ?? 0,
+    p_verified_only: filters.verifiedOnly ?? false,
+    p_page: filters.page,
+    p_page_size: filters.pageSize,
+    p_sort_by: filters.sortBy,
+    p_kind: filters.kind,
+    p_channel: filters.channel
+  })
+
+  if (error) {
+    console.error('Error searching plugins by kind/channel:', error)
+    throw new Error(`Failed to search plugins: ${error.message}`)
+  }
+
+  const result = data?.[0] || { plugins: [], total_count: 0 }
+  return {
+    plugins: result.plugins || [],
+    totalCount: Number(result.total_count) || 0
+  }
+}
+
+/**
  * Look up a plugin by manifest id for the PUBLISH paths, including unpublished rows.
  *
  * getPlugin() goes through the get_plugin_with_stats RPC, whose body ends in
@@ -116,10 +164,10 @@ export async function searchPlugins(
 export async function getPluginForPublish(
   supabase: SupabaseClient,
   pluginId: string
-): Promise<{ id: string; authorId: string; published: boolean } | null> {
+): Promise<{ id: string; authorId: string; published: boolean; kind: PluginKind } | null> {
   const { data, error } = await supabase
     .from('plugins')
-    .select('id, author_id, published')
+    .select('id, author_id, published, kind')
     .eq('plugin_id', pluginId)
     .maybeSingle()
 
@@ -132,7 +180,8 @@ export async function getPluginForPublish(
     return null
   }
 
-  return { id: data.id, authorId: data.author_id, published: data.published }
+  // kind is NOT NULL in the database; a row without it (a stub, or a read before the migration) is a plugin.
+  return { id: data.id, authorId: data.author_id, published: data.published, kind: data.kind ?? 'plugin' }
 }
 
 /**
@@ -250,10 +299,10 @@ export async function getPlugin(
 export async function getPluginById(
   supabase: SupabaseClient,
   id: string
-): Promise<{ id: string, pluginId: string, authorId: string | null } | null> {
+): Promise<{ id: string, pluginId: string, authorId: string | null, kind: PluginKind } | null> {
   const { data, error } = await supabase
     .from('plugins')
-    .select('id, plugin_id, author_id')
+    .select('id, plugin_id, author_id, kind')
     .eq('id', id)
     .single()
 
@@ -266,7 +315,8 @@ export async function getPluginById(
   return data ? {
     id: data.id,
     pluginId: data.plugin_id,
-    authorId: data.author_id
+    authorId: data.author_id,
+    kind: data.kind ?? 'plugin'
   } : null
 }
 
@@ -336,7 +386,12 @@ export async function createPlugin(
    * `'org'` is how an org-scoped publish - one allowed by an organisation's own publish policy
    * rather than by `plugins.create` - lands on that organisation's shelf instead of the global one.
    */
-  visibility: 'public' | 'org' | 'unlisted' | null = null
+  visibility: 'public' | 'org' | 'unlisted' | null = null,
+  /**
+   * plugins.kind, set once here and never changed afterwards (updatePlugin has no kind). OMITTED for 'plugin' so the
+   * insert is exactly what it always was and the column default decides.
+   */
+  kind: PluginKind = 'plugin'
 ): Promise<{ id: string }> {
   const { data, error } = await supabase
     .from('plugins')
@@ -353,7 +408,8 @@ export async function createPlugin(
       required_permissions: requiredPermissions,
       published: true,
       ...(orgId ? { org_id: orgId } : {}),
-      ...(visibility ? { visibility } : {})
+      ...(visibility ? { visibility } : {}),
+      ...(kind !== 'plugin' ? { kind } : {})
     })
     .select('id')
     .single()
