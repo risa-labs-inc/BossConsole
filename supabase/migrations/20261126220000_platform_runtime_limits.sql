@@ -10,7 +10,8 @@ CREATE TABLE public.platform_limits (
 ALTER TABLE public.platform_limits ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.platform_limits FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.platform_limits TO anon, authenticated, service_role;
-CREATE POLICY "numeric limits read" ON public.platform_limits FOR SELECT TO anon, authenticated USING (true);
+-- Readable without a session on purpose: the Optimist chat server reads it with the public anon key.
+CREATE POLICY "numeric limits read" ON public.platform_limits FOR SELECT TO anon, authenticated, service_role USING (true);
 -- Values are those in force when written (Optimist main after #147/#148 plus live optimist-config), so applying this changes no budget.
 INSERT INTO public.platform_limits (key, value, default_value) VALUES
   ('magicLinkPerIp', '[[300, 3600000], [3000, 86400000]]'::jsonb, '[[300, 3600000], [3000, 86400000]]'::jsonb),
@@ -46,7 +47,8 @@ DECLARE w jsonb; n numeric;
 BEGIN
   IF p_value IS NULL OR p_default IS NULL THEN RETURN false; END IF;
   IF pg_catalog.jsonb_typeof(p_default) = 'number' THEN
-    IF pg_catalog.jsonb_typeof(p_value) <> 'number' THEN RETURN false; END IF;
+    -- Plain digits only: 3.0 or 3e0 would pass a numeric check but break the ::int readers.
+    IF pg_catalog.jsonb_typeof(p_value) <> 'number' OR p_value::text !~ '^[1-9][0-9]*$' THEN RETURN false; END IF;
     n := p_value::text::numeric;
     RETURN n = pg_catalog.trunc(n) AND n >= 1 AND n <= CASE WHEN p_key LIKE '%Ms' THEN 86400000 ELSE 1000000 END;
   END IF;
@@ -56,6 +58,7 @@ BEGIN
     IF pg_catalog.jsonb_typeof(w) <> 'array' THEN RETURN false; END IF;
     IF pg_catalog.jsonb_array_length(w) <> 2 THEN RETURN false; END IF;
     IF pg_catalog.jsonb_typeof(w->0) <> 'number' OR pg_catalog.jsonb_typeof(w->1) <> 'number' THEN RETURN false; END IF;
+    IF (w->0)::text !~ '^[1-9][0-9]*$' OR (w->1)::text !~ '^[1-9][0-9]*$' THEN RETURN false; END IF;
     n := (w->>0)::numeric;
     IF n <> pg_catalog.trunc(n) OR n < 1 OR n > 1000000 THEN RETURN false; END IF;
     n := (w->>1)::numeric;
@@ -94,7 +97,7 @@ GRANT EXECUTE ON FUNCTION public.set_platform_limit(text,jsonb,bigint) TO authen
 -- Database-enforced budgets use the same registry, taking effect on the next transaction.
 CREATE FUNCTION public.platform_limit_number(p_key text, p_fallback int)
 RETURNS int LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
-  SELECT COALESCE((SELECT (value::text)::int FROM public.platform_limits WHERE key = p_key), p_fallback);
+  SELECT COALESCE((SELECT pg_catalog.trunc((value::text)::numeric)::int FROM public.platform_limits WHERE key = p_key), p_fallback);
 $$;
 REVOKE ALL ON FUNCTION public.platform_limit_number(text,int) FROM PUBLIC, anon, authenticated;
 
