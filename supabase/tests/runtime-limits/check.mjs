@@ -29,6 +29,7 @@ for (const v of [null,0,-1,[],[[0,1000]],[[1,0]],[[1,86400001]],[[1.5,1000]],'un
 await assert.rejects(db.exec("SELECT public.set_platform_limit('unknown','20',1)"),/unknown_limit/);
 await db.exec("SELECT public.set_platform_limit('loginLockMs','1000',1)");
 await assert.rejects(db.exec("SELECT public.set_platform_limit('loginLockMs','86400001',2)"),/invalid_limit/);
+await assert.rejects(db.exec("SELECT public.set_platform_limit('loginFailureWindowMs','999',1)"),/invalid_limit/);
 for (const raw of ['3.0','30e-1','3.5']) await assert.rejects(db.exec(`SELECT public.set_platform_limit('orgsPerOwner','${raw}',1)`),/invalid_limit/);
 await assert.rejects(db.exec("SELECT public.set_platform_limit('magicLinkPerEmail','[[3.0,900000]]',2)"),/invalid_limit/);
 await db.exec("SELECT public.set_platform_limit('orgsPerOwner','100',1)");

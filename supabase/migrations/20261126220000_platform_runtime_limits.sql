@@ -50,7 +50,7 @@ BEGIN
     -- Plain digits only: 3.0 or 3e0 would pass a numeric check but break the ::int readers.
     IF pg_catalog.jsonb_typeof(p_value) <> 'number' OR p_value::text !~ '^[1-9][0-9]*$' THEN RETURN false; END IF;
     n := p_value::text::numeric;
-    RETURN n = pg_catalog.trunc(n) AND n >= 1 AND n <= CASE WHEN p_key LIKE '%Ms' THEN 86400000 ELSE 1000000 END;
+    RETURN n = pg_catalog.trunc(n) AND n >= CASE WHEN p_key LIKE '%Ms' THEN 1000 ELSE 1 END AND n <= CASE WHEN p_key LIKE '%Ms' THEN 86400000 ELSE 1000000 END;
   END IF;
   IF pg_catalog.jsonb_typeof(p_value) <> 'array' THEN RETURN false; END IF;
   IF pg_catalog.jsonb_array_length(p_value) NOT BETWEEN 1 AND 6 THEN RETURN false; END IF;

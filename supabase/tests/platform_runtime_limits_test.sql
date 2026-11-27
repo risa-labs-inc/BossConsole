@@ -1,6 +1,6 @@
 -- Runtime numeric configuration: RLS, validation, optimistic edits and audit history.
 begin;
-select plan(20);
+select plan(21);
 insert into auth.users (id,email,email_confirmed_at) values
  ('f0260000-0000-4000-8000-000000000001','limits-admin@example.test',now()),
  ('f0260000-0000-4000-8000-000000000002','limits-user@example.test',now());
@@ -26,6 +26,7 @@ select throws_ok($q$select public.set_platform_limit('magicLinkPerEmail','[]',2)
 select throws_ok($q$select public.set_platform_limit('magicLinkPerEmail','[[0,900000]]',2)$q$,'22023','invalid_limit','zero counts are refused');
 select throws_ok($q$select public.set_platform_limit('magicLinkPerEmail','[[20,86400001]]',2)$q$,'22023','invalid_limit','windows cannot exceed counter retention');
 select throws_ok($q$select public.set_platform_limit('loginLockMs','0',1)$q$,'22023','invalid_limit','zero lock duration refused');
+select throws_ok($q$select public.set_platform_limit('loginLockMs','999',1)$q$,'22023','invalid_limit','sub-second lock duration refused');
 select throws_ok($q$select public.set_platform_limit('unknown','1',1)$q$,'22023','unknown_limit','unknown key refused');
 select throws_ok($q$select public.set_platform_limit('orgsPerOwner','3.0',1)$q$,'22023','invalid_limit','a fractional representation cannot reach the integer readers');
 select throws_ok($q$select public.set_platform_limit('magicLinkPerEmail','[[3.0,900000]]',2)$q$,'22023','invalid_limit','window counts must be plain integers');
